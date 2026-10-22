@@ -1,0 +1,30 @@
+[package]
+name = "search"
+description = "Maze full-text search: query language, Tantivy index and encrypted index directory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+blake3 = { workspace = true }
+mazemail_types = { workspace = true }
+quick_cache = { workspace = true }
+serde_json = { workspace = true }
+tantivy = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+tracing = { workspace = true }
+vault = { workspace = true }
+winnow = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+proptest = { workspace = true }
+# The plaintext MmapDirectory, only as a baseline in tests and the S7 benchmark.
+tantivy = { workspace = true, features = ["mmap"] }
+
+[lints]
+workspace = true
