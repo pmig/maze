@@ -649,6 +649,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "auth"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "base64 0.23.1",
+ "dbus-secret-service-keyring-store",
+ "getrandom 0.4.3",
+ "keyring-core",
+ "mazemail_types",
+ "pretty_assertions",
+ "reqwest",
+ "security-framework",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
+ "uuid",
+ "wiremock",
+ "zeroize",
+]
+
+[[package]]
 name = "auto_update"
 version = "0.0.0"
 dependencies = [

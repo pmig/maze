@@ -13,6 +13,7 @@ publish = false
 
 [workspace.dependencies]
 # Internal crates (layering: see AGENTS.md)
+auth = { path = "crates/auth" }
 mazemail_types = { path = "crates/mazemail_types" }
 auto_update = { path = "crates/auto_update" }
 mail_ui = { path = "crates/mail_ui" }
@@ -85,6 +86,7 @@ tokio-util = "0.7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 url = { version = "2", features = ["serde"] }
+uuid = "1"
 winnow = "1"
 zeroize = { version = "1", features = ["derive"] }
 whatlang = "0.18.0"
