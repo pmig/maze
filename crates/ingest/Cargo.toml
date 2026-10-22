@@ -1,0 +1,29 @@
+[package]
+name = "ingest"
+description = "Maze ingest pipeline: turns raw messages and headers into stored state and search documents"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+blake3 = { workspace = true }
+mazemail_mime = { workspace = true }
+mazemail_types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+store = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+mazemail_mime = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+vault = { workspace = true }
+
+[lints]
+workspace = true

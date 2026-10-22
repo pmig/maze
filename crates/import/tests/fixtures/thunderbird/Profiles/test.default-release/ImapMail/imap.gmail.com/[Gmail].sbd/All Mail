@@ -1,0 +1,28 @@
+From - Tue Oct 01 08:00:00 2024
+X-Mozilla-Status: 0000
+X-Mozilla-Status2: 00000000
+X-Mozilla-Keys:                                                                                 
+Date: Wed, 02 Oct 2024 12:00:00 +0000
+From: Carla <carla@example.net>
+To: Ben <ben@example.org>
+Subject: Gmail copy
+Message-ID: <g1@gmail-example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Same bytes in two folders.
+
+From - Tue Oct 01 08:00:00 2024
+X-Mozilla-Status: 0001
+X-Mozilla-Status2: 00000000
+X-Mozilla-Keys:                                                                                 
+Date: Tue, 01 Oct 2024 10:00:00 +0200
+From: Carla <carla@example.net>
+To: Ben <ben@example.org>
+Subject: Only in All Mail
+Message-ID: <allmail-only@gmail-example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+archived
+

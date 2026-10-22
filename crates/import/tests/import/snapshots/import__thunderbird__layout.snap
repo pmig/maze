@@ -1,0 +1,14 @@
+---
+source: crates/import/tests/import/thunderbird.rs
+expression: "serde_json::to_value(&profile.layout).unwrap()"
+---
+folder_pane_compact: false
+folder_pane_modes:
+  - all
+  - favorite
+  - unified
+folder_pane_width: 286
+message_pane_height: ~
+message_pane_width: 640
+pane_layout: 2
+thread_pane_list_view: 1

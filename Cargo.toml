@@ -14,6 +14,8 @@ publish = false
 [workspace.dependencies]
 # Internal crates (layering: see AGENTS.md)
 auth = { path = "crates/auth" }
+import = { path = "crates/import" }
+ingest = { path = "crates/ingest" }
 local_api = { path = "crates/local_api" }
 mazemail_core = { path = "crates/mazemail_core" }
 mazemail_types = { path = "crates/mazemail_types" }
@@ -62,6 +64,7 @@ notify = "8"
 notify-debouncer-mini = "0.7"
 psl = "2.1"
 quick_cache = "0.7"
+rayon = "1.12"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2", "system-proxy"] }
 rusqlite = { version = "0.40", default-features = false, features = ["array", "backup", "bundled-sqlcipher", "cache"] }
 rusqlite_migration = "2.6"

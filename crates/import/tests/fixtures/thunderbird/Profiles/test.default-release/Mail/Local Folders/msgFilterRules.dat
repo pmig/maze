@@ -1,0 +1,7 @@
+version="9"
+logging="no"
+name="Everything periodic"
+enabled="yes"
+type="256"
+action="Mark flagged"
+condition="ALL"

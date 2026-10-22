@@ -1,0 +1,76 @@
+---
+source: crates/import/tests/import/thunderbird.rs
+expression: "redact(serde_json::to_value(&report).unwrap(), &profile_dir)"
+---
+accounts:
+  - auth: password_prompt
+    host: imap.example.com
+    identities: 2
+    key: account1
+    kind: imap
+    name: Work
+    port: 993
+    username: anna@example.com
+  - auth: sign_in_again
+    host: imap.gmail.com
+    identities: 1
+    key: account2
+    kind: gmail
+    name: anna.example@gmail.com
+    port: 993
+    username: anna.example@gmail.com
+  - auth: none
+    host: Local Folders
+    identities: 0
+    key: account3
+    kind: local
+    name: Local Folders
+    port: ~
+    username: nobody
+  - auth: none
+    host: news.example.org
+    identities: 1
+    key: account4
+    kind: unsupported
+    name: news.example.org
+    port: 119
+    username: ~
+address_books:
+  - contacts: 4
+    lists: 1
+    name: Personal Address Book
+filters: 3
+filters_with_unsupported_actions: 1
+identities: 3
+layout:
+  folder_pane_compact: false
+  folder_pane_modes:
+    - all
+    - favorite
+    - unified
+  folder_pane_width: 286
+  message_pane_height: ~
+  message_pane_width: 640
+  pane_layout: 2
+  thread_pane_list_view: 1
+local_folders:
+  - account: Local Folders
+    bytes: 2146
+    folders: 6
+    format: mbox
+offline_store_bytes: 5320
+profile: "[profile]"
+saved_searches: 2
+signatures: 2
+smtp_servers: 3
+tags: 6
+unsupported:
+  - item: account news.example.org
+    reason: "News (NNTP) accounts aren't supported by Maze"
+  - item: 3 message filters
+    reason: "imported disabled; review and enable them once Maze's rules engine is available"
+  - item: 1 mailing lists in Personal Address Book
+    reason: Maze has no contact lists yet; their members are imported as contacts
+  - item: calendars and tasks
+    reason: out of scope for Maze
+untranslated_search_terms: 1

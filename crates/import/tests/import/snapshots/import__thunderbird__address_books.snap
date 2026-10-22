@@ -1,0 +1,27 @@
+---
+source: crates/import/tests/import/thunderbird.rs
+expression: "redact(serde_json::to_value(&books).unwrap(), &profile_dir)"
+---
+- cards:
+    - display_name: Ben Example
+      emails:
+        - ben@example.org
+        - ben.private@example.net
+      uid: c1
+      vcard: "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Ben Example\r\nEMAIL;PREF=1:ben@example.org\r\nEMAIL:ben.private@example.net\r\nEND:VCARD\r\n"
+    - display_name: Carla Muster
+      emails:
+        - carla@example.net
+      uid: c2
+      vcard: ~
+    - display_name: Dora Vcard
+      emails:
+        - dora@example.com
+      uid: c3
+      vcard: "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Dora Vcard\r\nEMAIL:dora@example.com\r\nEND:VCARD\r\n"
+  file: "[profile]/abook.sqlite"
+  lists:
+    - members: 2
+      name: Team
+      uid: l1
+  name: Personal Address Book

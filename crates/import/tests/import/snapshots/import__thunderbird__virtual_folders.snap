@@ -1,0 +1,48 @@
+---
+source: crates/import/tests/import/thunderbird.rs
+expression: "serde_json::to_value(&profile.virtual_folders).unwrap()"
+---
+- name: Unread local
+  scope:
+    - "mailbox://nobody@Local%20Folders/Inbox"
+    - "mailbox://nobody@Local%20Folders/Archives/2024"
+  search_online: false
+  terms:
+    match_all: false
+    raw: "AND (status,isn't,read) AND (from,contains,ben@example.org)"
+    terms:
+      - attribute: status
+        boolean: and
+        custom_header: false
+        operator: "isn't"
+        value: read
+      - attribute: from
+        boolean: and
+        custom_header: false
+        operator: contains
+        value: ben@example.org
+  uri: "mailbox://nobody@Local%20Folders/Unread%20local"
+- name: Big mail
+  scope:
+    - "imap://anna%40example.com@imap.example.com/INBOX"
+  search_online: true
+  terms:
+    match_all: false
+    raw: "OR (size,is greater than,5000) OR (has attachment status,is,true) OR (junk status,is,2)"
+    terms:
+      - attribute: size
+        boolean: or
+        custom_header: false
+        operator: is greater than
+        value: "5000"
+      - attribute: has attachment status
+        boolean: or
+        custom_header: false
+        operator: is
+        value: "true"
+      - attribute: junk status
+        boolean: or
+        custom_header: false
+        operator: is
+        value: "2"
+  uri: "imap://anna%40example.com@imap.example.com/Big%20mail"
