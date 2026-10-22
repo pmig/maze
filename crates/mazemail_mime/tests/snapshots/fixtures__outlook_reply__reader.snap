@@ -1,0 +1,47 @@
+---
+source: crates/mazemail_mime/tests/fixtures.rs
+expression: reader
+---
+source: html
+blocks:
+  - type: paragraph
+    content:
+      - text: "Works for me, see you Thursday."
+  - type: paragraph
+    content:
+      - text: Bob
+  - type: quote
+    depth: 1
+    blocks:
+      - type: paragraph
+        content:
+          - text: "From:"
+            style: BOLD
+          - text: " Anna Example <anna@example.com>\n"
+          - text: "Sent:"
+            style: BOLD
+          - text: " Tuesday, March 4, 2025 9:00 AM\n"
+          - text: "To:"
+            style: BOLD
+          - text: " Bob Builder <bob@example.com>\n"
+          - text: "Subject:"
+            style: BOLD
+          - text: " Project kickoff"
+      - type: paragraph
+        content:
+          - text: "Hi Bob,"
+      - type: paragraph
+        content:
+          - text: shall we meet on Thursday at 10?
+      - type: table
+        rows:
+          - cells:
+              - content:
+                  - text: Topic
+              - content:
+                  - text: Owner
+          - cells:
+              - content:
+                  - text: Scope
+              - content:
+                  - text: Anna

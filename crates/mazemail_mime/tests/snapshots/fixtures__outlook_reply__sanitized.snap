@@ -1,0 +1,9 @@
+---
+source: crates/mazemail_mime/tests/fixtures.rs
+expression: html
+---
+<style><!--
+p.MsoNormal {margin:0cm; font-size:11.0pt; font-family:"Calibri",sans-serif;}
+--></style>
+<div class="WordSection1"><p class="MsoNormal">Works for me, see you Thursday.</p><p class="MsoNormal">&nbsp;</p><p class="MsoNormal">Bob</p>
+<div id="mail-editor-reference-message-container"><div><div style="border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0cm 0cm 0cm"><p class="MsoNormal"><b>From:</b> Anna Example &lt;anna@example.com&gt;<br><b>Sent:</b> Tuesday, March 4, 2025 9:00 AM<br><b>To:</b> Bob Builder &lt;bob@example.com&gt;<br><b>Subject:</b> Project kickoff</p></div><p class="MsoNormal">Hi Bob,</p><p class="MsoNormal">shall we meet on Thursday at 10?</p><table class="MsoTableGrid" border="1" cellspacing="0" cellpadding="0"><tbody><tr><td><p class="MsoNormal">Topic</p></td><td><p class="MsoNormal">Owner</p></td></tr><tr><td><p class="MsoNormal">Scope</p></td><td><p class="MsoNormal">Anna</p></td></tr></tbody></table></div></div></div>

@@ -1,0 +1,9 @@
+---
+source: crates/mazemail_mime/tests/fixtures.rs
+expression: html
+---
+
+<p>Hi all,</p>
+<p>here are the <b>notes</b> from <i>today</i>:</p>
+<ul><li>Release candidate on <strong>Thursday</strong></li><li>Final release next Tuesday</li></ul>
+<p>Carol</p>

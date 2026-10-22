@@ -1,0 +1,12 @@
+From: "Broken Sender" <broken@example.net>
+To: undisclosed-recipients:;
+Subject: =?x-unknown?Q?Caf=E9?= menu =?UTF-8?B?invalid!!?=
+Date: not a date at all
+Message-ID: <broken-1@example.net>
+References: <broken-0@example.net> garbage <<nested>> <
+MIME-Version: 1.0
+Content-Type: text/plain; charset="x-unknown-charset"
+Content-Transfer-Encoding: 8bit
+
+Café au lait, crème brûlée and invalid UTF-8: Ã( ÿþ.
+Still readable afterwards.

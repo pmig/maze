@@ -1,0 +1,14 @@
+---
+source: crates/mazemail_mime/tests/fixtures.rs
+expression: output
+---
+trackers_removed: 2
+has_remote_resources: true
+cid_references: []
+remote_resources:
+  - "https://news.example.org/img/hero-bg.jpg"
+  - "https://news.example.org/img/logo.png"
+  - "https://news.example.org/img/hero.jpg"
+  - "https://news.example.org/img/a.jpg"
+  - "https://news.example.org/img/b.jpg"
+csp: "default-src 'none'; img-src http://127.0.0.1:4711/fixture-token/ data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"

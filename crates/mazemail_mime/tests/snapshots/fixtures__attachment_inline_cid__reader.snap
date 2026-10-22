@@ -1,0 +1,22 @@
+---
+source: crates/mazemail_mime/tests/fixtures.rs
+expression: reader
+---
+source: html
+blocks:
+  - type: image
+    source:
+      kind: cid
+      value: logo@example.com
+    alt: Example Corp
+    width: 120
+    height: 40
+  - type: paragraph
+    content:
+      - text: "Hi Grace,"
+  - type: paragraph
+    content:
+      - text: the Q1 report is attached.
+  - type: paragraph
+    content:
+      - text: Frank

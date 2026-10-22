@@ -1,0 +1,33 @@
+From: Carol Writer <carol@example.org>
+To: Dave Reader <dave@example.net>, team@example.org
+Cc: "Example, Erin" <erin@example.org>
+Reply-To: Carol (replies) <carol+replies@example.org>
+Subject: Meeting notes for the release planning
+Date: Mon, 10 Mar 2025 16:20:05 +0000
+Message-ID: <notes-20250310@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="alt-boundary"
+
+--alt-boundary
+Content-Type: text/plain; charset=us-ascii
+
+Hi all,
+
+here are the notes from today:
+
+* Release candidate on Thursday
+* Final release next Tuesday
+
+Carol
+
+--alt-boundary
+Content-Type: text/html; charset=us-ascii
+
+<html><body>
+<p>Hi all,</p>
+<p>here are the <b>notes</b> from <i>today</i>:</p>
+<ul><li>Release candidate on <strong>Thursday</strong></li><li>Final release next Tuesday</li></ul>
+<p>Carol</p>
+</body></html>
+
+--alt-boundary--

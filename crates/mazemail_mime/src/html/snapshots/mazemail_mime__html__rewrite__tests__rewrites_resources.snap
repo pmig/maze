@@ -1,0 +1,8 @@
+---
+source: crates/mazemail_mime/src/html/rewrite.rs
+expression: out.html
+---
+<img src="http://127.0.0.1:4711/tok3n/cid/logo@x"><img src="http://127.0.0.1:4711/tok3n/remote/0"><img src="http://127.0.0.1:4711/tok3n/remote/0">
+            <table><tbody><tr><td background="http://127.0.0.1:4711/tok3n/remote/1"></td></tr></tbody></table><p style="background:url(&quot;http://127.0.0.1:4711/tok3n/cid/bg&quot;)">x</p>
+            <style>.a{background:url("http://127.0.0.1:4711/tok3n/remote/2")}</style><img src="data:image/png;base64,AA">
+            <a href="https://e.com/page">link</a>

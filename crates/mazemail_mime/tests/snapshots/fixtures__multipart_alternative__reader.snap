@@ -1,0 +1,34 @@
+---
+source: crates/mazemail_mime/tests/fixtures.rs
+expression: reader
+---
+source: html
+blocks:
+  - type: paragraph
+    content:
+      - text: "Hi all,"
+  - type: paragraph
+    content:
+      - text: "here are the "
+      - text: notes
+        style: BOLD
+      - text: " from "
+      - text: today
+        style: ITALIC
+      - text: ":"
+  - type: list
+    ordered: false
+    items:
+      - blocks:
+          - type: paragraph
+            content:
+              - text: "Release candidate on "
+              - text: Thursday
+                style: BOLD
+      - blocks:
+          - type: paragraph
+            content:
+              - text: Final release next Tuesday
+  - type: paragraph
+    content:
+      - text: Carol

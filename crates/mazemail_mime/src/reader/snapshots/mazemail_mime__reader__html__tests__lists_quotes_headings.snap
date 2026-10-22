@@ -1,0 +1,44 @@
+---
+source: crates/mazemail_mime/src/reader/html.rs
+expression: doc
+---
+source: html
+blocks:
+  - type: heading
+    level: 2
+    content:
+      - text: Title
+  - type: list
+    ordered: true
+    start: 3
+    items:
+      - blocks:
+          - type: paragraph
+            content:
+              - text: one
+          - type: list
+            ordered: false
+            items:
+              - blocks:
+                  - type: paragraph
+                    content:
+                      - text: nested
+      - blocks:
+          - type: paragraph
+            content:
+              - text: two
+  - type: quote
+    depth: 1
+    blocks:
+      - type: paragraph
+        content:
+          - text: outer
+      - type: quote
+        depth: 2
+        blocks:
+          - type: paragraph
+            content:
+              - text: inner
+  - type: rule
+  - type: preformatted
+    text: "  a\n  b"

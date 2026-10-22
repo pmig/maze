@@ -1,0 +1,15 @@
+---
+source: crates/mazemail_mime/tests/fixtures.rs
+expression: reader
+---
+source: plain_text
+blocks:
+  - type: paragraph
+    content:
+      - text: "Hallo Ägidius,"
+  - type: paragraph
+    content:
+      - text: "anbei die Übersicht für die Besprechung am Donnerstag. Bitte gib mir bis morgen Bescheid, ob die Zahlen für dich so passen."
+  - type: paragraph
+    content:
+      - text: "Viele Grüße\nJürgen"

@@ -1,0 +1,45 @@
+---
+source: crates/mazemail_mime/tests/fixtures.rs
+expression: summary
+---
+headers:
+  message_id: 20250303081500.4711@example.de
+  in_reply_to:
+    - budget-1@example.de
+  references: []
+  date: "2025-03-03T08:15:00+01:00"
+  subject: "AW: Grüße aus München – Abstimmung über das Budget"
+  from:
+    - name: Jürgen Müller
+      email: juergen.mueller@example.de
+  sender: ~
+  reply_to: []
+  to:
+    - name: Ägidius Böhm
+      email: aegidius@example.de
+  cc: []
+  bcc: []
+  delivered_to: []
+  x_original_to: []
+  envelope_to: []
+  list_id: ~
+  list_unsubscribe: []
+  list_unsubscribe_post: ~
+  authentication_results: []
+attachments:
+  - part_path: "2"
+    filename: Übersicht März.xlsx
+    content_type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+    size: 10
+    content_id: ~
+    disposition: attachment
+has_attachments: true
+snippet: "Hallo Ägidius, anbei die Übersicht für die Besprechung am Donnerstag. Bitte gib mir bis morgen Bescheid, ob die Zahlen für dich so passen. Viele Grüße Jürgen"
+size: 967
+text_body:
+  text: "Hallo Ägidius,\n\nanbei die Übersicht für die Besprechung am Donnerstag. Bitte gib mir bis morgen Bescheid, ob die Zahlen für dich so passen.\n\nViele Grüße\nJürgen\n"
+  format:
+    flowed: false
+    delsp: false
+html_body_bytes: ~
+language: de

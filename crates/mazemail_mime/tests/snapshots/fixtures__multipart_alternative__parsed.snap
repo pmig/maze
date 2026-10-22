@@ -1,0 +1,44 @@
+---
+source: crates/mazemail_mime/tests/fixtures.rs
+expression: summary
+---
+headers:
+  message_id: notes-20250310@example.org
+  in_reply_to: []
+  references: []
+  date: "2025-03-10T16:20:05Z"
+  subject: Meeting notes for the release planning
+  from:
+    - name: Carol Writer
+      email: carol@example.org
+  sender: ~
+  reply_to:
+    - name: Carol (replies)
+      email: carol+replies@example.org
+  to:
+    - name: Dave Reader
+      email: dave@example.net
+    - name: ~
+      email: team@example.org
+  cc:
+    - name: "Example, Erin"
+      email: erin@example.org
+  bcc: []
+  delivered_to: []
+  x_original_to: []
+  envelope_to: []
+  list_id: ~
+  list_unsubscribe: []
+  list_unsubscribe_post: ~
+  authentication_results: []
+attachments: []
+has_attachments: false
+snippet: "Hi all, here are the notes from today: * Release candidate on Thursday * Final release next Tuesday Carol"
+size: 878
+text_body:
+  text: "Hi all,\n\nhere are the notes from today:\n\n* Release candidate on Thursday\n* Final release next Tuesday\n\nCarol\n"
+  format:
+    flowed: false
+    delsp: false
+html_body_bytes: 214
+language: en

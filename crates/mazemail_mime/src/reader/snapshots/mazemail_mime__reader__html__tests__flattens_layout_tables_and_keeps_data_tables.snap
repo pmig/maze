@@ -1,0 +1,35 @@
+---
+source: crates/mazemail_mime/src/reader/html.rs
+expression: doc
+---
+source: html
+blocks:
+  - type: paragraph
+    content:
+      - text: Header
+  - type: paragraph
+    content:
+      - text: Body text
+  - type: table
+    rows:
+      - cells:
+          - header: true
+            content:
+              - text: Name
+          - header: true
+            content:
+              - text: Qty
+      - cells:
+          - content:
+              - text: Apples
+          - content:
+              - text: "3"
+  - type: image
+    source:
+      kind: cid
+      value: logo
+    width: 80
+    height: 20
+  - type: paragraph
+    content:
+      - text: Logo text

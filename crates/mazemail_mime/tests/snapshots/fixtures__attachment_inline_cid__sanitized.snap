@@ -1,0 +1,6 @@
+---
+source: crates/mazemail_mime/tests/fixtures.rs
+expression: html
+---
+<p><img src="cid:logo@example.com" alt="Example Corp" width="120" height="40"></p>
+<p>Hi Grace,</p><p>the Q1 report is attached.</p><p>Frank</p>

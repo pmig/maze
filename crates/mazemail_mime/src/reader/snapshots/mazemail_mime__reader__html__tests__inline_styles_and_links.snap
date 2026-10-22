@@ -1,0 +1,19 @@
+---
+source: crates/mazemail_mime/src/reader/html.rs
+expression: doc
+---
+source: html
+blocks:
+  - type: paragraph
+    content:
+      - text: B
+        style: BOLD
+      - text: I
+        style: ITALIC
+      - text: "S "
+        style: BOLD | UNDERLINE
+      - text: link
+        link: "https://e.com"
+      - text: bad
+      - text: c
+        style: CODE

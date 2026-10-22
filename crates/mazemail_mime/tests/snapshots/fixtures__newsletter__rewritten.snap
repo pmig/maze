@@ -1,0 +1,37 @@
+---
+source: crates/mazemail_mime/tests/fixtures.rs
+expression: rewritten.html
+---
+<style>
+  body { margin: 0; background: #f4f4f4; }
+  .hero { background: url("http://127.0.0.1:4711/fixture-token/remote/0") no-repeat; }
+  
+</style>
+
+
+
+<table width="100%" bgcolor="#f4f4f4" cellpadding="0" cellspacing="0" border="0"><tbody><tr><td align="center">
+  <table width="600" role="presentation" cellpadding="0" cellspacing="0" border="0">
+    <tbody><tr><td><a href="https://news.example.org/?utm_source=mail" rel="noopener noreferrer"><img src="http://127.0.0.1:4711/fixture-token/remote/1" alt="Example Weekly" width="200" height="50"></a></td></tr>
+    <tr><td class="hero" style="padding:20px;background-image:url(&quot;http://127.0.0.1:4711/fixture-token/remote/2&quot;)">
+      <h1 style="font-family:Arial">Spring releases are here</h1>
+      <p>This week: three new releases, a <em>community</em> spotlight and an event in Vienna.</p>
+      <table cellpadding="0" cellspacing="0"><tbody><tr><td bgcolor="#0066cc" style="border-radius:4px"><a href="https://news.example.org/r/1" style="color:#fff" rel="noopener noreferrer">Read the full story</a></td></tr></tbody></table>
+    </td></tr>
+    <tr><td>
+      <table width="100%" cellpadding="10"><tbody><tr>
+        <td width="50%"><img src="http://127.0.0.1:4711/fixture-token/remote/3" width="280" height="160" alt="Release A"><p>Release A brings faster sync.</p></td>
+        <td width="50%"><img src="http://127.0.0.1:4711/fixture-token/remote/4" width="280" height="160" alt="Release B"><p>Release B adds dark mode.</p></td>
+      </tr></tbody></table>
+    </td></tr>
+    <tr><td>
+      <table border="1" cellpadding="4"><tbody><tr><th>Release</th><th>Date</th></tr>
+        <tr><td>A 2.0</td><td>3 March</td></tr><tr><td>B 1.5</td><td>5 March</td></tr></tbody></table>
+    </td></tr>
+    <tr><td style="font-size:11px;color:#999">
+      <p>You get this because you subscribed. <a href="https://news.example.org/unsubscribe/abc" rel="noopener noreferrer">Unsubscribe</a> | <a rel="noopener noreferrer">Preferences</a></p>
+      
+      
+    </td></tr>
+  </tbody></table>
+</td></tr></tbody></table>
