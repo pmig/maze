@@ -1,0 +1,92 @@
+//! The Maze core (PLAN §4.1, §4.2): one headless facade over the store, the search
+//! index, sender verification and settings, used by the GUI, the CLI, headless mode
+//! and tests. No GPUI; everything runs on Tokio.
+//!
+//! # Lifecycle
+//!
+//! [`CoreHandle::open`] takes the single-instance lock on the data directory, arms the
+//! [crash guard](crash_guard), reads the master key (on a blocking thread, so the window
+//! can open meanwhile), handles a [lost key](lost_key), opens the store (running
+//! migrations with their backup), the encrypted search index and the settings (with a
+//! watcher), and starts three tasks: the [indexer](indexing), the [event
+//! batcher](events) and the change forwarder that keeps the caches in step with the
+//! store. [`CoreHandle::mark_healthy`] disarms the crash guard once the first window has
+//! rendered; [`CoreHandle::shutdown`] stops everything cleanly.
+//!
+//! # API
+//!
+//! | Area     | Methods |
+//! | -------- | ------- |
+//! | Queries  | [`accounts`](CoreHandle::accounts), [`folders`](CoreHandle::folders), [`thread_list`](CoreHandle::thread_list), [`rows`](CoreHandle::rows): synchronous, cheap, no network |
+//! | Messages | [`message`](CoreHandle::message), [`verify_auth`](CoreHandle::verify_auth) |
+//! | Search   | [`search`](CoreHandle::search), [`quick_filter_body`](CoreHandle::quick_filter_body) |
+//! | Commands | [`apply`](CoreHandle::apply), [`undo`](CoreHandle::undo) |
+//! | Events   | [`events`](CoreHandle::events), [`settings_watch`](CoreHandle::settings_watch) |
+//! | Index    | [`index_sink`](CoreHandle::index_sink), [`reindex_all`](CoreHandle::reindex_all), [`check_index`](CoreHandle::check_index) |
+//!
+//! # Seams for crates built later
+//!
+//! Each integration sits behind one small module, so wiring it is mechanical:
+//!
+//! - **sync**: [`sync_bridge`] ([`SyncBridge`] for body fetches, refresh and op
+//!   wake-ups; [`SyncStatusSink`] for status) and [`ops`] (the pending-op
+//!   payload, a private mirror of `sync::ops::OpPayload`).
+//! - **ingest**: [`indexing`] ([`CoreIndexSink`] with [`IndexDocument`]) plus
+//!   [`CoreHandle::store`] for its writes.
+//! - **local_api**: [`api_handler`] ([`CommandAuthorizer`] decides agent commands).
+//! - **auth**: nothing in core; its token provider and secret store are handed to the
+//!   sync engine, which core only sees through [`SyncBridge`].
+//!
+//! # Privacy
+//!
+//! Types with message content implement `Debug` without it, and nothing here logs
+//! subjects, addresses, bodies or queries.
+
+mod config;
+mod error;
+mod handle;
+mod lock;
+mod metadata;
+mod row_cache;
+mod runtime;
+
+pub mod api_handler;
+pub mod commands;
+pub mod crash_guard;
+pub mod events;
+pub mod folders;
+pub mod global_search;
+pub mod indexing;
+pub mod lost_key;
+pub mod message;
+pub mod ops;
+pub mod sync_bridge;
+pub mod thread_list;
+
+pub use api_handler::{Authorization, CommandAuthorizer, DenyAgents};
+pub use commands::{CommandOutcome, CommandReceipt, MailCommand, Origin};
+pub use config::{CoreConfig, RuntimeConfig};
+pub use crash_guard::{CrashGuardStatus, ROLLBACK_THRESHOLD, SENTINEL_FILE};
+pub use error::{Error, Result};
+pub use events::{CoreEventBatch, DEFAULT_EVENT_WINDOW, FolderCounts};
+pub use folders::{FolderNode, FolderNodeKind, UNIFIED_ROLES, unified_name};
+pub use global_search::{SearchFacets, SearchOpts, SearchResults, SearchSort, SearchThread};
+pub use handle::CoreHandle;
+pub use indexing::{CoreIndexSink, IndexCheck, IndexDocument, IndexProgress, ReindexReport};
+pub use lock::LOCK_FILE;
+pub use lost_key::{LostKey, RecoveryFailed};
+pub use message::{AuthStatus, Body, MessageView, RENDERER_VERSION, RemoteContent, RenderedBody};
+pub use row_cache::{DEFAULT_ROW_CACHE_CAPACITY, RowCacheStats};
+pub use sync_bridge::{
+    FetchPriority, NoSync, RefreshScope, SyncBridge, SyncState, SyncStatus, SyncStatusSink,
+};
+pub use thread_list::{ListQuery, QuickFilter, ThreadListSnapshot};
+
+/// Store types that are part of this API.
+pub use store::{
+    Account, AccountKind, ListKey, ListScope, OpId, ProposalId, RuleId, SortOrder, ThreadRow,
+    TokenId,
+};
+
+/// Search types that are part of this API.
+pub use search::Snippet;
