@@ -1,0 +1,54 @@
+// Maze default keymap for macOS (Zed keymap format).
+//
+// Thunderbird's bindings are the default and win every conflict; Zed's fill the gaps
+// (CONCEPT §12). Only actions that exist are bound; the rest of §12.2/§12.3 follows
+// as the features land. Your own keymap.json is loaded after this file and wins.
+[
+  {
+    "bindings": {
+      "cmd-q": "maze::Quit",
+      "cmd-h": "maze::Hide",
+      "cmd-alt-h": "maze::HideOthers",
+      "cmd-m": "maze::Minimize"
+    }
+  },
+  {
+    "context": "Workspace",
+    "bindings": {
+      "cmd-shift-p": "command_palette::Toggle",
+      "cmd-b": "workspace::ToggleFolderPane",
+      "cmd-?": "workspace::ToggleAgentColumn",
+      "f8": "workspace::ToggleMessagePane",
+      "cmd-k": "search::FocusSearch",
+      "cmd-shift-k": "search::QuickFilter",
+      "cmd-r": "mail::Reply",
+      "cmd-shift-r": "mail::ReplyAll",
+      "cmd-l": "mail::Forward"
+    }
+  },
+  {
+    // Single-key Thunderbird shortcuts work wherever a message or the list has focus,
+    // never inside a text field.
+    "context": "ThreadList || MessageView",
+    "bindings": {
+      "f": "mail::NextMessage",
+      "b": "mail::PreviousMessage",
+      "n": "mail::NextUnread",
+      "p": "mail::PreviousUnread",
+      "m": "mail::ToggleRead",
+      "s": "mail::ToggleStar",
+      "a": "mail::Archive"
+    }
+  },
+  {
+    "context": "ThreadList",
+    "bindings": {
+      "down": "mail::NextMessage",
+      "up": "mail::PreviousMessage",
+      "home": "mail::FirstMessage",
+      "end": "mail::LastMessage",
+      "pagedown": "mail::PageDown",
+      "pageup": "mail::PageUp"
+    }
+  }
+]
