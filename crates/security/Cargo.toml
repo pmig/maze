@@ -1,0 +1,31 @@
+[package]
+name = "security"
+description = "Maze sender verification (DKIM, ARC, DMARC, trusted provider results) and phishing heuristics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+idna = { workspace = true }
+mail-auth = { workspace = true }
+mazemail_mime = { workspace = true }
+mazemail_types = { workspace = true }
+psl = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+aws-lc-rs = { workspace = true }
+base64 = { workspace = true }
+pretty_assertions = { workspace = true }
+proptest = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

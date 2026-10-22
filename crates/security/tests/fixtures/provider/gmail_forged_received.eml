@@ -1,0 +1,20 @@
+Delivered-To: ben@gmail.example
+Received: by 2002:a05:6504:51c6:b0:2a1:4d2b:9f10 with SMTP id q6csp1234567lth;
+        Tue, 2 Jan 2024 02:00:05 -0800 (PST)
+Received: from mail.evil.example (mail.evil.example [198.51.100.66])
+        by relay.evil.example with ESMTP id 99;
+        Tue,  2 Jan 2024 10:00:04 +0000 (UTC)
+Received: from mail.evil.example (mail.evil.example. [198.51.100.66])
+        by mx.google.com with ESMTPS id fake;
+        Tue, 02 Jan 2024 02:00:03 -0800 (PST)
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@paypal.com;
+       spf=pass smtp.mailfrom=service@paypal.com;
+       dmarc=pass header.from=paypal.com
+From: PayPal <service@paypal.com>
+To: ben@gmail.example
+Subject: Account limited
+Date: Tue, 02 Jan 2024 10:00:00 +0000
+Message-ID: <forged-3@evil.example>
+
+Body.

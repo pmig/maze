@@ -1,0 +1,14 @@
+From: Anna Example <billing@paypa1.com>
+To: ben@reader.example
+Subject: Your account is limited
+Date: Tue, 02 Jan 2024 12:00:00 +0000
+Message-ID: <phish-1@paypa1.com>
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body>
+<p>Dear customer, your account has been limited.</p>
+<p>Please confirm your details at <a href="https://paypal.com.account-check.example/login"><b>www.</b>paypal.com</a>.</p>
+<p>Or use our <a href="https://xn--pple-43d.com/verify">Apple ID page</a>.</p>
+<p>Questions? See <a href="https://www.paypa1.com/help">help</a> or <a href="https://www.example.com/faq">www.example.com/faq</a>.</p>
+</body></html>

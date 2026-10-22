@@ -1,0 +1,12 @@
+Authentication-Results: mail.reader.example; dkim=pass header.d=example.com
+Authentication-Results: mail.reader.example; dmarc
+Received: from mail.example.com (mail.example.com [192.0.2.10])
+	by mail.reader.example (Postfix) with ESMTPS id 4T3abc;
+	Tue,  2 Jan 2024 10:00:05 +0000 (UTC)
+From: Anna Example <anna@example.com>
+To: ben@reader.example
+Subject: Quarterly numbers
+Date: Tue, 02 Jan 2024 10:00:00 +0000
+Message-ID: <generic-2@example.com>
+
+Body.
