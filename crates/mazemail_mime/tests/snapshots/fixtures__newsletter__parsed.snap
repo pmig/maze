@@ -1,0 +1,38 @@
+---
+source: crates/mazemail_mime/tests/fixtures.rs
+expression: summary
+---
+headers:
+  message_id: issue42.abc@news.example.org
+  in_reply_to: []
+  references: []
+  date: "2025-03-06T06:00:00-05:00"
+  subject: "[Example Weekly] Issue #42: Spring releases"
+  from:
+    - name: Example Weekly
+      email: news@news.example.org
+  sender: ~
+  reply_to: []
+  to:
+    - name: ~
+      email: anna@example.com
+  cc: []
+  bcc: []
+  delivered_to:
+    - anna@example.com
+  x_original_to: []
+  envelope_to: []
+  list_id: weekly.news.example.org
+  list_unsubscribe:
+    - "https://news.example.org/unsubscribe/abc"
+    - "mailto:unsubscribe@news.example.org?subject=abc"
+  list_unsubscribe_post: List-Unsubscribe=One-Click
+  authentication_results:
+    - mx.example.com; dkim=pass header.d=news.example.org; spf=pass smtp.mailfrom=news.example.org; dmarc=pass header.from=news.example.org
+attachments: []
+has_attachments: false
+snippet: "Spring releases are here This week: three new releases, a community spotlight and an event in Vienna. Read the full story Release A brings faster sync. Release B adds dark mode. Release Date A 2.0 3 M"
+size: 3315
+text_body: ~
+html_body_bytes: 2603
+language: en

@@ -1,0 +1,29 @@
+From: =?ISO-8859-1?Q?J=FCrgen_M=FCller?= <juergen.mueller@example.de>
+To: =?UTF-8?B?w4RnaWRpdXMgQsO2aG0=?= <aegidius@example.de>
+Subject: =?UTF-8?Q?AW:_Gr=C3=BC=C3=9Fe_aus_M=C3=BCnchen_=E2=80=93_?=
+ =?UTF-8?Q?Abstimmung_=C3=BCber_das_Budget?=
+Date: Mon, 3 Mar 2025 08:15:00 +0100
+Message-ID: <20250303081500.4711@example.de>
+In-Reply-To: <budget-1@example.de>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="grenze"
+
+--grenze
+Content-Type: text/plain; charset=ISO-8859-1
+Content-Transfer-Encoding: quoted-printable
+
+Hallo =C4gidius,
+
+anbei die =DCbersicht f=FCr die Besprechung am Donnerstag. Bitte gib mir bi=
+s morgen Bescheid, ob die Zahlen f=FCr dich so passen.
+
+Viele Gr=FC=DFe
+J=FCrgen
+
+--grenze
+Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+Content-Disposition: attachment; filename*=UTF-8''%C3%9Cbersicht%20M%C3%A4rz.xlsx
+Content-Transfer-Encoding: base64
+
+UEsDBBQAAAAIAA==
+--grenze--

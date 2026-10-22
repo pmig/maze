@@ -1,0 +1,40 @@
+---
+source: crates/mazemail_mime/tests/fixtures.rs
+expression: summary
+---
+headers:
+  message_id: DB9PR01MB1234ABCD@DB9PR01MB1234.eurprd01.prod.example.com
+  in_reply_to:
+    - kickoff-1@example.com
+  references:
+    - kickoff-1@example.com
+  date: "2025-03-05T14:02:11Z"
+  subject: "RE: Project kickoff"
+  from:
+    - name: Bob Builder
+      email: bob@example.com
+  sender: ~
+  reply_to: []
+  to:
+    - name: Anna Example
+      email: anna@example.com
+  cc: []
+  bcc: []
+  delivered_to: []
+  x_original_to: []
+  envelope_to: []
+  list_id: ~
+  list_unsubscribe: []
+  list_unsubscribe_post: ~
+  authentication_results: []
+attachments: []
+has_attachments: false
+snippet: "Works for me, see you Thursday. Bob"
+size: 2325
+text_body:
+  text: "Works for me, see you Thursday.\n\nBob\n\n________________________________\nFrom: Anna Example <anna@example.com>\nSent: Tuesday, March 4, 2025 9:00 AM\nTo: Bob Builder <bob@example.com>\nSubject: Project kickoff\n\nHi Bob,\nshall we meet on Thursday at 10?\n"
+  format:
+    flowed: false
+    delsp: false
+html_body_bytes: 1256
+language: en

@@ -1,0 +1,73 @@
+---
+source: crates/mazemail_mime/tests/fixtures.rs
+expression: reader
+---
+source: html
+blocks:
+  - type: image
+    source:
+      kind: remote
+      value: "https://news.example.org/img/logo.png"
+    alt: Example Weekly
+    width: 200
+    height: 50
+    link: "https://news.example.org/?utm_source=mail"
+  - type: heading
+    level: 1
+    content:
+      - text: Spring releases are here
+  - type: paragraph
+    content:
+      - text: "This week: three new releases, a "
+      - text: community
+        style: ITALIC
+      - text: " spotlight and an event in Vienna."
+  - type: paragraph
+    content:
+      - text: Read the full story
+        link: "https://news.example.org/r/1"
+  - type: image
+    source:
+      kind: remote
+      value: "https://news.example.org/img/a.jpg"
+    alt: Release A
+    width: 280
+    height: 160
+  - type: paragraph
+    content:
+      - text: Release A brings faster sync.
+  - type: image
+    source:
+      kind: remote
+      value: "https://news.example.org/img/b.jpg"
+    alt: Release B
+    width: 280
+    height: 160
+  - type: paragraph
+    content:
+      - text: Release B adds dark mode.
+  - type: table
+    rows:
+      - cells:
+          - header: true
+            content:
+              - text: Release
+          - header: true
+            content:
+              - text: Date
+      - cells:
+          - content:
+              - text: A 2.0
+          - content:
+              - text: 3 March
+      - cells:
+          - content:
+              - text: B 1.5
+          - content:
+              - text: 5 March
+  - type: paragraph
+    content:
+      - text: "You get this because you subscribed. "
+      - text: Unsubscribe
+        link: "https://news.example.org/unsubscribe/abc"
+      - text: " | Preferences"

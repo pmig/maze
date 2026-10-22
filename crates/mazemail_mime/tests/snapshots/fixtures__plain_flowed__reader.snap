@@ -1,0 +1,37 @@
+---
+source: crates/mazemail_mime/tests/fixtures.rs
+expression: reader
+---
+source: plain_text
+blocks:
+  - type: paragraph
+    content:
+      - text: "Hi Bob,"
+  - type: paragraph
+    content:
+      - text: "Friday works for me. The new place on the corner has a lunch menu, see "
+      - text: "https://lunch.example.com/menu"
+        link: "https://lunch.example.com/menu"
+      - text: " - shall we meet there at noon? If it is full we can still go to the usual one."
+  - type: paragraph
+    content:
+      - text: "On 06.03.25 18:01, Bob Builder wrote:"
+  - type: quote
+    depth: 1
+    blocks:
+      - type: paragraph
+        content:
+          - text: Are you free for lunch on Friday? I could do 12 or 13.
+      - type: quote
+        depth: 2
+        blocks:
+          - type: paragraph
+            content:
+              - text: "Anna wrote earlier:\nLet's catch up soon!"
+  - type: signature
+    blocks:
+      - type: paragraph
+        content:
+          - text: "Anna Example\nExample Corp | "
+          - text: anna@example.com
+            link: "mailto:anna@example.com"

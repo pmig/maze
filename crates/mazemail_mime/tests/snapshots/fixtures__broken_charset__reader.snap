@@ -1,0 +1,9 @@
+---
+source: crates/mazemail_mime/tests/fixtures.rs
+expression: reader
+---
+source: plain_text
+blocks:
+  - type: paragraph
+    content:
+      - text: "Café au lait, crème brûlée and invalid UTF-8: Ã( ÿþ.\nStill readable afterwards."

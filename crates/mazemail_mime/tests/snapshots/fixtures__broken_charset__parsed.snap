@@ -1,0 +1,38 @@
+---
+source: crates/mazemail_mime/tests/fixtures.rs
+expression: summary
+---
+headers:
+  message_id: broken-1@example.net
+  in_reply_to: []
+  references:
+    - broken-0@example.net
+    - nested
+  date: ~
+  subject: Caf� menu =?UTF-8?B?invalid!!?=
+  from:
+    - name: Broken Sender
+      email: broken@example.net
+  sender: ~
+  reply_to: []
+  to: []
+  cc: []
+  bcc: []
+  delivered_to: []
+  x_original_to: []
+  envelope_to: []
+  list_id: ~
+  list_unsubscribe: []
+  list_unsubscribe_post: ~
+  authentication_results: []
+attachments: []
+has_attachments: false
+snippet: "Café au lait, crème brûlée and invalid UTF-8: Ã( ÿþ. Still readable afterwards."
+size: 443
+text_body:
+  text: "Café au lait, crème brûlée and invalid UTF-8: Ã( ÿþ.\nStill readable afterwards.\n"
+  format:
+    flowed: false
+    delsp: false
+html_body_bytes: ~
+language: ~

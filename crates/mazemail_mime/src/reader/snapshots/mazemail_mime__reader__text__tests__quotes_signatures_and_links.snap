@@ -1,0 +1,47 @@
+---
+source: crates/mazemail_mime/src/reader/text.rs
+expression: doc
+---
+source: plain_text
+blocks:
+  - type: paragraph
+    content:
+      - text: "Hi Anna,"
+  - type: paragraph
+    content:
+      - text: "see "
+      - text: "https://example.com/x?y=1"
+        link: "https://example.com/x?y=1"
+      - text: " or mail "
+      - text: bob@example.com
+        link: "mailto:bob@example.com"
+      - text: "."
+  - type: paragraph
+    content:
+      - text: "On Monday Anna wrote:"
+  - type: quote
+    depth: 1
+    blocks:
+      - type: paragraph
+        content:
+          - text: Lunch?
+      - type: quote
+        depth: 2
+        blocks:
+          - type: paragraph
+            content:
+              - text: Earlier
+          - type: quote
+            depth: 3
+            blocks:
+              - type: paragraph
+                content:
+                  - text: deepest
+      - type: paragraph
+        content:
+          - text: back
+  - type: signature
+    blocks:
+      - type: paragraph
+        content:
+          - text: "Bob\nExample Corp"

@@ -1,0 +1,50 @@
+---
+source: crates/mazemail_mime/tests/fixtures.rs
+expression: summary
+---
+headers:
+  message_id: report-q1@example.com
+  in_reply_to: []
+  references: []
+  date: "2025-03-11T09:00:00+01:00"
+  subject: Quarterly report with logo
+  from:
+    - name: Frank Sender
+      email: frank@example.com
+  sender: ~
+  reply_to: []
+  to:
+    - name: Grace Receiver
+      email: grace@example.com
+  cc: []
+  bcc: []
+  delivered_to: []
+  x_original_to: []
+  envelope_to: []
+  list_id: ~
+  list_unsubscribe: []
+  list_unsubscribe_post: ~
+  authentication_results: []
+attachments:
+  - part_path: "1.2"
+    filename: logo.png
+    content_type: image/png
+    size: 70
+    content_id: logo@example.com
+    disposition: inline
+  - part_path: "2"
+    filename: report-q1.pdf
+    content_type: application/pdf
+    size: 72
+    content_id: ~
+    disposition: attachment
+has_attachments: true
+snippet: "Hi Grace, the Q1 report is attached. Frank"
+size: 1256
+text_body:
+  text: "Hi Grace,\n\nthe Q1 report is attached.\n\nFrank\n"
+  format:
+    flowed: false
+    delsp: false
+html_body_bytes: 147
+language: en

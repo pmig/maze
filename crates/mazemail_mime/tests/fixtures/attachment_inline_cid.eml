@@ -1,0 +1,47 @@
+From: Frank Sender <frank@example.com>
+To: Grace Receiver <grace@example.com>
+Subject: Quarterly report with logo
+Date: Tue, 11 Mar 2025 09:00:00 +0100
+Message-ID: <report-q1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="mixed"
+
+--mixed
+Content-Type: multipart/related; boundary="related"
+
+--related
+Content-Type: multipart/alternative; boundary="alt"
+
+--alt
+Content-Type: text/plain; charset=utf-8
+
+Hi Grace,
+
+the Q1 report is attached.
+
+Frank
+
+--alt
+Content-Type: text/html; charset=utf-8
+
+<p><img src="cid:logo@example.com" alt="Example Corp" width="120" height="40"></p>
+<p>Hi Grace,</p><p>the Q1 report is attached.</p><p>Frank</p>
+
+--alt--
+
+--related
+Content-Type: image/png; name="logo.png"
+Content-Disposition: inline; filename="logo.png"
+Content-ID: <logo@example.com>
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==
+--related--
+
+--mixed
+Content-Type: application/pdf; name="report-q1.pdf"
+Content-Disposition: attachment; filename="report-q1.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKMSAwIG9iaiA8PC9UeXBlL0NhdGFsb2c+PiBlbmRvYmoKdHJhaWxlciA8PC9Sb290IDEgMCBSPj4KJSVFT0YK
+--mixed--

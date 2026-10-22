@@ -1,0 +1,41 @@
+---
+source: crates/mazemail_mime/tests/fixtures.rs
+expression: summary
+---
+headers:
+  message_id: lunch-3@example.com
+  in_reply_to:
+    - lunch-2@example.com
+  references:
+    - lunch-1@example.com
+    - lunch-2@example.com
+  date: "2025-03-07T11:42:00+01:00"
+  subject: "Re: Lunch on Friday?"
+  from:
+    - name: Anna Example
+      email: anna@example.com
+  sender: ~
+  reply_to: []
+  to:
+    - name: Bob Builder
+      email: bob@example.com
+  cc: []
+  bcc: []
+  delivered_to: []
+  x_original_to: []
+  envelope_to: []
+  list_id: ~
+  list_unsubscribe: []
+  list_unsubscribe_post: ~
+  authentication_results: []
+attachments: []
+has_attachments: false
+snippet: "Hi Bob, Friday works for me. The new place on the corner has a lunch menu, see https://lunch.example.com/menu - shall we meet there at noon? If it is full we can still go to the usual one."
+size: 783
+text_body:
+  text: "Hi Bob,\n\nFriday works for me. The new place on the corner has a lunch menu, see \nhttps://lunch.example.com/menu - shall we meet there at noon? If it is \nfull we can still go to the usual one.\n\nOn 06.03.25 18:01, Bob Builder wrote:\n> Are you free for lunch on Friday? I could do 12 or 13.\n>\n>> Anna wrote earlier:\n>> Let's catch up soon!\n\n-- \nAnna Example\nExample Corp | anna@example.com\n"
+  format:
+    flowed: true
+    delsp: false
+html_body_bytes: ~
+language: en
