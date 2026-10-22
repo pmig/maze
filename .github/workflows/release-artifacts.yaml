@@ -1,0 +1,306 @@
+name: Release artifacts
+
+# Runs when release-please pushes a tag (PLAN §4.16): builds, signs and notarizes the
+# bundles, uploads them to the GitHub Release, and publishes the signed update
+# manifests to the gh-pages branch last, so a client never sees a manifest that
+# points at a missing file.
+#
+# macOS bundles are only signed and notarized when all Apple secrets are present
+# (APPLE_CERTIFICATE_P12, APPLE_CERTIFICATE_PASSWORD, APPLE_TEAM_ID, APPLE_NOTARY_KEY,
+# APPLE_NOTARY_KEY_ID, APPLE_NOTARY_ISSUER, APPLE_PROVISIONING_PROFILE). Without them
+# the unsigned bundles are still uploaded, but no macOS update manifest is published,
+# because the updater rejects bundles that aren't signed by our Team ID.
+on:
+  push:
+    tags: ['*']
+
+concurrency:
+  group: release-artifacts-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Where release_channel embeds the channel from (see crates/release_channel).
+  RELEASE_CHANNEL_FILE: crates/mazemail/RELEASE_CHANNEL
+
+jobs:
+  prepare:
+    name: Determine channel
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      channel: ${{ steps.channel.outputs.channel }}
+      sign: ${{ steps.sign.outputs.sign }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check that the tag matches version.txt
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(tr -d '[:space:]' < version.txt)
+          if [ "$version" != "$TAG" ]; then
+            echo "::error::tag '$TAG' does not match version.txt '$version'"
+            exit 1
+          fi
+
+      - name: Determine release channel
+        id: channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # release-please creates the tag and the release back to back, so wait a little.
+          pre=""
+          for _ in $(seq 1 24); do
+            if pre=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease); then
+              break
+            fi
+            pre=""
+            sleep 5
+          done
+          case $pre in
+            true) channel=preview ;;
+            false) channel=stable ;;
+            *) echo "::error::no GitHub Release found for tag $TAG"; exit 1 ;;
+          esac
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "Release $TAG is on the $channel channel"
+
+      - name: Check Apple signing secrets
+        id: sign
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
+          APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+        run: |
+          sign=true
+          for var in APPLE_CERTIFICATE_P12 APPLE_CERTIFICATE_PASSWORD APPLE_TEAM_ID \
+            APPLE_NOTARY_KEY APPLE_NOTARY_KEY_ID APPLE_NOTARY_ISSUER APPLE_PROVISIONING_PROFILE; do
+            if [ -z "${!var}" ]; then
+              echo "::warning::secret $var is not set"
+              sign=false
+            fi
+          done
+          if [ "$sign" = false ]; then
+            echo "::warning::macOS bundles will NOT be signed or notarized, and no macOS update manifest will be published"
+          fi
+          echo "sign=$sign" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.os }} ${{ matrix.arch }})
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: write # gh release upload
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { os: macos, arch: aarch64, target: aarch64-apple-darwin, runner: macos-latest }
+          - { os: macos, arch: x86_64, target: x86_64-apple-darwin, runner: macos-latest }
+          # Older Ubuntu images keep the tarball runnable on older glibc versions.
+          - { os: linux, arch: x86_64, target: x86_64-unknown-linux-gnu, runner: ubuntu-22.04 }
+          - { os: linux, arch: aarch64, target: aarch64-unknown-linux-gnu, runner: ubuntu-22.04-arm }
+    env:
+      TAG: ${{ github.ref_name }}
+      CHANNEL: ${{ needs.prepare.outputs.channel }}
+      SIGN: ${{ needs.prepare.outputs.sign }}
+      TARGET: ${{ matrix.target }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # CFBundleVersion defaults to the commit count.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Linux system dependencies
+        if: matrix.os == 'linux'
+        run: script/linux-deps
+
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          # Only the Rust toolchain: the test and lint tools aren't needed to build.
+          install_args: rust
+
+      - name: Add Rust target
+        run: rustup target add "$TARGET"
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Write release channel
+        run: printf '%s' "$CHANNEL" > "$RELEASE_CHANNEL_FILE"
+
+      - name: Prepare provisioning profile
+        if: matrix.os == 'macos' && env.SIGN == 'true'
+        env:
+          APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+        run: |
+          printf '%s' "$APPLE_PROVISIONING_PROFILE" | base64 --decode > "$RUNNER_TEMP/maze.provisionprofile"
+
+      - name: Bundle Maze.app
+        if: matrix.os == 'macos'
+        run: |
+          args=(--target "$TARGET" --no-package)
+          if [ "$SIGN" = true ]; then
+            args+=(--provisioning-profile "$RUNNER_TEMP/maze.provisionprofile")
+          fi
+          script/bundle-mac "${args[@]}"
+
+      - name: Sign and notarize Maze.app
+        if: matrix.os == 'macos' && env.SIGN == 'true'
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
+        run: script/sign-and-notarize-mac "dist/mac-$ARCH/Maze.app"
+
+      - name: Pack .app.tar.zst and .dmg
+        if: matrix.os == 'macos'
+        run: script/package-mac "dist/mac-$ARCH/Maze.app" "$TAG" "$ARCH" dist
+
+      - name: Bundle Linux tarball
+        if: matrix.os == 'linux'
+        run: script/bundle-linux --target "$TARGET"
+
+      - name: Upload to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          files=(dist/Maze-*.tar.zst dist/Maze-*.dmg)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::no release artifacts found in dist/"
+            exit 1
+          fi
+          gh release upload "$TAG" "${files[@]}" --clobber
+
+  publish-manifests:
+    name: Publish update manifests
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    # One manifest publication at a time, across releases.
+    concurrency:
+      group: publish-update-manifests
+      cancel-in-progress: false
+    env:
+      TAG: ${{ github.ref_name }}
+      CHANNEL: ${{ needs.prepare.outputs.channel }}
+      SIGN: ${{ needs.prepare.outputs.sign }}
+    steps:
+      - name: Check signing key
+        id: key
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          if [ -z "$UPDATE_SIGNING_KEY" ]; then
+            echo "::warning::secret UPDATE_SIGNING_KEY is not set, no update manifests are published"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.key.outputs.available == 'true'
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        if: steps.key.outputs.available == 'true'
+        with:
+          install_args: rust
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: steps.key.outputs.available == 'true'
+        with:
+          key: xtask
+
+      - name: Download release artifacts
+        if: steps.key.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets --pattern '*.tar.zst'
+
+      - name: Check out gh-pages
+        if: steps.key.outputs.available == 'true'
+        env:
+          RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+        run: |
+          auth=$(printf 'x-access-token:%s' "$RELEASE_BOT_TOKEN" | base64 | tr -d '\n')
+          echo "::add-mask::$auth"
+          {
+            echo "GIT_CONFIG_COUNT=1"
+            echo "GIT_CONFIG_KEY_0=http.https://github.com/.extraheader"
+            echo "GIT_CONFIG_VALUE_0=AUTHORIZATION: basic $auth"
+          } >> "$GITHUB_ENV"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
+          remote="https://github.com/$GITHUB_REPOSITORY.git"
+          if git ls-remote --exit-code --heads "$remote" gh-pages >/dev/null; then
+            git clone --quiet --depth 1 --branch gh-pages "$remote" pages
+          else
+            git init --quiet --initial-branch gh-pages pages
+            git -C pages remote add origin "$remote"
+          fi
+
+      - name: Generate signed manifests
+        if: steps.key.outputs.available == 'true'
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          key_file="$RUNNER_TEMP/update-signing.key"
+          (umask 077 && printf '%s' "$UPDATE_SIGNING_KEY" > "$key_file")
+          export KEY_FILE="$key_file" ASSET_DIR=assets PAGES_DIR=pages
+          if [ "$SIGN" != true ]; then
+            export SKIP_MACOS=1
+          fi
+          script/generate-manifests
+          rm -f "$key_file"
+
+      - name: Publish to gh-pages
+        if: steps.key.outputs.available == 'true'
+        run: |
+          cd pages
+          # Custom domain and no Jekyll processing for the static manifests.
+          echo "releases.mazemail.dev" > CNAME
+          touch .nojekyll
+          git config user.name "Maze release bot"
+          git config user.email "philip@pmig.at"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "nothing to publish"
+            exit 0
+          fi
+          git commit --quiet -m "release: update manifests for $TAG ($CHANNEL)"
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD:gh-pages; then
+              exit 0
+            fi
+            echo "push failed (attempt $attempt), retrying"
+            git pull --rebase --quiet origin gh-pages || true
+            sleep $((attempt * 3))
+          done
+          echo "::error::could not push to gh-pages"
+          exit 1

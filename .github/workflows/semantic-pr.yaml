@@ -1,0 +1,35 @@
+name: Semantic PR title
+
+# Squash merges use the PR title as the commit message, and release-please reads it,
+# so the title has to be a conventional commit (PLAN §4.16).
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  semantic-pr:
+    name: Conventional PR title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # The action's defaults plus `deps`, which release-please and dependabot use.
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            deps
+            docs
+            chore
+            build
+            ci
+            revert
+            style
+            test
