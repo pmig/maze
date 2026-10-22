@@ -1,0 +1,134 @@
+// Maze default settings.
+//
+// Don't edit this file: it is compiled into Maze. Put your changes into
+// ~/.config/mazemail/settings.json (Maze Dev: ~/.config/mazemail-dev/settings.json).
+// Your file only needs the keys you want to change; it is merged over these defaults.
+// Comments and trailing commas are allowed. Accounts, identities and SMTP servers live
+// in the encrypted database, not here, so this file never holds addresses.
+{
+  // Colors. "mode" is "system", "light" or "dark"; "light" and "dark" name the theme
+  // used in each mode (Zed theme format).
+  "theme": {
+    "mode": "system",
+    "light": "One Light",
+    "dark": "One Dark"
+  },
+
+  // Window layout: "four_column" (folders | list | message | agent),
+  // "vertical" (four_column without the agent column), "classic" or "wide"
+  // (Thunderbird's layouts).
+  "layout": "four_column",
+  // Below this window width (in px) the message moves under the list (Classic).
+  "narrow_layout_below_px": 1000,
+
+  // The agent column on the right.
+  "agent_panel": {
+    "visible": true,
+    // Width in px.
+    "width": 380,
+    // Show the agent for the selected message or thread.
+    "follow_selection": true,
+    // Below this window width (in px) the column collapses to a thin strip.
+    "collapse_below_px": 1400
+  },
+
+  // The message list.
+  "thread_list": {
+    // "cards" (two-line rows) or "table" (columns).
+    "view": "cards",
+    // "date_desc", "date_asc", "received_desc", "received_asc", "from_asc",
+    // "from_desc", "subject_asc", "subject_desc", "size_desc" or "size_asc".
+    "sort": "date_desc",
+    // Group messages into conversations.
+    "threaded": true
+  },
+
+  // The folder pane. Combine any of "all", "unified", "favorite", "unread", "tags"
+  // and "recent".
+  "folder_pane": {
+    "modes": ["favorite", "unified"]
+  },
+
+  // Quick Filter: combine several active filters with "or" or "and".
+  "quick_filter": {
+    "boolean_mode": "or"
+  },
+
+  // The message view.
+  "reader": {
+    // "reader" (sanitized reader mode) or "plain_text".
+    "default_mode": "reader",
+    // Remote content (images, fonts, tracking pixels): "ask" (blocked, with a banner
+    // to allow it), "never" or "always". Can be overridden per account.
+    "remote_content": "ask"
+  },
+
+  // Writing mail.
+  "compose": {
+    // Open the composer in a "tab" (Zed style) or a separate "window" (Thunderbird style).
+    "open_in": "tab",
+    // "markdown" or "plain".
+    "format": "markdown",
+    // Seconds during which a sent message can still be undone (0 to 30).
+    "undo_send_seconds": 10
+  },
+
+  // Spell-check languages as BCP 47 tags, e.g. ["de-AT", "en-US"]. Empty: the
+  // system's languages.
+  "spellcheck": [],
+
+  // Which messages are kept on this computer: "headers_only", "recent" (bodies of the
+  // last `offline_recent_days` days), "all" or "on_demand". Can be overridden per account.
+  "offline": "recent",
+  "offline_recent_days": 90,
+
+  // Overrides per account, keyed by the account's label, e.g.
+  // "work": { "offline": "all", "remote_content": "never" }
+  // Supported keys: "offline", "offline_recent_days", "remote_content".
+  "accounts": {},
+
+  // AI agents. AI is off unless enabled per account.
+  "agent": {
+    // The agent used when none is chosen explicitly.
+    "default": "claude",
+    // Access per account label: "off", "local_only" (local models only) or "any".
+    // Accounts not listed are "off".
+    "accounts": {}
+  },
+
+  // The sandbox every agent process runs in.
+  "agent_sandbox": {
+    // Turning this off lets agents read your whole home directory.
+    "enabled": true,
+    // Extra paths in your home directory agents may read, e.g. "~/Documents/contracts".
+    "allow_read": [],
+    // Extra paths outside your home directory agents may never read.
+    "deny_read": [],
+    // Additions per agent, e.g. "claude": { "read": [], "write": [] }.
+    "agent_paths": {},
+    // null: any host. Or a list such as ["api.anthropic.com", "*.openai.com"].
+    "network_hosts": null
+  },
+
+  // Look for updates in the background. false: only when asked
+  // (command palette "Maze: Check for Updates").
+  "auto_update": true,
+  // "stable" or "preview". null: the channel of the installed build.
+  "update_channel": null,
+  // "background" (download and install, then offer a restart) or "notify_only".
+  "auto_update_install": "background",
+
+  // Notifications for new mail.
+  "notifications": {
+    "enabled": true,
+    // What a notification shows: "sender_and_subject", "sender_only" or "none".
+    // macOS keeps the text of delivered notifications in its own database.
+    "content": "sender_and_subject",
+    // The unread count on the dock icon.
+    "dock_badge": true
+  },
+
+  // Log verbosity: "error", "warn", "info", "debug" or "trace". The MAZEMAIL_LOG
+  // environment variable takes precedence.
+  "log_level": "info",
+}
