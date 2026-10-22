@@ -1,5 +1,9 @@
 //! `mazemail`: starts Maze, or runs a CLI subcommand.
 
+mod app;
+
+use std::time::Instant;
+
 use clap::{Parser, Subcommand};
 use mazemail_types::PRODUCT_NAME;
 
@@ -21,6 +25,12 @@ enum Command {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Taken first: the startup measurement runs from here to the first frame.
+    let process_start = Instant::now();
+    // `time` only reads the local UTC offset reliably while the process has a single
+    // thread, so read it before anything spawns one.
+    let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_env("MAZEMAIL_LOG")
@@ -31,8 +41,13 @@ fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        None => tracing::info!("{PRODUCT_NAME} has no window yet"),
-        Some(Command::Status) => tracing::info!("{PRODUCT_NAME} is not running"),
+        None => app::run(app::AppOptions {
+            process_start,
+            local_offset,
+        }),
+        Some(Command::Status) => {
+            tracing::info!("{PRODUCT_NAME} is not running");
+            Ok(())
+        }
     }
-    Ok(())
 }

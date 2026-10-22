@@ -1,0 +1,26 @@
+[package]
+name = "mail_ui"
+description = "Maze main window: folder pane, message list, message view, agent column"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui = { workspace = true }
+gpui-kit = { workspace = true }
+mazemail_types = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+tracing = { workspace = true }
+ui = { workspace = true }
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+# `render_to_image` for screenshots needs the platform's test support.
+gpui_platform = { workspace = true, features = ["test-support"] }
+image = { workspace = true }
+
+[lints]
+workspace = true

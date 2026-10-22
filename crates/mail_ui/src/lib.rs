@@ -1,0 +1,95 @@
+//! The Maze main window (layer L3), CONCEPT §8.2:
+//!
+//! ```text
+//! spaces | folder pane | message list | message view | agent column
+//! ```
+//!
+//! The UI reads everything through the [`MailSource`] trait, so it doesn't depend on
+//! any non-UI Maze crate except `mazemail_types`. [`FakeMailSource`] provides
+//! synthetic data (including a 1,000,000-thread folder) until the core implements
+//! the trait.
+//!
+//! Start-up: [`ui::init`], then [`init`], then [`open_main_window`].
+
+pub mod actions;
+mod chrome;
+pub mod command_palette;
+pub mod fake;
+pub mod folder_pane;
+pub mod format;
+pub mod layout;
+pub mod message_view;
+pub mod perf;
+pub mod selection;
+pub mod source;
+pub mod thread_list;
+pub mod window;
+
+use gpui::{App, Menu, MenuItem, OsAction, SystemMenuType};
+use gpui_kit::component::input;
+use mazemail_types::PRODUCT_NAME;
+
+pub use fake::FakeMailSource;
+pub use source::MailSource;
+pub use window::{MailWindow, MailWindowOptions, OpenWindowError, open_main_window};
+
+use crate::actions::{
+    About, Hide, HideOthers, Minimize, Quit, ShowAll, Toggle, ToggleAgentColumn, ToggleFolderPane,
+    ToggleMessagePane, ToggleTableView, Zoom,
+};
+
+/// Registers application-wide action handlers, binds the default keymap and sets the
+/// menu bar. Call after [`ui::init`].
+pub fn init(cx: &mut App) {
+    cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_action(|_: &Hide, cx| cx.hide());
+    cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+    cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+
+    match ui::keymap::bind_keymap(ui::keymap::DEFAULT_MACOS_KEYMAP, cx) {
+        Ok(errors) if errors.is_empty() => {}
+        Ok(errors) => tracing::warn!(count = errors.len(), "default keymap has invalid bindings"),
+        Err(error) => tracing::error!(%error, "default keymap failed to load"),
+    }
+    cx.set_menus(app_menus());
+}
+
+/// The menu bar. On macOS the first menu is the application menu; its title comes
+/// from the bundle (`Maze.app`), the items say "Maze".
+pub fn app_menus() -> Vec<Menu> {
+    vec![
+        Menu::new(PRODUCT_NAME).items([
+            MenuItem::action(format!("About {PRODUCT_NAME}"), About),
+            MenuItem::separator(),
+            MenuItem::os_submenu("Services", SystemMenuType::Services),
+            MenuItem::separator(),
+            MenuItem::action(format!("Hide {PRODUCT_NAME}"), Hide),
+            MenuItem::action("Hide Others", HideOthers),
+            MenuItem::action("Show All", ShowAll),
+            MenuItem::separator(),
+            MenuItem::action(format!("Quit {PRODUCT_NAME}"), Quit),
+        ]),
+        Menu::new("Edit").items([
+            MenuItem::os_action("Undo", input::Undo, OsAction::Undo),
+            MenuItem::os_action("Redo", input::Redo, OsAction::Redo),
+            MenuItem::separator(),
+            MenuItem::os_action("Cut", input::Cut, OsAction::Cut),
+            MenuItem::os_action("Copy", input::Copy, OsAction::Copy),
+            MenuItem::os_action("Paste", input::Paste, OsAction::Paste),
+            MenuItem::os_action("Select All", input::SelectAll, OsAction::SelectAll),
+        ]),
+        Menu::new("View").items([
+            MenuItem::action("Command Palette…", Toggle),
+            MenuItem::separator(),
+            MenuItem::action("Folder Pane", ToggleFolderPane),
+            MenuItem::action("Message Pane", ToggleMessagePane),
+            MenuItem::action("Agent Column", ToggleAgentColumn),
+            MenuItem::separator(),
+            MenuItem::action("Table View", ToggleTableView),
+        ]),
+        Menu::new("Window").items([
+            MenuItem::action("Minimize", Minimize),
+            MenuItem::action("Zoom", Zoom),
+        ]),
+    ]
+}

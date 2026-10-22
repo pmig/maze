@@ -5,6 +5,19 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+# Unmaintained (not vulnerable) crates that only reach us through GPUI and gpui-kit (`gpui-pre-*`,
+# pinned by gpui-kit, PLAN ADR-002). We can't replace them without forking GPUI;
+# re-check when gpui-kit moves to a newer GPUI snapshot.
+ignore = [
+  { id = "RUSTSEC-2024-0384", reason = "instant: via GPUI, unmaintained only" },
+  { id = "RUSTSEC-2024-0436", reason = "paste: via GPUI, unmaintained only" },
+  { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile: via GPUI's HTTP client, unmaintained only" },
+  { id = "RUSTSEC-2026-0192", reason = "ttf-parser: GPUI text shaping, unmaintained only" },
+  { id = "RUSTSEC-2026-0206", reason = "rustybuzz: GPUI text shaping, unmaintained only" },
+  { id = "RUSTSEC-2026-0370", reason = "zvariant: GPUI Linux (zbus), unmaintained only" },
+  { id = "RUSTSEC-2026-0371", reason = "zbus_names: GPUI Linux (zbus), unmaintained only" },
+  { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: GPUI Linux (zbus), unmaintained only" },
+]
 
 [licenses]
 version = 2
