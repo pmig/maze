@@ -1,0 +1,86 @@
+name: CI
+
+# Pull requests and pushes to main: lint, test, license check and a build.
+# Nothing is published from here (PLAN §4.16). The unsigned macOS build that
+# pushes to main upload is only a workflow artifact for manual testing.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  check:
+    name: Check (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64
+            runner: macos-latest
+          - name: Linux x86_64
+            runner: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: script/linux-deps
+
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Lint (rustfmt + clippy)
+        run: mise run lint
+
+      - name: Test
+        run: mise run test
+
+      - name: Licenses and advisories
+        run: mise run deny
+
+      - name: Build
+        run: cargo build --locked
+
+  unsigned-macos-build:
+    name: Unsigned macOS build (artifact)
+    # Builds between releases are never published and never offered by the updater.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: check
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: release-aarch64-apple-darwin
+
+      - name: Bundle Maze.app (unsigned)
+        run: script/bundle-mac --target aarch64-apple-darwin
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: maze-macos-aarch64-unsigned
+          path: dist/*
+          retention-days: 7
+          if-no-files-found: error

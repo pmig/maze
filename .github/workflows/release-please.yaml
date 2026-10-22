@@ -1,0 +1,27 @@
+name: Release Please
+
+# Keeps the release PR (version.txt + CHANGELOG.md) up to date. Merging that PR
+# creates the tag and the GitHub Release, which triggers release-artifacts.yaml.
+# See PLAN §4.16.
+on:
+  push:
+    branches: [main, 'v*.*.x', 'v*.*.*-rc.x']
+  workflow_dispatch:
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          # Must be a bot/PAT token, not GITHUB_TOKEN: tags created with GITHUB_TOKEN
+          # don't trigger release-artifacts.yaml.
+          token: ${{ secrets.RELEASE_BOT_TOKEN }}
+          target-branch: ${{ github.ref_name }}
