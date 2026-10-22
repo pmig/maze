@@ -1,0 +1,38 @@
+[package]
+name = "auth"
+description = "Maze account authentication: OAuth2 (PKCE, loopback redirect), token lifecycle, SASL and keychain secrets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+base64 = { workspace = true }
+getrandom = { workspace = true }
+mazemail_types = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+zeroize = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus-secret-service-keyring-store = { workspace = true }
+keyring-core = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+wiremock = { workspace = true }
+
+[lints]
+workspace = true
