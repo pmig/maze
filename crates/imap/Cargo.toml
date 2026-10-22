@@ -1,0 +1,42 @@
+[package]
+name = "imap"
+description = "Maze IMAP protocol layer: the ImapSession trait, a Tokio/rustls client and an in-memory fake"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# In-memory `FakeImap` implementation of `ImapSession` for deterministic tests in
+# downstream crates (`sync`, `mazemail_core`).
+fake = []
+
+[dependencies]
+async-channel = { workspace = true }
+async-imap = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+mazemail_types = { workspace = true }
+rustls = { workspace = true }
+rustls-platform-verifier = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+webpki-roots = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+imap = { workspace = true, features = ["fake"] }
+pretty_assertions = { workspace = true }
+proptest = { workspace = true }
+rcgen = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

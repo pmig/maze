@@ -21,19 +21,24 @@ release_channel = { path = "crates/release_channel" }
 settings = { path = "crates/settings" }
 ui = { path = "crates/ui" }
 vault = { path = "crates/vault" }
+imap = { path = "crates/imap" }
 
 # External crates, pinned here and inherited with `workspace = true`
 ammonia = "4.2.4"
 anyhow = "1"
-base64 = "0.23"
 # GPUI comes from Zed's `gpui-pre-*` snapshots. gpui-kit pins the exact snapshot it was
 # built against (PLAN ADR-002); keep these pins equal to the ones in gpui-kit's manifest.
+async-channel = "2"
+async-imap = { version = "0.12", default-features = false, features = ["runtime-tokio", "compress"] }
+async-trait = "0.1"
+base64 = "0.23"
 gpui = { package = "gpui-pre", version = "=0.3.9" }
 gpui-kit = "0.8"
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9" }
 bitflags = { version = "2", features = ["serde"] }
 blake3 = { version = "1", features = ["zeroize"] }
 chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc", "zeroize"] }
+bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }
 dbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
 ed25519-dalek = "3"
@@ -53,6 +58,8 @@ semver = { version = "1", features = ["serde"] }
 html5ever = "0.40.1"
 linkify = "0.11.0"
 mail-parser = { version = "0.11.9", features = ["full_encoding"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-platform-verifier = "0.7"
 serde = { version = "1", features = ["derive"] }
 serde_ignored = "0.1"
 serde_json = "1"
@@ -62,11 +69,14 @@ tar = { version = "0.4", default-features = false }
 thiserror = "2"
 time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "fs", "signal"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+tokio-util = "0.7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 url = { version = "2", features = ["serde"] }
 zeroize = { version = "1", features = ["derive"] }
 whatlang = "0.18.0"
+webpki-roots = "1"
 
 # Test-only
 aead-stream = { version = "0.6", features = ["alloc"] }
@@ -74,6 +84,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 insta = { version = "1", features = ["json", "yaml"] }
 pretty_assertions = "1"
 proptest = "1"
+rcgen = "0.14"
 tempfile = "3"
 wiremock = "0.6"
 
