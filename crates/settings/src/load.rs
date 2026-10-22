@@ -152,6 +152,9 @@ pub fn parse_settings(user_text: Option<&str>) -> LoadedSettings {
                     kind: DiagnosticKind::UnknownKey,
                     path,
                 }));
+                // Report in a stable order. serde_json's map order depends on whether
+                // some other crate in the build enables its `preserve_order` feature.
+                diagnostics.sort_by(|a, b| a.path.cmp(&b.path));
                 return LoadedSettings {
                     settings,
                     diagnostics,
