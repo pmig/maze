@@ -1,0 +1,9 @@
+From: Example Alerts <alerts@news.example.com>
+To: ben@reader.example
+Subject: Your weekly digest
+Date: Tue, 02 Jan 2024 11:00:00 +0000
+Message-ID: <digest-7@news.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Here is what happened this week.

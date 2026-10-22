@@ -1,0 +1,26 @@
+Delivered-To: ben@gmail.example
+Received: by 2002:a05:6504:51c6:b0:2a1:4d2b:9f10 with SMTP id q6csp1234567lth;
+        Tue, 2 Jan 2024 02:00:05 -0800 (PST)
+Return-Path: <attacker@evil.example>
+Received: from mail.evil.example (mail.evil.example. [198.51.100.66])
+        by mx.google.com with ESMTPS id y34si654321wrq.1.2024.01.02.02.00.05
+        for <ben@gmail.example>;
+        Tue, 02 Jan 2024 02:00:05 -0800 (PST)
+Received-SPF: neutral (google.com: 198.51.100.66 is neither permitted nor denied) client-ip=198.51.100.66;
+Authentication-Results: mx.google.com;
+       spf=neutral (google.com: 198.51.100.66 is neither permitted nor denied) smtp.mailfrom=attacker@evil.example;
+       dmarc=fail (p=REJECT sp=REJECT dis=QUARANTINE) header.from=paypal.com
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@paypal.com;
+       spf=pass smtp.mailfrom=service@paypal.com;
+       dmarc=pass header.from=paypal.com
+Received: from laptop (unknown [203.0.113.9])
+        by mail.evil.example (Postfix) with ESMTPSA id 1A2B3C;
+        Tue,  2 Jan 2024 10:00:03 +0000 (UTC)
+From: PayPal <service@paypal.com>
+To: ben@gmail.example
+Subject: Account limited
+Date: Tue, 02 Jan 2024 10:00:00 +0000
+Message-ID: <forged-2@evil.example>
+
+Body.

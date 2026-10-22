@@ -1,0 +1,31 @@
+Received: from SN6PR04MB1234.namprd04.prod.outlook.com (2603:10b6:805:1::12)
+ by MN2PR04MB5678.namprd04.prod.outlook.com with HTTPS; Tue, 2 Jan 2024
+ 10:00:06 +0000
+Received: from BN9PR03CA0123.namprd03.prod.outlook.com (2603:10b6:408:fe::8)
+ by SN6PR04MB1234.namprd04.prod.outlook.com (2603:10b6:805:1::12) with
+ Microsoft SMTP Server (version=TLS1_2,
+ cipher=TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384) id 15.20.7159.13; Tue, 2 Jan
+ 2024 10:00:06 +0000
+Received: from BN8NAM11FT045.eop-nam11.prod.protection.outlook.com
+ (2603:10b6:408:fe:cafe::1) by BN9PR03CA0123.outlook.office365.com
+ (2603:10b6:408:fe::8) with Microsoft SMTP Server (version=TLS1_2,
+ cipher=TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384) id 15.20.7159.13 via Frontend
+ Transport; Tue, 2 Jan 2024 10:00:06 +0000
+Authentication-Results: spf=pass (sender IP is 192.0.2.10)
+ smtp.mailfrom=example.com; dkim=pass (signature was verified)
+ header.d=example.com;dmarc=pass action=none
+ header.from=example.com;compauth=pass reason=100
+Received-SPF: Pass (protection.outlook.com: domain of example.com designates
+ 192.0.2.10 as permitted sender) receiver=protection.outlook.com;
+ client-ip=192.0.2.10; helo=mail.example.com; pr=C
+Received: from mail.example.com (192.0.2.10) by
+ BN8NAM11FT045.mail.protection.outlook.com (10.13.177.57) with Microsoft SMTP
+ Server (version=TLS1_3, cipher=TLS_AES_256_GCM_SHA384) id 15.20.7159.9 via
+ Frontend Transport; Tue, 2 Jan 2024 10:00:05 +0000
+From: Anna Example <anna@example.com>
+To: ben@contoso.example
+Subject: Quarterly numbers
+Date: Tue, 02 Jan 2024 10:00:00 +0000
+Message-ID: <ms-1@example.com>
+
+Body.

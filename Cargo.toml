@@ -18,6 +18,7 @@ auto_update = { path = "crates/auto_update" }
 mail_ui = { path = "crates/mail_ui" }
 mazemail_mime = { path = "crates/mazemail_mime" }
 release_channel = { path = "crates/release_channel" }
+security = { path = "crates/security" }
 settings = { path = "crates/settings" }
 ui = { path = "crates/ui" }
 vault = { path = "crates/vault" }
@@ -31,6 +32,7 @@ anyhow = "1"
 async-channel = "2"
 async-imap = { version = "0.12", default-features = false, features = ["runtime-tokio", "compress"] }
 async-trait = "0.1"
+aws-lc-rs = "1.18"
 base64 = "0.23"
 gpui = { package = "gpui-pre", version = "=0.3.9" }
 gpui-kit = "0.8"
@@ -45,11 +47,14 @@ ed25519-dalek = "3"
 getrandom = "0.4"
 hex = "0.4"
 hkdf = "0.13"
+idna = "1.1"
 jsonc-parser = { version = "0.34", features = ["serde"] }
 keyring-core = "1"
 libc = "0.2"
+mail-auth = { version = "0.13.3", default-features = false, features = ["aws-lc-rs", "arc"] }
 notify = "8"
 notify-debouncer-mini = "0.7"
+psl = "2.1"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2", "system-proxy"] }
 ruzstd = "0.9"
 schemars = "1"

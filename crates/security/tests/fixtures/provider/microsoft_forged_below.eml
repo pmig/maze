@@ -1,0 +1,19 @@
+Received: from BN8NAM11FT045.eop-nam11.prod.protection.outlook.com
+ (2603:10b6:408:fe:cafe::1) by BN9PR03CA0123.outlook.office365.com
+ (2603:10b6:408:fe::8) with Microsoft SMTP Server id 15.20.7159.13 via Frontend
+ Transport; Tue, 2 Jan 2024 10:00:06 +0000
+Received: from mail.evil.example (198.51.100.66) by
+ BN8NAM11FT045.mail.protection.outlook.com (10.13.177.57) with Microsoft SMTP
+ Server id 15.20.7159.9 via Frontend Transport; Tue, 2 Jan 2024 10:00:05 +0000
+Authentication-Results: spf=pass (sender IP is 198.51.100.66)
+ smtp.mailfrom=paypal.com; dkim=pass (signature was verified)
+ header.d=paypal.com;dmarc=pass action=none header.from=paypal.com
+Received: from laptop (unknown [203.0.113.9]) by mail.evil.example (Postfix);
+ Tue,  2 Jan 2024 10:00:03 +0000 (UTC)
+From: PayPal <service@paypal.com>
+To: ben@contoso.example
+Subject: Account limited
+Date: Tue, 02 Jan 2024 10:00:00 +0000
+Message-ID: <ms-forged-1@evil.example>
+
+Body.

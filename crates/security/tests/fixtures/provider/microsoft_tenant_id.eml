@@ -1,0 +1,17 @@
+Received: from BN8NAM11FT045.eop-nam11.prod.protection.outlook.com
+ (2603:10b6:408:fe:cafe::1) by BN9PR03CA0123.outlook.office365.com
+ (2603:10b6:408:fe::8) with Microsoft SMTP Server id 15.20.7159.13 via Frontend
+ Transport; Tue, 2 Jan 2024 10:00:06 +0000
+Authentication-Results: gateway.contoso.example; spf=softfail
+ smtp.mailfrom=example.com; dkim=fail header.d=example.com; dmarc=fail
+ header.from=example.com
+Received: from mail.example.com (192.0.2.10) by
+ BN8NAM11FT045.mail.protection.outlook.com (10.13.177.57) with Microsoft SMTP
+ Server id 15.20.7159.9 via Frontend Transport; Tue, 2 Jan 2024 10:00:05 +0000
+From: Anna Example <anna@example.com>
+To: ben@contoso.example
+Subject: Quarterly numbers
+Date: Tue, 02 Jan 2024 10:00:00 +0000
+Message-ID: <ms-2@example.com>
+
+Body.

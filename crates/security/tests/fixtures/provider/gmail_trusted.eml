@@ -1,0 +1,32 @@
+Delivered-To: ben@gmail.example
+Received: by 2002:a05:6504:51c6:b0:2a1:4d2b:9f10 with SMTP id q6csp1234567lth;
+        Tue, 2 Jan 2024 02:00:05 -0800 (PST)
+X-Received: by 2002:a17:90a:9a8:b0:28b:1c3e:1a2b with SMTP id 40csp42;
+        Tue, 2 Jan 2024 02:00:05 -0800 (PST)
+ARC-Seal: i=1; a=rsa-sha256; t=1704189605; cv=none; d=google.com; s=arc-20160816; b=AAAA
+ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20160816; h=from:to:subject; bh=AAAA; b=AAAA
+ARC-Authentication-Results: i=1; mx.google.com;
+       dkim=pass header.i=@example.com header.s=s1 header.b=AbCdEfGh;
+       spf=pass (google.com: domain of bounce@example.com designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounce@example.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=example.com
+Return-Path: <bounce@example.com>
+Received: from mail.example.com (mail.example.com. [192.0.2.10])
+        by mx.google.com with ESMTPS id x12si123456wrq.42.2024.01.02.02.00.05
+        for <ben@gmail.example>
+        (version=TLS1_3 cipher=TLS_AES_256_GCM_SHA384 bits=256/256);
+        Tue, 02 Jan 2024 02:00:05 -0800 (PST)
+Received-SPF: pass (google.com: domain of bounce@example.com designates 192.0.2.10 as permitted sender) client-ip=192.0.2.10;
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@example.com header.s=s1 header.b=AbCdEfGh;
+       spf=pass (google.com: domain of bounce@example.com designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounce@example.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=example.com
+Received: from internal.example.com (internal.example.com [10.0.0.5])
+        by mail.example.com (Postfix) with ESMTPS id 4T3xyz;
+        Tue,  2 Jan 2024 10:00:04 +0000 (UTC)
+From: Anna Example <anna@example.com>
+To: ben@gmail.example
+Subject: Quarterly numbers
+Date: Tue, 02 Jan 2024 10:00:00 +0000
+Message-ID: <gmail-1@example.com>
+
+Body.
