@@ -27,6 +27,7 @@ search = { path = "crates/search" }
 security = { path = "crates/security" }
 settings = { path = "crates/settings" }
 store = { path = "crates/store" }
+sync = { path = "crates/sync" }
 ui = { path = "crates/ui" }
 vault = { path = "crates/vault" }
 imap = { path = "crates/imap" }

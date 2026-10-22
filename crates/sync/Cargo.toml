@@ -1,0 +1,38 @@
+[package]
+name = "sync"
+description = "Maze sync engine: per-account IMAP actors, folder sync, bodies, change detection and pending-op replay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+
+[dependencies]
+async-trait = { workspace = true }
+bytes = { workspace = true }
+imap = { workspace = true }
+mazemail_mime = { workspace = true }
+mazemail_types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+settings = { workspace = true }
+store = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+imap = { workspace = true, features = ["fake"] }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+vault = { workspace = true }
+
+[lints]
+workspace = true
