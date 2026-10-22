@@ -15,6 +15,7 @@ publish = false
 # Internal crates (layering: see AGENTS.md)
 auth = { path = "crates/auth" }
 local_api = { path = "crates/local_api" }
+mazemail_core = { path = "crates/mazemail_core" }
 mazemail_types = { path = "crates/mazemail_types" }
 auto_update = { path = "crates/auto_update" }
 mail_ui = { path = "crates/mail_ui" }

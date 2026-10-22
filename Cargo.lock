@@ -4953,6 +4953,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "mazemail_core"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "mazemail_mime",
+ "mazemail_types",
+ "pretty_assertions",
+ "search",
+ "security",
+ "serde",
+ "serde_json",
+ "settings",
+ "store",
+ "tempfile",
+ "thiserror 2.0.21",
+ "time",
+ "tokio",
+ "tracing",
+ "vault",
+]
+
+[[package]]
 name = "mazemail_mime"
 version = "0.0.0"
 dependencies = [
