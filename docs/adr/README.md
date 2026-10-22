@@ -25,3 +25,4 @@ to the index below.
 | [013](0013-agent-sandbox.md)                 | Agent sandbox                  | Accepted (working decision) |
 | [014](0014-name.md)                          | Name                           | Accepted (working decision) |
 | [015](0015-crate-naming-collisions.md)       | Crate naming collisions        | Accepted (working decision) |
+| [016](0016-cursor-and-pi-agents.md)           | Cursor and pi as ACP agents    | Accepted (working decision) |
