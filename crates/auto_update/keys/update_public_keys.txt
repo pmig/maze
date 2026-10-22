@@ -1,0 +1,13 @@
+# Ed25519 public keys that may sign Maze update manifests (PLAN §4.15).
+#
+# One key per line, base64 of the 32 raw key bytes, as written to `update-key.pub`
+# by `cargo xtask gen-update-key`. At most two keys, so a key can be rotated: add the
+# new key, ship a release signed with the old one, then sign with the new key and
+# remove the old one.
+#
+# The matching private key lives only in the CI secret UPDATE_SIGNING_KEY.
+# The environment variable MAZEMAIL_UPDATE_PUBLIC_KEYS (keys separated by commas or
+# whitespace) replaces this list at build time, e.g. for forks.
+#
+# While this list is empty, release builds can't verify manifests and the updater
+# stays disabled.

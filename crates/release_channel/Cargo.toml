@@ -1,0 +1,22 @@
+[package]
+name = "release_channel"
+description = "Maze release channel, version and commit, embedded at build time (no IO)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+semver = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[build-dependencies]
+semver = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true
