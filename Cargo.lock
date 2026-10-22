@@ -4159,6 +4159,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e44b0a4eaa4c82f441d50a963f2d5f05a787240aeee097597033e72accfd22f"
 
 [[package]]
+name = "import"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "ingest",
+ "insta",
+ "mazemail_mime",
+ "mazemail_types",
+ "pretty_assertions",
+ "rayon",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "store",
+ "tempfile",
+ "thiserror 2.0.21",
+ "time",
+ "tokio",
+ "tracing",
+ "url",
+ "vault",
+ "zeroize",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4168,6 +4194,25 @@ dependencies = [
  "hashbrown 0.17.1",
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "ingest"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "mazemail_mime",
+ "mazemail_types",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "store",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "vault",
 ]
 
 [[package]]

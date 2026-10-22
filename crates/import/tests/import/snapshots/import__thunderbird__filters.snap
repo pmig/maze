@@ -1,0 +1,79 @@
+---
+source: crates/import/tests/import/thunderbird.rs
+expression: "serde_json::to_value(&profile.filters).unwrap()"
+---
+server1:
+  errors: 0
+  filters:
+    - actions:
+        - action: Move to folder
+          custom_id: ~
+          value: "imap://anna%40example.com@imap.example.com/Lists"
+        - action: Mark read
+          custom_id: ~
+          value: ~
+      condition:
+        match_all: false
+        raw: "OR (\"list-id\",contains,dev.example.org) OR (subject,begins with,[dev])"
+        terms:
+          - attribute: list-id
+            boolean: or
+            custom_header: true
+            operator: contains
+            value: dev.example.org
+          - attribute: subject
+            boolean: or
+            custom_header: false
+            operator: begins with
+            value: "[dev]"
+      description: ~
+      enabled: true
+      filter_type: 17
+      name: Lists to folder
+      script_name: ~
+    - actions:
+        - action: AddTag
+          custom_id: ~
+          value: $label1
+        - action: Custom
+          custom_id: "filtaquilla@mesquilla.com#runFile"
+          value: /usr/bin/true
+      condition:
+        match_all: false
+        raw: "AND (from,contains,boss@example.com) AND (subject,doesn't contain,\"a, (b)\")"
+        terms:
+          - attribute: from
+            boolean: and
+            custom_header: false
+            operator: contains
+            value: boss@example.com
+          - attribute: subject
+            boolean: and
+            custom_header: false
+            operator: "doesn't contain"
+            value: "a, (b)"
+      description: ~
+      enabled: false
+      filter_type: 48
+      name: Tag the boss
+      script_name: ~
+  logging: false
+  version: 9
+server3:
+  errors: 0
+  filters:
+    - actions:
+        - action: Mark flagged
+          custom_id: ~
+          value: ~
+      condition:
+        match_all: true
+        raw: ALL
+        terms: []
+      description: ~
+      enabled: true
+      filter_type: 256
+      name: Everything periodic
+      script_name: ~
+  logging: false
+  version: 9

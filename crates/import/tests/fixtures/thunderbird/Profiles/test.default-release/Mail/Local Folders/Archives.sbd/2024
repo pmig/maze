@@ -1,0 +1,15 @@
+From - Mon Jan 01 08:00:00 2024
+X-Mozilla-Status: 0001
+X-Mozilla-Status2: 00000000
+X-Mozilla-Keys:                                                                                 
+Date: Mon, 01 Jan 2024 08:00:00 +0000
+From: Anna Example <anna@example.com>
+To: Ben <ben@example.org>
+Subject: Archived
+Message-ID: <l5@local.example>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Archived message with an
+From line that was never escaped by an old tool.
+

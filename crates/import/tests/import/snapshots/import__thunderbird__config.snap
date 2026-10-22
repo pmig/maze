@@ -1,0 +1,213 @@
+---
+source: crates/import/tests/import/thunderbird.rs
+expression: "redact(serde_json::to_value(config).unwrap(), &profile_dir)"
+---
+accounts:
+  - identities:
+      - id1
+      - id2
+    key: account1
+    server: server1
+  - identities:
+      - id3
+    key: account2
+    server: server2
+  - identities: []
+    key: account3
+    server: server3
+  - identities:
+      - id4
+    key: account4
+    server: server4
+default_account: account1
+default_smtp_server: smtp1
+default_store: mbox
+identities:
+  id1:
+    archive_enabled: true
+    archive_folder: "imap://anna%40example.com@imap.example.com/Archives"
+    archive_granularity: 2
+    archive_keep_folder_structure: true
+    catch_all: true
+    catch_all_hint:
+      - "*@anna.example"
+      - info@example.com
+    draft_folder: "imap://anna%40example.com@imap.example.com/Drafts"
+    email: anna@example.com
+    fcc_folder: "imap://anna%40example.com@imap.example.com/Sent"
+    full_name: Anna Example
+    key: id1
+    organization: ~
+    reply_to: team@example.com
+    signature:
+      file: ~
+      is_html: true
+      text: "<b>Anna Example</b>\n<i>Example GmbH</i>"
+      use_file: false
+    smtp_server: smtp1
+    templates_folder: ~
+  id2:
+    archive_enabled: false
+    archive_folder: ~
+    archive_granularity: 1
+    archive_keep_folder_structure: false
+    catch_all: false
+    catch_all_hint: []
+    draft_folder: "mailbox://nobody@Local%20Folders/Drafts"
+    email: billing@example.com
+    fcc_folder: "mailbox://nobody@Local%20Folders/Archives/2024"
+    full_name: Anna (Billing)
+    key: id2
+    organization: ~
+    reply_to: ~
+    signature:
+      file: "[profile]/signature.txt"
+      is_html: false
+      text: ~
+      use_file: true
+    smtp_server: smtp1
+    templates_folder: ~
+  id3:
+    archive_enabled: true
+    archive_folder: ~
+    archive_granularity: 1
+    archive_keep_folder_structure: false
+    catch_all: false
+    catch_all_hint: []
+    draft_folder: ~
+    email: anna.example@gmail.com
+    fcc_folder: ~
+    full_name: Anna Example
+    key: id3
+    organization: ~
+    reply_to: ~
+    signature:
+      file: ~
+      is_html: false
+      text: ~
+      use_file: false
+    smtp_server: smtp2
+    templates_folder: ~
+  id4:
+    archive_enabled: true
+    archive_folder: ~
+    archive_granularity: 1
+    archive_keep_folder_structure: false
+    catch_all: false
+    catch_all_hint: []
+    draft_folder: ~
+    email: anna@news.example.org
+    fcc_folder: ~
+    full_name: Anna
+    key: id4
+    organization: ~
+    reply_to: ~
+    signature:
+      file: ~
+      is_html: false
+      text: ~
+      use_file: false
+    smtp_server: ~
+    templates_folder: ~
+local_folders_server: server3
+pane_layout: 2
+servers:
+  server1:
+    auth: password
+    deferred_to_account: ~
+    directory: "[profile]/ImapMail/imap.example.com"
+    hostname: imap.example.com
+    key: server1
+    kind: imap
+    name: Work
+    port: 993
+    socket: tls
+    store_format: mbox
+    username: anna@example.com
+  server2:
+    auth: o_auth2
+    deferred_to_account: ~
+    directory: "[profile]/ImapMail/imap.gmail.com"
+    hostname: imap.gmail.com
+    key: server2
+    kind: imap
+    name: ~
+    port: 993
+    socket: tls
+    store_format: mbox
+    username: anna.example@gmail.com
+  server3:
+    auth: password
+    deferred_to_account: ~
+    directory: "[profile]/Mail/Local Folders"
+    hostname: Local Folders
+    key: server3
+    kind: local
+    name: Local Folders
+    port: ~
+    socket: plain
+    store_format: mbox
+    username: nobody
+  server4:
+    auth: password
+    deferred_to_account: ~
+    directory: ~
+    hostname: news.example.org
+    key: server4
+    kind: nntp
+    name: ~
+    port: 119
+    socket: plain
+    store_format: mbox
+    username: ~
+smtp_servers:
+  - auth: password
+    description: Example SMTP
+    hostname: smtp.example.com
+    key: smtp1
+    kind: smtp
+    port: 587
+    socket: start_tls
+    username: anna@example.com
+  - auth: o_auth2
+    description: ~
+    hostname: smtp.gmail.com
+    key: smtp2
+    kind: smtp
+    port: 465
+    socket: tls
+    username: anna.example@gmail.com
+  - auth: password
+    description: ~
+    hostname: unused.example.net
+    key: smtp3
+    kind: smtp
+    port: ~
+    socket: plain
+    username: ~
+tags:
+  - color: "#FF0000"
+    keyword: $label1
+    name: Wichtig
+    ordinal: ~
+  - color: "#FF9900"
+    keyword: $label2
+    name: Work
+    ordinal: ~
+  - color: "#009900"
+    keyword: $label3
+    name: Personal
+    ordinal: ~
+  - color: "#3333FF"
+    keyword: $label4
+    name: To Do
+    ordinal: ~
+  - color: "#993399"
+    keyword: $label5
+    name: Later
+    ordinal: ~
+  - color: "#3366CC"
+    keyword: projekt
+    name: "Projekt \"Atlas\""
+    ordinal: ~AUTOTAG
+thread_pane_list_view: 1

@@ -1,0 +1,10 @@
+version=1
+uri=mailbox://nobody@Local%20Folders/Unread%20local
+scope=mailbox://nobody@Local%20Folders/Inbox|mailbox://nobody@Local%20Folders/Archives/2024
+terms=AND (status,isn't,read) AND (from,contains,ben@example.org)
+searchOnline=false
+uri=imap://anna%40example.com@imap.example.com/Big%20mail
+searchFolderFlag=1
+scope=imap://anna%40example.com@imap.example.com/INBOX
+terms=OR (size,is greater than,5000) OR (has attachment status,is,true) OR (junk status,is,2)
+searchOnline=true
