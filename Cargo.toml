@@ -14,6 +14,7 @@ publish = false
 [workspace.dependencies]
 # Internal crates (layering: see AGENTS.md)
 auth = { path = "crates/auth" }
+local_api = { path = "crates/local_api" }
 mazemail_types = { path = "crates/mazemail_types" }
 auto_update = { path = "crates/auto_update" }
 mail_ui = { path = "crates/mail_ui" }
@@ -37,6 +38,7 @@ async-imap = { version = "0.12", default-features = false, features = ["runtime-
 async-trait = "0.1"
 aws-lc-rs = "1.18"
 base64 = "0.23"
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
 gpui = { package = "gpui-pre", version = "=0.3.9" }
 gpui-kit = "0.8"
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9" }
