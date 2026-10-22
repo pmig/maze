@@ -2,6 +2,7 @@
 
 use mazemail_types::{AccountId, FolderId, IdentityId};
 use rusqlite::{Connection, OptionalExtension, Row, params};
+use uuid::Uuid;
 
 use crate::model::{
     Account, Identity, IdentityInput, IdentityRule, IdentityRuleId, IdentityRuleKind, NewAccount,
@@ -9,11 +10,15 @@ use crate::model::{
 };
 use crate::{Error, Result, WriteTx};
 
-const ACCOUNT_COLUMNS: &str = "id, kind, name, config_json, sync_state_json, ordinal";
+const ACCOUNT_COLUMNS: &str = "id, kind, name, config_json, sync_state_json, ordinal, uuid";
 
 fn account_row(row: &Row<'_>) -> rusqlite::Result<Account> {
+    let uuid: String = row.get(6)?;
     Ok(Account {
         id: AccountId(row.get(0)?),
+        uuid: Uuid::parse_str(&uuid).map_err(|err| {
+            rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, err.into())
+        })?,
         kind: row.get(1)?,
         name: row.get(2)?,
         config_json: row.get(3)?,
@@ -29,6 +34,15 @@ pub(crate) fn accounts(conn: &Connection) -> Result<Vec<Account>> {
     Ok(stmt
         .query_map([], account_row)?
         .collect::<rusqlite::Result<_>>()?)
+}
+
+pub(crate) fn account_by_uuid(conn: &Connection, uuid: Uuid) -> Result<Option<Account>> {
+    Ok(conn
+        .prepare_cached(&format!(
+            "SELECT {ACCOUNT_COLUMNS} FROM account WHERE uuid = ?1"
+        ))?
+        .query_row([uuid.hyphenated().to_string()], account_row)
+        .optional()?)
 }
 
 pub(crate) fn account(conn: &Connection, id: AccountId) -> Result<Option<Account>> {
@@ -180,17 +194,19 @@ pub(crate) fn ensure_changed(changed: usize, entity: &'static str, id: i64) -> R
 impl WriteTx<'_> {
     // ---- accounts ----------------------------------------------------------------
 
-    /// Creates an account.
+    /// Creates an account with a new random [`Account::uuid`].
     pub fn create_account(&mut self, account: &NewAccount) -> Result<AccountId> {
         self.conn
             .prepare_cached(
-                "INSERT INTO account (kind, name, config_json, ordinal) VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO account (kind, name, config_json, ordinal, uuid)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
             )?
             .execute(params![
                 account.kind,
                 account.name,
                 account.config_json,
-                account.ordinal
+                account.ordinal,
+                Uuid::new_v4().hyphenated().to_string(),
             ])?;
         let id = AccountId(self.conn.last_insert_rowid());
         self.changes.accounts.insert(id);

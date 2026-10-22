@@ -17,6 +17,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
 vault = { workspace = true }
 zeroize = { workspace = true }
 zstd = { workspace = true }
@@ -24,6 +25,9 @@ zstd = { workspace = true }
 # SQLCipher's crypto backend (PLAN §4.17): on Apple targets `bundled-sqlcipher` uses
 # CommonCrypto (no OpenSSL at all); everywhere else OpenSSL is vendored and linked
 # statically so the build doesn't depend on the system libcrypto.
+[target.'cfg(target_vendor = "apple")'.dependencies]
+libc = { workspace = true }
+
 [target.'cfg(not(target_vendor = "apple"))'.dependencies]
 rusqlite = { workspace = true, features = ["bundled-sqlcipher-vendored-openssl"] }
 

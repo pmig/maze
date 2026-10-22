@@ -56,6 +56,12 @@ pub enum Error {
     #[error("database commit failed: {0}")]
     Commit(#[source] Arc<rusqlite::Error>),
 
+    /// The blobs this write references couldn't be made durable (see
+    /// [`BlobStore::persist`](crate::BlobStore::persist)), so the batch transaction it
+    /// was part of was rolled back; nothing of it was stored.
+    #[error("making blobs durable failed: {0}")]
+    BlobsNotDurable(#[source] Arc<Error>),
+
     /// A filesystem operation failed.
     #[error("{context}: {source}")]
     Io {

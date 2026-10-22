@@ -8,7 +8,9 @@ use mazemail_types::{
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use crate::blob::{self, StagedBlob};
-use crate::model::{BodyState, Location, MessageDetail, NewLocation, NewMessage, UpsertOutcome};
+use crate::model::{
+    BodyState, BodySummaryUpdate, Location, MessageDetail, NewLocation, NewMessage, UpsertOutcome,
+};
 use crate::repo::threads::MAX_REFERENCES;
 use crate::{Error, Result, WriteTx};
 
@@ -160,14 +162,24 @@ pub(crate) fn message_by_uid(
         .optional()?)
 }
 
+// `+account_id`: see the lookups in `threads.rs` (without it SQLite scans the account
+// through `message_account`, or every detached message through `message_detached`).
+
+/// Messages with Message-ID `?1` in account `?2`.
+pub(crate) const MESSAGES_BY_RFC_ID: &str =
+    "SELECT id FROM message WHERE rfc_message_id = ?1 AND +account_id = ?2 ORDER BY id";
+
+/// The most recently detached message with Message-ID `?1` in account `?2`.
+pub(crate) const DETACHED_BY_RFC_ID: &str = "SELECT id FROM message
+     WHERE rfc_message_id = ?1 AND +account_id = ?2 AND +detached_at IS NOT NULL
+     ORDER BY detached_at DESC, id DESC LIMIT 1";
+
 pub(crate) fn messages_by_rfc_id(
     conn: &Connection,
     account: AccountId,
     rfc_message_id: &str,
 ) -> Result<Vec<MessageId>> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT id FROM message WHERE rfc_message_id = ?1 AND account_id = ?2 ORDER BY id",
-    )?;
+    let mut stmt = conn.prepare_cached(MESSAGES_BY_RFC_ID)?;
     Ok(stmt
         .query_map(params![rfc_message_id, account.0], |row| {
             row.get(0).map(MessageId)
@@ -344,10 +356,7 @@ impl WriteTx<'_> {
         if let Some(rfc_id) = message.rfc_message_id.as_deref() {
             let detached: Option<i64> = self
                 .conn
-                .prepare_cached(
-                    "SELECT id FROM message WHERE rfc_message_id = ?1 AND account_id = ?2
-                       AND detached_at IS NOT NULL ORDER BY detached_at DESC, id DESC LIMIT 1",
-                )?
+                .prepare_cached(DETACHED_BY_RFC_ID)?
                 .query_row(params![rfc_id, message.account.0], |row| row.get(0))
                 .optional()?;
             if let Some(id) = detached {
@@ -771,11 +780,75 @@ impl WriteTx<'_> {
         Ok(())
     }
 
-    /// Records a staged blob in this transaction (inserting its `blob` row) and keeps
-    /// it pinned until the commit. Methods that take a [`StagedBlob`] call this.
+    /// Applies what the full body says about a stored message (see
+    /// [`BodySummaryUpdate`]): summary fields, attachment flag, body and body state, in
+    /// one statement. Thread and folder aggregates (attachment counts) follow.
+    pub fn update_body_summary(
+        &mut self,
+        message: MessageId,
+        update: &BodySummaryUpdate,
+    ) -> Result<()> {
+        let (thread, stored_blob): (i64, Option<Vec<u8>>) = self
+            .conn
+            .prepare_cached("SELECT thread_id, blob_id FROM message WHERE id = ?1")?
+            .query_row([message.0], |row| Ok((row.get(0)?, row.get(1)?)))
+            .optional()?
+            .ok_or_else(|| Error::not_found("message", message))?;
+        let body_state = match (&update.blob, update.body_state) {
+            (Some(_), state) => Some(state.unwrap_or(BodyState::Full)),
+            (None, Some(state)) if state != BodyState::None && stored_blob.is_none() => {
+                return Err(Error::Invalid("a body state without a body"));
+            }
+            (None, state) => state,
+        };
+        if let Some(blob) = &update.blob {
+            self.register_blob(blob)?;
+        }
+        self.conn
+            .prepare_cached(
+                "UPDATE message SET
+                   snippet = COALESCE(?2, snippet),
+                   size = COALESCE(?3, size),
+                   has_attachments = COALESCE(?4, has_attachments),
+                   bodystructure_json = COALESCE(?5, bodystructure_json),
+                   blob_id = COALESCE(?6, blob_id),
+                   body_state = COALESCE(?7, body_state)
+                 WHERE id = ?1",
+            )?
+            .execute(params![
+                message.0,
+                update.snippet,
+                update.size.map(|s| s as i64),
+                update.has_attachments,
+                update.bodystructure_json,
+                update.blob.as_ref().map(|b| b.id().0),
+                body_state.map(|s| s as i64),
+            ])?;
+        self.touch_thread(ThreadId(thread));
+        self.changes.messages.insert(message);
+        Ok(())
+    }
+
+    /// Sets (or with `None` clears) a message's sender verification report, as JSON
+    /// from the `security` crate.
+    pub fn set_auth_json(&mut self, message: MessageId, json: Option<&str>) -> Result<()> {
+        let changed = self
+            .conn
+            .prepare_cached("UPDATE message SET auth_json = ?2 WHERE id = ?1")?
+            .execute(params![message.0, json])?;
+        if changed == 0 {
+            return Err(Error::not_found("message", message));
+        }
+        self.changes.messages.insert(message);
+        Ok(())
+    }
+
+    /// Records a staged blob in this transaction (inserting its `blob` row), keeps it
+    /// pinned until the commit and makes it durable before the commit (if it isn't
+    /// yet). Methods that take a [`StagedBlob`] call this.
     pub fn register_blob(&mut self, blob: &StagedBlob) -> Result<()> {
         blob::ensure_row(self.conn, blob, self.now)?;
-        self.pins.push(blob.pin());
+        self.blobs_referenced.push(blob.clone());
         Ok(())
     }
 

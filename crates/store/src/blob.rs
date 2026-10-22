@@ -2,12 +2,48 @@
 //!
 //! # Write path
 //!
-//! [`BlobStore::put`] computes the keyed blob id, compresses with zstd (level 3), seals
-//! with the vault's `MZB1` format (the blob id is the associated data), writes to
-//! `mail/tmp/`, fsyncs, and renames into `mail/blobs/<2 hex>/<2 hex>/<id>.mzb`. It
-//! returns a [`StagedBlob`]. The `blob` row is inserted (or its reference count bumped
-//! by a trigger) in the writer transaction that references it, for example
-//! [`WriteTx::set_message_body`](crate::WriteTx::set_message_body).
+//! [`BlobStore::stage`] computes the keyed blob id, compresses with zstd (level 3),
+//! seals with the vault's `MZB1` format (the blob id is the associated data), writes the
+//! result to `mail/tmp/` and hands it to the device with a plain `fsync` (cheap; see
+//! the private `fsync` module). It returns a [`StagedBlob`] that is not durable yet.
+//! [`BlobStore::persist`] then makes any number of staged blobs durable at once:
+//!
+//! 1. **Order**: one full flush (`F_FULLFSYNC` on Apple platforms), so the contents of
+//!    every staged file are on stable storage before any of them gets its final name.
+//! 2. **Install**: rename each file to `mail/blobs/<2 hex>/<2 hex>/<id>.mzb` (creating
+//!    the shard directories), then `fsync` every directory that changed.
+//! 3. **Flush**: one more full flush, after which the renames are durable too.
+//!
+//! So a batch costs two device flushes plus a cheap `fsync` per file and directory,
+//! instead of two device flushes per blob. The `blob` row is inserted (or its reference
+//! count bumped by a trigger) in the writer transaction that references the blob, for
+//! example [`WriteTx::set_message_body`](crate::WriteTx::set_message_body).
+//!
+//! # Crash safety
+//!
+//! The invariant: **a committed row never points at a blob that isn't durably on
+//! disk.** The writer enforces it itself: before it commits a transaction it calls
+//! [`BlobStore::persist`] on every blob the transaction referenced, and if that fails,
+//! it rolls the whole transaction back ([`Error::BlobsNotDurable`]). Callers can persist
+//! earlier (the ingest pipeline does, on its own thread, so the writer finds nothing
+//! left to do), but never have to.
+//!
+//! A crash at any point therefore leaves at most files that no row references:
+//!
+//! - before step 1: complete or torn files in `tmp/`;
+//! - between steps 1 and 3: complete files in `tmp/` and complete files at their final
+//!   names whose renames may or may not survive;
+//! - after step 3 but before the commit: complete orphan files.
+//!
+//! A file only ever gets its final name after its contents are on stable storage, so
+//! whatever is at a final name after a crash is complete. Garbage collection removes
+//! the leftovers ([`GcOptions::full`]). Staging a blob whose final file already exists
+//! skips the write but still syncs the file's directory and flushes in step 3, because
+//! the rename that created it (by another thread, or before a crash of Maze) may not be
+//! durable yet.
+//!
+//! Plain [`BlobStore::put`] stages and persists one blob; [`BlobStore::put_many`] does
+//! a batch.
 //!
 //! # Why garbage collection can't delete a blob that is being referenced
 //!
@@ -16,13 +52,15 @@
 //! dropped unused). The collector runs on the writer thread, so it never interleaves
 //! with a write transaction, and it checks pins under the same lock it holds while
 //! deleting rows and unlinking files. So for every id either the collector sees the pin
-//! and skips it, or [`BlobStore::put`] runs after the file is gone and writes it again.
+//! and skips it, or [`BlobStore::stage`] runs after the file is gone and writes it
+//! again. Staging files are named after the full blob id, so the collector skips those
+//! of pinned blobs too.
 //!
 //! - Rows with `refs = 0` are deleted, then their files.
 //! - Files without a row are deleted only if older than 24 hours (written, but the
 //!   referencing transaction never committed, for example after a crash).
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -34,6 +72,7 @@ use mazemail_types::BlobId;
 use rusqlite::{Connection, OptionalExtension, params};
 use vault::{BlobCipher, BlobIdHasher, OpenReader};
 
+use crate::fsync;
 use crate::layout::{DataLayout, create_private_dir, sharded};
 use crate::{Error, Result};
 
@@ -90,15 +129,30 @@ impl Drop for BlobPin {
     }
 }
 
-/// A blob whose file is on disk but that no committed row references yet.
+/// Where a staged blob is on its way to being durable (shared by its clones).
+#[derive(Debug)]
+enum Stage {
+    /// Written to this file in `tmp/` and pushed to the device, not flushed.
+    Tmp(PathBuf),
+    /// At its final path; the directory entry may not be durable yet.
+    Installed,
+    /// On stable storage under its final path.
+    Durable,
+}
+
+/// A blob written by [`BlobStore::stage`] (or one of the `put` methods) that no
+/// committed row references yet.
 ///
 /// Hand it to a writer method that references it; the store keeps it pinned until that
-/// transaction has committed. Dropping it unused leaves the file for the orphan rule.
+/// transaction has committed, and makes it durable before committing if
+/// [`BlobStore::persist`] hasn't already. Dropping it unused leaves the file for the
+/// orphan rule. Clones share the durability state.
 #[derive(Debug, Clone)]
 pub struct StagedBlob {
     id: BlobId,
     size: u64,
-    pin: BlobPin,
+    _pin: BlobPin,
+    stage: Arc<Mutex<Stage>>,
 }
 
 impl StagedBlob {
@@ -112,9 +166,26 @@ impl StagedBlob {
         self.size
     }
 
-    pub(crate) fn pin(&self) -> BlobPin {
-        self.pin.clone()
+    /// Whether the blob is on stable storage under its final path (after
+    /// [`BlobStore::persist`]). Only then can [`BlobStore::open`] read it.
+    pub fn is_durable(&self) -> bool {
+        matches!(*self.stage(), Stage::Durable)
     }
+
+    fn stage(&self) -> MutexGuard<'_, Stage> {
+        self.stage.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// A step of [`BlobStore::persist`], for crash tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    /// Staged files are flushed; nothing is renamed yet.
+    Ordered,
+    /// One more file got its final name.
+    Renamed,
+    /// Every directory that changed is synced; the final flush is next.
+    DirsSynced,
 }
 
 /// A streaming reader over a stored blob (decrypt, then decompress).
@@ -151,6 +222,9 @@ struct Inner {
     hasher: BlobIdHasher,
     pins: Pins,
     tmp_counter: AtomicU64,
+    /// Serializes [`BlobStore::persist`] calls (they share the device flushes anyway),
+    /// so a staged blob's state only ever changes under this lock.
+    persist_lock: Mutex<()>,
 }
 
 impl std::fmt::Debug for BlobStore {
@@ -170,6 +244,7 @@ impl BlobStore {
                 hasher,
                 pins: Arc::default(),
                 tmp_counter: AtomicU64::new(0),
+                persist_lock: Mutex::new(()),
             }),
         }
     }
@@ -189,28 +264,137 @@ impl BlobStore {
         self.path(id).exists()
     }
 
-    /// Stores `content` (compress, encrypt, tmp, fsync, rename) unless a file with the
-    /// same id already exists, and pins it until it is referenced.
-    pub fn put(&self, content: &[u8]) -> Result<StagedBlob> {
+    /// Writes `content` (compressed, encrypted) to `mail/tmp/` without waiting for the
+    /// device, unless the blob's file already exists, and pins it until it is
+    /// referenced. Cheap enough to call per message from many threads; the expensive
+    /// part is shared by a whole batch in [`BlobStore::persist`] (see the module docs).
+    ///
+    /// The blob isn't readable through [`BlobStore::open`] until it is persisted.
+    pub fn stage(&self, content: &[u8]) -> Result<StagedBlob> {
         let id = self.id_for(content);
         // Pin before looking at the file, so the collector can't remove it in between.
         let pin = BlobPin::new(&self.inner.pins, id);
-        let path = self.path(&id);
-        if !path.exists() {
-            let tmp = self.tmp_path(&id);
-            let result = self
-                .write_sealed(&tmp, &id, content, true)
-                .and_then(|()| install(&tmp, &path, true));
-            if let Err(err) = result {
+        let stage = if self.path(&id).exists() {
+            Stage::Installed
+        } else {
+            let (tmp, file) = self.create_tmp(&id)?;
+            if let Err(err) = self.write_sealed(file, &id, content, true) {
                 let _ = fs::remove_file(&tmp);
                 return Err(err);
             }
-        }
+            Stage::Tmp(tmp)
+        };
         Ok(StagedBlob {
             id,
             size: content.len() as u64,
-            pin,
+            _pin: pin,
+            stage: Arc::new(Mutex::new(stage)),
         })
+    }
+
+    /// Stores `content` durably ([`BlobStore::stage`], then [`BlobStore::persist`]) and
+    /// pins it until it is referenced. For many blobs, [`BlobStore::put_many`] is much
+    /// cheaper.
+    pub fn put(&self, content: &[u8]) -> Result<StagedBlob> {
+        let staged = self.stage(content)?;
+        self.persist([&staged])?;
+        Ok(staged)
+    }
+
+    /// Stores several blobs durably, sharing one round of device flushes.
+    pub fn put_many<'a>(
+        &self,
+        contents: impl IntoIterator<Item = &'a [u8]>,
+    ) -> Result<Vec<StagedBlob>> {
+        let staged = contents
+            .into_iter()
+            .map(|content| self.stage(content))
+            .collect::<Result<Vec<_>>>()?;
+        self.persist(&staged)?;
+        Ok(staged)
+    }
+
+    /// Makes staged blobs durable under their final paths, with two device flushes for
+    /// the whole batch (see the module docs). Blobs that already are durable cost
+    /// nothing. The writer calls this before every commit that references blobs; call it
+    /// yourself to keep that work off the writer thread.
+    ///
+    /// On error some blobs may be durable and others not; calling it again retries the
+    /// rest.
+    pub fn persist<'a>(&self, blobs: impl IntoIterator<Item = &'a StagedBlob>) -> Result<()> {
+        self.persist_with(blobs, |_| Ok(()))
+    }
+
+    /// [`BlobStore::persist`], calling `checkpoint` after each step (tests stop there to
+    /// simulate a crash).
+    fn persist_with<'a>(
+        &self,
+        blobs: impl IntoIterator<Item = &'a StagedBlob>,
+        mut checkpoint: impl FnMut(Step) -> Result<()>,
+    ) -> Result<()> {
+        let _serial = self
+            .inner
+            .persist_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        // Every state that isn't durable yet, once (clones share their state).
+        let mut seen = HashSet::new();
+        let mut to_install: Vec<(&StagedBlob, PathBuf)> = Vec::new();
+        let mut installed: Vec<&StagedBlob> = Vec::new();
+        for blob in blobs {
+            if !seen.insert(Arc::as_ptr(&blob.stage)) {
+                continue;
+            }
+            match &*blob.stage() {
+                Stage::Tmp(tmp) => to_install.push((blob, tmp.clone())),
+                Stage::Installed => installed.push(blob),
+                Stage::Durable => {}
+            }
+        }
+        if to_install.is_empty() && installed.is_empty() {
+            return Ok(());
+        }
+
+        let blobs_dir = self.inner.layout.blobs_dir();
+        let mut dirs = BTreeSet::new();
+        if !to_install.is_empty() {
+            // 1. The staged contents reach stable storage before any final name does.
+            let tmp_dir = open_dir(&self.inner.layout.tmp_dir())?;
+            fsync::order(&tmp_dir).map_err(Error::io("flushing staged blobs"))?;
+            checkpoint(Step::Ordered)?;
+
+            // 2. Final names.
+            for (blob, tmp) in &to_install {
+                let dest = self.path(&blob.id);
+                let shard = dest
+                    .parent()
+                    .ok_or(Error::Invalid("blob path without a parent"))?;
+                create_shard_dirs(&blobs_dir, shard, &mut dirs)?;
+                fs::rename(tmp, &dest).map_err(Error::io("installing a blob"))?;
+                *blob.stage() = Stage::Installed;
+                dirs.insert(shard.to_owned());
+                checkpoint(Step::Renamed)?;
+            }
+        }
+        for blob in &installed {
+            if let Some(shard) = self.path(&blob.id).parent() {
+                dirs.insert(shard.to_owned());
+            }
+        }
+        for dir in &dirs {
+            fsync::push(&open_dir(dir)?).map_err(Error::io("syncing a blob directory"))?;
+        }
+        checkpoint(Step::DirsSynced)?;
+
+        // 3. The renames are durable.
+        fsync::flush(&open_dir(&blobs_dir)?).map_err(Error::io("flushing blobs"))?;
+        for (blob, _) in &to_install {
+            *blob.stage() = Stage::Durable;
+        }
+        for blob in &installed {
+            *blob.stage() = Stage::Durable;
+        }
+        Ok(())
     }
 
     /// Opens blob `id` for streaming reads. [`Error::BlobMissing`] if there's no file.
@@ -227,18 +411,29 @@ impl BlobStore {
         Ok(out)
     }
 
-    fn tmp_path(&self, id: &BlobId) -> PathBuf {
-        let n = self.inner.tmp_counter.fetch_add(1, Ordering::Relaxed);
-        self.inner.layout.tmp_dir().join(format!(
-            "{}-{}-{n}.tmp",
-            &id.to_hex()[..16],
-            std::process::id()
-        ))
+    /// A new staging file `tmp/<id hex>-<pid>-<n>.tmp`. A name can be taken by a
+    /// leftover of an earlier process with the same pid (after a crash); then the next
+    /// number is tried.
+    fn create_tmp(&self, id: &BlobId) -> Result<(PathBuf, File)> {
+        let hex = id.to_hex();
+        let pid = std::process::id();
+        loop {
+            let n = self.inner.tmp_counter.fetch_add(1, Ordering::Relaxed);
+            let path = self
+                .inner
+                .layout
+                .tmp_dir()
+                .join(format!("{hex}-{pid}-{n}.tmp"));
+            match create_private_file(&path) {
+                Ok(file) => return Ok((path, file)),
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(err) => return Err(Error::io("creating a blob file")(err)),
+            }
+        }
     }
 
-    /// zstd → MZB1 seal → `path` (mode 0600), optionally fsynced.
-    fn write_sealed(&self, path: &Path, ad: &BlobId, content: &[u8], sync: bool) -> Result<()> {
-        let file = create_private_file(path).map_err(Error::io("creating a blob file"))?;
+    /// zstd → MZB1 seal → `file`, optionally pushed to the device.
+    fn write_sealed(&self, file: File, ad: &BlobId, content: &[u8], sync: bool) -> Result<()> {
         let sealer = self.inner.cipher.seal_writer(ad, BufWriter::new(file))?;
         let mut encoder = zstd::stream::write::Encoder::new(sealer, ZSTD_LEVEL)
             .map_err(Error::io("starting zstd"))?;
@@ -251,7 +446,7 @@ impl BlobStore {
             .into_inner()
             .map_err(|err| Error::io("writing a blob")(err.into_error()))?;
         if sync {
-            file.sync_all().map_err(Error::io("syncing a blob"))?;
+            fsync::push(&file).map_err(Error::io("syncing a blob"))?;
         }
         Ok(())
     }
@@ -282,10 +477,10 @@ impl BlobStore {
         content: &[u8],
     ) -> Result<()> {
         let cache_id = self.cache_id(blob, kind, renderer_version);
-        let tmp = self.tmp_path(&cache_id);
+        let (tmp, file) = self.create_tmp(&cache_id)?;
         let result = self
-            .write_sealed(&tmp, &cache_id, content, false)
-            .and_then(|()| install(&tmp, &self.cache_path(&cache_id), false));
+            .write_sealed(file, &cache_id, content, false)
+            .and_then(|()| install(&tmp, &self.cache_path(&cache_id)));
         if result.is_err() {
             let _ = fs::remove_file(&tmp);
         }
@@ -427,9 +622,21 @@ impl BlobStore {
         let mut tmp = Vec::new();
         walk_files(&self.inner.layout.tmp_dir(), &mut tmp)?;
         for path in tmp {
-            if older_than(&path, tmp_cutoff) && remove_file_if_exists(&path)? {
+            if !older_than(&path, tmp_cutoff) {
+                continue;
+            }
+            // A staged blob waiting for its commit keeps its file, however old.
+            let pins = lock(&self.inner.pins);
+            let pinned = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.get(..64))
+                .and_then(BlobId::from_hex)
+                .is_some_and(|id| pins.contains_key(&id));
+            if !pinned && remove_file_if_exists(&path)? {
                 report.tmp_deleted += 1;
             }
+            drop(pins);
         }
         Ok(())
     }
@@ -527,20 +734,42 @@ fn read_error(context: &'static str) -> impl FnOnce(io::Error) -> Error {
     }
 }
 
-/// Renames `tmp` to `dest`, creating the shard directories; with `sync`, also fsyncs the
-/// directory so the rename survives a crash.
-fn install(tmp: &Path, dest: &Path, sync: bool) -> Result<()> {
+/// Renames `tmp` to `dest` (a cache entry), creating the shard directories.
+fn install(tmp: &Path, dest: &Path) -> Result<()> {
     let dir = dest
         .parent()
-        .ok_or(Error::Invalid("blob path without a parent"))?;
-    fs::create_dir_all(dir).map_err(Error::io("creating a blob directory"))?;
-    fs::rename(tmp, dest).map_err(Error::io("installing a blob"))?;
-    if sync {
-        File::open(dir)
-            .and_then(|d| d.sync_all())
-            .map_err(Error::io("syncing a blob directory"))?;
+        .ok_or(Error::Invalid("cache path without a parent"))?;
+    fs::create_dir_all(dir).map_err(Error::io("creating a cache directory"))?;
+    fs::rename(tmp, dest).map_err(Error::io("installing a cache entry"))?;
+    Ok(())
+}
+
+/// Creates the missing directories between `root` (which exists) and `shard`, and
+/// records the parent of each one created: its new entry needs syncing.
+fn create_shard_dirs(root: &Path, shard: &Path, changed: &mut BTreeSet<PathBuf>) -> Result<()> {
+    let mut missing = Vec::new();
+    let mut dir = shard;
+    while dir != root && !dir.is_dir() {
+        missing.push(dir);
+        dir = dir
+            .parent()
+            .ok_or(Error::Invalid("blob directory outside the blob store"))?;
+    }
+    for dir in missing.into_iter().rev() {
+        match fs::create_dir(dir) {
+            Ok(()) => {}
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(err) => return Err(Error::io("creating a blob directory")(err)),
+        }
+        if let Some(parent) = dir.parent() {
+            changed.insert(parent.to_owned());
+        }
     }
     Ok(())
+}
+
+fn open_dir(dir: &Path) -> Result<File> {
+    File::open(dir).map_err(Error::io("opening a blob directory"))
 }
 
 fn create_private_file(path: &Path) -> io::Result<File> {
@@ -624,6 +853,149 @@ mod tests {
         assert_eq!(
             fs::read_dir(tmp.path().join("mail/tmp")).unwrap().count(),
             0
+        );
+    }
+
+    #[test]
+    fn staged_blobs_become_readable_when_persisted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let blobs = store(tmp.path());
+        let contents: Vec<Vec<u8>> = (0..5).map(|i| format!("message {i}").into()).collect();
+        let staged: Vec<_> = contents.iter().map(|c| blobs.stage(c).unwrap()).collect();
+        for blob in &staged {
+            assert!(!blob.is_durable());
+            assert!(blobs.pinned(&blob.id()));
+            assert!(matches!(blobs.open(&blob.id()), Err(Error::BlobMissing(_))));
+        }
+        // Clones share their state; a blob listed twice is installed once.
+        let twice: Vec<_> = staged.iter().chain(staged.iter()).cloned().collect();
+        blobs.persist(&twice).unwrap();
+        for (blob, content) in staged.iter().zip(&contents) {
+            assert!(blob.is_durable());
+            assert_eq!(&blobs.read(&blob.id()).unwrap(), content);
+        }
+        assert_eq!(
+            fs::read_dir(tmp.path().join("mail/tmp")).unwrap().count(),
+            0
+        );
+        // Persisting again is free; staging existing content doesn't rewrite it.
+        blobs.persist(&staged).unwrap();
+        let again = blobs.stage(&contents[0]).unwrap();
+        assert!(!again.is_durable());
+        assert_eq!(
+            fs::read_dir(tmp.path().join("mail/tmp")).unwrap().count(),
+            0
+        );
+        blobs.persist([&again]).unwrap();
+        assert!(again.is_durable());
+
+        let many = blobs.put_many([b"a".as_slice(), b"b".as_slice()]).unwrap();
+        assert!(many.iter().all(StagedBlob::is_durable));
+        assert_eq!(blobs.read(&many[1].id()).unwrap(), b"b");
+    }
+
+    /// A minimal `blob` table for running the collector without a store.
+    fn blob_table() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE blob (id BLOB PRIMARY KEY, size INTEGER NOT NULL,
+               created INTEGER NOT NULL, refs INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID;",
+        )
+        .unwrap();
+        conn
+    }
+
+    /// Simulates a crash after each step of `persist` (the process dies: nothing in
+    /// memory survives, files stay as they are), then a restart. Whatever is at a final
+    /// path must be complete, staging the same content again must work, and garbage
+    /// collection must remove the leftovers.
+    #[test]
+    fn a_crash_between_persist_steps_leaves_only_complete_orphans() {
+        let crash_points = [
+            None,
+            Some((Step::Ordered, 1)),
+            Some((Step::Renamed, 1)),
+            Some((Step::Renamed, 3)),
+            Some((Step::DirsSynced, 1)),
+        ];
+        let contents: Vec<Vec<u8>> = (0..3)
+            .map(|i| format!("Subject: {i}\r\n\r\n{}", "body ".repeat(500)).into())
+            .collect();
+        for crash in crash_points {
+            let tmp = tempfile::tempdir().unwrap();
+            {
+                let blobs = store(tmp.path());
+                let staged: Vec<_> = contents.iter().map(|c| blobs.stage(c).unwrap()).collect();
+                if let Some((step, nth)) = crash {
+                    let mut seen = 0;
+                    let result = blobs.persist_with(&staged, |at| {
+                        if at == step {
+                            seen += 1;
+                            if seen == nth {
+                                return Err(Error::Invalid("simulated crash"));
+                            }
+                        }
+                        Ok(())
+                    });
+                    assert!(result.is_err(), "{crash:?}");
+                }
+                assert!(staged.iter().all(|b| !b.is_durable()), "{crash:?}");
+                // The process dies here: no commit, no cleanup.
+            }
+
+            let blobs = store(tmp.path());
+            // Every file at a final name is complete.
+            for content in &contents {
+                let id = blobs.id_for(content);
+                if blobs.exists(&id) {
+                    assert_eq!(&blobs.read(&id).unwrap(), content, "{crash:?}");
+                }
+            }
+            // A new attempt makes everything durable and readable.
+            let staged = blobs.put_many(contents.iter().map(Vec::as_slice)).unwrap();
+            for (blob, content) in staged.iter().zip(&contents) {
+                assert_eq!(&blobs.read(&blob.id()).unwrap(), content, "{crash:?}");
+            }
+            drop(staged);
+            // Nothing references them: the collector removes the files and the staging
+            // leftovers once they are old enough.
+            let conn = blob_table();
+            let mut conn = conn;
+            let report = blobs
+                .collect(
+                    &mut conn,
+                    &GcOptions {
+                        orphans: true,
+                        orphan_min_age: Duration::ZERO,
+                        now: SystemTime::now() + Duration::from_secs(2 * 60 * 60),
+                    },
+                )
+                .unwrap();
+            assert_eq!(report.orphans_deleted, contents.len(), "{crash:?}");
+            let mut left = Vec::new();
+            walk_files(tmp.path(), &mut left).unwrap();
+            assert_eq!(left, Vec::<PathBuf>::new(), "{crash:?}");
+        }
+    }
+
+    #[test]
+    fn staging_files_of_pinned_blobs_survive_collection() {
+        let tmp = tempfile::tempdir().unwrap();
+        let blobs = store(tmp.path());
+        let staged = blobs.stage(b"waiting for a long commit").unwrap();
+        let mut conn = blob_table();
+        let options = GcOptions {
+            orphans: true,
+            orphan_min_age: Duration::ZERO,
+            now: SystemTime::now() + Duration::from_secs(2 * 60 * 60),
+        };
+        assert_eq!(blobs.collect(&mut conn, &options).unwrap().tmp_deleted, 0);
+        blobs.persist([&staged]).unwrap();
+        assert!(staged.is_durable());
+        drop(staged);
+        assert_eq!(
+            blobs.collect(&mut conn, &options).unwrap().orphans_deleted,
+            1
         );
     }
 

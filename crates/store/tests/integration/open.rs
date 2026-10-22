@@ -119,3 +119,27 @@ fn writes_after_close_fail_cleanly() {
     assert!(matches!(err, Error::Closed), "{err:?}");
     assert!(matches!(other.reader(), Err(Error::Closed)));
 }
+
+#[test]
+fn accounts_keep_their_uuid() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = common::open(tmp.path());
+    let a = common::fixture(&store, AccountKind::Imap).account;
+    let b = common::fixture(&store, AccountKind::Gmail).account;
+    let uuid_of = |store: &Store, id| store.reader().unwrap().account(id).unwrap().unwrap().uuid;
+    let (ua, ub) = (uuid_of(&store, a), uuid_of(&store, b));
+    assert_ne!(ua, ub);
+    assert_eq!(ua.get_version_num(), 4);
+    store
+        .write_blocking(move |w| w.update_account(a, "Renamed", "{}", 3))
+        .unwrap();
+    common::close(store);
+
+    let store = common::open(tmp.path());
+    assert_eq!(uuid_of(&store, a), ua);
+    let reader = store.reader().unwrap();
+    assert_eq!(reader.account_by_uuid(ub).unwrap().unwrap().id, b);
+    assert_eq!(reader.account_by_uuid(store::Uuid::nil()).unwrap(), None);
+    drop(reader);
+    common::close(store);
+}

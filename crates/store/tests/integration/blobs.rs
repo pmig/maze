@@ -233,3 +233,65 @@ fn gc_never_deletes_a_blob_a_concurrent_insert_references() {
         assert!(body.starts_with(b"shared content"));
     }
 }
+
+#[test]
+fn the_writer_makes_staged_blobs_durable_before_committing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = common::open(tmp.path());
+    let f = common::fixture(&store, AccountKind::Imap);
+    let staged = store
+        .blobs()
+        .stage(b"From: a@example.com\r\n\r\nstaged")
+        .unwrap();
+    assert!(!staged.is_durable());
+    let (s, m) = (staged.clone(), message(f.account, f.inbox, 1, 1));
+    let id = store
+        .write_blocking(move |w| {
+            let id = w.upsert_message(&m)?.message;
+            w.set_message_body(id, &s, BodyState::Full)?;
+            Ok(id)
+        })
+        .unwrap();
+    assert!(staged.is_durable());
+    let detail = store.reader().unwrap().message(id).unwrap().unwrap();
+    assert_eq!(
+        store.blobs().read(&detail.blob.unwrap()).unwrap(),
+        b"From: a@example.com\r\n\r\nstaged"
+    );
+    common::close(store);
+}
+
+#[test]
+fn a_blob_that_cannot_be_made_durable_rolls_the_commit_back() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = common::open(tmp.path());
+    let f = common::fixture(&store, AccountKind::Imap);
+    let staged = store.blobs().stage(b"doomed").unwrap();
+    // The staging file disappears (a failing disk, a cleaner run amok): the rename
+    // fails, so the row that would point at the blob must not commit.
+    let hex = staged.id().to_hex();
+    for entry in fs::read_dir(store.layout().tmp_dir()).unwrap() {
+        let path = entry.unwrap().path();
+        if path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with(&hex)
+        {
+            fs::remove_file(path).unwrap();
+        }
+    }
+    let m = message(f.account, f.inbox, 1, 1);
+    let err = store
+        .write_blocking(move |w| {
+            let id = w.upsert_message(&m)?.message;
+            w.set_message_body(id, &staged, BodyState::Full)
+        })
+        .unwrap_err();
+    assert!(matches!(err, store::Error::BlobsNotDurable(_)), "{err:?}");
+    let reader = store.reader().unwrap();
+    assert_eq!(reader.folder_uids(f.inbox).unwrap(), Vec::new());
+    drop(reader);
+    common::close(store);
+}

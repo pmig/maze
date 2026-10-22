@@ -421,6 +421,45 @@ fn headers_first_then_body() {
 }
 
 #[test]
+fn the_body_corrects_the_header_summary() {
+    let f = fixture(AccountKind::Imap);
+    let raw = ATTACHMENT_MAIL.as_bytes();
+    let header_end = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+    // A location without a UID (not findable by an upsert) and a summary that missed
+    // the attachment.
+    let location = NewLocation::new(f.inbox, None, Flags::empty());
+    let headers = f
+        .ingestor
+        .ingest_headers_blocking(
+            MessageMeta::new(f.account, location),
+            &raw[..header_end],
+            BodySummary::default(),
+        )
+        .unwrap();
+    let reader = f.store.reader().unwrap();
+    let thread_has_attachments = || {
+        reader
+            .thread_rows(&[headers.thread], Some(f.inbox))
+            .unwrap()[0]
+            .has_attachments
+    };
+    assert!(!thread_has_attachments());
+
+    f.ingestor
+        .attach_body_blocking(headers.message, raw)
+        .unwrap();
+    let detail = reader.message(headers.message).unwrap().unwrap();
+    assert!(detail.has_attachments);
+    assert_eq!(detail.size, Some(raw.len() as u64));
+    assert!(detail.snippet.as_deref().unwrap().starts_with("Hallo Ben"));
+    assert!(detail.bodystructure_json.is_some());
+    assert!(thread_has_attachments());
+    assert!(f.sink.get(headers.message).unwrap().has_attachment);
+    drop(reader);
+    close(f.store);
+}
+
+#[test]
 fn rejects_messages_without_locations() {
     let f = fixture(AccountKind::Imap);
     let mut m = meta(&f, f.inbox, 1);
@@ -529,8 +568,9 @@ fn perf() {
         close(f.store);
     }
 
-    // Where prepare time goes: parsing alone, and blob writes alone (sequential and
-    // from 8 threads; each put fsyncs).
+    // Where the time goes: parsing alone, blob writes alone (`put` makes each blob
+    // durable on its own; `stage` + `persist` share the flushes of a batch), sequential
+    // and from 8 threads.
     let raw = mail("p@x", "s", "", &"Lorem ipsum dolor sit amet. ".repeat(80));
     let t = Instant::now();
     for _ in 0..1000 {
@@ -538,26 +578,43 @@ fn perf() {
     }
     println!("parse: {:.1} µs/message", t.elapsed().as_secs_f64() * 1e3);
     let f = fixture(AccountKind::Imap);
+    let unique = |n: u32| {
+        let mut unique = raw.clone();
+        unique.extend_from_slice(&n.to_le_bytes());
+        unique
+    };
     let t = Instant::now();
     for i in 0..200u32 {
-        let mut unique = raw.clone();
-        unique.extend_from_slice(&i.to_le_bytes());
-        f.store.blobs().put(&unique).unwrap();
+        f.store.blobs().put(&unique(i)).unwrap();
     }
     println!(
         "blob put, 1 thread: {:.2} ms/blob",
         t.elapsed().as_secs_f64() * 1e3 / 200.0
     );
     let t = Instant::now();
+    for chunk in 0..10u32 {
+        let staged: Vec<_> = (0..200u32)
+            .map(|i| {
+                f.store
+                    .blobs()
+                    .stage(&unique(1000 + chunk * 200 + i))
+                    .unwrap()
+            })
+            .collect();
+        f.store.blobs().persist(&staged).unwrap();
+    }
+    println!(
+        "blob stage + persist per 200, 1 thread: {:.0} µs/blob",
+        t.elapsed().as_secs_f64() * 1e6 / 2000.0
+    );
+    let t = Instant::now();
     std::thread::scope(|scope| {
         for thread in 0..8u32 {
             let blobs = f.store.blobs().clone();
-            let raw = raw.clone();
+            let unique = &unique;
             scope.spawn(move || {
                 for i in 0..100u32 {
-                    let mut unique = raw.clone();
-                    unique.extend_from_slice(&(thread * 1000 + i + 10_000).to_le_bytes());
-                    blobs.put(&unique).unwrap();
+                    blobs.put(&unique(thread * 1000 + i + 10_000)).unwrap();
                 }
             });
         }
@@ -566,5 +623,79 @@ fn perf() {
         "blob put, 8 threads: {:.0} blobs/s",
         800.0 / t.elapsed().as_secs_f64()
     );
+    close(f.store);
+}
+
+/// Commit time must stay flat as the account grows: every message looks its thread up
+/// by Message-ID, and a lookup that scans the account makes ingest quadratic. Ingests
+/// 50,000 header-only messages (a quarter of them thread roots, the rest replying to
+/// their root) in batches of 500 and prints the time per 5,000. Run with
+/// `cargo nextest run -p ingest --release --run-ignored only perf_scaling --no-capture`.
+#[test]
+#[ignore = "performance measurement"]
+fn perf_scaling() {
+    const N: u32 = 50_000;
+    const CHUNK: u32 = 5_000;
+    const BATCH: u32 = 500;
+    let f = fixture(AccountKind::Imap);
+    // `MemoryIndexSink` replaces documents by id with a linear scan; keep it out of the
+    // measurement.
+    let ingestor = Ingestor::new(f.store.clone());
+    let mut chunk_times = Vec::new();
+    let started = Instant::now();
+    for chunk in 0..N / CHUNK {
+        let t = Instant::now();
+        for batch in 0..CHUNK / BATCH {
+            let first = chunk * CHUNK + batch * BATCH;
+            let prepared: Vec<_> = (first..first + BATCH)
+                .map(|i| {
+                    let root = i - i % 4;
+                    let refs = if i == root {
+                        String::new()
+                    } else {
+                        format!("In-Reply-To: <scale-{root}@x>\r\nReferences: <scale-{root}@x>\r\n")
+                    };
+                    let headers = format!(
+                        "Message-ID: <scale-{i}@x>\r\nSubject: Thread {root}\r\n{refs}\r\n"
+                    );
+                    ingestor
+                        .prepare_headers(
+                            meta(&f, f.inbox, i + 1),
+                            headers.as_bytes(),
+                            BodySummary::default(),
+                        )
+                        .unwrap()
+                })
+                .collect();
+            for result in ingestor.commit_blocking(prepared) {
+                result.unwrap();
+            }
+        }
+        let elapsed = t.elapsed();
+        println!(
+            "messages {:>6}–{:>6}: {elapsed:.2?} ({:.0} µs/message)",
+            chunk * CHUNK,
+            (chunk + 1) * CHUNK,
+            elapsed.as_secs_f64() * 1e6 / f64::from(CHUNK)
+        );
+        chunk_times.push(elapsed);
+    }
+    println!(
+        "{N} messages in {:.2?} ({:.0} msg/s)",
+        started.elapsed(),
+        f64::from(N) / started.elapsed().as_secs_f64()
+    );
+    let reader = f.store.reader().unwrap();
+    assert_eq!(
+        reader
+            .threads_for_rfc_ids(f.account, &["scale-0@x", "scale-49996@x"])
+            .unwrap()
+            .len(),
+        2
+    );
+    drop(reader);
+    // Linear: the last 5,000 cost about what the first did (quadratic was 10×+).
+    let (first, last) = (chunk_times[0], chunk_times[chunk_times.len() - 1]);
+    assert!(last < first * 3, "first {first:?}, last {last:?}");
     close(f.store);
 }
