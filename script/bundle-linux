@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# Build the Linux release tarball (PLAN §4.15, §4.16), laid out like Zed's
+# ~/.local/zed.app so the updater can swap the whole folder in one step:
+#
+#   mazemail.app/
+#   ├─ bin/mazemail                                    GUI and CLI are the same binary
+#   └─ share/
+#      ├─ applications/dev.mazemail.maze.desktop       Name=Maze, mailto handler
+#      └─ icons/hicolor/512x512/apps/dev.mazemail.maze.png   (if assets/icons/maze.png exists)
+#
+# Output: <out>/Maze-<version>-linux-<arch>.tar.zst
+#
+# Usage: script/bundle-linux [options]
+#   --target <triple>      Rust target (default: the host's linux-gnu triple)
+#   --binary <path>        use a prebuilt binary instead of running cargo
+#   --output-dir <dir>     default: dist
+#   -h, --help
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$repo_root"
+
+usage() { sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; }
+
+target=""
+binary=""
+out="dist"
+
+while [ "$#" -gt 0 ]; do
+  case $1 in
+    --target) target=${2:?missing value for --target}; shift 2 ;;
+    --binary) binary=${2:?missing value for --binary}; shift 2 ;;
+    --output-dir) out=${2:?missing value for --output-dir}; shift 2 ;;
+    -h | --help) usage; exit 0 ;;
+    *) echo "error: unknown option $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+if [ -z "$target" ]; then
+  case $(uname -m) in
+    x86_64) target=x86_64-unknown-linux-gnu ;;
+    arm64 | aarch64) target=aarch64-unknown-linux-gnu ;;
+    *) echo "error: unsupported host architecture $(uname -m)" >&2; exit 1 ;;
+  esac
+fi
+case $target in
+  x86_64-unknown-linux-gnu) arch=x86_64 ;;
+  aarch64-unknown-linux-gnu) arch=aarch64 ;;
+  *) echo "error: unsupported target $target" >&2; exit 1 ;;
+esac
+
+version=$(tr -d '[:space:]' < version.txt)
+if [ -z "$version" ]; then
+  echo "error: version.txt is empty" >&2
+  exit 1
+fi
+
+if [ -z "$binary" ]; then
+  cargo build --release --locked --target "$target" --package mazemail
+  binary="target/$target/release/mazemail"
+fi
+if [ ! -x "$binary" ]; then
+  echo "error: binary $binary not found or not executable" >&2
+  exit 1
+fi
+if ! command -v zstd >/dev/null 2>&1; then
+  echo "error: zstd not found in PATH" >&2
+  exit 1
+fi
+
+stage="$out/linux-$arch"
+app="$stage/mazemail.app"
+rm -rf "$app"
+mkdir -p "$app/bin" "$app/share/applications"
+
+cp "$binary" "$app/bin/mazemail"
+chmod 755 "$app/bin/mazemail"
+
+# The installer (and the updater) rewrite Exec to the absolute install path.
+cat > "$app/share/applications/dev.mazemail.maze.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Maze
+GenericName=Email Client
+Comment=Local-first email client
+Exec=mazemail %U
+Icon=dev.mazemail.maze
+Terminal=false
+Categories=Network;Email;Office;
+MimeType=x-scheme-handler/mailto;
+StartupWMClass=dev.mazemail.maze
+StartupNotify=true
+DESKTOP
+
+if [ -f assets/icons/maze.png ]; then
+  icon_dir="$app/share/icons/hicolor/512x512/apps"
+  mkdir -p "$icon_dir"
+  cp assets/icons/maze.png "$icon_dir/dev.mazemail.maze.png"
+fi
+
+mkdir -p "$out"
+tarball="$out/Maze-${version}-linux-${arch}.tar.zst"
+rm -f "$tarball"
+
+tar_opts=()
+if tar --version 2>/dev/null | grep -q 'GNU tar'; then
+  tar_opts=(--owner=0 --group=0 --numeric-owner --sort=name)
+fi
+tar -C "$stage" ${tar_opts[@]+"${tar_opts[@]}"} -cf - mazemail.app | zstd -19 -T0 -q -o "$tarball"
+
+echo "$tarball"

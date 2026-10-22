@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# Generate the signed update manifests for one release (PLAN §4.15, §4.16).
+#
+# Writes <pages-dir>/<channel>/<os>-<arch>.json for every release artifact found in
+# <asset-dir>. A stable release is also written to the preview channel when it is
+# newer than the manifest already published there. A manifest is only written when the
+# release is not older than the one already published for that channel, so a patch
+# release from a maintenance branch never downgrades the channel.
+#
+# This script does not touch git; the release workflow commits and pushes <pages-dir>.
+#
+# Usage: script/generate-manifests
+#
+# Environment:
+#   TAG          release tag, equal to the version, e.g. 0.2.0-alpha.3 (required)
+#   CHANNEL      preview | stable (required)
+#   KEY_FILE     file with the Ed25519 signing key, passed to xtask (required)
+#   ASSET_DIR    directory holding the uploaded release artifacts (required)
+#   PAGES_DIR    checkout of the gh-pages branch (required)
+#   COMMIT       commit the release was built from (default: git rev-parse --short=7 HEAD)
+#   REPO         GitHub repository (default: $GITHUB_REPOSITORY, else pmig/mazemail)
+#   SKIP_MACOS   set to 1 to skip macOS manifests, e.g. when the build was not signed
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$repo_root"
+
+: "${TAG:?TAG is required}"
+: "${CHANNEL:?CHANNEL is required}"
+: "${KEY_FILE:?KEY_FILE is required}"
+: "${ASSET_DIR:?ASSET_DIR is required}"
+: "${PAGES_DIR:?PAGES_DIR is required}"
+repo=${REPO:-${GITHUB_REPOSITORY:-pmig/mazemail}}
+commit=${COMMIT:-$(git rev-parse --short=7 HEAD)}
+skip_macos=${SKIP_MACOS:-0}
+
+case $CHANNEL in
+  preview | stable) ;;
+  *) echo "error: CHANNEL must be preview or stable, got '$CHANNEL'" >&2; exit 1 ;;
+esac
+
+base_url="https://github.com/$repo/releases/download/$TAG"
+notes_url="https://github.com/$repo/releases/tag/$TAG"
+published=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Version of the manifest currently published for <channel>/<platform>, empty if none.
+published_version() {
+  local file="$PAGES_DIR/$1/$2.json"
+  if [ -f "$file" ]; then
+    sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$file" | head -n1
+  fi
+}
+
+# True if the release should replace what is published for <channel>/<platform>.
+should_publish() {
+  local current
+  current=$(published_version "$1" "$2")
+  [ -z "$current" ] && return 0
+  ! script/semver-gt "$current" "$TAG"
+}
+
+write_manifest() {
+  local channel=$1 os=$2 arch=$3 asset=$4
+  mkdir -p "$PAGES_DIR/$channel"
+  cargo xtask release-manifest \
+    --version "$TAG" \
+    --channel "$channel" \
+    --os "$os" \
+    --arch "$arch" \
+    --commit "$commit" \
+    --published "$published" \
+    --url "$base_url/$asset" \
+    --file "$ASSET_DIR/$asset" \
+    --notes-url "$notes_url" \
+    --key-file "$KEY_FILE" \
+    --output "$PAGES_DIR/$channel/$os-$arch.json"
+  echo "wrote $channel/$os-$arch.json for $TAG"
+}
+
+count=0
+for platform in macos-aarch64 macos-x86_64 linux-x86_64 linux-aarch64; do
+  os=${platform%-*}
+  arch=${platform#*-}
+  if [ "$os" = macos ]; then
+    asset="Maze-${TAG}-macos-${arch}.app.tar.zst"
+    [ "$skip_macos" = 1 ] && { echo "skipping $platform (SKIP_MACOS=1)"; continue; }
+  else
+    asset="Maze-${TAG}-linux-${arch}.tar.zst"
+  fi
+  if [ ! -f "$ASSET_DIR/$asset" ]; then
+    echo "error: missing release artifact $ASSET_DIR/$asset" >&2
+    exit 1
+  fi
+
+  if should_publish "$CHANNEL" "$platform"; then
+    write_manifest "$CHANNEL" "$os" "$arch" "$asset"
+    count=$((count + 1))
+  else
+    echo "skipping $CHANNEL/$platform: $(published_version "$CHANNEL" "$platform") is newer than $TAG"
+  fi
+
+  # Preview users must never fall behind stable (PLAN §4.15).
+  if [ "$CHANNEL" = stable ]; then
+    current=$(published_version preview "$platform")
+    if [ -z "$current" ] || script/semver-gt "$TAG" "$current"; then
+      write_manifest preview "$os" "$arch" "$asset"
+      count=$((count + 1))
+    fi
+  fi
+done
+
+echo "$count manifest(s) written"

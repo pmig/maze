@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Pack a Maze.app bundle into the two macOS release artifacts:
+#   <out>/Maze-<version>-macos-<arch>.app.tar.zst   (consumed by the auto-updater)
+#   <out>/Maze-<version>-macos-<arch>.dmg           (first install, with /Applications link)
+#
+# Usage: script/package-mac <path/to/Maze.app> <version> <arch> <out-dir>
+#
+# Called by script/bundle-mac, and again by the release workflow after the bundle
+# was signed, notarized and stapled.
+set -euo pipefail
+
+if [ "$#" -ne 4 ]; then
+  echo "usage: ${0##*/} <Maze.app> <version> <arch> <out-dir>" >&2
+  exit 2
+fi
+
+app=$1
+version=$2
+arch=$3
+out=$4
+
+if [ ! -d "$app/Contents" ]; then
+  echo "error: $app is not an app bundle" >&2
+  exit 1
+fi
+
+mkdir -p "$out"
+name="Maze-${version}-macos-${arch}"
+tarball="$out/$name.app.tar.zst"
+dmg="$out/$name.dmg"
+rm -f "$tarball" "$dmg"
+
+app_dir=$(cd "$(dirname "$app")" && pwd)
+app_name=$(basename "$app")
+
+# The updater extracts this next to the installed app, so Maze.app is the only
+# top-level entry. COPYFILE_DISABLE avoids AppleDouble (._*) files.
+if ! command -v zstd >/dev/null 2>&1; then
+  echo "error: zstd not found in PATH (preinstalled on GitHub runners)" >&2
+  exit 1
+fi
+COPYFILE_DISABLE=1 tar -C "$app_dir" -cf - "$app_name" | zstd -19 -T0 -q -o "$tarball"
+
+staging=$(mktemp -d "${TMPDIR:-/tmp}/maze-dmg.XXXXXX")
+trap 'rm -rf "$staging"' EXIT
+# ditto preserves signatures, extended attributes and the stapled ticket.
+ditto "$app" "$staging/$app_name"
+ln -s /Applications "$staging/Applications"
+hdiutil create -quiet -volname "Maze" -srcfolder "$staging" -fs HFS+ -format UDZO -ov "$dmg"
+
+echo "$tarball"
+echo "$dmg"
