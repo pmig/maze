@@ -20,14 +20,10 @@
 //! # Sender verification
 //!
 //! The [`AuthReport`] comes from `message.auth_json` (written by sync from trusted
-//! provider headers, or by an earlier check), else from the encrypted cache, else it is
-//! computed lazily in the background with [`security::Verifier`] and persisted, and the
-//! view says [`AuthStatus::Pending`] until then. Reports with temporary errors or an
-//! older schema are recomputed.
-//!
-//! The store has no setter for `auth_json` yet, so a computed report is written through
-//! [`store::WriteTx::upsert_message`] for messages the store can identify (a Gmail
-//! message id or a server UID) and to the cache (kind `"auth"`) otherwise.
+//! provider headers, or by an earlier check), else it is computed lazily in the
+//! background with [`security::Verifier`] and persisted with
+//! [`store::WriteTx::set_auth_json`], and the view says [`AuthStatus::Pending`] until
+//! then. Reports with temporary errors or an older schema are recomputed.
 
 use std::sync::Arc;
 
@@ -38,9 +34,7 @@ use security::AuthReport;
 use security::phishing::{KnownContacts, Warning, normalize_display_name};
 use serde::{Deserialize, Serialize};
 use settings::RemoteContentPolicy;
-use store::{
-    BlobStore, MessageDetail, NewLocation, NewMessage, Queries, Reader, Store, ThreadAssignment,
-};
+use store::{BlobStore, MessageDetail, Queries, Reader, Store};
 
 use crate::{Error, Result};
 
@@ -49,9 +43,6 @@ pub const RENDERER_VERSION: u32 = 1;
 
 /// Cache kind of rendered bodies.
 pub(crate) const READER_CACHE_KIND: &str = "reader";
-
-/// Cache kind of sender verification reports that couldn't go into the database.
-pub(crate) const AUTH_CACHE_KIND: &str = "auth";
 
 /// A rendered body, as cached.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -223,84 +214,31 @@ pub(crate) fn load_rendered(
     Ok(Some((body, RenderSource::Rendered)))
 }
 
-/// The best stored verification report: the database's, else the cached one, unless
-/// it should be recomputed.
-pub(crate) fn stored_auth(blobs: &BlobStore, detail: &MessageDetail) -> Option<AuthReport> {
-    let from_db = detail
+/// The stored verification report, unless it should be recomputed.
+pub(crate) fn stored_auth(detail: &MessageDetail) -> Option<AuthReport> {
+    detail
         .auth_json
         .as_deref()
         .and_then(|json| serde_json::from_str::<AuthReport>(json).ok())
-        .filter(|report| !report.needs_recheck());
-    from_db.or_else(|| {
-        let blob = detail.blob?;
-        let bytes = blobs.cache_get(&blob, AUTH_CACHE_KIND, security::AUTH_REPORT_SCHEMA)?;
-        serde_json::from_slice::<AuthReport>(&bytes)
-            .ok()
-            .filter(|report| !report.needs_recheck())
-    })
+        .filter(|report| !report.needs_recheck())
 }
 
-/// Persists a computed report: into `message.auth_json` when the store can identify the
-/// message by Gmail id or UID, else into the cache. Returns whether it went into the
-/// database.
+/// Persists a computed report into `message.auth_json`, replacing a stale one. A
+/// message deleted in the meantime is not an error.
 pub(crate) async fn persist_auth(
     store: &Store,
-    detail: &MessageDetail,
+    message: MessageId,
     report: &AuthReport,
-) -> Result<bool> {
+) -> Result<()> {
     let json = serde_json::to_string(report)
         .map_err(|err| Error::io("encoding a verification report")(err.into()))?;
-    let id = detail.id;
-    let db_json = json.clone();
-    let stored = store
-        .write(move |w| {
-            let Some(current) = w.message(id)? else {
-                return Ok(false);
-            };
-            if current.auth_json.is_some() {
-                // `upsert_message` only fills empty fields; a stale report stays and the
-                // fresh one goes to the cache.
-                return Ok(false);
-            }
-            let location = current.locations.iter().find(|l| l.uid.is_some());
-            if current.gm_msgid.is_none() && location.is_none() {
-                return Ok(false);
-            }
-            let mut update = NewMessage::new(current.account, current.date);
-            update.rfc_message_id = current.rfc_message_id.clone();
-            update.gm_msgid = current.gm_msgid;
-            update.auth_json = Some(db_json);
-            update.thread = ThreadAssignment::Existing(current.thread);
-            update.locations = location
-                .map(|l| {
-                    vec![NewLocation {
-                        folder: l.folder,
-                        uid: l.uid,
-                        modseq: l.modseq,
-                        flags: l.flags,
-                        keywords: l.keywords.clone(),
-                    }]
-                })
-                .unwrap_or_default();
-            let outcome = w.upsert_message(&update)?;
-            if outcome.created || outcome.message != id {
-                // Rolls the job back: this must only ever update the same message.
-                return Err(store::Error::Invalid(
-                    "verification report matched another message",
-                ));
-            }
-            Ok(true)
+    store
+        .write(move |w| match w.set_auth_json(message, Some(&json)) {
+            Err(store::Error::NotFound { .. }) => Ok(()),
+            other => other,
         })
         .await?;
-    if !stored && let Some(blob) = detail.blob {
-        store.blobs().cache_put(
-            &blob,
-            AUTH_CACHE_KIND,
-            security::AUTH_REPORT_SCHEMA,
-            json.as_bytes(),
-        )?;
-    }
-    Ok(stored)
+    Ok(())
 }
 
 /// Known contacts from the address book, for display-name spoofing checks.

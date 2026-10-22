@@ -22,11 +22,28 @@
 //!   while the writer writes.
 //! - **Changes.** After every commit, a [`ChangeSet`] goes out on
 //!   [`Store::subscribe`], for `mazemail_core`'s event batches.
-//! - **Blobs** are written by the caller's thread ([`BlobStore::put`]) and referenced
-//!   in a write job; garbage collection runs on the writer thread (see [`blob`]).
+//! - **Blobs** are staged by the caller's thread ([`BlobStore::stage`]) and referenced
+//!   in a write job. They become durable in batches ([`BlobStore::persist`], two device
+//!   flushes per batch): by the caller, or at the latest by the writer right before the
+//!   commit, so a committed row never points at a blob that isn't on stable storage.
+//!   Garbage collection runs on the writer thread (see [`blob`]).
 //!
 //! # Data model notes
 //!
+//! - **Schema** v1 is the base schema (`migrations/main/0001_schema_v1.sql`); v2 adds
+//!   `account.uuid`. Migrations only ever add files; opening an older database backs it
+//!   up first (see [`MigrationReport`]).
+//! - **Accounts** have a stable [`Account::uuid`] (random v4, unique, immutable, never
+//!   reused) besides the numeric id; keychain secrets are keyed by it (`auth` crate).
+//!   [`Queries::account_by_uuid`] looks it up.
+//! - **Bodies**: header-first sync stores a message without a body; when the body
+//!   arrives, [`WriteTx::update_body_summary`] sets the body and replaces what the
+//!   headers could only guess (snippet, size, attachment flag, body structure), keeping
+//!   the thread and folder attachment counts right. [`WriteTx::set_message_body`] only
+//!   points the message at a blob.
+//! - **Sender verification** reports live in `message.auth_json`
+//!   ([`WriteTx::set_auth_json`]); an upsert only fills it if empty.
+//! - **Blobs** referenced by a committed row are always durable (see [`blob`]).
 //! - **Flags are per location** (IMAP flags belong to the copy in each mailbox). A
 //!   message's effective flags ([`effective_flags`]) are `\Seen` only if every location
 //!   is seen, any other flag if some location has it. Folder counts and
@@ -42,6 +59,10 @@
 //! - **Search**: the index holds only immutable fields; [`Queries::filter_message_ids`]
 //!   applies folder, flag, tag and role conditions to candidate ids, and
 //!   [`Queries::message_ids_in_scope`] turns narrow scopes into id sets.
+//! - **Message-ID lookups** (threading, detached messages) go through the
+//!   `message_rfcid` index and filter by account afterwards (`+account_id` in the SQL):
+//!   left to itself, SQLite without statistics scans the whole account through
+//!   `message_account`, which made ingest quadratic. A unit test pins the query plans.
 //!
 //! # SQLCipher crypto backend
 //!
@@ -95,6 +116,10 @@ pub mod blob;
 mod changes;
 mod conn;
 mod error;
+// The only module with `unsafe` code: `fsync` and `fcntl` calls into libc on Apple
+// platforms.
+#[allow(unsafe_code)]
+mod fsync;
 mod layout;
 mod migrate;
 mod model;
@@ -117,3 +142,6 @@ pub use repo::ops::{MAX_OP_ATTEMPTS, retry_backoff_secs};
 pub use sendlog::SendLog;
 pub use store::{Store, StoreConfig};
 pub use writer::WriteTx;
+
+/// The type of [`Account::uuid`], re-exported.
+pub use uuid::Uuid;

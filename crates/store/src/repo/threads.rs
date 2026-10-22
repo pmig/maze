@@ -37,6 +37,28 @@ pub(crate) const MAX_REFERENCES: usize = 64;
 /// Participants kept per thread row.
 const MAX_PARTICIPANTS: usize = 8;
 
+// Lookups by Message-ID. `+m.account_id` keeps SQLite from using `message_account`
+// for the account filter: without `ANALYZE` statistics it rates that index as good as
+// `message_rfcid` and then scans every message of the account for each id, which made
+// ingest quadratic in the size of the account. The unary `+` makes the term
+// unindexable, so the planner looks the id up in `message_rfcid` and filters the few
+// matches by account. `query_plans_use_the_selective_index` pins the plans.
+
+/// Threads of messages with one of the ids in `rarray(?1)`, in account `?2`.
+const THREADS_BY_RFC_ID: &str = "SELECT DISTINCT m.thread_id FROM rarray(?1) x
+     CROSS JOIN message m ON m.rfc_message_id = x.value WHERE +m.account_id = ?2";
+
+/// Threads of messages that refer to one of the ids in `rarray(?1)`, in account `?2`.
+const THREADS_REFERRING_TO: &str = "SELECT DISTINCT m.thread_id FROM rarray(?1) x
+     CROSS JOIN message_ref r ON r.rfc_id = x.value
+     CROSS JOIN message m ON m.id = r.message_id WHERE m.account_id = ?2";
+
+const THREAD_BY_GM_THRID: &str =
+    "SELECT thread_id FROM message WHERE account_id = ?1 AND gm_thrid = ?2 LIMIT 1";
+
+const THREAD_BY_SUBJECT: &str = "SELECT id FROM thread WHERE account_id = ?1 AND subject_key = ?2
+       AND last_date >= ?3 ORDER BY last_date DESC LIMIT 1";
+
 pub(crate) fn text_array<'a>(values: impl IntoIterator<Item = &'a str>) -> Rc<Vec<Value>> {
     Rc::new(
         values
@@ -62,18 +84,11 @@ pub(crate) fn threads_for_rfc_ids(
         return Ok(threads);
     }
     let ids = text_array(rfc_ids.iter().copied());
-    let mut direct = conn.prepare_cached(
-        "SELECT DISTINCT m.thread_id FROM rarray(?1) x
-         CROSS JOIN message m ON m.rfc_message_id = x.value WHERE m.account_id = ?2",
-    )?;
+    let mut direct = conn.prepare_cached(THREADS_BY_RFC_ID)?;
     for thread in direct.query_map(params![ids, account.0], |row| row.get(0))? {
         threads.insert(ThreadId(thread?));
     }
-    let mut referring = conn.prepare_cached(
-        "SELECT DISTINCT m.thread_id FROM rarray(?1) x
-         CROSS JOIN message_ref r ON r.rfc_id = x.value
-         CROSS JOIN message m ON m.id = r.message_id WHERE m.account_id = ?2",
-    )?;
+    let mut referring = conn.prepare_cached(THREADS_REFERRING_TO)?;
     for thread in referring.query_map(params![ids, account.0], |row| row.get(0))? {
         threads.insert(ThreadId(thread?));
     }
@@ -86,9 +101,7 @@ pub(crate) fn thread_for_gm_thrid(
     gm_thrid: u64,
 ) -> Result<Option<ThreadId>> {
     Ok(conn
-        .prepare_cached(
-            "SELECT thread_id FROM message WHERE account_id = ?1 AND gm_thrid = ?2 LIMIT 1",
-        )?
+        .prepare_cached(THREAD_BY_GM_THRID)?
         .query_row(params![account.0, gm_thrid as i64], |row| row.get(0))
         .optional()?
         .map(ThreadId))
@@ -274,10 +287,7 @@ impl WriteTx<'_> {
                     && let Some(key) = message.subject_key.as_deref().filter(|k| !k.is_empty())
                     && let Some(thread) = self
                         .conn
-                        .prepare_cached(
-                            "SELECT id FROM thread WHERE account_id = ?1 AND subject_key = ?2
-                               AND last_date >= ?3 ORDER BY last_date DESC LIMIT 1",
-                        )?
+                        .prepare_cached(THREAD_BY_SUBJECT)?
                         .query_row(
                             params![message.account.0, key, message.date - SUBJECT_WINDOW_SECS],
                             |row| row.get::<_, i64>(0),
@@ -591,5 +601,49 @@ impl WriteTx<'_> {
             ])?;
         self.changes.threads.insert(thread);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::conn::{self, Access};
+    use crate::repo::messages::{DETACHED_BY_RFC_ID, MESSAGES_BY_RFC_ID};
+
+    /// The plan's detail lines, with every parameter bound to NULL.
+    fn plan(conn: &Connection, sql: &str) -> String {
+        let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+        for i in 1..=stmt.parameter_count() {
+            stmt.raw_bind_parameter(i, rusqlite::types::Null).unwrap();
+        }
+        let mut rows = stmt.raw_query();
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().unwrap() {
+            out.push(row.get::<_, String>(3).unwrap());
+        }
+        out.join(" | ")
+    }
+
+    /// Threading looks messages up by Message-ID once or more per ingested message; a
+    /// lookup that scans the account makes ingest quadratic.
+    #[test]
+    fn query_plans_use_the_selective_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let key = vault::MasterKey::from_bytes(vault::KeyId::FIRST, [1; vault::KEY_LEN])
+            .sqlcipher_pragma_key();
+        let mut c = conn::open(&tmp.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
+        crate::migrate::migrate_main(&mut c, &key, tmp.path(), "test").unwrap();
+        for (sql, index) in [
+            (THREADS_BY_RFC_ID, "message_rfcid"),
+            (THREADS_REFERRING_TO, "PRIMARY KEY (rfc_id=?)"),
+            (MESSAGES_BY_RFC_ID, "message_rfcid"),
+            (DETACHED_BY_RFC_ID, "message_rfcid"),
+            (THREAD_BY_GM_THRID, "message_gm_thread"),
+            (THREAD_BY_SUBJECT, "thread_subject"),
+        ] {
+            let plan = plan(&c, sql);
+            assert!(plan.contains(index), "{sql}\n=> {plan}");
+            assert!(!plan.contains("message_account"), "{sql}\n=> {plan}");
+        }
     }
 }

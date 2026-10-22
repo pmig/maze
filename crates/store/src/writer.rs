@@ -32,7 +32,7 @@ use mazemail_types::ThreadId;
 use rusqlite::Connection;
 use tokio::sync::{broadcast, oneshot};
 
-use crate::blob::{BlobPin, BlobStore, GcOptions, GcReport};
+use crate::blob::{BlobStore, GcOptions, GcReport, StagedBlob};
 use crate::changes::ChangeSet;
 use crate::{Error, Result};
 
@@ -63,7 +63,25 @@ pub(crate) enum Command {
 /// A job's result, held until the batch commits or fails.
 pub(crate) trait Deliver: Send {
     fn committed(self: Box<Self>);
-    fn aborted(self: Box<Self>, err: &Arc<rusqlite::Error>);
+    fn aborted(self: Box<Self>, cause: &Abort);
+}
+
+/// Why a batch that ran was rolled back instead of committed.
+#[derive(Debug, Clone)]
+pub(crate) enum Abort {
+    /// Making the referenced blobs durable failed (before `COMMIT`).
+    Blobs(Arc<Error>),
+    /// `COMMIT` failed.
+    Commit(Arc<rusqlite::Error>),
+}
+
+impl Abort {
+    fn error(&self) -> Error {
+        match self {
+            Self::Blobs(err) => Error::BlobsNotDurable(Arc::clone(err)),
+            Self::Commit(err) => Error::Commit(Arc::clone(err)),
+        }
+    }
 }
 
 struct Reply<R> {
@@ -76,11 +94,11 @@ impl<R: Send> Deliver for Reply<R> {
         let _ = self.tx.send(self.result);
     }
 
-    fn aborted(self: Box<Self>, err: &Arc<rusqlite::Error>) {
+    fn aborted(self: Box<Self>, cause: &Abort) {
         let result = match self.result {
             // The job itself had failed; report its own error.
             Err(err) => Err(err),
-            Ok(_) => Err(Error::Commit(Arc::clone(err))),
+            Ok(_) => Err(cause.error()),
         };
         let _ = self.tx.send(result);
     }
@@ -113,7 +131,8 @@ where
 }
 
 /// The write side of one job: the connection inside the job's savepoint, plus the
-/// bookkeeping the store does for you (aggregates, change set, blob pins).
+/// bookkeeping the store does for you (aggregates, change set, the blobs it references,
+/// which stay pinned and are made durable before the commit).
 ///
 /// Repository methods are defined on this type across the crate's modules; read
 /// methods come from [`Queries`](crate::Queries).
@@ -123,7 +142,7 @@ pub struct WriteTx<'c> {
     pub(crate) now: i64,
     pub(crate) dirty_threads: BTreeSet<ThreadId>,
     pub(crate) changes: ChangeSet,
-    pub(crate) pins: Vec<BlobPin>,
+    pub(crate) blobs_referenced: Vec<StagedBlob>,
 }
 
 impl std::fmt::Debug for WriteTx<'_> {
@@ -142,7 +161,7 @@ impl<'c> WriteTx<'c> {
             now: unix_now(),
             dirty_threads: BTreeSet::new(),
             changes: ChangeSet::default(),
-            pins: Vec::new(),
+            blobs_referenced: Vec::new(),
         }
     }
 
@@ -294,22 +313,35 @@ impl WriterThread {
             }
         }
 
-        match self.conn.execute_batch("COMMIT") {
+        // A committed row must never point at a blob that isn't durable (see `blob`).
+        let committed = self
+            .blobs
+            .persist(&batch.blobs)
+            .map_err(|err| {
+                tracing::error!(error = %err, "making blobs durable failed; the batch was rolled back");
+                Abort::Blobs(Arc::new(err))
+            })
+            .and_then(|()| {
+                self.conn.execute_batch("COMMIT").map_err(|err| {
+                    tracing::error!(error = %err, "store commit failed; the batch was rolled back");
+                    Abort::Commit(Arc::new(err))
+                })
+            });
+        match committed {
             Ok(()) => {
                 for reply in batch.replies {
                     reply.committed();
                 }
-                drop(batch.pins);
+                // Unpins the blobs: their rows hold references now.
+                drop(batch.blobs);
                 if !batch.changes.is_empty() {
                     let _ = self.events.send(Arc::new(batch.changes));
                 }
             }
-            Err(err) => {
-                tracing::error!(error = %err, "store commit failed; the batch was rolled back");
+            Err(cause) => {
                 let _ = self.conn.execute_batch("ROLLBACK");
-                let err = Arc::new(err);
                 for reply in batch.replies {
-                    reply.aborted(&err);
+                    reply.aborted(&cause);
                 }
             }
         }
@@ -326,12 +358,16 @@ impl WriterThread {
         }
         let mut w = WriteTx::new(&self.conn, &self.blobs);
         let (ok, reply) = run(Ok(&mut w));
-        let WriteTx { changes, pins, .. } = w;
+        let WriteTx {
+            changes,
+            blobs_referenced,
+            ..
+        } = w;
         if ok {
             match self.conn.execute_batch("RELEASE job") {
                 Ok(()) => {
                     batch.changes.merge(changes);
-                    batch.pins.extend(pins);
+                    batch.blobs.extend(blobs_referenced);
                 }
                 Err(err) => tracing::error!(error = %err, "could not release a savepoint"),
             }
@@ -346,7 +382,7 @@ impl WriterThread {
 struct Batch {
     replies: Vec<Box<dyn Deliver>>,
     changes: ChangeSet,
-    pins: Vec<BlobPin>,
+    blobs: Vec<StagedBlob>,
 }
 
 /// Creates the command channel.

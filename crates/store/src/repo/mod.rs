@@ -57,6 +57,11 @@ pub trait Queries: sealed::Sealed {
         accounts::account(self.connection(sealed::Token), id)
     }
 
+    /// The account with this [`Account::uuid`].
+    fn account_by_uuid(&self, uuid: uuid::Uuid) -> Result<Option<Account>> {
+        accounts::account_by_uuid(self.connection(sealed::Token), uuid)
+    }
+
     /// Identities of one account, or of all accounts.
     fn identities(&self, account: Option<AccountId>) -> Result<Vec<Identity>> {
         accounts::identities(self.connection(sealed::Token), account)

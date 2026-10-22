@@ -9,6 +9,7 @@ use mazemail_types::{
     AccountId, Address, BlobId, FolderId, FolderRole, IdentityId, MessageId, TagId, ThreadId,
 };
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// Unix time in seconds (UTC). Every timestamp in the store uses it.
 pub type UnixTime = i64;
@@ -155,6 +156,9 @@ text_enum!(
 #[derive(Clone, PartialEq, Eq)]
 pub struct Account {
     pub id: AccountId,
+    /// Stable for the account's lifetime and never reused; generated when the account
+    /// is created. Keychain secrets are keyed by it (`auth` crate).
+    pub uuid: Uuid,
     pub kind: AccountKind,
     /// The name shown in the folder pane (often an address).
     pub name: String,
@@ -164,7 +168,12 @@ pub struct Account {
     pub sync_state_json: Option<String>,
     pub ordinal: i64,
 }
-redacted_debug!(Account { id, kind, ordinal });
+redacted_debug!(Account {
+    id,
+    uuid,
+    kind,
+    ordinal
+});
 
 /// Input for creating an account.
 #[derive(Clone, PartialEq, Eq)]
@@ -604,6 +613,36 @@ impl NewMessage {
             locations: Vec::new(),
             replace_labels: false,
         }
+    }
+}
+
+/// What the full body says about a stored message, for
+/// [`WriteTx::update_body_summary`](crate::WriteTx::update_body_summary) (header-first
+/// sync once the body arrives). Every field is optional: `None` keeps the stored value,
+/// `Some` replaces it.
+#[derive(Clone, Default)]
+pub struct BodySummaryUpdate {
+    pub snippet: Option<String>,
+    /// Uncompressed size of the raw message in bytes.
+    pub size: Option<u64>,
+    /// Feeds the thread and folder attachment counts.
+    pub has_attachments: Option<bool>,
+    pub bodystructure_json: Option<String>,
+    /// The new body. The message's previous body (if any) loses a reference.
+    pub blob: Option<crate::StagedBlob>,
+    /// The new body state; with a `blob` and no state, [`BodyState::Full`]. A state
+    /// other than [`BodyState::None`] needs a body (given or stored).
+    pub body_state: Option<BodyState>,
+}
+
+impl fmt::Debug for BodySummaryUpdate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BodySummaryUpdate")
+            .field("size", &self.size)
+            .field("has_attachments", &self.has_attachments)
+            .field("blob", &self.blob.as_ref().map(crate::StagedBlob::id))
+            .field("body_state", &self.body_state)
+            .finish_non_exhaustive()
     }
 }
 

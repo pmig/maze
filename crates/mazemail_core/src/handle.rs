@@ -491,7 +491,7 @@ impl CoreHandle {
                     context = context.with_received_at(received);
                 }
                 let report = verifier.verify(&raw, &context).await;
-                persist_auth(&inner.store, &detail, &report).await?;
+                persist_auth(&inner.store, detail.id, &report).await?;
                 let _ = inner.events_in.send(CoreEvent::MessageUpdated(id));
                 Ok(AuthStatus::Ready(Box::new(report)))
             })
@@ -929,7 +929,7 @@ fn build_view(inner: &Inner, id: MessageId) -> Result<(MessageView, bool, bool)>
         }
     };
 
-    let stored = stored_auth(inner.store.blobs(), &detail);
+    let stored = stored_auth(&detail);
     let verifier_known_missing = matches!(inner.verifier.get(), Some(None));
     let mut verify = false;
     let auth = match &stored {
@@ -1006,7 +1006,7 @@ fn load_for_verification(inner: &Inner, id: MessageId) -> Result<Verification> {
     let detail = reader
         .message(id)?
         .ok_or_else(|| Error::not_found("message", id.to_public()))?;
-    if let Some(report) = stored_auth(inner.store.blobs(), &detail) {
+    if let Some(report) = stored_auth(&detail) {
         return Ok(Verification::Stored(Box::new(report)));
     }
     let Some(blob) = detail.blob else {

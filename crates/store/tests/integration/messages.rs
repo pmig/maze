@@ -1,9 +1,10 @@
 //! Message upsert, Gmail dedup, locations, flags, tags, threading.
 
-use mazemail_types::{Flags, FolderRole};
+use mazemail_types::{Flags, FolderRole, MessageId};
 use pretty_assertions::assert_eq;
 use store::{
-    AccountKind, BodyState, Error, NewFolder, NewLocation, NewMessage, Queries, ThreadAssignment,
+    AccountKind, BodyState, BodySummaryUpdate, Error, NewFolder, NewLocation, NewMessage, Queries,
+    ThreadAssignment,
 };
 
 use crate::common::{self, message};
@@ -462,4 +463,118 @@ fn a_reused_uid_moves_to_the_message_the_server_names() {
     assert!(old.locations.is_empty());
     assert!(old.detached_at.is_some());
     assert_eq!(reader.folder(f.archive).unwrap().unwrap().total, 1);
+}
+
+#[test]
+fn body_summary_updates_keep_attachment_aggregates_right() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = common::open(tmp.path());
+    let f = common::fixture(&store, AccountKind::Imap);
+    let mut m = message(f.account, f.inbox, 1, 1_700_000_000);
+    m.snippet = Some("server preview".to_owned());
+    let out = store.write_blocking(move |w| w.upsert_message(&m)).unwrap();
+    let id = out.message;
+    let has_attachments = |store: &store::Store| {
+        let reader = store.reader().unwrap();
+        let in_folder =
+            reader.thread_rows(&[out.thread], Some(f.inbox)).unwrap()[0].has_attachments;
+        let anywhere = reader.thread_rows(&[out.thread], None).unwrap()[0].has_attachments;
+        (in_folder, anywhere)
+    };
+    assert_eq!(has_attachments(&store), (false, false));
+
+    // A body state without a body is refused; a missing message is not found.
+    let err = store
+        .write_blocking(move |w| {
+            w.update_body_summary(
+                id,
+                &BodySummaryUpdate {
+                    body_state: Some(BodyState::Full),
+                    ..BodySummaryUpdate::default()
+                },
+            )
+        })
+        .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    let err = store
+        .write_blocking(move |w| {
+            w.update_body_summary(MessageId(9999), &BodySummaryUpdate::default())
+        })
+        .unwrap_err();
+    assert!(matches!(err, Error::NotFound { .. }), "{err:?}");
+
+    let blob = store
+        .blobs()
+        .stage(b"From: a@x\r\n\r\nwith attachment")
+        .unwrap();
+    let update = BodySummaryUpdate {
+        snippet: Some("from the body".to_owned()),
+        size: Some(31),
+        has_attachments: Some(true),
+        bodystructure_json: Some("{\"v\":1}".to_owned()),
+        blob: Some(blob.clone()),
+        body_state: None,
+    };
+    store
+        .write_blocking(move |w| w.update_body_summary(id, &update))
+        .unwrap();
+    assert_eq!(has_attachments(&store), (true, true));
+    let detail = store.reader().unwrap().message(id).unwrap().unwrap();
+    assert_eq!(detail.snippet.as_deref(), Some("from the body"));
+    assert_eq!(detail.size, Some(31));
+    assert!(detail.has_attachments);
+    assert_eq!(detail.bodystructure_json.as_deref(), Some("{\"v\":1}"));
+    assert_eq!(detail.blob, Some(blob.id()));
+    assert_eq!(detail.body_state, BodyState::Full);
+    assert!(blob.is_durable());
+
+    // `None` keeps; `Some(false)` clears the attachment flag and the aggregates follow.
+    store
+        .write_blocking(move |w| {
+            w.update_body_summary(
+                id,
+                &BodySummaryUpdate {
+                    has_attachments: Some(false),
+                    ..BodySummaryUpdate::default()
+                },
+            )
+        })
+        .unwrap();
+    assert_eq!(has_attachments(&store), (false, false));
+    let detail = store.reader().unwrap().message(id).unwrap().unwrap();
+    assert_eq!(detail.snippet.as_deref(), Some("from the body"));
+    assert_eq!(detail.blob, Some(blob.id()));
+    common::close(store);
+}
+
+#[test]
+fn auth_json_can_be_set_replaced_and_cleared() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = common::open(tmp.path());
+    let f = common::fixture(&store, AccountKind::Imap);
+    let m = message(f.account, f.inbox, 1, 1);
+    let id = store
+        .write_blocking(move |w| w.upsert_message(&m))
+        .unwrap()
+        .message;
+    let auth = |store: &store::Store| {
+        store
+            .reader()
+            .unwrap()
+            .message(id)
+            .unwrap()
+            .unwrap()
+            .auth_json
+    };
+    for json in [Some("{\"v\":1}"), Some("{\"v\":2}"), None] {
+        store
+            .write_blocking(move |w| w.set_auth_json(id, json))
+            .unwrap();
+        assert_eq!(auth(&store).as_deref(), json);
+    }
+    let err = store
+        .write_blocking(move |w| w.set_auth_json(MessageId(9999), Some("{}")))
+        .unwrap_err();
+    assert!(matches!(err, Error::NotFound { .. }), "{err:?}");
+    common::close(store);
 }

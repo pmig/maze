@@ -185,8 +185,7 @@ async fn sender_verification_runs_lazily_and_is_persisted() {
         matches!(view.auth, AuthStatus::Ready(ref r) if r.verdict == security::Verdict::Unverified)
     );
 
-    // A message the store can't identify by UID (a local copy) keeps its report in the
-    // encrypted cache instead.
+    // A message without a UID (a local copy) gets its report in the database too.
     let (local, _) = common::ingest(
         &t.core,
         Place::new(f.work, f.projects, 0).no_uid(),
@@ -203,7 +202,7 @@ async fn sender_verification_runs_lazily_and_is_persisted() {
         .message(local)
         .unwrap()
         .unwrap();
-    assert!(detail.auth_json.is_none());
+    assert!(detail.auth_json.is_some());
     let view = t.core.message(local).await.unwrap();
     assert!(matches!(view.auth, AuthStatus::Ready(_)));
 }

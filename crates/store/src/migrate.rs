@@ -12,8 +12,10 @@ use vault::SecretString;
 use crate::conn::{self, Access};
 use crate::{Error, Result};
 
-const MAIN: &[M<'static>] =
-    &[M::up(include_str!("../migrations/main/0001_schema_v1.sql")).foreign_key_check()];
+const MAIN: &[M<'static>] = &[
+    M::up(include_str!("../migrations/main/0001_schema_v1.sql")).foreign_key_check(),
+    M::up(include_str!("../migrations/main/0002_account_uuid.sql")),
+];
 
 const SENDLOG: &[M<'static>] = &[M::up(include_str!(
     "../migrations/sendlog/0001_sendlog_v1.sql"
@@ -197,7 +199,7 @@ mod tests {
             .sqlcipher_pragma_key()
     }
 
-    const V2: &str = "CREATE TABLE added_in_v2 (id INTEGER PRIMARY KEY);";
+    const NEXT: &str = "CREATE TABLE added_in_next (id INTEGER PRIMARY KEY);";
 
     #[test]
     fn existing_database_is_backed_up_before_migrating() {
@@ -227,7 +229,8 @@ mod tests {
         let again = migrate_main(&mut conn, &key, &backups, "1.0.0").unwrap();
         assert_eq!(again.backup, None);
 
-        let migrations = [MAIN[0].clone(), M::up(V2)];
+        let mut migrations = MAIN.to_vec();
+        migrations.push(M::up(NEXT));
         let report = migrate_with_backup(&mut conn, &key, &backups, "1.1.0", &migrations).unwrap();
         let backup = report.backup.clone().unwrap();
         assert_eq!(
@@ -243,14 +246,14 @@ mod tests {
             .query_row("SELECT name FROM account", [], |r| r.get(0))
             .unwrap();
         assert_eq!(name, "Work");
-        let has_v2: i64 = copy
+        let has_next: i64 = copy
             .query_row(
-                "SELECT count(*) FROM sqlite_master WHERE name = 'added_in_v2'",
+                "SELECT count(*) FROM sqlite_master WHERE name = 'added_in_next'",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(has_v2, 0);
+        assert_eq!(has_next, 0);
         drop(copy);
 
         // It doesn't open with another key, and it isn't plaintext.
@@ -260,6 +263,60 @@ mod tests {
             Err(Error::WrongKey { .. })
         ));
         assert!(!fs::read(&backup).unwrap().starts_with(b"SQLite format 3"));
+    }
+
+    #[test]
+    fn v2_gives_every_account_a_stable_unique_uuid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let key = key(4);
+        let mut conn = conn::open(&tmp.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
+        migrate_with_backup(&mut conn, &key, tmp.path(), "1.0.0", &MAIN[..1]).unwrap();
+        for name in ["a", "b", "c"] {
+            conn.execute(
+                "INSERT INTO account (kind, name) VALUES ('imap', ?1)",
+                [name],
+            )
+            .unwrap();
+        }
+        let report = migrate_main(&mut conn, &key, tmp.path(), "1.1.0").unwrap();
+        assert_eq!((report.from, report.to), (1, SCHEMA_VERSION));
+        assert!(report.backup.is_some());
+
+        // Inserted without a UUID after the migration: the trigger fills it in.
+        conn.execute("INSERT INTO account (kind, name) VALUES ('imap', 'd')", [])
+            .unwrap();
+        let uuids: Vec<String> = conn
+            .prepare("SELECT uuid FROM account ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(uuids.len(), 4);
+        for uuid in &uuids {
+            let parsed = uuid::Uuid::parse_str(uuid).unwrap();
+            assert_eq!(parsed.get_version_num(), 4, "{uuid}");
+            assert_eq!(parsed.get_variant(), uuid::Variant::RFC4122, "{uuid}");
+            assert_eq!(&parsed.hyphenated().to_string(), uuid);
+        }
+        let distinct: std::collections::BTreeSet<_> = uuids.iter().collect();
+        assert_eq!(distinct.len(), uuids.len());
+
+        // Never changed, never duplicated.
+        assert!(
+            conn.execute("UPDATE account SET uuid = 'x' WHERE id = 1", [])
+                .is_err()
+        );
+        assert!(
+            conn.execute(
+                "INSERT INTO account (kind, name, uuid) VALUES ('imap', 'e', ?1)",
+                [&uuids[0]],
+            )
+            .is_err()
+        );
+        // Other columns still update.
+        conn.execute("UPDATE account SET name = 'renamed' WHERE id = 1", [])
+            .unwrap();
     }
 
     #[test]

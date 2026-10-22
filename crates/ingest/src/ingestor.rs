@@ -15,8 +15,8 @@ use mazemail_mime::{AttachmentMeta, MessageHeaders, ParsedMessage, detect_langua
 use mazemail_types::{AccountId, Address, IdentityId, MessageId, ThreadId};
 use serde::Serialize;
 use store::{
-    BodyState, NewLocation, NewMessage, Queries, StagedBlob, Store, ThreadAssignment, UnixTime,
-    WriteTx,
+    BodyState, BodySummaryUpdate, NewLocation, NewMessage, Queries, StagedBlob, Store,
+    ThreadAssignment, UnixTime, WriteTx,
 };
 
 use crate::doc::{IndexAddress, IndexDoc, IndexLanguage, IndexSink, NoopIndexSink};
@@ -206,7 +206,9 @@ impl Ingestor {
 
     // ---- prepare (any thread) ------------------------------------------------------
 
-    /// Parses a full raw message and writes its encrypted body blob.
+    /// Parses a full raw message and stages its encrypted body blob
+    /// ([`BlobStore::stage`](store::BlobStore::stage): written, not yet durable; the
+    /// commit makes the whole batch's blobs durable at once).
     ///
     /// Blocking (CPU and file IO); call it off async worker threads
     /// (`spawn_blocking`) or from a thread pool.
@@ -223,7 +225,7 @@ impl Ingestor {
             snippet: (!parsed.snippet.is_empty()).then(|| parsed.snippet.clone()),
             attachment_names,
         };
-        let blob = self.store.blobs().put(raw)?;
+        let blob = self.store.blobs().stage(raw)?;
         Ok(build(
             meta,
             &parsed.headers,
@@ -252,6 +254,10 @@ impl Ingestor {
 
     /// Stores a batch in one write job and indexes it. Results are in input order; if
     /// the batch job fails, every message is retried alone, so only bad messages fail.
+    ///
+    /// The store's writer makes the batch's blobs durable before it commits (no
+    /// blocking file IO here), together with those of other jobs in the same
+    /// transaction.
     pub async fn commit(&self, batch: Vec<PreparedMessage>) -> Vec<Result<Ingested>> {
         let items = Arc::new(batch);
         let all = 0..items.len();
@@ -283,7 +289,11 @@ impl Ingestor {
 
     /// Blocking variant of [`Ingestor::commit`] for synchronous callers (importers).
     /// Must not be called from an async runtime's worker thread.
+    ///
+    /// Makes the batch's blobs durable on the calling thread first, so the store's
+    /// writer doesn't have to.
     pub fn commit_blocking(&self, batch: Vec<PreparedMessage>) -> Vec<Result<Ingested>> {
+        self.persist_blobs(batch.iter().filter_map(|p| p.blob.as_ref()));
         let items = Arc::new(batch);
         let all = 0..items.len();
         match self.write_blocking(&items, all.clone()) {
@@ -299,6 +309,16 @@ impl Ingestor {
                     })
                     .collect()
             }
+        }
+    }
+
+    /// Makes staged blobs durable on this thread, sharing one round of device flushes.
+    /// A failure is only logged: the writer persists whatever is left before it
+    /// commits, and fails exactly the jobs it can't (then the batch is retried message
+    /// by message as usual).
+    fn persist_blobs<'a>(&self, blobs: impl IntoIterator<Item = &'a StagedBlob>) {
+        if let Err(err) = self.store.blobs().persist(blobs) {
+            tracing::warn!(error = %err, "making staged blobs durable failed; the writer retries");
         }
     }
 
@@ -432,8 +452,10 @@ impl Ingestor {
     }
 
     /// Fills in the body of a stored (header-only) message: writes the blob, sets the
-    /// body state to full, fills the snippet and attachment structure if they were
-    /// empty, and sends a full index document.
+    /// body state to full, takes size, snippet and the attachment flag from the parsed
+    /// body ([`WriteTx::update_body_summary`], so thread and folder attachment counts
+    /// follow), fills the attachment structure if sync stored none, and sends a full
+    /// index document.
     pub async fn attach_body(&self, message: MessageId, raw: &[u8]) -> Result<Ingested> {
         let prepared = self.prepare_body(raw)?;
         let job_input = prepared.clone();
@@ -449,6 +471,7 @@ impl Ingestor {
     /// Blocking variant of [`Ingestor::attach_body`].
     pub fn attach_body_blocking(&self, message: MessageId, raw: &[u8]) -> Result<Ingested> {
         let prepared = self.prepare_body(raw)?;
+        self.persist_blobs([&prepared.blob]);
         let job_input = prepared.clone();
         let detail = self
             .store
@@ -459,7 +482,7 @@ impl Ingestor {
     fn prepare_body(&self, raw: &[u8]) -> Result<PreparedBody> {
         let parsed = mazemail_mime::parse(raw)?;
         let body = capped(parsed.body_text(), MAX_INDEX_BODY_BYTES);
-        let blob = self.store.blobs().put(raw)?;
+        let blob = self.store.blobs().stage(raw)?;
         Ok(PreparedBody {
             language: language_of(parsed.headers.subject.as_deref(), &body),
             attachment_names: attachment_names(&parsed.attachments),
@@ -491,7 +514,7 @@ impl Ingestor {
             body: body.body,
             attachment_names: body.attachment_names,
             list_id: detail.list_id,
-            has_attachment: body.has_attachments || detail.has_attachments,
+            has_attachment: body.has_attachments,
             language: body.language,
         };
         self.sink.add(doc.clone());
@@ -792,7 +815,6 @@ struct AttachedDetail {
     cc: Vec<Address>,
     subject: Option<String>,
     list_id: Option<String>,
-    has_attachments: bool,
 }
 
 fn attach_job(
@@ -804,40 +826,23 @@ fn attach_job(
         entity: "message",
         id: message.to_string(),
     })?;
-    w.set_message_body(message, &body.blob, BodyState::Full)?;
-
-    // Fill empty summary fields. The store fills them on an upsert that finds the
-    // message, which needs its Gmail id or a UID location; local messages without
-    // either already got everything at ingest.
-    let missing = detail.snippet.is_none()
-        || detail.size.is_none()
-        || (detail.bodystructure_json.is_none() && body.bodystructure_json.is_some());
-    let findable = detail.gm_msgid.is_some() || detail.locations.iter().any(|l| l.uid.is_some());
-    if missing && findable {
-        let mut fill = NewMessage::new(detail.account, detail.date);
-        fill.gm_msgid = detail.gm_msgid;
-        fill.snippet.clone_from(&body.snippet);
-        fill.size = Some(body.size);
-        fill.bodystructure_json.clone_from(&body.bodystructure_json);
-        fill.locations = detail
-            .locations
-            .iter()
-            .map(|l| NewLocation {
-                folder: l.folder,
-                uid: l.uid,
-                modseq: l.modseq,
-                flags: l.flags,
-                keywords: l.keywords.clone(),
-            })
-            .collect();
-        let outcome = w.upsert_message(&fill)?;
-        if outcome.message != message {
-            // Can't happen for a findable message; refuse rather than leave a stray row.
-            return Err(store::Error::Invalid(
-                "attach_body matched a different message",
-            ));
-        }
-    }
+    // The parsed body is authoritative for size, attachments and the snippet; the
+    // body structure belongs to sync, so it is only filled in if sync stored none.
+    w.update_body_summary(
+        message,
+        &BodySummaryUpdate {
+            snippet: body.snippet.clone(),
+            size: Some(body.size),
+            has_attachments: Some(body.has_attachments),
+            bodystructure_json: if detail.bodystructure_json.is_none() {
+                body.bodystructure_json.clone()
+            } else {
+                None
+            },
+            blob: Some(body.blob.clone()),
+            body_state: Some(BodyState::Full),
+        },
+    )?;
     Ok(AttachedDetail {
         account: detail.account,
         thread: detail.thread,
@@ -847,7 +852,6 @@ fn attach_job(
         cc: detail.cc,
         subject: detail.subject,
         list_id: detail.list_id,
-        has_attachments: detail.has_attachments,
     })
 }
 

@@ -5,10 +5,14 @@
 //! 1. **Prepare** (caller's thread, CPU and file IO): parse with `mazemail_mime`, build
 //!    the [`NewMessage`](store::NewMessage) summary (snippet, attachments, List-Id,
 //!    Delivered-To, attachment structure), compute the [`IndexDoc`] for search, and
-//!    write the encrypted body blob ([`BlobStore::put`](store::BlobStore::put)).
+//!    stage the encrypted body blob ([`BlobStore::stage`](store::BlobStore::stage):
+//!    written, not yet durable).
 //!    [`Ingestor::prepare_raw`] and [`Ingestor::prepare_headers`] are `&self` and
 //!    thread-safe, so importers run them on many cores.
-//! 2. **Commit** (the store's writer thread): one write job per batch decides the
+//! 2. **Commit** (the store's writer thread): the batch's blobs are made durable
+//!    together ([`BlobStore::persist`](store::BlobStore::persist); on the caller's
+//!    thread for [`Ingestor::commit_blocking`], else by the writer right before its
+//!    commit), then one write job per batch decides the
 //!    thread (Gmail `X-GM-THRID`, else the store's Message-ID lookups fed to
 //!    [`join_thread`](mazemail_mime::thread::join_thread), merging threads a message
 //!    connects), upserts the message with its locations and points it at its body.
@@ -26,12 +30,14 @@
 //! [`DEFAULT_BATCH`] is the size the importers use.
 //!
 //! Measured by the ignored `perf` test (release, Apple Silicon, 4,000 messages of
-//! 2.5 KB, a quarter of them thread roots): the commit costs 1.0–1.3 ms per message one
-//! by one, 0.42 ms in batches of 50, 0.30 ms at 200 and 0.22 ms at 500. Preparing is
-//! dominated by [`BlobStore::put`](store::BlobStore::put), which fsyncs every blob
-//! (`F_FULLFSYNC` on macOS): about 8 ms per blob, and about 190 blobs/s from 8 threads,
-//! against a few µs for parsing. Bulk ingestion with bodies is therefore bound at
-//! roughly 120–190 messages/s by blob durability, not by the database.
+//! 2.5 KB, a quarter of them thread roots, one thread): about 109 messages/s one by
+//! one, 1,840/s in batches of 50, 3,000/s at 200 and 3,400/s at 500. Blob durability
+//! costs two device flushes (`F_FULLFSYNC`, a few ms each) per batch, plus about
+//! 0.25 ms per blob for the staging write, rename and directory syncs; parsing is a
+//! few µs. One message per batch is therefore bound by the flushes (as it was when
+//! every blob was flushed on its own: 108–140 messages/s at any batch size). The
+//! ignored `perf_scaling` test checks that commit cost stays flat as the account grows
+//! (header-only, 16 µs per message from the first to the 50,000th).
 //!
 //! # Search coupling
 //!
