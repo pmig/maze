@@ -1,0 +1,25 @@
+[tools]
+rust = { version = "1.99.1", components = "rustfmt,clippy,rust-src", profile = "minimal" }
+"cargo:cargo-nextest" = "latest"
+"cargo:cargo-deny" = "latest"
+"cargo:cargo-insta" = "latest"
+
+[tasks.fmt]
+description = "Format all crates"
+run = "cargo fmt --all"
+
+[tasks.lint]
+description = "rustfmt check + clippy with warnings as errors"
+run = ["cargo fmt --all --check", "cargo clippy --workspace --all-targets --locked -- -D warnings"]
+
+[tasks.test]
+description = "Run the test suite"
+run = "cargo nextest run --workspace --locked"
+
+[tasks.deny]
+description = "License and advisory checks"
+run = "cargo deny check"
+
+[tasks.ci]
+description = "Everything CI runs"
+depends = ["lint", "test", "deny"]
