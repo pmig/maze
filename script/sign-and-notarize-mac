@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Sign Maze.app with the Developer ID certificate (hardened runtime, no JIT),
+# notarize it with Apple and staple the ticket (PLAN §4.16).
+#
+# Usage: script/sign-and-notarize-mac <path/to/Maze.app>
+#
+# Environment (all required):
+#   APPLE_CERTIFICATE_P12        base64 of the Developer ID Application .p12
+#   APPLE_CERTIFICATE_PASSWORD   password of the .p12
+#   APPLE_TEAM_ID                10-character Apple Team ID
+#   APPLE_NOTARY_KEY             contents of the App Store Connect API key (.p8)
+#   APPLE_NOTARY_KEY_ID          key ID of that API key
+#   APPLE_NOTARY_ISSUER          issuer ID of that API key
+#
+# The provisioning profile is embedded earlier, by script/bundle-mac
+# --provisioning-profile, because it has to be part of the signed bundle.
+set -euo pipefail
+
+if [ "$#" -ne 1 ]; then
+  echo "usage: ${0##*/} <Maze.app>" >&2
+  exit 2
+fi
+app=$1
+if [ ! -d "$app/Contents/MacOS" ]; then
+  echo "error: $app is not an app bundle" >&2
+  exit 1
+fi
+
+for var in APPLE_CERTIFICATE_P12 APPLE_CERTIFICATE_PASSWORD APPLE_TEAM_ID \
+  APPLE_NOTARY_KEY APPLE_NOTARY_KEY_ID APPLE_NOTARY_ISSUER; do
+  if [ -z "${!var:-}" ]; then
+    echo "error: $var is not set" >&2
+    exit 1
+  fi
+done
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/maze-sign.XXXXXX")
+keychain="$work/maze-signing.keychain-db"
+keychain_password=$(openssl rand -base64 32)
+original_keychains=$(security list-keychains -d user | tr -d '"' | xargs)
+
+cleanup() {
+  # shellcheck disable=SC2086 # intentional word splitting of the keychain list
+  security list-keychains -d user -s $original_keychains >/dev/null 2>&1 || true
+  security delete-keychain "$keychain" >/dev/null 2>&1 || true
+  rm -rf "$work"
+}
+trap cleanup EXIT
+
+# Import the certificate into a temporary keychain.
+printf '%s' "$APPLE_CERTIFICATE_P12" | base64 --decode > "$work/certificate.p12"
+security create-keychain -p "$keychain_password" "$keychain"
+security set-keychain-settings -lut 21600 "$keychain"
+security unlock-keychain -p "$keychain_password" "$keychain"
+security import "$work/certificate.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" \
+  -f pkcs12 -T /usr/bin/codesign
+security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+  -k "$keychain_password" "$keychain" >/dev/null
+# shellcheck disable=SC2086 # intentional word splitting of the keychain list
+security list-keychains -d user -s "$keychain" $original_keychains
+
+identity=$(security find-identity -v -p codesigning "$keychain" \
+  | awk -v team="($APPLE_TEAM_ID)" '/Developer ID Application/ && index($0, team) { print $2; exit }')
+if [ -z "$identity" ]; then
+  echo "error: no 'Developer ID Application' identity for team $APPLE_TEAM_ID in the certificate" >&2
+  exit 1
+fi
+
+# $(TeamID) is an Xcode build variable, codesign does not expand it.
+entitlements="$work/entitlements.plist"
+sed "s/\$(TeamID)/$APPLE_TEAM_ID/g" "$repo_root/script/entitlements.plist" > "$entitlements"
+plutil -lint "$entitlements" >/dev/null
+
+# Sign the executable first, then the bundle (which also seals the embedded profile).
+codesign --force --timestamp --options runtime --entitlements "$entitlements" \
+  --keychain "$keychain" --sign "$identity" "$app/Contents/MacOS/mazemail"
+codesign --force --timestamp --options runtime --entitlements "$entitlements" \
+  --keychain "$keychain" --sign "$identity" "$app"
+codesign --verify --deep --strict --verbose=2 "$app"
+
+# Notarize.
+printf '%s' "$APPLE_NOTARY_KEY" > "$work/notary-key.p8"
+ditto -c -k --keepParent "$app" "$work/Maze.zip"
+result=$(xcrun notarytool submit "$work/Maze.zip" \
+  --key "$work/notary-key.p8" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER" \
+  --wait --timeout 30m --output-format json)
+status=$(printf '%s' "$result" | plutil -extract status raw -o - -)
+if [ "$status" != "Accepted" ]; then
+  echo "error: notarization finished with status '$status'" >&2
+  submission_id=$(printf '%s' "$result" | plutil -extract id raw -o - - || true)
+  if [ -n "$submission_id" ]; then
+    xcrun notarytool log "$submission_id" \
+      --key "$work/notary-key.p8" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER" >&2 || true
+  fi
+  exit 1
+fi
+
+xcrun stapler staple "$app"
+xcrun stapler validate "$app"
+spctl --assess --type execute --verbose=2 "$app"
+echo "signed and notarized: $app"

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Hardened runtime, no JIT and no unsigned executable memory (PLAN §4.15).
+
+    Data protection keychain access group for the storage master key (PLAN §4.17).
+    The placeholder is replaced by script/sign-and-notarize-mac with APPLE_TEAM_ID.
+    This restricted entitlement needs the Developer ID provisioning profile that
+    script/bundle-mac embeds.
+  -->
+  <key>keychain-access-groups</key>
+  <array>
+    <string>$(TeamID).dev.mazemail.maze</string>
+  </array>
+</dict>
+</plist>

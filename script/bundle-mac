@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+# Build Maze.app and pack it for distribution (PLAN §4.16).
+#
+# The command line client is the same binary: Maze.app/Contents/MacOS/mazemail.
+#
+# Usage: script/bundle-mac [options]
+#   --target <triple>               Rust target (default: the host's apple-darwin triple)
+#   --binary <path>                 use a prebuilt binary instead of running cargo
+#   --build-number <n>              CFBundleVersion (default: git rev-list --count HEAD)
+#   --provisioning-profile <path>   embed a Developer ID provisioning profile (PLAN §4.17)
+#   --output-dir <dir>              default: dist
+#   --no-package                    only create the bundle, skip .app.tar.zst and .dmg
+#   -h, --help
+#
+# Environment:
+#   RELEASE_CHANNEL_FILE   file holding dev|preview|stable
+#                          (default: crates/mazemail/RELEASE_CHANNEL; missing means dev)
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$repo_root"
+
+usage() { sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; }
+
+target=""
+binary=""
+build_number=""
+profile=""
+out="dist"
+package=1
+
+while [ "$#" -gt 0 ]; do
+  case $1 in
+    --target) target=${2:?missing value for --target}; shift 2 ;;
+    --binary) binary=${2:?missing value for --binary}; shift 2 ;;
+    --build-number) build_number=${2:?missing value for --build-number}; shift 2 ;;
+    --provisioning-profile) profile=${2:?missing value for --provisioning-profile}; shift 2 ;;
+    --output-dir) out=${2:?missing value for --output-dir}; shift 2 ;;
+    --no-package) package=0; shift ;;
+    -h | --help) usage; exit 0 ;;
+    *) echo "error: unknown option $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+if [ "$(uname -s)" != "Darwin" ]; then
+  echo "error: script/bundle-mac only runs on macOS" >&2
+  exit 1
+fi
+
+if [ -z "$target" ]; then
+  case $(uname -m) in
+    arm64 | aarch64) target=aarch64-apple-darwin ;;
+    x86_64) target=x86_64-apple-darwin ;;
+    *) echo "error: unsupported host architecture $(uname -m)" >&2; exit 1 ;;
+  esac
+fi
+case $target in
+  aarch64-apple-darwin) arch=aarch64 ;;
+  x86_64-apple-darwin) arch=x86_64 ;;
+  *) echo "error: unsupported target $target" >&2; exit 1 ;;
+esac
+
+version=$(tr -d '[:space:]' < version.txt)
+if [ -z "$version" ]; then
+  echo "error: version.txt is empty" >&2
+  exit 1
+fi
+numeric_version=${version%%-*}
+build_number=${build_number:-$(git rev-list --count HEAD)}
+
+channel_file=${RELEASE_CHANNEL_FILE:-crates/mazemail/RELEASE_CHANNEL}
+channel=dev
+if [ -f "$channel_file" ]; then
+  channel=$(tr -d '[:space:]' < "$channel_file")
+fi
+case $channel in
+  dev) bundle_id=dev.mazemail.maze-dev ;;
+  preview | stable) bundle_id=dev.mazemail.maze ;;
+  *) echo "error: unknown release channel '$channel' in $channel_file" >&2; exit 1 ;;
+esac
+
+if [ -z "$binary" ]; then
+  cargo build --release --locked --target "$target" --package mazemail
+  binary="target/$target/release/mazemail"
+fi
+if [ ! -x "$binary" ]; then
+  echo "error: binary $binary not found or not executable" >&2
+  exit 1
+fi
+
+bundle_dir="$out/mac-$arch"
+app="$bundle_dir/Maze.app"
+rm -rf "$app"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+
+cp "$binary" "$app/Contents/MacOS/mazemail"
+chmod 755 "$app/Contents/MacOS/mazemail"
+
+icon_plist=""
+if [ -f assets/icons/Maze.icns ]; then
+  cp assets/icons/Maze.icns "$app/Contents/Resources/Maze.icns"
+  icon_plist="  <key>CFBundleIconFile</key>
+  <string>Maze</string>"
+fi
+
+if [ -n "$profile" ]; then
+  cp "$profile" "$app/Contents/embedded.provisionprofile"
+fi
+
+cat > "$app/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleExecutable</key>
+  <string>mazemail</string>
+  <key>CFBundleIdentifier</key>
+  <string>${bundle_id}</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>Maze</string>
+  <key>CFBundleDisplayName</key>
+  <string>Maze</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>${numeric_version}</string>
+  <key>CFBundleVersion</key>
+  <string>${build_number}</string>
+  <key>MazeVersion</key>
+  <string>${version}</string>
+${icon_plist}
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>${bundle_id}.mailto</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>mailto</string>
+      </array>
+    </dict>
+  </array>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.productivity</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSPrincipalClass</key>
+  <string>NSApplication</string>
+</dict>
+</plist>
+PLIST
+printf 'APPL????' > "$app/Contents/PkgInfo"
+
+plutil -lint "$app/Contents/Info.plist" >&2
+
+echo "bundle: $app (version $version, build $build_number, channel $channel, id $bundle_id)" >&2
+
+if [ "$package" -eq 1 ]; then
+  script/package-mac "$app" "$version" "$arch" "$out"
+fi

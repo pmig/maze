@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Exit 0 if semver A has higher precedence than semver B, 1 otherwise
+# (semver.org section 11, build metadata ignored).
+#
+# Usage: script/semver-gt <A> <B>
+#   script/semver-gt 0.3.0 0.3.0-alpha.2     -> exit 0
+#   script/semver-gt 0.3.0-alpha.2 0.3.0-alpha.10 -> exit 1
+set -euo pipefail
+
+if [ "$#" -ne 2 ]; then
+  echo "usage: ${0##*/} <A> <B>" >&2
+  exit 2
+fi
+
+parse() {
+  local v=${1%%+*}
+  core=${v%%-*}
+  pre=""
+  if [ "$v" != "$core" ]; then
+    pre=${v#*-}
+  fi
+  if ! [[ $core =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "error: '$1' is not a semantic version" >&2
+    exit 2
+  fi
+}
+
+parse "$1"
+a_core=$core a_pre=$pre
+parse "$2"
+b_core=$core b_pre=$pre
+
+IFS=. read -r a1 a2 a3 <<< "$a_core"
+IFS=. read -r b1 b2 b3 <<< "$b_core"
+for pair in "$a1 $b1" "$a2 $b2" "$a3 $b3"; do
+  # shellcheck disable=SC2086 # intentional split into two numbers
+  set -- $pair
+  if [ "$((10#$1))" -gt "$((10#$2))" ]; then exit 0; fi
+  if [ "$((10#$1))" -lt "$((10#$2))" ]; then exit 1; fi
+done
+
+# Equal core versions: a release outranks any prerelease of it.
+if [ -z "$a_pre" ] && [ -z "$b_pre" ]; then exit 1; fi
+if [ -z "$a_pre" ]; then exit 0; fi
+if [ -z "$b_pre" ]; then exit 1; fi
+
+IFS=. read -ra a_ids <<< "$a_pre"
+IFS=. read -ra b_ids <<< "$b_pre"
+i=0
+while [ "$i" -lt "${#a_ids[@]}" ] && [ "$i" -lt "${#b_ids[@]}" ]; do
+  x=${a_ids[$i]}
+  y=${b_ids[$i]}
+  x_num=0 y_num=0
+  [[ $x =~ ^[0-9]+$ ]] && x_num=1
+  [[ $y =~ ^[0-9]+$ ]] && y_num=1
+  if [ "$x_num" -eq 1 ] && [ "$y_num" -eq 1 ]; then
+    if [ "$((10#$x))" -gt "$((10#$y))" ]; then exit 0; fi
+    if [ "$((10#$x))" -lt "$((10#$y))" ]; then exit 1; fi
+  elif [ "$x_num" -eq 1 ]; then
+    exit 1 # numeric identifiers sort below alphanumeric ones
+  elif [ "$y_num" -eq 1 ]; then
+    exit 0
+  elif [[ $x > $y ]]; then
+    exit 0
+  elif [[ $x < $y ]]; then
+    exit 1
+  fi
+  i=$((i + 1))
+done
+# All shared identifiers equal: the longer prerelease wins.
+[ "${#a_ids[@]}" -gt "${#b_ids[@]}" ]

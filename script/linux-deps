@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Install the system packages needed to build Maze (GPUI) on Debian/Ubuntu.
+# Derived from Zed's script/linux. Used by CI and the release workflow.
+set -euo pipefail
+
+if [ "$(id -u)" -eq 0 ]; then
+  maysudo=()
+else
+  maysudo=(sudo)
+fi
+
+deps=(
+  build-essential
+  clang
+  libfontconfig1-dev
+  libssl-dev
+  libvulkan-dev
+  libwayland-dev
+  libx11-xcb-dev
+  libxcb1-dev
+  libxkbcommon-dev
+  libxkbcommon-x11-dev
+  pkg-config
+  zstd
+)
+
+"${maysudo[@]}" apt-get update
+"${maysudo[@]}" apt-get install -y --no-install-recommends "${deps[@]}"
