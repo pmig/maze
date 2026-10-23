@@ -155,17 +155,11 @@ mod tests {
     use super::*;
     use crate::SecretKind;
 
-    fn unique() -> u128 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    }
-
     #[test]
     fn round_trip_survives_a_new_instance_and_is_private() {
-        let dir = std::env::temp_dir().join(format!("mazemail-secrets-{}", unique()));
-        let path = dir.join("secrets.json");
+        // The directory doesn't exist yet: the store creates it.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("secrets").join("secrets.json");
         let key = SecretKey::new(Uuid::from_u128(7), SecretKind::Password);
         let other = SecretKey::new(Uuid::from_u128(8), SecretKind::OAuthRefresh);
         let store = FileSecretStore::new(&path);
@@ -190,18 +184,15 @@ mod tests {
         assert_eq!(store.load(&key).unwrap(), None);
         assert_eq!(store.load(&other).unwrap().unwrap().expose(), "rt");
         assert!(!format!("{store:?}").contains("rt\""));
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn garbage_is_invalid_data() {
-        let dir = std::env::temp_dir().join(format!("mazemail-secrets-{}", unique()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("secrets.json");
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("secrets.json");
         std::fs::write(&path, b"not json").unwrap();
         let store = FileSecretStore::new(&path);
         let key = SecretKey::new(Uuid::from_u128(1), SecretKind::Password);
         assert_eq!(store.load(&key), Err(SecretStoreError::InvalidData));
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
