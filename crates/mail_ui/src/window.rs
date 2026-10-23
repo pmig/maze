@@ -855,6 +855,41 @@ mod tests {
         assert!(view.read_with(cx, |w, _| w.prefs().agent_expanded.is_some()));
     }
 
+    /// App-level handlers for actions run from the palette (or a button) are called
+    /// while this window handles the event, when GPUI can't update the window. The
+    /// app defers such handlers (`mazemail::app`, Add Account): this pins down why.
+    #[gpui::test]
+    fn palette_actions_must_defer_window_updates(cx: &mut TestAppContext) {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let (_view, cx) = open(cx);
+        cx.run_until_parked();
+        let handle = cx.update(|window, _| window.window_handle());
+        let results: Rc<RefCell<Vec<(&str, bool)>>> = Rc::default();
+        cx.update(|_, cx| {
+            let results = results.clone();
+            cx.on_action(move |_: &crate::actions::AddAccount, cx| {
+                let direct = handle.update(cx, |_, _, _| ()).is_ok();
+                results.borrow_mut().push(("direct", direct));
+                let results = results.clone();
+                cx.defer(move |cx| {
+                    let deferred = handle.update(cx, |_, _, _| ()).is_ok();
+                    results.borrow_mut().push(("deferred", deferred));
+                });
+            });
+        });
+        cx.simulate_keystrokes("cmd-shift-p");
+        cx.simulate_input("add account");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert_eq!(
+            *results.borrow(),
+            vec![("direct", false), ("deferred", true)],
+            "the palette ran Add Account inside the window's event handling"
+        );
+    }
+
     #[gpui::test]
     fn palette_opens_runs_actions_and_closes(cx: &mut TestAppContext) {
         let (view, cx) = open(cx);
