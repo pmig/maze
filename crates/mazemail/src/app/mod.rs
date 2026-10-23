@@ -21,6 +21,7 @@
 //! core, a key or a socket.
 
 mod add_account;
+mod agents;
 mod approval;
 mod compose;
 mod lost_key;
@@ -130,6 +131,7 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
         // From the title bar's "+", cmd-n (any window) or the palette: deferred, like
         // Add Account, because the window is busy handling that event.
         cx.on_action(|_: &mail_ui::actions::NewMessage, cx| cx.defer(compose::new_message));
+        agents::init(cx);
         cx.set_global(AppState {
             source,
             authorizer,
@@ -327,6 +329,7 @@ pub(crate) fn core_ready(core: &CoreHandle, cx: &mut App) {
     cx.global_mut::<AppState>().server = Some(RunningServer { stop, task });
 
     updates::follow_core_settings(core, cx);
+    agents::start(core, &authorizer, cx);
     let window = cx
         .global::<AppState>()
         .window

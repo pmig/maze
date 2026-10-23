@@ -157,7 +157,7 @@ impl RenderOnce for AgentColumn {
                 .w_full()
                 .label(label)
                 .disabled(true)
-                .tooltip("Agent setup arrives with the agents milestone (M6)")
+                .tooltip("Agents need your mail data; they aren't available here")
         };
         column
             .child(

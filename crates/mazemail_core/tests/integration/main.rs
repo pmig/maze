@@ -6,6 +6,7 @@
 #![allow(clippy::unwrap_used, clippy::print_stderr)]
 
 mod accounts;
+mod agent;
 mod api;
 mod bench;
 mod commands;

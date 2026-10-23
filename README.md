@@ -163,6 +163,8 @@ privately, see [SECURITY.md](SECURITY.md).
   keyboard shortcuts
 - [The `mazemail` CLI](docs/cli.md): tokens, profiles, approvals and `--headless`
 - [CLI reference for agents](docs/AGENTS-cli.md), generated from the command registry
+- [Agents](docs/agents.md): the agent column, installing Claude Code, Codex, Gemini,
+  Cursor and pi, sign-in, the sandbox, custom agents
 - [Security](docs/security.md): encryption at rest, keys and recovery, API tokens
 - [Releasing](docs/releasing.md): the maintainer checklist
 

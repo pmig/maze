@@ -1,0 +1,53 @@
+[package]
+name = "agent"
+description = "Maze ACP client: agent registry and install, sandboxed agent sessions, terminal host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# The scripted in-process ACP agent (`agent::fake`) for tests of crates above this one.
+test-support = []
+
+# Test helper for the manager's end-to-end test, never shipped.
+[[bin]]
+name = "mazemail-probe-agent"
+path = "src/bin/mazemail-probe-agent.rs"
+required-features = ["test-support"]
+test = false
+
+[dependencies]
+agent-client-protocol = { workspace = true }
+async-channel = { workspace = true }
+async-trait = { workspace = true }
+flate2 = { workspace = true }
+futures-util = { workspace = true }
+getrandom = { workspace = true }
+hex = { workspace = true }
+local_api = { workspace = true }
+mazemail_types = { workspace = true }
+reqwest = { workspace = true }
+rustix = { workspace = true }
+sandbox = { workspace = true }
+semver = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+settings = { workspace = true }
+sha2 = { workspace = true }
+tar = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true, features = ["process", "io-std"] }
+tokio-util = { workspace = true, features = ["compat"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+async-channel = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["process", "test-util"] }
+
+[lints]
+workspace = true

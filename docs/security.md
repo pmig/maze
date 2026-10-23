@@ -69,12 +69,15 @@ separate keychain items.
   and no addresses; accounts and identities are in the encrypted database.
 - **Logs**: Maze never logs message content, subjects or addresses.
 
+- **Agent session folders** (`sessions/<id>/` in the data directory): the thread you
+  attached to a conversation, as Markdown, because the agent has to read it. Only what
+  that session was given; deleted when the session ends, leftovers at the next start.
+
 As the features arrive, these join the list: attachments you open in another app (a
 private temporary folder, deleted on quit or after 24 hours), notification text (macOS
 keeps delivered notifications in its own database; the `notifications.content` setting
-controls whether they include the subject), pages you open in a browser, and the
-scratch folders of agent sessions (only what that session was given, deleted when it
-ends). Maze doesn't donate mail to Spotlight.
+controls whether they include the subject) and pages you open in a browser. Maze
+doesn't donate mail to Spotlight.
 
 ## Lost key and recovery
 
@@ -126,15 +129,16 @@ Agents you start yourself, outside Maze, are not sandboxed by Maze. Encryption k
 them out of the store, and they see only what the token you gave them allows. Prefer
 `read-only` or `triage` tokens with a short lifetime and a label.
 
-Agents that Maze will start itself (the agent column, a later milestone) run in an
-operating system sandbox: Seatbelt on macOS, bubblewrap with a seccomp filter on Linux.
-The planned policy hides your home directory except the agent's own home and its
-session folder, never lets an agent read `mail/`, other sessions, `~/.ssh` or the
-Thunderbird profile, lets it write only to its session and its own home, and allows no
-Unix socket except Maze's. Each session gets a token scoped to that session, revoked
-when it ends. Network access stays on by default, because agents have to reach their
-model provider; a host allowlist is available as a setting (`agent_sandbox`). AI is off
-for every account unless you turn it on.
+Agents that Maze starts itself (the agent column) run in an operating system sandbox:
+Seatbelt on macOS, bubblewrap on Linux (the seccomp filter against new Unix sockets is
+not implemented yet). The policy hides your home directory except the agent's own home
+and its session folder, never lets an agent read `mail/`, other sessions, `~/.ssh` or
+the Thunderbird profile, lets it write only to its session and its own home, and allows
+no Unix socket except Maze's. Agents start with an empty environment plus what Maze
+sets. Each session gets a token scoped to the accounts you share with agents, revoked
+when it ends. Network access stays on, because agents have to reach their model
+provider. AI is off for every account unless you turn it on. Details in
+[agents.md](agents.md).
 
 ## Updates
 

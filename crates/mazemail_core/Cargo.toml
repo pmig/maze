@@ -32,6 +32,8 @@ tracing = { workspace = true }
 vault = { workspace = true }
 
 [dev-dependencies]
+# The agent crate's session tokens, tested against the real core (it never depends on core).
+agent = { workspace = true }
 anyhow = { workspace = true }
 imap = { workspace = true, features = ["fake"] }
 mail-parser = { workspace = true }

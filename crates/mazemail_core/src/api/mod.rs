@@ -36,6 +36,7 @@
 //! handler calls `apply`.
 
 mod accounts;
+mod agent_export;
 mod audit;
 mod export;
 mod handler;
@@ -47,9 +48,11 @@ use std::sync::Arc;
 
 use local_api::{Approver, Services};
 
+pub use agent_export::thread_markdown_for_agents;
 pub use audit::StoreAuditSink;
 pub use handler::{CoreCommandHandler, ProposalPublicId, not_available};
 pub use policy::SettingsAccountPolicy;
+pub(crate) use tokens::proposal_title as proposal_summary;
 pub use tokens::{StoreTokenStore, TokenAuthorizer, TokenCache};
 
 use crate::handle::CoreHandle;

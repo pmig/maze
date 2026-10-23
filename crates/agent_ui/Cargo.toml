@@ -1,0 +1,27 @@
+[package]
+name = "agent_ui"
+description = "Maze agent column: agent picker and install, conversation view, permission prompts, proposal review"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+agent = { workspace = true }
+async-channel = { workspace = true }
+gpui = { workspace = true }
+gpui-kit = { workspace = true }
+mazemail_types = { workspace = true }
+settings = { workspace = true }
+tracing = { workspace = true }
+ui = { workspace = true }
+
+[dev-dependencies]
+agent = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

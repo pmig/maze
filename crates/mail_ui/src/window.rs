@@ -22,7 +22,7 @@ use gpui_kit::component::{
     resizable::{HandleEdge, resize_handle},
     v_flex,
 };
-use mazemail_types::{FolderRole, MessageId, PRODUCT_NAME};
+use mazemail_types::{FolderRole, MessageId, PRODUCT_NAME, ThreadId};
 use time::UtcOffset;
 use ui::assets::IconName;
 
@@ -178,6 +178,7 @@ pub struct MailWindow {
     pending_benchmark: Option<ScrollBenchmark>,
     bench: Option<BenchRun>,
     title_bar_items: Vec<AnyView>,
+    agent_panel: Option<AnyView>,
     after_paint: Rc<RefCell<Vec<AfterPaint>>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -249,6 +250,7 @@ impl MailWindow {
             pending_benchmark: options.benchmark,
             bench: None,
             title_bar_items: Vec::new(),
+            agent_panel: None,
             after_paint: Rc::default(),
             _subscriptions: subscriptions,
         };
@@ -298,6 +300,26 @@ impl MailWindow {
     pub fn add_title_bar_item(&mut self, view: AnyView, cx: &mut Context<'_, Self>) {
         self.title_bar_items.push(view);
         cx.notify();
+    }
+
+    /// Shows `view` as the expanded agent column's content instead of the setup card
+    /// (the `agent_ui` panel; the binary plugs it in so the window doesn't depend on
+    /// it). The view brings its own header.
+    pub fn set_agent_panel(&mut self, view: AnyView, cx: &mut Context<'_, Self>) {
+        self.agent_panel = Some(view);
+        cx.notify();
+    }
+
+    /// The thread the agent column attaches as context: the selected thread and its
+    /// subject, when exactly one row is selected and its message is shown.
+    pub fn agent_context(&self, cx: &App) -> Option<(ThreadId, SharedString)> {
+        if self.thread_list.read(cx).selected_count() > 1 {
+            return None;
+        }
+        self.message_view
+            .read(cx)
+            .document()
+            .map(|doc| (doc.thread, doc.subject.expose().clone()))
     }
 
     /// Runs `callback` (deferred, outside of painting) after the next frame has been
@@ -888,14 +910,28 @@ impl Render for MailWindow {
                 .into_any_element(),
         };
         let agent = match resolved.agent {
-            AgentPlacement::Expanded(width) => Self::column(
-                "resize-agent",
-                width,
-                ColumnDrag::Agent,
-                HandleEdge::Leading,
-                AgentColumn::expanded(width, context),
-            )
-            .into_any_element(),
+            AgentPlacement::Expanded(width) => match &self.agent_panel {
+                Some(panel) => Self::column(
+                    "resize-agent",
+                    width,
+                    ColumnDrag::Agent,
+                    HandleEdge::Leading,
+                    div()
+                        .size_full()
+                        .border_l_1()
+                        .border_color(theme.border)
+                        .child(panel.clone()),
+                )
+                .into_any_element(),
+                None => Self::column(
+                    "resize-agent",
+                    width,
+                    ColumnDrag::Agent,
+                    HandleEdge::Leading,
+                    AgentColumn::expanded(width, context),
+                )
+                .into_any_element(),
+            },
             AgentPlacement::Strip => AgentColumn::strip(self.config.agent_strip).into_any_element(),
         };
 

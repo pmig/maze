@@ -1,0 +1,19 @@
+[package]
+name = "sandbox"
+description = "Maze agent sandbox: Seatbelt profiles on macOS, bubblewrap arguments on Linux"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

@@ -480,6 +480,9 @@ Maze uses Thunderbird's shortcuts and fills the gaps with Zed's. These are bound
 | Toggle folder pane                   | `cmd-b`                     |
 | Toggle message pane                  | `F8`                        |
 | Toggle agent column                  | `cmd-?`                     |
+| New agent conversation (agent column) | `cmd-n`                    |
+| Accept / reject all agent proposals  | `cmd-shift-enter` / `cmd-shift-backspace` |
+| Accept / reject a proposal item      | `y` / `n` (review focused)  |
 | Next / previous message              | `f` / `b`, `down` / `up`    |
 | Next / previous unread               | `n` / `p`                   |
 | First / last message, page down / up | `home` / `end`, `pagedown` / `pageup` |
@@ -503,6 +506,13 @@ Maze uses Thunderbird's shortcuts and fills the gaps with Zed's. These are bound
 Single-letter shortcuts work when the message list or a message has focus, never inside
 a text field. The rest of Thunderbird's keymap (tags `1`–`9`, junk, delete, history)
 follows as the features arrive.
+
+## Agents
+
+The fourth column runs coding agents (Claude Code, Codex, Gemini CLI, Cursor, pi or
+your own) in a sandbox, with the selected thread as context. AI is off until you share
+an account with agents (`"agent": { "accounts": { "Work": "any" } }`). See
+[agents.md](agents.md).
 
 ## Getting help
 

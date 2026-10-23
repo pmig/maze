@@ -19,6 +19,8 @@ name = "mazemail"
 path = "src/main.rs"
 
 [dependencies]
+agent = { workspace = true }
+agent_ui = { workspace = true }
 anyhow = { workspace = true }
 async-channel = { workspace = true }
 async-trait = { workspace = true }
