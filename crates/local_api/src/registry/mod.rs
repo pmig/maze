@@ -577,6 +577,95 @@ static REGISTRY: &[CommandSpec] = &[
         output_schema: schema::<ImportOutput>,
         human: Human::Fields,
     },
+    CommandSpec {
+        name: "account.list",
+        path: &["account", "list"],
+        summary: "List mail accounts and their sync state",
+        help: "Lists the accounts in your token's scope with their server, sign-in method and \
+               sync state (up to date, syncing, offline, sign-in required).",
+        permission: Permission::Read,
+        requires_token: true,
+        touches_mail: false,
+        examples: &[ex(
+            "mazemail account list --json | jq -r '.[] | select(.state == \"auth_required\") | .id'",
+            "Accounts that need a new sign-in",
+        )],
+        args_schema: schema::<AccountListArgs>,
+        output_schema: schema::<Vec<AccountOutput>>,
+        human: Human::Table(&[
+            col("ID", "id"),
+            col("NAME", "name"),
+            col("KIND", "kind"),
+            col("SERVER", "server"),
+            col("STATUS", "status"),
+        ]),
+    },
+    CommandSpec {
+        name: "account.add",
+        path: &["account", "add"],
+        summary: "Add an IMAP, Gmail or Microsoft account",
+        help: "Maze connects, logs in and lists the folders before it saves anything, then \
+               keeps the password (or the sign-in) in the system keychain and starts syncing. \
+               The password is read from the terminal without echo, or from stdin with \
+               --password-stdin; it is never a command-line argument. With --oauth google or \
+               --oauth microsoft, Maze opens the browser for the sign-in instead (Google needs \
+               auth.google.client_id in settings.json). Host, port and security are detected \
+               for well-known providers. Needs a writer token, and you approve every account \
+               in Maze.",
+        permission: Permission::Admin,
+        requires_token: true,
+        touches_mail: false,
+        examples: &[
+            ex(
+                "mazemail account add alice@example.org --host imap.example.org",
+                "Add an account; asks for the password",
+            ),
+            ex(
+                "printf '%s\\n' \"$PASSWORD\" | mazemail account add alice@example.org --password-stdin",
+                "Password from stdin (scripts)",
+            ),
+            ex(
+                "mazemail account add bob@gmail.com --oauth google",
+                "Sign in with Google in the browser",
+            ),
+        ],
+        args_schema: schema::<AccountAddArgs>,
+        output_schema: schema::<AccountOutput>,
+        human: Human::Fields,
+    },
+    CommandSpec {
+        name: "account.remove",
+        path: &["account", "remove"],
+        summary: "Remove a mail account",
+        help: "Stops syncing the account and deletes its local mail, folders, identities and \
+               keychain items. Nothing changes on the server. Needs a writer token, and you \
+               approve it in Maze.",
+        permission: Permission::Admin,
+        requires_token: true,
+        touches_mail: false,
+        examples: &[ex("mazemail account remove a_b", "Remove an account")],
+        args_schema: schema::<AccountRemoveArgs>,
+        output_schema: schema::<AccountRemoved>,
+        human: Human::Fields,
+    },
+    CommandSpec {
+        name: "sync",
+        path: &["sync"],
+        summary: "Sync accounts now",
+        help: "Asks every account in your token's scope (or --account) to look for new mail and \
+               replay pending changes now, and retries at once when an account is offline. \
+               Returns right away; `mazemail account list` shows the progress.",
+        permission: Permission::Read,
+        requires_token: true,
+        touches_mail: false,
+        examples: &[
+            ex("mazemail sync", "Sync every account"),
+            ex("mazemail sync --account a_b", "Sync one account"),
+        ],
+        args_schema: schema::<SyncArgs>,
+        output_schema: schema::<SyncOutput>,
+        human: Human::Fields,
+    },
 ];
 
 /// Every command, in help order.
@@ -597,6 +686,7 @@ pub fn find_by_path(path: &[&str]) -> Option<&'static CommandSpec> {
 /// Command groups with subcommands, and their summaries.
 pub(crate) const GROUPS: &[(&str, &str)] = &[
     ("token", "Create, list and revoke API tokens"),
+    ("account", "Add, list and remove mail accounts"),
     ("attachment", "Work with attachments"),
     ("draft", "Write and change drafts"),
     ("rule", "Manage filter rules"),
@@ -660,6 +750,10 @@ mod tests {
             "send",
             "export",
             "import",
+            "account.list",
+            "account.add",
+            "account.remove",
+            "sync",
         ] {
             assert!(find(name).is_some(), "{name} missing");
         }
@@ -670,9 +764,11 @@ mod tests {
         for spec in registry() {
             let is_mail = Command::NAMES.contains(&spec.name);
             assert_eq!(spec.is_builtin(), !is_mail, "{}", spec.name);
-            // Mail commands need a token.
+            // Mail commands need a token; all but account management touch mail.
             if is_mail {
-                assert!(spec.requires_token && spec.touches_mail, "{}", spec.name);
+                assert!(spec.requires_token, "{}", spec.name);
+                let manages_accounts = spec.name.starts_with("account.") || spec.name == "sync";
+                assert_eq!(spec.touches_mail, !manages_accounts, "{}", spec.name);
             }
         }
         for name in Command::NAMES {
@@ -712,6 +808,14 @@ mod tests {
             assert_eq!(triage(name), Propose, "{name}");
         }
         assert_eq!(triage("rule.add"), Ask);
+        // Accounts: listing and syncing are reads; adding and removing need a writer
+        // token and the user's approval.
+        assert_eq!(triage("account.list"), Allow);
+        assert_eq!(triage("sync"), Allow);
+        for name in ["account.add", "account.remove"] {
+            assert_eq!(triage(name), Deny, "{name}");
+            assert_eq!(find(name).unwrap().access(Profile::Writer, true), Ask);
+        }
         assert_eq!(triage("send"), Deny);
         assert_eq!(find("send").unwrap().access(Profile::Triage, true), Ask);
         assert_eq!(triage("login"), Ask);

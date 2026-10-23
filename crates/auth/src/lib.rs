@@ -60,8 +60,8 @@ pub use secret::KeychainSecretStore;
 #[cfg(target_os = "linux")]
 pub use secret::SecretServiceStore;
 pub use secret::{
-    AccountSecrets, MemorySecretStore, SERVICE, SecretKey, SecretKind, SecretStore,
-    SecretStoreError, system_secret_store,
+    AccountSecrets, FileSecretStore, MemorySecretStore, SERVICE, SecretKey, SecretKind,
+    SecretStore, SecretStoreError, system_secret_store,
 };
 pub use token::{OAuthTokenManager, REFRESH_MARGIN, StaticTokenProvider, TokenProvider, TokenSet};
 pub use uuid::Uuid;

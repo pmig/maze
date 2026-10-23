@@ -1,4 +1,4 @@
-//! Where the master key lives (PLAN §4.17).
+//! Where the master key and the account secrets live (PLAN §4.6, §4.17).
 //!
 //! Production builds keep it in the platform key store: the macOS keychain or the
 //! Secret Service on Linux, with a separate item for development builds so a dev build
@@ -8,6 +8,12 @@
 //! key in a file inside the data directory instead ([`DEV_KEY_FILE`], mode 0600). That
 //! file sits next to the data it decrypts, so it protects nothing: it is never the
 //! default, and every start with it logs a warning.
+//!
+//! Account passwords and OAuth refresh tokens go to the system keychain too
+//! ([`auth::system_secret_store`], `mazemail/<account-uuid>/<kind>`). For automated
+//! end-to-end runs, where a keychain may prompt or be locked,
+//! `MAZEMAIL_INSECURE_DEV_SECRETS=1` keeps them **unencrypted** in a file in the data
+//! directory ([`DEV_SECRETS_FILE`], mode 0600) instead, with the same warnings.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -20,6 +26,33 @@ pub const INSECURE_DEV_KEYSTORE_ENV: &str = "MAZEMAIL_INSECURE_DEV_KEYSTORE";
 
 /// The key file name inside the data directory with [`INSECURE_DEV_KEYSTORE_ENV`].
 pub const DEV_KEY_FILE: &str = "insecure-dev-master-key";
+
+/// Set to `1` to keep account passwords and tokens in a plain file in the data
+/// directory.
+pub const INSECURE_DEV_SECRETS_ENV: &str = "MAZEMAIL_INSECURE_DEV_SECRETS";
+
+/// The secrets file name inside the data directory with [`INSECURE_DEV_SECRETS_ENV`].
+pub const DEV_SECRETS_FILE: &str = "insecure-dev-secrets.json";
+
+/// Whether [`INSECURE_DEV_SECRETS_ENV`] is set to `1`.
+pub fn insecure_dev_secrets_requested() -> bool {
+    std::env::var(INSECURE_DEV_SECRETS_ENV).is_ok_and(|value| value.trim() == "1")
+}
+
+/// Where account secrets live: the file store if [`INSECURE_DEV_SECRETS_ENV`] is set,
+/// else the system keychain.
+pub fn secret_store(data_dir: &Path) -> Arc<dyn auth::SecretStore> {
+    if insecure_dev_secrets_requested() {
+        let path = data_dir.join(DEV_SECRETS_FILE);
+        tracing::warn!(
+            path = %path.display(),
+            "INSECURE: account passwords and tokens are kept unencrypted in a plain file \
+             ({INSECURE_DEV_SECRETS_ENV}=1); use this only for development and tests"
+        );
+        return Arc::new(auth::FileSecretStore::new(path));
+    }
+    auth::system_secret_store()
+}
 
 /// No key store is available on this platform.
 #[derive(Debug, thiserror::Error)]
@@ -92,6 +125,22 @@ mod tests {
         assert_eq!(flavor(ReleaseChannel::Dev), Flavor::Dev);
         assert_eq!(flavor(ReleaseChannel::Stable), Flavor::Release);
         assert_eq!(flavor(ReleaseChannel::Preview), Flavor::Release);
+    }
+
+    #[test]
+    fn the_dev_secret_store_is_a_file_in_the_data_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        use auth::SecretStore as _;
+        let store = auth::FileSecretStore::new(dir.path().join(DEV_SECRETS_FILE));
+        let key = auth::SecretKey::new(auth::Uuid::from_u128(1), auth::SecretKind::Password);
+        store
+            .store(&key, &mazemail_types::Sensitive::new("pw".to_owned()))
+            .unwrap();
+        assert!(dir.path().join(DEV_SECRETS_FILE).is_file());
+        // Without the switch the system keychain is used (not touched here).
+        if !insecure_dev_secrets_requested() {
+            assert!(!format!("{:?}", secret_store(dir.path())).contains(DEV_SECRETS_FILE));
+        }
     }
 
     #[test]

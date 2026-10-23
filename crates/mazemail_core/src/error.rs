@@ -86,6 +86,20 @@ pub enum Error {
         source: io::Error,
     },
 
+    /// Adding or removing an account failed. `message` is for people: what went
+    /// wrong and what to do (no passwords or tokens).
+    #[error("{message}")]
+    Account {
+        /// What kind of failure.
+        kind: crate::accounts::AccountErrorKind,
+        /// The explanation.
+        message: String,
+    },
+
+    /// Accounts can't be added or synced: this core runs without a sync engine.
+    #[error("accounts can't be added here: Maze runs without its sync engine")]
+    NoSyncEngine,
+
     /// A background task panicked or was cancelled.
     #[error("a background task failed: {0}")]
     Task(&'static str),

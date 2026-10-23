@@ -21,7 +21,7 @@ use time::{Duration, OffsetDateTime};
 use crate::source::{
     AccountEntry, AccountKind, AttachmentInfo, Direction, FolderEntry, FolderKey, FolderTree,
     MailSource, MessageBody, MessageDocument, SourceError, SourceStatus, SyncState, ThreadFilter,
-    ThreadKeys, ThreadPredicate, ThreadRow, ThreadScope,
+    ThreadKeys, ThreadPredicate, ThreadRow, ThreadScope, Verdict, Verification,
 };
 
 /// Number of threads in the large folder (Gmail (personal) / Archives).
@@ -803,6 +803,13 @@ impl MailSource for FakeMailSource {
             date: row.date,
             body: MessageBody::Html(Sensitive::new(SharedString::from(body))),
             attachments,
+            verification: Verification::Checked {
+                verdict: Verdict::Verified,
+                dkim: "pass".into(),
+                spf: "pass".into(),
+                dmarc: "pass".into(),
+                explanation: "The sender's domain signed this message.".into(),
+            },
         })
     }
 

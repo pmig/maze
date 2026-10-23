@@ -29,8 +29,9 @@ pub(crate) fn run(utc_offset: UtcOffset) -> anyhow::Result<()> {
 
 async fn serve(paths: Paths, utc_offset: UtcOffset) -> anyhow::Result<()> {
     let key_store = keys::key_store(paths.data_dir())?;
+    let secrets = keys::secret_store(paths.data_dir());
     let authorizer = TokenAuthorizer::new();
-    let config = startup::core_config(&paths, key_store, &authorizer, utc_offset)
+    let config = startup::core_config(&paths, key_store, secrets, &authorizer, utc_offset)
         .with_runtime(tokio::runtime::Handle::current());
     let core = match CoreHandle::open(config).await {
         Ok(core) => core,

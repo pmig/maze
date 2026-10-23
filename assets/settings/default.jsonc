@@ -87,6 +87,19 @@
   // Supported keys: "offline", "offline_recent_days", "remote_content".
   "accounts": {},
 
+  // OAuth clients for "Sign in with Google" and "Sign in with Microsoft". Maze has no
+  // Google client ID of its own yet: create an OAuth client of type "Desktop app" in
+  // the Google Cloud console and enter its ID and secret here.
+  "auth": {
+    "google": {
+      "client_id": null,
+      "client_secret": null
+    },
+    "microsoft": {
+      "client_id": null
+    }
+  },
+
   // AI agents. AI is off unless enabled per account.
   "agent": {
     // The agent used when none is chosen explicitly.

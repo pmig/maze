@@ -20,6 +20,8 @@ actions!(
         Minimize,
         /// Zoom the window.
         Zoom,
+        /// Add a mail account (IMAP, Gmail or Microsoft).
+        AddAccount,
     ]
 );
 

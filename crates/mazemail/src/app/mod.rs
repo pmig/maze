@@ -16,6 +16,7 @@
 //! `MAZEMAIL_DEMO=1` runs the window on synthetic mail (`FakeMailSource`) without a
 //! core, a key or a socket.
 
+mod add_account;
 mod approval;
 mod lost_key;
 
@@ -82,8 +83,15 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
 
     let paths = Paths::current().context("finding the data directory")?;
     let key_store = keys::key_store(paths.data_dir())?;
+    let secrets = keys::secret_store(paths.data_dir());
     let authorizer = TokenAuthorizer::new();
-    let config = startup::core_config(&paths, key_store, &authorizer, options.local_offset);
+    let config = startup::core_config(
+        &paths,
+        key_store,
+        secrets,
+        &authorizer,
+        options.local_offset,
+    );
     let source = Arc::new(CoreMailSource::opening());
 
     let app = ui::kit::application().with_assets(ui::assets::Assets);
@@ -97,6 +105,12 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
     app.run(move |cx| {
         ui::init(cx);
         mail_ui::init(cx);
+        cx.on_action(|_: &mail_ui::actions::AddAccount, cx| {
+            match cx.global::<AppState>().core.clone() {
+                Some(core) => add_account::show(core, cx),
+                None => tracing::info!("Add Account: the mail data isn't open yet"),
+            }
+        });
         cx.set_global(AppState {
             source,
             authorizer,
@@ -176,7 +190,7 @@ fn open_window(cx: &mut App) {
 }
 
 /// Tells the window what changed.
-fn apply_changes(changes: &DataChanges, cx: &mut App) {
+pub(crate) fn apply_changes(changes: &DataChanges, cx: &mut App) {
     if let Some((_, view)) = cx.global::<AppState>().window.clone() {
         view.update(cx, |window, cx| window.apply_changes(changes, cx));
     }

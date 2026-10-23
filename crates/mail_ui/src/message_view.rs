@@ -16,7 +16,7 @@ use ui::assets::IconName;
 
 use crate::actions::{Archive, Forward, Reply, ReplyAll};
 use crate::format::{DateFormatter, format_size, initials};
-use crate::source::{MessageBody, MessageDocument};
+use crate::source::{MessageBody, MessageDocument, Verdict, Verification};
 
 /// The message view.
 pub struct MessageView {
@@ -93,17 +93,6 @@ impl MessageView {
         let action = |id: &'static str, label: &'static str, icon: IconName| {
             Button::new(id).outline().xsmall().icon(icon).label(label)
         };
-        let verification = |label: &'static str| {
-            h_flex()
-                .gap_0p5()
-                .px_1()
-                .rounded_sm()
-                .border_1()
-                .border_color(theme.border)
-                .text_color(theme.muted_foreground)
-                .child(label)
-                .child("–")
-        };
         v_flex()
             .flex_none()
             .gap_2()
@@ -161,27 +150,7 @@ impl MessageView {
             .when(!doc.cc.expose().is_empty(), |this| {
                 this.child(Self::address_line("Cc", doc.cc.expose(), cx))
             })
-            .child(
-                // Sender verification arrives with the `security` crate (M3); until
-                // then the row shows that nothing was checked.
-                h_flex()
-                    .id("verification")
-                    .gap_1p5()
-                    .text_xs()
-                    .child(
-                        Icon::new(IconName::ShieldCheck)
-                            .xsmall()
-                            .text_color(theme.muted_foreground),
-                    )
-                    .child(verification("DKIM"))
-                    .child(verification("SPF"))
-                    .child(verification("DMARC"))
-                    .child(
-                        div()
-                            .text_color(theme.muted_foreground)
-                            .child("Not verified"),
-                    ),
-            )
+            .child(Self::render_verification(&doc.verification, cx))
             .child(
                 h_flex()
                     .gap_1()
@@ -205,6 +174,75 @@ impl MessageView {
                         ),
                     ),
             )
+    }
+
+    /// The verification row: DKIM, SPF and DMARC results and the verdict, with the
+    /// explanation as a tooltip.
+    fn render_verification(verification: &Verification, cx: &App) -> impl IntoElement {
+        let theme = cx.theme();
+        let chip = |label: &'static str, result: SharedString| {
+            let color = match result.as_ref() {
+                "pass" => theme.success,
+                "fail" => theme.danger,
+                _ => theme.muted_foreground,
+            };
+            h_flex()
+                .gap_0p5()
+                .px_1()
+                .rounded_sm()
+                .border_1()
+                .border_color(theme.border)
+                .child(div().text_color(theme.muted_foreground).child(label))
+                .child(div().text_color(color).child(result))
+        };
+        let row = h_flex().id("verification").gap_1p5().text_xs();
+        match verification {
+            Verification::Pending | Verification::Unavailable => {
+                let text = if *verification == Verification::Pending {
+                    "Checking the sender…"
+                } else {
+                    "Sender can't be verified (no DNS)"
+                };
+                row.child(
+                    Icon::new(IconName::ShieldCheck)
+                        .xsmall()
+                        .text_color(theme.muted_foreground),
+                )
+                .child(chip("DKIM", "–".into()))
+                .child(chip("SPF", "–".into()))
+                .child(chip("DMARC", "–".into()))
+                .child(div().text_color(theme.muted_foreground).child(text))
+            }
+            Verification::Checked {
+                verdict,
+                dkim,
+                spf,
+                dmarc,
+                explanation,
+            } => {
+                let (icon, color, text) = match verdict {
+                    Verdict::Verified => (IconName::ShieldCheck, theme.success, "Verified sender"),
+                    Verdict::Unverified => (
+                        IconName::ShieldCheck,
+                        theme.muted_foreground,
+                        "Not verified",
+                    ),
+                    Verdict::Suspicious => {
+                        (IconName::ShieldAlert, theme.danger, "Suspicious sender")
+                    }
+                };
+                let explanation = explanation.clone();
+                row.child(Icon::new(icon).xsmall().text_color(color))
+                    .child(chip("DKIM", dkim.clone()))
+                    .child(chip("SPF", spf.clone()))
+                    .child(chip("DMARC", dmarc.clone()))
+                    .child(div().text_color(color).child(text))
+                    .tooltip(move |window, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(explanation.clone())
+                            .build(window, cx)
+                    })
+            }
+        }
     }
 
     fn render_attachments(doc: &MessageDocument, cx: &App) -> impl IntoElement {

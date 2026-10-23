@@ -10,12 +10,14 @@ use std::sync::Arc;
 use mazemail_types::Sensitive;
 use uuid::Uuid;
 
+mod file;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 mod memory;
 
+pub use file::FileSecretStore;
 #[cfg(target_os = "linux")]
 pub use linux::SecretServiceStore;
 #[cfg(target_os = "macos")]

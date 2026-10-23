@@ -106,6 +106,17 @@ type Outcome = Result<CommandOutput, ApiError>;
 
 const INVALID_CMD: &str = "<invalid>";
 
+/// Arguments as an approval dialog may show them: secrets (`account add`'s password)
+/// replaced, so they never reach a dialog, a prompt or a log.
+fn redacted(mut args: Value) -> Value {
+    if let Some(value) = args.as_object_mut().and_then(|o| o.get_mut("password"))
+        && !value.is_null()
+    {
+        *value = Value::String("<redacted>".to_owned());
+    }
+    args
+}
+
 impl Dispatcher {
     /// A dispatcher over `services`.
     pub fn new(services: Services, config: DispatchConfig) -> Self {
@@ -344,7 +355,7 @@ impl Dispatcher {
                     lifetime: token.grant().lifetime,
                     command: spec.name.to_owned(),
                     kind: ApprovalKind::Command {
-                        args: args.into(),
+                        args: redacted(args).into(),
                         // `send` is never auto-approved.
                         rememberable: spec.permission != crate::Permission::Disabled,
                     },
@@ -463,7 +474,7 @@ impl Dispatcher {
             folders: (!args.folders.is_empty()).then(|| args.folders.iter().copied().collect()),
         };
         let allowed = self.services.policy.agent_accounts();
-        check_policy(&scope, &allowed)?;
+        check_policy(args.profile, &scope, &allowed)?;
 
         let request = ApprovalRequest {
             process: peer.process.clone(),
@@ -492,7 +503,7 @@ impl Dispatcher {
         if let Some(accounts) = &mut grant.scope.accounts {
             accounts.retain(|account| allowed.contains(account));
         }
-        check_policy(&grant.scope, &allowed)?;
+        check_policy(grant.profile, &grant.scope, &allowed)?;
         if grant.profile == crate::Profile::ReadOnly {
             grant.allow_send = false;
         }
@@ -611,10 +622,19 @@ fn denied(spec: &CommandSpec, token: &TokenRecord) -> ApiError {
 }
 
 /// A token's scope can never include accounts whose AI policy excludes agents.
+///
+/// One exception keeps the CLI usable before any account is shared: a writer token
+/// for all accounts may be approved while no account allows agents. It sees no mail
+/// (its effective scope is empty) and can only run `account add` (which asks again
+/// each time), `account list` and `sync`.
 fn check_policy(
+    profile: crate::Profile,
     scope: &TokenScope,
     allowed: &BTreeSet<mazemail_types::AccountId>,
 ) -> Result<(), ApiError> {
+    if allowed.is_empty() && profile == crate::Profile::Writer && *scope == TokenScope::all() {
+        return Ok(());
+    }
     if allowed.is_empty() {
         return Err(ApiError::new(
             ErrorCode::PermissionDenied,

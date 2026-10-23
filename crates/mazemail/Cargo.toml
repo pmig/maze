@@ -22,6 +22,7 @@ path = "src/main.rs"
 anyhow = { workspace = true }
 async-channel = { workspace = true }
 async-trait = { workspace = true }
+auth = { workspace = true }
 clap = { workspace = true }
 gpui = { workspace = true }
 local_api = { workspace = true }
@@ -29,6 +30,7 @@ mail_ui = { workspace = true }
 mazemail_core = { workspace = true }
 mazemail_types = { workspace = true }
 release_channel = { workspace = true }
+security = { workspace = true }
 serde_json = { workspace = true }
 settings = { workspace = true }
 thiserror = { workspace = true }
@@ -44,6 +46,7 @@ gpui = { workspace = true, features = ["test-support"] }
 # `render_to_image` for the screenshot example needs the platform's test support.
 gpui_platform = { workspace = true, features = ["test-support"] }
 image = { workspace = true }
+imap = { workspace = true }
 import = { workspace = true }
 ingest = { workspace = true }
 tempfile = { workspace = true }

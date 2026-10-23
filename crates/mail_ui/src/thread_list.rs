@@ -948,11 +948,11 @@ impl Render for ThreadList {
                     .key_context("ThreadList")
                     .when(empty, |this| {
                         this.child(
-                            div()
+                            v_flex()
                                 .size_full()
-                                .flex()
                                 .items_center()
                                 .justify_center()
+                                .gap_3()
                                 .text_sm()
                                 .text_color(theme.muted_foreground)
                                 .px_6()
@@ -961,7 +961,22 @@ impl Render for ThreadList {
                                     self.source
                                         .placeholder()
                                         .unwrap_or_else(|| SharedString::from("No messages")),
-                                ),
+                                )
+                                .when(self.source.offers_add_account(), |this| {
+                                    this.child(
+                                        Button::new("empty-add-account")
+                                            .primary()
+                                            .small()
+                                            .icon(IconName::Plus)
+                                            .label("Add Account…")
+                                            .on_click(|_, window, cx| {
+                                                window.dispatch_action(
+                                                    Box::new(crate::actions::AddAccount),
+                                                    cx,
+                                                );
+                                            }),
+                                    )
+                                }),
                         )
                     })
                     .when(!empty, |this| this.child(body)),

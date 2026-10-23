@@ -245,7 +245,9 @@ impl RenderOnce for MailStatusBar {
                 account,
                 done,
                 total,
-            } => format!("{account} {done}/{total}").into(),
+            } => format!("{account}: syncing {done}/{total}").into(),
+            SyncState::NoAccounts => "No accounts".into(),
+            SyncState::Message { text, .. } => text.clone(),
         };
         let online_dot = div().size(px(7.)).rounded_full().bg(if self.status.online {
             theme.success

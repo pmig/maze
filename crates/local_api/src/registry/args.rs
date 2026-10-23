@@ -726,6 +726,121 @@ pub struct ImportArgs {
     pub account: Option<AccountId>,
 }
 
+/// `mazemail account list`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AccountListArgs {}
+
+/// Providers with a browser sign-in.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum OAuthProvider {
+    /// Gmail and Google Workspace.
+    Google,
+    /// Outlook.com and Microsoft 365.
+    Microsoft,
+}
+
+/// IMAP transport security.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum SecurityArg {
+    /// TLS from the first byte (port 993).
+    Tls,
+    /// STARTTLS (port 143).
+    Starttls,
+    /// No encryption: only for local test servers.
+    None,
+}
+
+/// `mazemail account add` as sent to Maze. The CLI never takes the password as an
+/// argument; it reads it from the terminal or stdin ([`AccountAddCliArgs`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AccountAddArgs {
+    /// The account's address.
+    #[schemars(with = "String")]
+    pub email: Sensitive<String>,
+    /// The name in the folder pane (default: the address).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Sign in with Google or Microsoft in the browser instead of a password.
+    #[serde(default)]
+    pub oauth: Option<OAuthProvider>,
+    /// IMAP host (default: detected from the address).
+    #[serde(default)]
+    pub host: Option<String>,
+    /// IMAP port (default: 993 for TLS, 143 otherwise).
+    #[serde(default)]
+    pub port: Option<u16>,
+    /// Transport security (default: tls).
+    #[serde(default)]
+    pub security: Option<SecurityArg>,
+    /// Login name (default: the address).
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub username: Option<Sensitive<String>>,
+    /// The password; required without `oauth`. Stored in the keychain, never logged.
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub password: Option<Sensitive<String>>,
+}
+
+/// `mazemail account add` on the command line.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct AccountAddCliArgs {
+    /// The account's address.
+    #[arg(value_name = "EMAIL")]
+    pub email: String,
+    /// The name in the folder pane (default: the address).
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Sign in with Google or Microsoft in the browser (no password).
+    #[arg(long, value_enum, conflicts_with_all = ["password_stdin", "host", "port", "security", "username"])]
+    pub oauth: Option<OAuthProvider>,
+    /// IMAP host (default: detected from the address).
+    #[arg(long)]
+    pub host: Option<String>,
+    /// IMAP port (default: 993 for TLS, 143 otherwise).
+    #[arg(long)]
+    pub port: Option<u16>,
+    /// Transport security.
+    #[arg(long, value_enum)]
+    pub security: Option<SecurityArg>,
+    /// Login name (default: the address).
+    #[arg(long)]
+    pub username: Option<String>,
+    /// Read the password from stdin (first line) instead of prompting on the terminal.
+    #[arg(long)]
+    pub password_stdin: bool,
+}
+
+/// `mazemail account remove`.
+#[derive(Debug, Clone, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AccountRemoveArgs {
+    /// The account (`a_…`).
+    #[arg(value_name = "ACCOUNT")]
+    #[serde(with = "pubid::one")]
+    #[schemars(with = "String")]
+    pub id: AccountId,
+}
+
+/// `mazemail sync`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SyncArgs {
+    /// Only this account (default: every account in scope).
+    #[arg(long, value_name = "ACCOUNT")]
+    #[serde(default, with = "pubid::option")]
+    #[schemars(with = "Option<String>")]
+    pub account: Option<AccountId>,
+}
+
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;

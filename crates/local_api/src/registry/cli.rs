@@ -75,6 +75,22 @@ pub enum CliCommand {
     Export(ExportArgs),
     /// `mazemail import`.
     Import(ImportArgs),
+    /// `mazemail account …`.
+    #[command(subcommand)]
+    Account(AccountCommand),
+    /// `mazemail sync`.
+    Sync(SyncArgs),
+}
+
+/// `mazemail account …`.
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
+pub enum AccountCommand {
+    /// `mazemail account list`.
+    List(AccountListArgs),
+    /// `mazemail account add`.
+    Add(AccountAddCliArgs),
+    /// `mazemail account remove`.
+    Remove(AccountRemoveArgs),
 }
 
 /// `mazemail token …`.
@@ -194,6 +210,8 @@ pub trait ClientEnv {
     fn exists(&self, path: &Path) -> bool;
     /// Creates `path` (failing if it exists) and writes `bytes`.
     fn write_new_file(&self, path: &Path, bytes: &[u8]) -> io::Result<()>;
+    /// Asks for a password on the terminal without echoing it.
+    fn read_password(&self, prompt: &str) -> io::Result<String>;
 }
 
 /// The real process environment.
@@ -227,6 +245,11 @@ impl ClientEnv for SystemEnv {
             .open(path)?;
         file.write_all(bytes)?;
         file.sync_all()
+    }
+
+    fn read_password(&self, prompt: &str) -> io::Result<String> {
+        // Reads from the controlling terminal (`/dev/tty`), not from stdin.
+        rpassword::prompt_password(prompt)
     }
 }
 
@@ -371,6 +394,10 @@ impl CliCommand {
             Self::Send(_) => &["send"],
             Self::Export(_) => &["export"],
             Self::Import(_) => &["import"],
+            Self::Account(AccountCommand::List(_)) => &["account", "list"],
+            Self::Account(AccountCommand::Add(_)) => &["account", "add"],
+            Self::Account(AccountCommand::Remove(_)) => &["account", "remove"],
+            Self::Sync(_) => &["sync"],
         };
         // Every path above is in the registry (tested), so the fallback is unreachable.
         find_by_path(path).unwrap_or(&registry()[0])
@@ -459,8 +486,53 @@ impl CliCommand {
                 args.path = cwd(env)?.join(&args.path);
                 Invocation::new(name, &args)
             }
+            Self::Account(AccountCommand::List(args)) => Invocation::new(name, &args),
+            Self::Account(AccountCommand::Add(args)) => {
+                let password = if args.oauth.is_some() {
+                    None
+                } else {
+                    Some(password(env, &args)?)
+                };
+                let wire = AccountAddArgs {
+                    email: Sensitive::new(args.email),
+                    name: args.name,
+                    oauth: args.oauth,
+                    host: args.host,
+                    port: args.port,
+                    security: args.security,
+                    username: args.username.map(Sensitive::new),
+                    password,
+                };
+                Invocation::new(name, &wire)
+            }
+            Self::Account(AccountCommand::Remove(args)) => Invocation::new(name, &args),
+            Self::Sync(args) => Invocation::new(name, &args),
         }
     }
+}
+
+/// The password for `account add`: the first line of stdin with `--password-stdin`,
+/// else a prompt on the terminal without echo.
+fn password(env: &dyn ClientEnv, args: &AccountAddCliArgs) -> Result<Sensitive<String>, CliError> {
+    let password = if args.password_stdin {
+        let bytes = zeroize::Zeroizing::new(env.read_stdin().map_err(|source| CliError::Read {
+            path: PathBuf::from("-"),
+            source,
+        })?);
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|_| CliError::Invalid("the password on stdin is not UTF-8".into()))?;
+        text.lines().next().unwrap_or_default().to_owned()
+    } else {
+        env.read_password(&format!("Password for {}: ", args.email))
+            .map_err(|source| CliError::Read {
+                path: PathBuf::from("/dev/tty"),
+                source,
+            })?
+    };
+    if password.is_empty() {
+        return Err(CliError::Invalid("no password given".into()));
+    }
+    Ok(Sensitive::new(password))
 }
 
 fn cwd(env: &dyn ClientEnv) -> Result<PathBuf, CliError> {
@@ -588,6 +660,7 @@ mod tests {
     struct FakeEnv {
         files: RefCell<BTreeMap<PathBuf, Vec<u8>>>,
         stdin: Vec<u8>,
+        prompts: RefCell<Vec<String>>,
     }
 
     impl ClientEnv for FakeEnv {
@@ -614,6 +687,10 @@ mod tests {
             }
             files.insert(path.to_owned(), bytes.to_vec());
             Ok(())
+        }
+        fn read_password(&self, prompt: &str) -> io::Result<String> {
+            self.prompts.borrow_mut().push(prompt.to_owned());
+            Ok("from-tty".to_owned())
         }
     }
 
@@ -689,6 +766,15 @@ mod tests {
             ),
             (&["send", "d_b"], "send"),
             (&["import", "mail.mbox"], "import"),
+            (&["account", "list"], "account.list"),
+            (&["account", "add", "a@example.org"], "account.add"),
+            (
+                &["account", "add", "b@gmail.com", "--oauth", "google"],
+                "account.add",
+            ),
+            (&["account", "remove", "a_b"], "account.remove"),
+            (&["sync"], "sync"),
+            (&["sync", "--account", "a_b"], "sync"),
         ] {
             let invocation = invoke(args, &env);
             assert_eq!(invocation.cmd(), name, "{args:?}");
@@ -863,5 +949,146 @@ mod tests {
         assert_eq!(sanitize_file_name(".."), "attachment");
         assert_eq!(sanitize_file_name("a\u{0}b\n.txt"), "ab.txt");
         assert_eq!(sanitize_file_name(""), "attachment");
+    }
+}
+
+#[cfg(test)]
+mod account_tests {
+    use std::cell::RefCell;
+
+    use clap::FromArgMatches as _;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    use super::*;
+
+    #[derive(Default)]
+    struct Env {
+        stdin: Vec<u8>,
+        prompts: RefCell<Vec<String>>,
+    }
+
+    impl ClientEnv for Env {
+        fn cwd(&self) -> io::Result<PathBuf> {
+            Ok(PathBuf::from("/work"))
+        }
+        fn read_file(&self, _: &Path) -> io::Result<Vec<u8>> {
+            Err(io::ErrorKind::NotFound.into())
+        }
+        fn read_stdin(&self) -> io::Result<Vec<u8>> {
+            Ok(self.stdin.clone())
+        }
+        fn exists(&self, _: &Path) -> bool {
+            false
+        }
+        fn write_new_file(&self, _: &Path, _: &[u8]) -> io::Result<()> {
+            Err(io::ErrorKind::Unsupported.into())
+        }
+        fn read_password(&self, prompt: &str) -> io::Result<String> {
+            self.prompts.borrow_mut().push(prompt.to_owned());
+            Ok("typed secret".to_owned())
+        }
+    }
+
+    fn invoke(args: &[&str], env: &Env) -> Result<Invocation, CliError> {
+        let matches = cli_command()
+            .try_get_matches_from(std::iter::once("mazemail").chain(args.iter().copied()))
+            .unwrap_or_else(|error| panic!("{args:?}: {error}"));
+        CliCommand::from_arg_matches(&matches)
+            .unwrap()
+            .into_invocation(env)
+    }
+
+    #[test]
+    fn the_password_comes_from_the_terminal_or_stdin_never_an_argument() {
+        let env = Env::default();
+        let typed = invoke(
+            &[
+                "account",
+                "add",
+                "alice@example.org",
+                "--host",
+                "imap.example.org",
+            ],
+            &env,
+        )
+        .unwrap();
+        assert_eq!(typed.args["password"], "typed secret");
+        assert_eq!(typed.args["host"], "imap.example.org");
+        assert_eq!(*env.prompts.borrow(), ["Password for alice@example.org: "]);
+
+        let piped = Env {
+            stdin: b"from stdin\nignored\n".to_vec(),
+            ..Env::default()
+        };
+        let invocation = invoke(
+            &[
+                "account",
+                "add",
+                "alice@example.org",
+                "--password-stdin",
+                "--security",
+                "none",
+                "--port",
+                "1143",
+            ],
+            &piped,
+        )
+        .unwrap();
+        assert_eq!(invocation.args["password"], "from stdin");
+        assert_eq!(invocation.args["security"], "none");
+        assert_eq!(invocation.args["port"], 1143);
+        assert!(piped.prompts.borrow().is_empty());
+        // What the CLI sends parses on the server side.
+        super::super::Command::from_wire("account.add", invocation.args)
+            .unwrap()
+            .unwrap();
+
+        let empty = Env {
+            stdin: b"\n".to_vec(),
+            ..Env::default()
+        };
+        assert!(invoke(&["account", "add", "a@b.c", "--password-stdin"], &empty).is_err());
+
+        // There is no password option at all.
+        assert!(
+            cli_command()
+                .try_get_matches_from(["mazemail", "account", "add", "a@b.c", "--password", "x"])
+                .is_err()
+        );
+        // A browser sign-in takes no password and no server options.
+        let oauth = invoke(
+            &["account", "add", "b@gmail.com", "--oauth", "google"],
+            &env,
+        )
+        .unwrap();
+        assert_eq!(oauth.args["oauth"], "google");
+        assert_eq!(oauth.args["password"], json!(null));
+        assert!(
+            cli_command()
+                .try_get_matches_from([
+                    "mazemail",
+                    "account",
+                    "add",
+                    "b@gmail.com",
+                    "--oauth",
+                    "google",
+                    "--password-stdin"
+                ])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn the_server_requires_a_password_without_oauth() {
+        let error = super::super::Command::from_wire("account.add", json!({ "email": "a@b.c" }))
+            .unwrap_err();
+        assert!(error.0.contains("password"), "{error}");
+        let error = super::super::Command::from_wire(
+            "account.add",
+            json!({ "email": "a@b.c", "oauth": "google", "password": "x" }),
+        )
+        .unwrap_err();
+        assert!(error.0.contains("oauth"), "{error}");
     }
 }

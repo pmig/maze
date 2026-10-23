@@ -16,6 +16,7 @@ clap = { workspace = true }
 futures-util = { workspace = true }
 getrandom = { workspace = true }
 mazemail_types = { workspace = true }
+rpassword = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

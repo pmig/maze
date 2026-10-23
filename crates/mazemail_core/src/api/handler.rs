@@ -103,7 +103,7 @@ pub fn not_available(command: &str) -> CommandError {
 }
 
 /// Maps a core error to what the client sees. Internal details are logged, not sent.
-fn core_error(error: Error) -> CommandError {
+pub(crate) fn core_error(error: Error) -> CommandError {
     match error {
         Error::NotFound { entity, id } => {
             CommandError::not_found(format!("{entity} {id} not found"))
@@ -989,6 +989,22 @@ impl CommandHandler for CoreCommandHandler {
             Command::Propose(args) => self.propose_batch(ctx, args).await,
             Command::Export(args) => self.export(ctx, args).await,
             Command::Import(args) => self.import(ctx, args).await,
+            Command::AccountList(_) => output(&super::accounts::list(&self.core, ctx)?, Vec::new()),
+            Command::AccountAdd(args) => {
+                let added = super::accounts::add(&self.core, args).await?;
+                let id = added.id.clone();
+                output(&added, vec![id])
+            }
+            Command::AccountRemove(args) => {
+                let removed = super::accounts::remove(&self.core, ctx, &args).await?;
+                let id = removed.id.clone();
+                output(&removed, vec![id])
+            }
+            Command::Sync(args) => {
+                let synced = super::accounts::sync(&self.core, ctx, &args)?;
+                let ids = synced.accounts.clone();
+                output(&synced, ids)
+            }
             command @ (Command::AttachmentSave(_)
             | Command::DraftNew(_)
             | Command::DraftEdit(_)

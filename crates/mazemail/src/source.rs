@@ -34,11 +34,12 @@ use mail_ui::DataChanges;
 use mail_ui::source::{
     AccountEntry, AccountKind, AttachmentInfo, FolderEntry, FolderKey, FolderTree, MailSource,
     MessageBody, MessageDocument, SourceError, SourceStatus, SyncState, ThreadFilter, ThreadKeys,
-    ThreadRow, ThreadScope,
+    ThreadRow, ThreadScope, Verdict, Verification,
 };
 use mazemail_core::{
-    Body, CoreEventBatch, CoreHandle, FolderNode, FolderNodeKind, ListQuery, ListScope,
-    MailCommand, Origin, QuickFilter, SearchOpts, SearchSort, SortOrder, reader_text,
+    AccountInfo, AuthStatus, Body, CoreEventBatch, CoreHandle, FolderNode, FolderNodeKind,
+    ListQuery, ListScope, MailCommand, Origin, QuickFilter, SearchOpts, SearchSort, SortOrder,
+    SyncState as CoreSyncState, reader_text,
 };
 use mazemail_types::{AccountId, Address, Flags, FolderId, MessageId, Sensitive, ThreadId};
 use time::OffsetDateTime;
@@ -50,8 +51,8 @@ pub const WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const SEARCH_LIMIT: usize = 2_000;
 
 /// What the list shows before any account exists.
-pub const NO_ACCOUNTS: &str =
-    "No accounts yet — import mail with `mazemail import <file.mbox>` (Maze must be running).";
+pub const NO_ACCOUNTS: &str = "No accounts yet. Add your IMAP, Gmail or Microsoft account, or \
+     import mail with `mazemail import <file.mbox>`.";
 
 enum State {
     Opening,
@@ -183,6 +184,8 @@ impl CoreMailSource {
             counts: folders_touched,
             threads: !batch.threads_changed.is_empty() || !batch.removed.is_empty(),
             threads_updated: batch.threads_updated.clone(),
+            messages_updated: batch.messages_changed.clone(),
+            status: !batch.sync_status.is_empty() || !batch.accounts_changed.is_empty(),
             everything: batch.reload,
         }
     }
@@ -286,6 +289,75 @@ fn row(row: mazemail_core::ThreadRow) -> ThreadRow {
         message_count: row.message_count,
         // Rows don't carry sizes; the table's size column stays empty.
         size: 0,
+    }
+}
+
+/// The verification row's data from the core's sender verification.
+fn verification(auth: &AuthStatus) -> Verification {
+    match auth {
+        AuthStatus::Pending => Verification::Pending,
+        AuthStatus::Unavailable => Verification::Unavailable,
+        AuthStatus::Ready(report) => Verification::Checked {
+            verdict: match report.verdict {
+                security::Verdict::Verified => Verdict::Verified,
+                security::Verdict::Unverified => Verdict::Unverified,
+                security::Verdict::Suspicious => Verdict::Suspicious,
+            },
+            dkim: report.dkim.result.label().into(),
+            spf: report.spf.result.label().into(),
+            dmarc: report.dmarc.result.label().into(),
+            explanation: report.explanation.clone().into(),
+        },
+    }
+}
+
+/// The status bar's sync state over all synced accounts: progress of a syncing account
+/// first, then problems (sign-in, errors, offline), then "Connecting…", else up to date.
+pub fn status_of(accounts: &[AccountInfo]) -> SourceStatus {
+    let synced: Vec<(&AccountInfo, &mazemail_core::SyncStatus)> = accounts
+        .iter()
+        .filter_map(|a| a.sync.as_ref().map(|s| (a, s)))
+        .collect();
+    let online = synced
+        .iter()
+        .any(|(_, s)| matches!(s.state, CoreSyncState::Idle | CoreSyncState::Syncing { .. }));
+    let problem = |state: &CoreSyncState| {
+        matches!(
+            state,
+            CoreSyncState::AuthRequired | CoreSyncState::Error { .. } | CoreSyncState::Offline
+        )
+    };
+    let sync = if synced.is_empty() {
+        SyncState::NoAccounts
+    } else if let Some((account, done, total)) = synced.iter().find_map(|(a, s)| match s.state {
+        CoreSyncState::Syncing { done, total, .. } => Some((a, done, total.unwrap_or(done))),
+        _ => None,
+    }) {
+        SyncState::Syncing {
+            account: account.name.clone().into(),
+            done,
+            total,
+        }
+    } else if let Some((account, status)) = synced.iter().find(|(_, s)| problem(&s.state)) {
+        SyncState::Message {
+            text: format!("{}: {}", account.name, status.text()).into(),
+            problem: true,
+        }
+    } else if let Some((_, status)) = synced
+        .iter()
+        .find(|(_, s)| s.state == CoreSyncState::Connecting)
+    {
+        SyncState::Message {
+            text: status.text().into(),
+            problem: false,
+        }
+    } else {
+        SyncState::Idle
+    };
+    SourceStatus {
+        sync,
+        outbox: 0,
+        online,
     }
 }
 
@@ -497,6 +569,7 @@ impl MailSource for CoreMailSource {
             date: timestamp(view.date),
             body,
             attachments,
+            verification: verification(&view.auth),
         })
     }
 
@@ -514,12 +587,16 @@ impl MailSource for CoreMailSource {
     }
 
     fn status(&self) -> SourceStatus {
-        // No sync engine is wired in yet: local mail only.
-        SourceStatus {
-            sync: SyncState::Idle,
-            outbox: 0,
-            online: false,
-        }
+        let accounts = self
+            .core()
+            .and_then(|core| core.accounts_with_status().ok())
+            .unwrap_or_default();
+        status_of(&accounts)
+    }
+
+    fn offers_add_account(&self) -> bool {
+        self.core()
+            .is_some_and(|core| core.accounts().is_ok_and(|accounts| accounts.is_empty()))
     }
 
     fn placeholder(&self) -> Option<SharedString> {

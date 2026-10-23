@@ -276,3 +276,67 @@ fn placeholders_cover_opening_failure_and_no_accounts() {
     assert_eq!(opening.placeholder().unwrap().as_ref(), NO_ACCOUNTS);
     runtime.block_on(core.shutdown()).unwrap();
 }
+
+#[test]
+fn the_status_bar_follows_the_accounts_sync_states() {
+    use mail_ui::source::SyncState as Bar;
+    use mazemail::source::status_of;
+    use mazemail_core::{AccountInfo, AccountKind, SyncState, SyncStatus};
+    use mazemail_types::AccountId;
+
+    let account = |id: i64, state: Option<SyncState>, detail: Option<&str>| AccountInfo {
+        id: AccountId(id),
+        uuid: auth::Uuid::from_u128(id as u128),
+        name: format!("Account {id}"),
+        kind: AccountKind::Imap,
+        email: None,
+        server: None,
+        auth: None,
+        sync: state.map(|state| SyncStatus {
+            account: AccountId(id),
+            state,
+            detail: detail.map(str::to_owned),
+        }),
+    };
+    assert_eq!(status_of(&[]).sync, Bar::NoAccounts);
+    assert_eq!(status_of(&[account(1, None, None)]).sync, Bar::NoAccounts);
+
+    let idle = account(1, Some(SyncState::Idle), None);
+    let status = status_of(std::slice::from_ref(&idle));
+    assert_eq!(status.sync, Bar::Idle);
+    assert!(status.online);
+
+    let offline = account(
+        2,
+        Some(SyncState::Offline),
+        Some("Offline: connection refused. Maze will try again in 30 seconds."),
+    );
+    let status = status_of(&[idle, offline.clone()]);
+    assert_eq!(
+        status.sync,
+        Bar::Message {
+            text: "Account 2: Offline: connection refused. Maze will try again in 30 seconds."
+                .into(),
+            problem: true,
+        }
+    );
+    assert!(status.online, "one account is still online");
+
+    let syncing = account(
+        3,
+        Some(SyncState::Syncing {
+            folder: None,
+            done: 2,
+            total: Some(5),
+        }),
+        None,
+    );
+    assert_eq!(
+        status_of(&[offline, syncing]).sync,
+        Bar::Syncing {
+            account: "Account 3".into(),
+            done: 2,
+            total: 5,
+        }
+    );
+}

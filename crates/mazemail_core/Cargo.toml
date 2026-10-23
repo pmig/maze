@@ -9,6 +9,9 @@ publish.workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
+auth = { workspace = true }
+bytes = { workspace = true }
+imap = { workspace = true }
 import = { workspace = true }
 ingest = { workspace = true }
 local_api = { workspace = true }
@@ -20,6 +23,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 settings = { workspace = true }
 store = { workspace = true }
+sync = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
@@ -28,9 +32,13 @@ vault = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
+imap = { workspace = true, features = ["fake"] }
 pretty_assertions = { workspace = true }
+reqwest = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
+url = { workspace = true }
+wiremock = { workspace = true }
 
 [lints]
 workspace = true

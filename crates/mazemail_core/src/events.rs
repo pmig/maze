@@ -266,10 +266,12 @@ mod tests {
     fn later_sync_status_of_an_account_wins_and_removals_win() {
         let mut acc = Accumulator::default();
         acc.add(CoreEvent::Sync(SyncStatus {
+            detail: None,
             account: AccountId(1),
             state: SyncState::Offline,
         }));
         acc.add(CoreEvent::Sync(SyncStatus {
+            detail: None,
             account: AccountId(1),
             state: SyncState::Idle,
         }));

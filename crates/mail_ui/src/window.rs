@@ -252,8 +252,12 @@ impl MailWindow {
         }
         // A changed selection was shown through the list's event already.
         let selected = self.thread_list.read(cx).selected_thread();
-        let showing = self.message_view.read(cx).document().map(|doc| doc.thread);
-        let stale = selected.is_some_and(|id| changes.threads_updated.contains(&id));
+        let showing_doc = self.message_view.read(cx).document();
+        let showing = showing_doc.map(|doc| doc.thread);
+        let message_stale =
+            showing_doc.is_some_and(|doc| changes.messages_updated.contains(&doc.message));
+        let stale =
+            message_stale || selected.is_some_and(|id| changes.threads_updated.contains(&id));
         if selected == before && (changes.everything || stale || showing != selected) {
             self.show_selected(cx);
         }

@@ -26,7 +26,8 @@ fn folders_of(core: &CoreHandle, id: MessageId) -> Vec<FolderId> {
     folders
 }
 
-/// The account's pending ops as `(kind, payload)`.
+/// The account's pending ops as `(kind, payload)`. Every payload decodes as the sync
+/// engine's `OpPayload` with a matching kind.
 fn ops(core: &CoreHandle, account: AccountId) -> Vec<(String, Value)> {
     core.store()
         .reader()
@@ -35,6 +36,7 @@ fn ops(core: &CoreHandle, account: AccountId) -> Vec<(String, Value)> {
         .unwrap()
         .into_iter()
         .map(|op| {
+            mazemail_core::ops::OpPayload::from_pending(&op).unwrap();
             let payload: Value = serde_json::from_str(&op.payload_json).unwrap();
             assert_eq!(payload["op"], op.kind.as_str());
             assert_eq!(payload["v"], 1);
@@ -120,10 +122,13 @@ async fn set_flags_applies_queues_audits_and_undoes() {
     let queued = ops(&t.core, f.work);
     let (kind, payload) = queued.last().unwrap();
     assert_eq!(kind, "set_flags");
-    assert_eq!(payload["add"], serde_json::json!(["\\Seen", "\\Flagged"]));
-    assert_eq!(payload["targets"][0]["mailbox"], "INBOX");
+    // Absolute flags per location, captured with the location's UID.
+    assert_eq!(
+        payload["targets"][0]["flags"],
+        serde_json::json!(["\\Seen", "\\Flagged"])
+    );
+    assert_eq!(payload["targets"][0]["folder"], f.inbox.0);
     assert_eq!(payload["targets"][0]["uid"], 11);
-    assert_eq!(payload["targets"][0]["rfc_message_id"], "c1@example.com");
     assert!(t.sync.op_wakeups.lock().unwrap().contains(&f.work));
 
     let (origin, action, audit) = last_audit(&t.core);
@@ -146,11 +151,12 @@ async fn set_flags_applies_queues_audits_and_undoes() {
     assert_eq!(rows[0].unread_count, 1);
     let (kind, payload) = ops(&t.core, f.work).pop().unwrap();
     assert_eq!(kind, "set_flags");
+    // The undo sets the flags from before: nothing for `a`, `\Seen` for `b`.
+    let targets = payload["targets"].as_array().unwrap();
     assert!(
-        payload["remove"]
-            .as_array()
-            .unwrap()
-            .contains(&"\\Flagged".into())
+        targets
+            .iter()
+            .all(|t| !t["flags"].as_array().unwrap().contains(&"\\Flagged".into()))
     );
     assert_eq!(last_audit(&t.core).1, "undo");
     assert!(!t.core.can_undo());
@@ -184,11 +190,14 @@ async fn tags_are_keywords_and_undo_restores_them() {
     assert_eq!(detail(&t.core, a).tags, vec![tag]);
     let (kind, payload) = ops(&t.core, f.work).pop().unwrap();
     assert_eq!(kind, "set_flags");
-    assert_eq!(payload["add_keywords"], serde_json::json!(["$label1"]));
+    assert_eq!(
+        payload["targets"][0]["keywords"],
+        serde_json::json!(["$label1"])
+    );
     t.core.undo().await.unwrap().unwrap();
     assert!(detail(&t.core, a).tags.is_empty());
     let (_, payload) = ops(&t.core, f.work).pop().unwrap();
-    assert_eq!(payload["remove_keywords"], serde_json::json!(["$label1"]));
+    assert_eq!(payload["targets"][0]["keywords"], serde_json::json!([]));
 
     let unknown = t
         .core
@@ -226,16 +235,18 @@ async fn move_copy_and_their_undo() {
     assert_eq!(folders_of(&t.core, a), vec![f.projects]);
     let (kind, payload) = ops(&t.core, f.work).pop().unwrap();
     assert_eq!(kind, "move");
-    assert_eq!(payload["to"]["remote_name"], "Projects");
-    assert_eq!(payload["targets"][0]["mailbox"], "INBOX");
-    assert_eq!(payload["targets"][0]["uid"], 11);
+    assert_eq!(payload["to"], f.projects.0);
+    assert_eq!(payload["items"][0]["folder"], f.inbox.0);
+    assert_eq!(payload["items"][0]["uid"], 11);
 
     t.core.undo().await.unwrap().unwrap();
     assert_eq!(folders_of(&t.core, a), vec![f.inbox]);
     let (kind, payload) = ops(&t.core, f.work).pop().unwrap();
     assert_eq!(kind, "move");
-    assert_eq!(payload["to"]["remote_name"], "INBOX");
-    assert_eq!(payload["targets"][0]["mailbox"], "Projects");
+    assert_eq!(payload["to"], f.inbox.0);
+    // The moved copy has no UID until sync learns it from COPYUID.
+    assert_eq!(payload["items"][0]["folder"], f.projects.0);
+    assert_eq!(payload["items"][0]["uid"], Value::Null);
 
     t.core
         .apply(
@@ -301,12 +312,10 @@ async fn archive_uses_the_identity_folder_and_granularity() {
     let queued = ops(&t.core, f.work);
     let kinds: Vec<&str> = queued.iter().map(|(k, _)| k.as_str()).collect();
     assert_eq!(kinds, vec!["create_folder", "archive"]);
-    assert_eq!(queued[1].1["target"]["kind"], "folder");
-    assert_eq!(
-        queued[1].1["target"]["folder"]["remote_name"],
-        "Archive/2025"
-    );
-    assert_eq!(queued[1].1["targets"][0]["uid"], 11);
+    assert_eq!(queued[0].1["name"], "Archive/2025");
+    assert_eq!(queued[0].1["folder"], year.id.0);
+    assert_eq!(queued[1].1["target"]["folder"], year.id.0);
+    assert_eq!(queued[1].1["items"][0]["uid"], 11);
 
     t.core.undo().await.unwrap().unwrap();
     assert_eq!(folders_of(&t.core, a), vec![f.inbox]);
@@ -341,8 +350,8 @@ async fn gmail_archive_removes_the_inbox_label() {
     assert_eq!(folders_of(&t.core, id), vec![f.g_all]);
     let (kind, payload) = ops(&t.core, f.gmail).pop().unwrap();
     assert_eq!(kind, "archive");
-    assert_eq!(payload["target"]["kind"], "gmail_remove_inbox");
-    assert_eq!(payload["targets"][0]["gm_msgid"], 1001);
+    assert_eq!(payload["target"], "gmail_remove_inbox");
+    assert_eq!(payload["items"][0]["folder"], f.g_inbox.0);
 
     t.core.undo().await.unwrap().unwrap();
     let mut expected = vec![f.g_inbox, f.g_all];
@@ -368,7 +377,7 @@ async fn delete_moves_to_trash_and_deletes_for_good_from_there() {
     let (kind, payload) = ops(&t.core, f.work).pop().unwrap();
     assert_eq!(kind, "delete");
     assert_eq!(payload["permanent"], false);
-    assert_eq!(payload["trash"]["remote_name"], "Trash");
+    assert_eq!(payload["trash"], f.trash.0);
 
     t.core.undo().await.unwrap().unwrap();
     assert_eq!(folders_of(&t.core, a), vec![f.inbox]);
@@ -400,7 +409,7 @@ async fn delete_moves_to_trash_and_deletes_for_good_from_there() {
         (kind.as_str(), &payload["permanent"]),
         ("delete", &Value::Bool(true))
     );
-    assert_eq!(payload["targets"][0]["mailbox"], "Trash");
+    assert_eq!(payload["items"][0]["folder"], f.trash.0);
     assert!(!t.core.can_undo(), "a permanent delete can't be undone");
 
     let receipt = t
@@ -465,7 +474,8 @@ async fn folder_commands_and_mark_folder_read() {
     assert_eq!(renamed.remote_name.as_deref(), Some("Projects/Q4"));
     let (kind, payload) = ops(&t.core, f.work).pop().unwrap();
     assert_eq!(kind, "rename_folder");
-    assert_eq!(payload["from_name"], "Projects/Q3");
+    assert_eq!(payload["from"], "Projects/Q3");
+    assert_eq!(payload["to"], "Projects/Q4");
 
     // Renaming the parent renames the child's server name too.
     t.core

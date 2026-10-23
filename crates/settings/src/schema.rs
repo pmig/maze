@@ -88,6 +88,7 @@ mod tests {
             "compose",
             "spellcheck",
             "accounts",
+            "auth",
             "agent",
             "agent_sandbox",
             "auto_update",

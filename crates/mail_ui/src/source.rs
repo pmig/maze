@@ -222,6 +222,42 @@ pub struct MessageDocument {
     pub body: MessageBody,
     /// Attachments, in message order.
     pub attachments: Vec<AttachmentInfo>,
+    /// Sender verification (DKIM, SPF, DMARC).
+    pub verification: Verification,
+}
+
+/// The overall result of sender verification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    /// The sender's domain authenticated the message.
+    Verified,
+    /// Nothing proves or disproves the sender.
+    Unverified,
+    /// The sender's domain says it didn't send this message.
+    Suspicious,
+}
+
+/// Sender verification as the message header shows it (CONCEPT §8.4).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Verification {
+    /// Being checked, or waiting for the body.
+    #[default]
+    Pending,
+    /// Can't be checked (no DNS resolver).
+    Unavailable,
+    /// Checked.
+    Checked {
+        /// The verdict.
+        verdict: Verdict,
+        /// The DKIM result ("pass", "fail", "key no longer published", …).
+        dkim: SharedString,
+        /// The SPF result.
+        spf: SharedString,
+        /// The DMARC result.
+        dmarc: SharedString,
+        /// One or two sentences explaining the verdict.
+        explanation: SharedString,
+    },
 }
 
 /// The body of a message.
@@ -285,6 +321,16 @@ pub enum SyncState {
         /// Messages total.
         total: u64,
     },
+    /// No account syncs (none added yet, or only local folders).
+    NoAccounts,
+    /// What the sync engine says, for states without progress ("Connecting…",
+    /// "Offline: … Maze will try again in 30 seconds.").
+    Message {
+        /// The sentence.
+        text: SharedString,
+        /// Whether it needs attention (offline, sign-in required, an error).
+        problem: bool,
+    },
 }
 
 /// Connection and queue state shown in the status bar.
@@ -312,6 +358,11 @@ pub struct DataChanges {
     /// Threads whose rows or messages changed: re-show the message if it belongs to
     /// one of them.
     pub threads_updated: Vec<ThreadId>,
+    /// Messages whose data changed (body arrived, sender verified): re-show the
+    /// message if it is one of them.
+    pub messages_updated: Vec<MessageId>,
+    /// The sync or connection status changed: re-render the status bar.
+    pub status: bool,
     /// Changes were lost (or the backend just became available): reload everything.
     pub everything: bool,
 }
@@ -336,6 +387,12 @@ impl DataChanges {
         self.counts |= other.counts;
         self.threads |= other.threads;
         self.everything |= other.everything;
+        self.status |= other.status;
+        for message in other.messages_updated {
+            if !self.messages_updated.contains(&message) {
+                self.messages_updated.push(message);
+            }
+        }
         for thread in other.threads_updated {
             if !self.threads_updated.contains(&thread) {
                 self.threads_updated.push(thread);
@@ -444,5 +501,10 @@ pub trait MailSource: Send + Sync + 'static {
     /// when mail can be shown (an empty folder still says "No messages").
     fn placeholder(&self) -> Option<SharedString> {
         None
+    }
+
+    /// Whether the empty state offers "Add account" (no account exists yet).
+    fn offers_add_account(&self) -> bool {
+        false
     }
 }

@@ -13,7 +13,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use mazemail_types::{PRODUCT_NAME, Sensitive};
 use serde_json::Value;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, oneshot};
 
 use crate::peer::ProcessInfo;
 use crate::token::{Grant, Profile, TokenId, TokenScope, Ttl};
@@ -159,15 +159,26 @@ impl Approver for DenyAllApprover {
 /// Asks on a terminal, for `mazemail --headless`: prints the request and reads `y` or
 /// `n` (anything else, EOF or a timeout denies).
 ///
-/// Input is read by a dedicated thread, so a prompt that times out doesn't leave a
-/// blocked read behind; answers typed after a timeout are discarded before the next
-/// prompt. Prompts are shown one at a time.
+/// Input is read by a dedicated thread, one line per prompt and only when a prompt
+/// asks for it, so a prompt that times out doesn't leave a blocked read behind and the
+/// outcome never depends on thread timing:
+///
+/// - Answers queued before a prompt (piped input, type-ahead) are consumed in order,
+///   one line per prompt.
+/// - The line that completes the read of a prompt that already timed out is discarded:
+///   it was meant for the prompt that is gone, never for the next one.
+///
+/// Prompts are shown one at a time.
 pub struct TerminalApprover {
     io: Mutex<TerminalIo>,
 }
 
+/// A request for the next input line; the reader thread answers with the line, or
+/// `None` at end of input.
+type LineRequest = oneshot::Sender<Option<String>>;
+
 struct TerminalIo {
-    lines: mpsc::Receiver<String>,
+    requests: std::sync::mpsc::Sender<LineRequest>,
     output: Box<dyn Write + Send>,
 }
 
@@ -187,36 +198,51 @@ impl TerminalApprover {
 
     /// Prompts on `output` and reads answers from `input`.
     pub fn new(input: impl BufRead + Send + 'static, output: impl Write + Send + 'static) -> Self {
-        let (tx, rx) = mpsc::channel(8);
+        let (tx, rx) = std::sync::mpsc::channel::<LineRequest>();
         let spawned = std::thread::Builder::new()
             .name("mazemail-approval-tty".into())
-            .spawn(move || {
-                for line in input.lines() {
-                    let Ok(line) = line else { break };
-                    if tx.blocking_send(line).is_err() {
-                        break;
-                    }
-                }
-            });
+            .spawn(move || read_on_request(input, &rx));
         if let Err(error) = spawned {
             // Without the reader every prompt sees EOF and denies, which is safe.
             tracing::warn!(%error, "cannot start the approval reader thread");
         }
         Self {
             io: Mutex::new(TerminalIo {
-                lines: rx,
+                requests: tx,
                 output: Box::new(output),
             }),
         }
     }
 }
 
+/// The reader thread: reads one line per request. A request whose prompt is gone
+/// (its receiver dropped after a timeout) still consumes the line that answers it, so
+/// a late answer can't approve the next prompt. After end of input every request gets
+/// `None`.
+fn read_on_request(mut input: impl BufRead, requests: &std::sync::mpsc::Receiver<LineRequest>) {
+    let mut eof = false;
+    while let Ok(reply) = requests.recv() {
+        let line = if eof {
+            None
+        } else {
+            let mut line = String::new();
+            match input.read_line(&mut line) {
+                Ok(0) | Err(_) => {
+                    eof = true;
+                    None
+                }
+                Ok(_) => Some(line.trim_end_matches(['\r', '\n']).to_owned()),
+            }
+        };
+        // A closed receiver means the prompt timed out: the line is dropped.
+        let _ = reply.send(line);
+    }
+}
+
 #[async_trait]
 impl Approver for TerminalApprover {
     async fn approve(&self, request: ApprovalRequest) -> Decision {
-        let mut io = self.io.lock().await;
-        // Drop answers meant for an earlier prompt that timed out.
-        while io.lines.try_recv().is_ok() {}
+        let io = &mut *self.io.lock().await;
         let prompt = format!("\n{PRODUCT_NAME}: {}\nAllow? [y/N] ", request.describe());
         if io
             .output
@@ -226,7 +252,12 @@ impl Approver for TerminalApprover {
         {
             return Decision::Deny;
         }
-        let answer = io.lines.recv().await;
+        let (reply, answer) = oneshot::channel();
+        let answer = if io.requests.send(reply).is_ok() {
+            answer.await.ok().flatten()
+        } else {
+            None
+        };
         let approved = answer
             .is_some_and(|line| matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes"));
         let verdict = if approved { "approved\n" } else { "denied\n" };
@@ -350,6 +381,27 @@ mod tests {
         let next = tokio::spawn(async move { approver.approve(login_request()).await });
         tokio::time::sleep(Duration::from_millis(50)).await;
         writer.write_all(b"n\n").unwrap();
+        assert_eq!(next.await.unwrap(), Decision::Deny);
+    }
+
+    #[tokio::test]
+    async fn a_late_answer_never_reaches_the_next_prompt() {
+        let (reader, mut writer) = std::io::pipe().unwrap();
+        let approver = Arc::new(TerminalApprover::new(
+            io::BufReader::new(reader),
+            SharedOutput::default(),
+        ));
+        let timed_out =
+            tokio::time::timeout(Duration::from_millis(20), approver.approve(login_request()))
+                .await;
+        assert!(timed_out.is_err());
+        let next = tokio::spawn({
+            let approver = Arc::clone(&approver);
+            async move { approver.approve(login_request()).await }
+        });
+        // Both lines arrive only now, possibly after the next prompt started: the first
+        // completes the read of the prompt that timed out and is dropped with it.
+        writer.write_all(b"y\nn\n").unwrap();
         assert_eq!(next.await.unwrap(), Decision::Deny);
     }
 }

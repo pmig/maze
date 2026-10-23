@@ -25,16 +25,20 @@ pub enum Permission {
     /// Disabled by default (`send`). A token approved with `allow_send` may run it, and
     /// then it always asks and is never auto-approved.
     Disabled,
+    /// Changes Maze itself (adding and removing accounts): only writer tokens may ask,
+    /// and the user approves every time.
+    Admin,
 }
 
 impl Permission {
     /// Every class.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Read,
         Self::Draft,
         Self::Propose,
         Self::Ask,
         Self::Disabled,
+        Self::Admin,
     ];
 
     /// The wire name.
@@ -45,6 +49,7 @@ impl Permission {
             Self::Propose => "propose",
             Self::Ask => "ask",
             Self::Disabled => "disabled",
+            Self::Admin => "admin",
         }
     }
 }
@@ -98,6 +103,7 @@ impl fmt::Display for Access {
 /// | propose    | deny      | propose  | allow  |
 /// | ask        | deny      | ask      | ask    |
 /// | disabled   | deny      | deny / ask with `allow_send` | deny / ask with `allow_send` |
+/// | admin      | deny      | deny     | ask    |
 ///
 /// Permanent delete is not a command at all, so no token can ever run it.
 pub fn access(profile: Profile, permission: Permission, allow_send: bool) -> Access {
@@ -111,6 +117,8 @@ pub fn access(profile: Profile, permission: Permission, allow_send: bool) -> Acc
         (Triage, P::Propose) => A::Propose,
         (Writer, P::Propose) => A::Allow,
         (Triage | Writer, P::Ask) => A::Ask,
+        (Triage, P::Admin) => A::Deny,
+        (Writer, P::Admin) => A::Ask,
         (Triage | Writer, P::Disabled) => {
             if allow_send {
                 A::Ask
@@ -137,6 +145,7 @@ mod tests {
             (Permission::Propose,  [Deny,      Propose, Allow,   Propose,     Allow]),
             (Permission::Ask,      [Deny,      Ask,     Ask,     Ask,         Ask]),
             (Permission::Disabled, [Deny,      Deny,    Deny,    Ask,         Ask]),
+            (Permission::Admin,    [Deny,      Deny,    Ask,     Deny,        Ask]),
         ];
         for (permission, expected) in table {
             let actual = [

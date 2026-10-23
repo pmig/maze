@@ -38,7 +38,9 @@ use store::{
 };
 use time::{OffsetDateTime, UtcOffset};
 
-use crate::ops::{ArchiveTarget, FolderRef, OpPayload, OpTarget};
+use crate::ops::{
+    ArchiveTarget, FlagTarget, LocationRef, OpPayload, edit_keywords, flag_target, location_ref,
+};
 use crate::sync_bridge::RefreshScope;
 
 /// A change to mail, from any origin.
@@ -204,6 +206,8 @@ pub(crate) struct Applied {
     pub(crate) messages: Vec<MessageId>,
     pub(crate) threads: BTreeSet<ThreadId>,
     pub(crate) ops: Vec<OpId>,
+    /// The queued ops with their accounts, in queue order.
+    pub(crate) queued: Vec<(AccountId, OpId)>,
     pub(crate) accounts: BTreeSet<AccountId>,
     pub(crate) created_folder: Option<FolderId>,
     pub(crate) undo: Option<UndoAction>,
@@ -328,19 +332,20 @@ impl<'a, 'w> Tx<'a, 'w> {
         self.applied.threads.insert(detail.thread);
     }
 
-    fn target(&mut self, detail: &MessageDetail, location: &Location) -> store::Result<OpTarget> {
-        let folder = self.folder(location.folder)?;
-        Ok(OpTarget::new(detail, location, Some(&folder)))
-    }
-
     fn enqueue(&mut self, account: AccountId, payload: &OpPayload) -> store::Result<()> {
-        let json = payload.to_json()?;
-        let id = self
-            .w
-            .enqueue_op(account, payload.kind(), &json, self.origin)?;
+        let id = payload.enqueue(self.w, account, self.origin)?;
         self.applied.ops.push(id);
+        self.applied.queued.push((account, id));
         self.applied.accounts.insert(account);
         Ok(())
+    }
+
+    /// The full server name of a folder (its display name for local folders).
+    fn remote_name(folder: &Folder) -> String {
+        folder
+            .remote_name
+            .clone()
+            .unwrap_or_else(|| folder.display_name.clone())
     }
 
     fn account_kind(&mut self, account: AccountId) -> store::Result<AccountKind> {
@@ -432,7 +437,7 @@ impl<'a, 'w> Tx<'a, 'w> {
 
     fn set_flags(&mut self, ids: &[MessageId], add: Flags, remove: Flags) -> store::Result<()> {
         let details = self.details(ids)?;
-        let mut by_account: BTreeMap<AccountId, Vec<OpTarget>> = BTreeMap::new();
+        let mut by_account: BTreeMap<AccountId, Vec<FlagTarget>> = BTreeMap::new();
         let mut before = Vec::with_capacity(details.len());
         let mut changed = Vec::new();
         for detail in &details {
@@ -444,7 +449,8 @@ impl<'a, 'w> Tx<'a, 'w> {
                 continue;
             }
             for location in &detail.locations {
-                let target = self.target(detail, location)?;
+                let flags = (location.flags | add) & !remove;
+                let target = flag_target(detail, location, flags, location.keywords.clone());
                 by_account.entry(detail.account).or_default().push(target);
             }
             before.push((
@@ -459,7 +465,7 @@ impl<'a, 'w> Tx<'a, 'w> {
             self.touch(detail);
         }
         for (account, targets) in by_account {
-            self.enqueue(account, &OpPayload::set_flags(targets, add, remove))?;
+            self.enqueue(account, &OpPayload::set_flags(targets))?;
         }
         if !changed.is_empty() {
             self.w.set_flags(&changed, add, remove)?;
@@ -484,7 +490,7 @@ impl<'a, 'w> Tx<'a, 'w> {
         let add: Vec<String> = add.iter().map(keyword).collect::<store::Result<_>>()?;
         let remove: Vec<String> = remove.iter().map(keyword).collect::<store::Result<_>>()?;
         let details = self.details(ids)?;
-        let mut by_account: BTreeMap<AccountId, Vec<OpTarget>> = BTreeMap::new();
+        let mut by_account: BTreeMap<AccountId, Vec<FlagTarget>> = BTreeMap::new();
         let mut undo = Vec::new();
         let mut changed = Vec::new();
         for detail in &details {
@@ -507,7 +513,8 @@ impl<'a, 'w> Tx<'a, 'w> {
                 continue;
             }
             for location in &detail.locations {
-                let target = self.target(detail, location)?;
+                let keywords = edit_keywords(&location.keywords, &add, &remove);
+                let target = flag_target(detail, location, location.flags, keywords);
                 by_account.entry(detail.account).or_default().push(target);
             }
             // Undo re-adds what was removed and removes what was added.
@@ -516,10 +523,7 @@ impl<'a, 'w> Tx<'a, 'w> {
             self.touch(detail);
         }
         for (account, targets) in by_account {
-            self.enqueue(
-                account,
-                &OpPayload::set_keywords(targets, add.clone(), remove.clone()),
-            )?;
+            self.enqueue(account, &OpPayload::set_flags(targets))?;
         }
         if !changed.is_empty() {
             self.w.set_keywords(&changed, &add, &remove)?;
@@ -532,8 +536,7 @@ impl<'a, 'w> Tx<'a, 'w> {
         &mut self,
         items: &[(MessageId, Vec<(FolderId, Flags)>)],
     ) -> store::Result<()> {
-        // Group the reverse changes by (account, add, remove) so each is one op.
-        let mut groups: BTreeMap<(AccountId, u32, u32), Vec<OpTarget>> = BTreeMap::new();
+        let mut by_account: BTreeMap<AccountId, Vec<FlagTarget>> = BTreeMap::new();
         for (id, before) in items {
             let Some(detail) = self.w.message(*id)? else {
                 continue;
@@ -545,25 +548,15 @@ impl<'a, 'w> Tx<'a, 'w> {
                 if *flags == location.flags {
                     continue;
                 }
-                let add = *flags & !location.flags;
-                let remove = location.flags & !*flags;
-                let target = self.target(&detail, location)?;
-                groups
-                    .entry((detail.account, add.bits(), remove.bits()))
-                    .or_default()
-                    .push(target);
+                let target = flag_target(&detail, location, *flags, location.keywords.clone());
+                by_account.entry(detail.account).or_default().push(target);
                 self.w
                     .set_location_flags(detail.id, location.folder, *flags)?;
             }
             self.touch(&detail);
         }
-        for ((account, add, remove), targets) in groups {
-            let payload = OpPayload::set_flags(
-                targets,
-                Flags::from_bits_truncate(add),
-                Flags::from_bits_truncate(remove),
-            );
-            self.enqueue(account, &payload)?;
+        for (account, targets) in by_account {
+            self.enqueue(account, &OpPayload::set_flags(targets))?;
         }
         Ok(())
     }
@@ -576,14 +569,15 @@ impl<'a, 'w> Tx<'a, 'w> {
             let Some(detail) = self.w.message(*id)? else {
                 continue;
             };
-            let mut targets = Vec::new();
-            for location in &detail.locations {
-                targets.push(self.target(&detail, location)?);
-            }
-            self.enqueue(
-                detail.account,
-                &OpPayload::set_keywords(targets, add.clone(), remove.clone()),
-            )?;
+            let targets = detail
+                .locations
+                .iter()
+                .map(|location| {
+                    let keywords = edit_keywords(&location.keywords, add, remove);
+                    flag_target(&detail, location, location.flags, keywords)
+                })
+                .collect();
+            self.enqueue(detail.account, &OpPayload::set_flags(targets))?;
             self.w.set_keywords(&[detail.id], add, remove)?;
             self.touch(&detail);
         }
@@ -646,7 +640,7 @@ impl<'a, 'w> Tx<'a, 'w> {
         let details = self.details(ids)?;
         let mut undo = Vec::new();
         let mut planned = Vec::new();
-        let mut targets = Vec::new();
+        let mut items = Vec::new();
         for detail in details {
             if detail.account != target.account {
                 return Err(invalid("moving messages between accounts is not supported"));
@@ -655,19 +649,11 @@ impl<'a, 'w> Tx<'a, 'w> {
             if sources.is_empty() {
                 continue;
             }
-            for source in &sources {
-                targets.push(self.target(&detail, source)?);
-            }
+            items.extend(sources.iter().map(|source| location_ref(&detail, source)));
             planned.push((detail, sources));
         }
-        if !targets.is_empty() {
-            self.enqueue(
-                target.account,
-                &OpPayload::Move {
-                    targets,
-                    to: FolderRef::of(&target),
-                },
-            )?;
+        if !items.is_empty() {
+            self.enqueue(target.account, &OpPayload::move_to(items, target.id))?;
         }
         for (detail, sources) in planned {
             undo.push((detail.id, detail.locations.clone()));
@@ -680,7 +666,7 @@ impl<'a, 'w> Tx<'a, 'w> {
     fn copy_messages(&mut self, ids: &[MessageId], to: FolderId) -> store::Result<()> {
         let target = self.folder(to)?;
         let details = self.details(ids)?;
-        let mut targets = Vec::new();
+        let mut items = Vec::new();
         let mut planned = Vec::new();
         for detail in details {
             if detail.account != target.account {
@@ -691,20 +677,14 @@ impl<'a, 'w> Tx<'a, 'w> {
             if detail.locations.iter().any(|l| l.folder == to) {
                 continue;
             }
-            let Some(source) = detail.locations.first().cloned() else {
+            let Some(source) = detail.locations.first() else {
                 continue;
             };
-            targets.push(self.target(&detail, &source)?);
+            items.push(location_ref(&detail, source));
             planned.push(detail);
         }
-        if !targets.is_empty() {
-            self.enqueue(
-                target.account,
-                &OpPayload::Copy {
-                    targets,
-                    to: FolderRef::of(&target),
-                },
-            )?;
+        if !items.is_empty() {
+            self.enqueue(target.account, &OpPayload::copy_to(items, target.id))?;
         }
         let mut copied = Vec::new();
         for detail in planned {
@@ -737,32 +717,20 @@ impl<'a, 'w> Tx<'a, 'w> {
 
     fn remove_copies(&mut self, folder: FolderId, messages: &[MessageId]) -> store::Result<()> {
         let folder_row = self.folder(folder)?;
-        let mut targets = Vec::new();
+        let mut items = Vec::new();
         let mut planned = Vec::new();
         for id in messages {
             let Some(detail) = self.w.message(*id)? else {
                 continue;
             };
-            let Some(location) = detail
-                .locations
-                .iter()
-                .find(|l| l.folder == folder)
-                .cloned()
-            else {
+            let Some(location) = detail.locations.iter().find(|l| l.folder == folder) else {
                 continue;
             };
-            targets.push(self.target(&detail, &location)?);
+            items.push(location_ref(&detail, location));
             planned.push(detail);
         }
-        if !targets.is_empty() {
-            self.enqueue(
-                folder_row.account,
-                &OpPayload::Delete {
-                    targets,
-                    permanent: true,
-                    trash: None,
-                },
-            )?;
+        if !items.is_empty() {
+            self.enqueue(folder_row.account, &OpPayload::delete_permanently(items))?;
         }
         for detail in planned {
             self.w.remove_location(detail.id, folder)?;
@@ -794,55 +762,30 @@ impl<'a, 'w> Tx<'a, 'w> {
             // copy into any further ones (Gmail labels).
             let mut back = before_only.iter();
             if let Some(first) = back.next() {
-                let to = self.folder(first.folder)?;
                 if now_only.is_empty() {
                     if let Some(source) = detail.locations.first() {
-                        let targets = vec![self.target(&detail, source)?];
-                        self.enqueue(
-                            detail.account,
-                            &OpPayload::Copy {
-                                targets,
-                                to: FolderRef::of(&to),
-                            },
-                        )?;
+                        let items = vec![location_ref(&detail, source)];
+                        self.enqueue(detail.account, &OpPayload::copy_to(items, first.folder))?;
                     }
                 } else {
-                    let mut targets = Vec::new();
-                    for location in &now_only {
-                        targets.push(self.target(&detail, location)?);
-                    }
-                    self.enqueue(
-                        detail.account,
-                        &OpPayload::Move {
-                            targets,
-                            to: FolderRef::of(&to),
-                        },
-                    )?;
+                    let items: Vec<LocationRef> = now_only
+                        .iter()
+                        .map(|location| location_ref(&detail, location))
+                        .collect();
+                    self.enqueue(detail.account, &OpPayload::move_to(items, first.folder))?;
                 }
                 for extra in back {
-                    let to = self.folder(extra.folder)?;
-                    let targets = vec![self.target(&detail, first)?];
-                    self.enqueue(
-                        detail.account,
-                        &OpPayload::Copy {
-                            targets,
-                            to: FolderRef::of(&to),
-                        },
-                    )?;
+                    // The first original folder gets its copy back (without a UID yet)
+                    // from the op above; the further ones are copied from it.
+                    let items = vec![LocationRef::new(detail.id, first.folder, None)];
+                    self.enqueue(detail.account, &OpPayload::copy_to(items, extra.folder))?;
                 }
             } else {
-                let mut targets = Vec::new();
-                for location in &now_only {
-                    targets.push(self.target(&detail, location)?);
-                }
-                self.enqueue(
-                    detail.account,
-                    &OpPayload::Delete {
-                        targets,
-                        permanent: true,
-                        trash: None,
-                    },
-                )?;
+                let items: Vec<LocationRef> = now_only
+                    .iter()
+                    .map(|location| location_ref(&detail, location))
+                    .collect();
+                self.enqueue(detail.account, &OpPayload::delete_permanently(items))?;
             }
             // Local side: put the original copies back first, so the message is never
             // detached in between.
@@ -925,8 +868,9 @@ impl<'a, 'w> Tx<'a, 'w> {
         self.enqueue(
             parent.account,
             &OpPayload::CreateFolder {
-                folder: FolderRef::of(&folder),
-                parent: Some(FolderRef::of(parent)),
+                name: Self::remote_name(&folder),
+                folder: Some(folder.id),
+                subscribe: true,
             },
         )?;
         Ok(folder)
@@ -951,7 +895,7 @@ impl<'a, 'w> Tx<'a, 'w> {
     fn archive(&mut self, ids: &[MessageId]) -> store::Result<()> {
         let details = self.details(ids)?;
         let mut undo = Vec::new();
-        let mut groups: BTreeMap<(AccountId, Option<FolderId>), Vec<OpTarget>> = BTreeMap::new();
+        let mut groups: BTreeMap<(AccountId, Option<FolderId>), Vec<LocationRef>> = BTreeMap::new();
         let mut planned: Vec<(MessageDetail, Vec<Location>, Option<FolderId>)> = Vec::new();
         for detail in details {
             if self.account_kind(detail.account)? == AccountKind::Gmail {
@@ -966,11 +910,10 @@ impl<'a, 'w> Tx<'a, 'w> {
                 else {
                     continue;
                 };
-                let target = self.target(&detail, &location)?;
                 groups
                     .entry((detail.account, None))
                     .or_default()
-                    .push(target);
+                    .push(location_ref(&detail, &location));
                 planned.push((detail, vec![location], None));
                 continue;
             }
@@ -984,23 +927,18 @@ impl<'a, 'w> Tx<'a, 'w> {
             if sources.is_empty() {
                 continue;
             }
-            for source in &sources {
-                let target = self.target(&detail, source)?;
-                groups
-                    .entry((detail.account, Some(folder.id)))
-                    .or_default()
-                    .push(target);
-            }
+            groups
+                .entry((detail.account, Some(folder.id)))
+                .or_default()
+                .extend(sources.iter().map(|source| location_ref(&detail, source)));
             planned.push((detail, sources, Some(folder.id)));
         }
-        for ((account, folder), targets) in groups {
+        for ((account, folder), items) in groups {
             let target = match folder {
-                Some(folder) => ArchiveTarget::Folder {
-                    folder: FolderRef::of(&self.folder(folder)?),
-                },
+                Some(folder) => ArchiveTarget::Folder(folder),
                 None => ArchiveTarget::GmailRemoveInbox,
             };
-            self.enqueue(account, &OpPayload::Archive { targets, target })?;
+            self.enqueue(account, &OpPayload::archive(items, target))?;
         }
         for (detail, sources, to) in planned {
             undo.push((detail.id, detail.locations.clone()));
@@ -1021,8 +959,8 @@ impl<'a, 'w> Tx<'a, 'w> {
     fn delete(&mut self, ids: &[MessageId], permanent: bool) -> store::Result<()> {
         let details = self.details(ids)?;
         let mut undo = Vec::new();
-        let mut trash_groups: BTreeMap<(AccountId, FolderId), Vec<OpTarget>> = BTreeMap::new();
-        let mut purge_groups: BTreeMap<AccountId, Vec<OpTarget>> = BTreeMap::new();
+        let mut trash_groups: BTreeMap<(AccountId, FolderId), Vec<LocationRef>> = BTreeMap::new();
+        let mut purge_groups: BTreeMap<AccountId, Vec<LocationRef>> = BTreeMap::new();
         let mut to_trash: Vec<(MessageDetail, Vec<Location>, FolderId)> = Vec::new();
         let mut to_purge: Vec<MessageDetail> = Vec::new();
         for detail in details {
@@ -1044,44 +982,28 @@ impl<'a, 'w> Tx<'a, 'w> {
                 Some(trash) if !sources.is_empty() => {
                     // Every copy outside Trash moves there; on Gmail that removes every
                     // label (All Mail included), as `UID MOVE` to `[Gmail]/Trash` does.
-                    for source in &sources {
-                        let target = self.target(&detail, source)?;
-                        trash_groups
-                            .entry((detail.account, trash.id))
-                            .or_default()
-                            .push(target);
-                    }
+                    trash_groups
+                        .entry((detail.account, trash.id))
+                        .or_default()
+                        .extend(sources.iter().map(|source| location_ref(&detail, source)));
                     to_trash.push((detail, sources, trash.id));
                 }
                 _ => {
-                    for location in &detail.locations {
-                        let target = self.target(&detail, location)?;
-                        purge_groups.entry(detail.account).or_default().push(target);
-                    }
+                    purge_groups.entry(detail.account).or_default().extend(
+                        detail
+                            .locations
+                            .iter()
+                            .map(|location| location_ref(&detail, location)),
+                    );
                     to_purge.push(detail);
                 }
             }
         }
-        for ((account, trash), targets) in trash_groups {
-            let trash = FolderRef::of(&self.folder(trash)?);
-            self.enqueue(
-                account,
-                &OpPayload::Delete {
-                    targets,
-                    permanent: false,
-                    trash: Some(trash),
-                },
-            )?;
+        for ((account, trash), items) in trash_groups {
+            self.enqueue(account, &OpPayload::trash(items, Some(trash)))?;
         }
-        for (account, targets) in purge_groups {
-            self.enqueue(
-                account,
-                &OpPayload::Delete {
-                    targets,
-                    permanent: true,
-                    trash: None,
-                },
-            )?;
+        for (account, items) in purge_groups {
+            self.enqueue(account, &OpPayload::delete_permanently(items))?;
         }
         for (detail, sources, trash) in to_trash {
             undo.push((detail.id, detail.locations.clone()));
@@ -1142,8 +1064,9 @@ impl<'a, 'w> Tx<'a, 'w> {
         self.enqueue(
             account,
             &OpPayload::CreateFolder {
-                folder: FolderRef::of(&folder),
-                parent: parent.as_ref().map(FolderRef::of),
+                name: Self::remote_name(&folder),
+                folder: Some(folder.id),
+                subscribe: true,
             },
         )?;
         self.applied.created_folder = Some(id);
@@ -1206,8 +1129,9 @@ impl<'a, 'w> Tx<'a, 'w> {
         self.enqueue(
             folder.account,
             &OpPayload::RenameFolder {
-                folder: FolderRef::of(&renamed),
-                from_name: old_remote,
+                folder: Some(renamed.id),
+                from: Self::remote_name(&folder),
+                to: Self::remote_name(&renamed),
             },
         )?;
         Ok(())
@@ -1218,10 +1142,12 @@ impl<'a, 'w> Tx<'a, 'w> {
         if folder.role.is_some() {
             return Err(invalid("special folders can't be deleted"));
         }
+        // The local folder is deleted in this transaction, so the op only names it.
         self.enqueue(
             folder.account,
             &OpPayload::DeleteFolder {
-                folder: FolderRef::of(&folder),
+                folder: None,
+                name: Self::remote_name(&folder),
             },
         )?;
         self.w.delete_folder(id)?;

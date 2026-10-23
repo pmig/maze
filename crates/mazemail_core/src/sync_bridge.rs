@@ -21,18 +21,20 @@
 //! messages and bodies need no extra channel: sync writes them to the store (through
 //! `ingest`), and the store's change sets become event batches.
 //!
-//! # Wiring sync in
+//! # The engine
 //!
-//! The `sync` crate's actor supervisor implements [`SyncBridge`] by forwarding to its
-//! per-account actors (body fetch and refresh map to its priority queue, `ops_enqueued`
-//! to a replay nudge), forwards its `SyncEvent` broadcast into the [`SyncStatusSink`],
-//! and is passed in [`CoreConfig::sync`](crate::CoreConfig::sync). Until then core runs
-//! with [`NoSync`], which only logs.
+//! With [`CoreConfig::sync_engine`](crate::CoreConfig::sync_engine) set (the app and
+//! `mazemail --headless` do), core runs the real engine (see [`crate::sync_engine`]):
+//! one `sync` account actor per IMAP, Gmail and Microsoft 365 account, whose
+//! supervisor implements [`SyncBridge`] and reports status into the event batches.
+//! Without it, core uses [`CoreConfig::sync`](crate::CoreConfig::sync): [`NoSync`] by
+//! default, which only logs, or a test double.
 
 use std::fmt;
 
 use mazemail_types::{AccountId, FolderId, MessageId};
 use serde::{Deserialize, Serialize};
+use store::OpId;
 use tokio::sync::mpsc;
 
 use crate::events::CoreEvent;
@@ -73,6 +75,15 @@ pub trait SyncBridge: Send + Sync + fmt::Debug {
 
     /// Pending ops were queued for these accounts; replay them soon.
     fn ops_enqueued(&self, accounts: &[AccountId]);
+
+    /// Pending ops were queued: `(account, op)` in queue order. The default calls
+    /// [`SyncBridge::ops_enqueued`] with the accounts.
+    fn ops_queued(&self, ops: &[(AccountId, OpId)]) {
+        let mut accounts: Vec<AccountId> = ops.iter().map(|(account, _)| *account).collect();
+        accounts.sort();
+        accounts.dedup();
+        self.ops_enqueued(&accounts);
+    }
 }
 
 /// A [`SyncBridge`] that does nothing but log, for headless use without accounts,
@@ -102,6 +113,8 @@ impl SyncBridge for NoSync {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum SyncState {
+    /// Opening the first connection.
+    Connecting,
     /// Connected and up to date (IDLE or polling).
     Idle,
     /// A sync pass is running.
@@ -125,6 +138,25 @@ pub enum SyncState {
     },
 }
 
+impl SyncState {
+    /// A short sentence for the status bar.
+    pub fn text(&self) -> String {
+        match self {
+            Self::Connecting => "Connecting…".to_owned(),
+            Self::Idle => "Up to date".to_owned(),
+            Self::Syncing {
+                done,
+                total: Some(total),
+                ..
+            } => format!("Syncing ({done} of {total})…"),
+            Self::Syncing { .. } => "Syncing…".to_owned(),
+            Self::Offline => "Offline".to_owned(),
+            Self::AuthRequired => "Sign-in required".to_owned(),
+            Self::Error { message } => format!("Sync failed: {message}"),
+        }
+    }
+}
+
 /// One account's sync state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyncStatus {
@@ -132,6 +164,27 @@ pub struct SyncStatus {
     pub account: AccountId,
     /// Its state.
     pub state: SyncState,
+    /// The engine's own sentence for people (with the reason and the next retry, say),
+    /// if it gave one. Never contains message content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+impl SyncStatus {
+    /// A status without detail text.
+    pub fn new(account: AccountId, state: SyncState) -> Self {
+        Self {
+            account,
+            state,
+            detail: None,
+        }
+    }
+
+    /// The sentence for the status bar and the activity log: the engine's detail, or
+    /// the state's default text.
+    pub fn text(&self) -> String {
+        self.detail.clone().unwrap_or_else(|| self.state.text())
+    }
 }
 
 /// Where sync reports [`SyncStatus`] changes. Cheap to clone; never blocks.
