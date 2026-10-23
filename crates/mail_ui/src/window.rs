@@ -402,7 +402,8 @@ impl MailWindow {
             return;
         }
         self.palette_return_focus = window.focused(cx);
-        let palette = cx.new(|cx| CommandPalette::new(window, cx));
+        let return_focus = self.palette_return_focus.clone();
+        let palette = cx.new(|cx| CommandPalette::new(return_focus.as_ref(), window, cx));
         let focus = palette.focus_handle(cx);
         self._subscriptions.push(cx.subscribe_in(
             &palette,
@@ -1033,6 +1034,30 @@ mod tests {
             vec![("direct", false), ("deferred", true)],
             "the palette ran Add Account inside the window's event handling"
         );
+    }
+
+    /// The palette shows a binding with a context (`a` for Archive in the list), which
+    /// only matches where the focus was before the palette took it.
+    #[gpui::test]
+    fn palette_hints_come_from_the_previous_focus(cx: &mut TestAppContext) {
+        let (view, cx) = open(cx);
+        cx.run_until_parked();
+        let list = view.read_with(cx, |w, cx| w.thread_list().focus_handle(cx));
+        cx.update(|window, cx| window.focus(&list, cx));
+        cx.run_until_parked();
+        cx.simulate_keystrokes("cmd-shift-p");
+        cx.update(|window, cx| {
+            let palette = view.read(cx).palette.clone().unwrap();
+            let palette_focus = palette.focus_handle(cx);
+            let archive = crate::actions::Archive;
+            let hint = crate::command_palette::binding_hint(&archive, Some(&list), window);
+            assert_eq!(hint.map(|k| k.key), Some("a".to_owned()));
+            // From the palette's own focus the list's bindings don't apply.
+            assert_eq!(
+                crate::command_palette::binding_hint(&archive, Some(&palette_focus), window),
+                None
+            );
+        });
     }
 
     #[gpui::test]
