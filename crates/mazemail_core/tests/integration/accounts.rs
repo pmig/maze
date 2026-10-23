@@ -305,6 +305,35 @@ async fn an_unreachable_server_is_reported() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn testing_a_connection_saves_nothing() {
+    let server = FakeServer::new();
+    server.add_folder("Projects", None);
+    let s = open(&server).await;
+
+    let test = s.core.test_imap_account(input(PASSWORD)).await.unwrap();
+    assert!(!test.gmail);
+    assert_eq!(test.folders, server.folder_names().len());
+    let wrong = s.core.test_imap_account(input("nope")).await.unwrap_err();
+    assert!(
+        matches!(
+            wrong,
+            Error::Account {
+                kind: AccountErrorKind::AuthFailed,
+                ..
+            }
+        ),
+        "{wrong}"
+    );
+    assert!(s.core.accounts().unwrap().is_empty());
+    assert!(s.secrets.is_empty());
+    assert!(s.core.synced_accounts().is_empty());
+
+    // A tested account can still be added.
+    s.core.add_imap_account(input(PASSWORD)).await.unwrap();
+    s.core.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn new_mail_bodies_and_ops_flow_through_the_engine() {
     let server = FakeServer::new();
     server.deliver("INBOX", mail(1, OLD));

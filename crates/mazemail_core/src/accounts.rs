@@ -499,10 +499,33 @@ fn check_server(server: &ImapServer) -> Result<ImapServer> {
     })
 }
 
-/// What validating a new account found out.
-#[derive(Debug, Clone, Copy)]
-struct Validated {
-    gmail: bool,
+/// What connecting to an account's server found out: it answered, accepted the login
+/// and listed its folders ([`CoreHandle::test_imap_account`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConnectionTest {
+    /// The server has Gmail's extensions (`X-GM-EXT-1`).
+    pub gmail: bool,
+    /// How many folders it listed.
+    pub folders: usize,
+}
+
+/// The checked address, server and user name of a password login.
+fn password_login(input: &AddImapAccount) -> Result<(String, ImapServer, String)> {
+    let email = check_email(&input.email)?;
+    let server = check_server(&input.server)?;
+    if input.password.expose().is_empty() {
+        return Err(account_error(
+            AccountErrorKind::InvalidInput,
+            "enter the account's password",
+        ));
+    }
+    let username = input
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+        .map_or_else(|| email.clone(), str::to_owned);
+    Ok((email, server, username))
 }
 
 impl CoreHandle {
@@ -558,7 +581,7 @@ impl CoreHandle {
     }
 
     /// Connects with `auth`, logs in and lists the folders.
-    async fn validate(&self, server: &ImapServer, auth: ImapAuth) -> Result<Validated> {
+    async fn validate(&self, server: &ImapServer, auth: ImapAuth) -> Result<ConnectionTest> {
         let engine = self.engine_or_err()?;
         let sessions = engine
             .connector()
@@ -588,7 +611,7 @@ impl CoreHandle {
             )),
             Ok(Ok((gmail, folders))) => {
                 tracing::info!(gmail, folders, "account validated");
-                Ok(Validated { gmail })
+                Ok(ConnectionTest { gmail, folders })
             }
         }
     }
@@ -672,19 +695,7 @@ impl CoreHandle {
 
     async fn add_imap_account_inner(&self, input: AddImapAccount) -> Result<AccountInfo> {
         let engine = self.engine_or_err()?;
-        let email = check_email(&input.email)?;
-        let server = check_server(&input.server)?;
-        if input.password.expose().is_empty() {
-            return Err(account_error(
-                AccountErrorKind::InvalidInput,
-                "enter the account's password",
-            ));
-        }
-        let username = input
-            .username
-            .map(|u| u.trim().to_owned())
-            .filter(|u| !u.is_empty())
-            .unwrap_or_else(|| email.clone());
+        let (email, server, username) = password_login(&input)?;
         self.check_duplicate(&email, &server.host)?;
 
         let validated = self
@@ -733,6 +744,29 @@ impl CoreHandle {
         engine.start(&account, None);
         tracing::info!(account = %account.id, kind = %account.kind.as_str(), "account added");
         self.info_of(&account)
+    }
+
+    /// Tests an IMAP account's settings without saving anything: connects, logs in and
+    /// lists the folders, as [`CoreHandle::add_imap_account`] does before it saves.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Account`] for bad input, an unreachable server or a rejected login;
+    /// [`Error::NoSyncEngine`] without a sync engine.
+    pub async fn test_imap_account(&self, input: AddImapAccount) -> Result<ConnectionTest> {
+        let core = self.clone();
+        self.run(async move {
+            let (_, server, user) = password_login(&input)?;
+            core.validate(
+                &server,
+                ImapAuth::Password {
+                    user,
+                    password: input.password,
+                },
+            )
+            .await
+        })
+        .await
     }
 
     /// Adds a Google or Microsoft account with a browser sign-in (OAuth2 with PKCE):

@@ -11,7 +11,8 @@
 //! Adding runs in the core ([`CoreHandle::add_imap_account`],
 //! [`CoreHandle::add_oauth_account`]), which connects and lists the folders before it
 //! saves anything; errors (wrong password, unreachable server, no OAuth client ID)
-//! keep the dialog open with the message. The dialog opens from the empty state's
+//! keep the dialog open with the message. "Test Connection" does the same check for a
+//! password account ([`CoreHandle::test_imap_account`]) and saves nothing. The dialog opens from the empty state's
 //! button, the folder pane's "Add Account…" and the command palette
 //! ("Maze: Add Account").
 
@@ -24,8 +25,8 @@ use gpui::{
 };
 use mail_ui::DataChanges;
 use mazemail_core::{
-    AddImapAccount, AddOAuthAccount, CoreHandle, ImapSecurity, ImapServer, ProviderKind,
-    suggest_imap_server,
+    AddImapAccount, AddOAuthAccount, ConnectionTest, CoreHandle, ImapSecurity, ImapServer,
+    ProviderKind, suggest_imap_server,
 };
 use mazemail_types::{PRODUCT_NAME, Sensitive};
 use ui::kit::component::{
@@ -50,6 +51,8 @@ struct Form {
     advanced: bool,
     busy: Option<SharedString>,
     error: Option<SharedString>,
+    /// The last successful "Test Connection".
+    success: Option<SharedString>,
 }
 
 type Shared = Rc<RefCell<Form>>;
@@ -126,6 +129,7 @@ pub(crate) fn show(core: CoreHandle, cx: &mut App) {
             advanced: false,
             busy: None,
             error: None,
+            success: None,
         };
         open(Rc::new(RefCell::new(form)), window, cx);
     });
@@ -160,6 +164,7 @@ fn open(state: Shared, window: &mut Window, cx: &mut App) {
         );
         let busy = form.busy.clone();
         let error = form.error.clone();
+        let success = form.success.clone();
         let advanced = form.advanced;
         let server_line: SharedString = match &plan.server {
             Some(server) => format!(
@@ -207,6 +212,12 @@ fn open(state: Shared, window: &mut Window, cx: &mut App) {
             let state = state.clone();
             move |_: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
                 add_with_password(&state, window, cx);
+            }
+        };
+        let test = {
+            let state = state.clone();
+            move |_: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
+                test_with_password(&state, window, cx);
             }
         };
         let sign_in = |provider: ProviderKind| {
@@ -275,6 +286,9 @@ fn open(state: Shared, window: &mut Window, cx: &mut App) {
                     .when_some(busy.clone(), |this, busy| {
                         this.child(div().text_color(theme.muted_foreground).child(busy))
                     })
+                    .when_some(success, |this, success| {
+                        this.child(div().text_color(theme.success).child(success))
+                    })
                     .when_some(error, |this, error| {
                         this.child(div().text_color(theme.danger).child(error))
                     }),
@@ -291,16 +305,27 @@ fn open(state: Shared, window: &mut Window, cx: &mut App) {
                             .child(sign_in(ProviderKind::Microsoft)),
                     )
                     .child(
-                        Button::new("add-account")
-                            .primary()
-                            .small()
-                            .label(if busy.is_some() {
-                                "Checking…"
-                            } else {
-                                "Add Account"
-                            })
-                            .disabled(busy.is_some())
-                            .on_click(add),
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("test-connection")
+                                    .small()
+                                    .label("Test Connection")
+                                    .disabled(busy.is_some())
+                                    .on_click(test),
+                            )
+                            .child(
+                                Button::new("add-account")
+                                    .primary()
+                                    .small()
+                                    .label(if busy.is_some() {
+                                        "Checking…"
+                                    } else {
+                                        "Add Account"
+                                    })
+                                    .disabled(busy.is_some())
+                                    .on_click(add),
+                            ),
                     ),
             )
     });
@@ -316,6 +341,7 @@ fn set_status(
         let mut form = state.borrow_mut();
         form.busy = busy;
         form.error = error;
+        form.success = None;
     }
     window.refresh();
 }
@@ -351,8 +377,13 @@ fn run(
     .detach();
 }
 
-fn add_with_password(state: &Shared, window: &mut Window, cx: &mut App) {
-    let (core, input) = {
+/// The password account the fields describe, or `None` after showing what's missing.
+fn password_input(
+    state: &Shared,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<(CoreHandle, AddImapAccount)> {
+    let input = {
         let form = state.borrow();
         let email = value(&form.email, cx);
         let plan = plan(
@@ -372,7 +403,7 @@ fn add_with_password(state: &Shared, window: &mut Window, cx: &mut App) {
                 Some("Enter your email address (name@example.com).".into()),
                 window,
             );
-            return;
+            return None;
         };
         if password.is_empty() {
             drop(form);
@@ -382,7 +413,7 @@ fn add_with_password(state: &Shared, window: &mut Window, cx: &mut App) {
                 Some("Enter the password, or sign in with Google or Microsoft.".into()),
                 window,
             );
-            return;
+            return None;
         }
         (
             form.core.clone(),
@@ -395,6 +426,13 @@ fn add_with_password(state: &Shared, window: &mut Window, cx: &mut App) {
             },
         )
     };
+    Some(input)
+}
+
+fn add_with_password(state: &Shared, window: &mut Window, cx: &mut App) {
+    let Some((core, input)) = password_input(state, window, cx) else {
+        return;
+    };
     let message = format!("Connecting to {}…", input.server.host);
     run(
         state,
@@ -403,6 +441,42 @@ fn add_with_password(state: &Shared, window: &mut Window, cx: &mut App) {
         window,
         cx,
     );
+}
+
+/// Connects and logs in with the fields' settings without saving; shows the outcome.
+fn test_with_password(state: &Shared, window: &mut Window, cx: &mut App) {
+    let Some((core, input)) = password_input(state, window, cx) else {
+        return;
+    };
+    let host = input.server.host.clone();
+    set_status(state, Some(format!("Testing {host}…").into()), None, window);
+    let attempt = cx.background_spawn(async move { core.test_imap_account(input).await });
+    let handle = window.window_handle();
+    let state = state.clone();
+    cx.spawn(async move |cx| {
+        let result = attempt.await;
+        cx.update(|cx| {
+            let _ = handle.update(cx, |_, window, _| match result {
+                Ok(test) => {
+                    set_status(&state, None, None, window);
+                    state.borrow_mut().success = Some(connection_ok(&host, test).into());
+                    window.refresh();
+                }
+                Err(error) => set_status(&state, None, Some(error.to_string().into()), window),
+            });
+        });
+    })
+    .detach();
+}
+
+/// "Connected to imap.example.org: the login works, 12 folders."
+pub(crate) fn connection_ok(host: &str, test: ConnectionTest) -> String {
+    let folders = match test.folders {
+        1 => "1 folder".to_owned(),
+        n => format!("{n} folders"),
+    };
+    let gmail = if test.gmail { " (Gmail)" } else { "" };
+    format!("Connected to {host}{gmail}: the login works, {folders}.")
 }
 
 fn add_with_oauth(state: &Shared, provider: ProviderKind, window: &mut Window, cx: &mut App) {
@@ -478,5 +552,29 @@ mod tests {
         );
         assert!(!guessed.detected);
         assert_eq!(plan("nothing", "", "", None).server, None);
+    }
+
+    #[test]
+    fn a_successful_test_says_what_it_found() {
+        assert_eq!(
+            connection_ok(
+                "imap.example.org",
+                ConnectionTest {
+                    gmail: false,
+                    folders: 12
+                }
+            ),
+            "Connected to imap.example.org: the login works, 12 folders."
+        );
+        assert_eq!(
+            connection_ok(
+                "imap.gmail.com",
+                ConnectionTest {
+                    gmail: true,
+                    folders: 1
+                }
+            ),
+            "Connected to imap.gmail.com (Gmail): the login works, 1 folder."
+        );
     }
 }

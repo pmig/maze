@@ -79,7 +79,7 @@ pub mod thread_tree;
 
 pub use accounts::{
     AccountAuth, AccountConfig, AccountErrorKind, AccountInfo, AddImapAccount, AddOAuthAccount,
-    ImapSecurity, ImapServer, ServerSuggestion, suggest_imap_server,
+    ConnectionTest, ImapSecurity, ImapServer, ServerSuggestion, suggest_imap_server,
 };
 pub use api_handler::{Authorization, CommandAuthorizer, DenyAgents};
 pub use commands::{CommandOutcome, CommandReceipt, MailCommand, Origin};
