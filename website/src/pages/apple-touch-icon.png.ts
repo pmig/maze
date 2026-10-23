@@ -6,7 +6,7 @@ import { croppedIconSvg } from "../lib/icon";
 export const GET: APIRoute = async () => {
   const png = await sharp(Buffer.from(croppedIconSvg()), { density: 72 })
     .resize(180, 180)
-    .flatten({ background: "#6E6BF8" })
+    .flatten({ background: "#52555F" })
     .png({ compressionLevel: 9 })
     .toBuffer();
   return new Response(new Uint8Array(png), { headers: { "Content-Type": "image/png" } });

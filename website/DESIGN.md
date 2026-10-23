@@ -49,15 +49,16 @@ to. It is a working document for whoever touches the site next.
 | Zed           | Concrete, measured claims instead of adjectives                                                  | Every number links to where it comes from                                          |
 | delta         | An honest maturity label ("Pre-alpha") in the header                                            | Ours also says what doesn't work yet, on the home page                             |
 | delta         | Small, dense section headings; tables and terminal output as the main "illustrations"           | No avatars or testimonials: there are no users to quote yet                        |
-| delta         | OKLCH-ish tokens with `color-mix()` derived tints                                               | Indigo from the Maze icon instead of red-orange; amber only for the "goal" dot     |
+| delta         | OKLCH-ish tokens with `color-mix()` derived tints                                               | Monochrome graphite instead of red-orange; amber only for the "goal" dot     |
 | Both          | Self-hosted Plex-family type and Lilex for code                                                  | Two families only (IBM Plex Sans + Lilex), latin subsets, no CDN                   |
 
 Nothing is copied: no assets, logos, copy, or CSS from either site.
 
 ## Maze's rules
 
-- **Palette.** Neutral, very slightly cool grays. Accent: indigo from the app icon
-  (`#6E6BF8` → `#3A2CB5`), used for links, the primary button and focus rings. Amber
+- **Palette.** Graphite: neutral grays and a monochrome accent (near-black `#18181B` in
+  light, near-white `#F4F4F5` in dark) for links, the primary button and focus rings,
+  matching the graphite app icon (`#52555F` → `#141519`). Amber
   (`#FFB86B`, the dot at the center of the icon's maze) appears only as a tiny marker:
   the pre-alpha dot, list bullets for "done". Both themes meet WCAG AA for text (most
   pairs AAA).
