@@ -1,0 +1,29 @@
+[package]
+name = "smtp"
+description = "Maze mail submission: lettre SMTP transport (PLAIN/LOGIN, XOAUTH2) and the outbox sender with its send log"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+auth = { workspace = true }
+lettre = { workspace = true }
+mazemail_types = { workspace = true }
+store = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+base64 = { workspace = true }
+imap = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+vault = { workspace = true }
+
+[lints]
+workspace = true

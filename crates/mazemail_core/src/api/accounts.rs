@@ -25,6 +25,7 @@ use crate::accounts::{
     ImapServer, suggest_imap_server,
 };
 use crate::handle::CoreHandle;
+use crate::outgoing::{SmtpServerSettings, smtp_default_port};
 use crate::sync_bridge::{RefreshScope, SyncState};
 use crate::{Error, ProviderKind};
 
@@ -89,6 +90,24 @@ fn security(arg: SecurityArg) -> ImapSecurity {
         SecurityArg::Starttls => ImapSecurity::Starttls,
         SecurityArg::None => ImapSecurity::Insecure,
     }
+}
+
+/// The SMTP server from `--smtp-host`, `--smtp-port` and `--smtp-security`; `None`
+/// (derived) without a host.
+fn smtp_settings(
+    host: Option<String>,
+    port: Option<u16>,
+    security_arg: Option<SecurityArg>,
+) -> Option<SmtpServerSettings> {
+    let host = host
+        .map(|h| h.trim().to_owned())
+        .filter(|h| !h.is_empty())?;
+    let security = security_arg.map_or(ImapSecurity::Starttls, security);
+    Some(SmtpServerSettings {
+        host,
+        port: port.unwrap_or_else(|| smtp_default_port(security)),
+        security,
+    })
 }
 
 /// `account list`.
@@ -157,6 +176,7 @@ pub(crate) async fn add(
                 },
                 username: args.username.map(|u| u.expose().clone()),
                 password,
+                smtp: smtp_settings(args.smtp_host, args.smtp_port, args.smtp_security),
             })
             .await
         }

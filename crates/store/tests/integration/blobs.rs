@@ -53,7 +53,7 @@ fn references_are_counted_by_every_owner() {
     let s = staged.clone();
     let (outbox, agent) = store
         .write_blocking(move |w| {
-            let outbox = w.outbox_enqueue(None, &s, "out@x", 0)?;
+            let outbox = w.outbox_enqueue(None, &s, "out@x", 0, None)?;
             let agent = w.create_agent_thread("claude", None, None)?;
             w.set_agent_transcript(agent, &s)?;
             Ok((outbox, agent))

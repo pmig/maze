@@ -31,7 +31,9 @@
 //! # Data model notes
 //!
 //! - **Schema** v1 is the base schema (`migrations/main/0001_schema_v1.sql`); v2 adds
-//!   `account.uuid`; v3 adds `message_location.date` and the message list indexes.
+//!   `account.uuid`; v3 adds `message_location.date` and the message list indexes; v4
+//!   adds local drafts ([`WriteTx::create_draft`]) and the outbox's SMTP envelope
+//!   ([`OutboxEnvelope`]).
 //!   Migrations only ever add files; opening an older database backs it up first (see
 //!   [`MigrationReport`]).
 //! - **Message lists** (threads off): [`Queries::message_list_keys`] pages through the
@@ -56,6 +58,11 @@
 //! - **Sender verification** reports live in `message.auth_json`
 //!   ([`WriteTx::set_auth_json`]); an upsert only fills it if empty.
 //! - **Blobs** referenced by a committed row are always durable (see [`blob`]).
+//! - **Outbox**: [`WriteTx::outbox_claim`] hands an item to exactly one sender;
+//!   [`Store::record_sent_with`] writes the send log entry before the outbox row (and
+//!   whatever has to follow a delivery exactly once, in the same transaction). Sent
+//!   items stay until [`WriteTx::outbox_prune_sent`] finds no pending op that still
+//!   needs their blob (the Sent copy's `APPEND`).
 //! - **Flags are per location** (IMAP flags belong to the copy in each mailbox). A
 //!   message's effective flags ([`effective_flags`]) are `\Seen` only if every location
 //!   is seen, any other flag if some location has it. Folder counts and

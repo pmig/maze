@@ -2,10 +2,11 @@
 
 Maze is a local-first email client: your mail is stored on your computer, encrypted,
 and the app behaves like Thunderbird. This guide covers installing, the first launch,
-importing mail, accounts, updates and the keyboard shortcuts.
+importing mail, accounts, writing mail, updates and the keyboard shortcuts.
 
-Maze is **pre-alpha**. Reading, searching and triaging work; writing and sending mail
-don't yet. Keep your mail on the server.
+Maze is **pre-alpha**. Reading, searching and triaging work, and writing and sending
+mail works in a first version (see [Writing mail](#writing-mail)). Keep your mail on the
+server.
 
 ## Install
 
@@ -236,10 +237,12 @@ labels and threads. Which message bodies are kept offline is set with `"offline"
   Maze, or "Maze: Add Account" in the command palette). Enter your address and
   password for any IMAP server, or use **Sign in with Google** / **Sign in with
   Microsoft**. The server is detected for well-known providers (Gmail, Outlook.com,
-  iCloud, Yahoo, Fastmail, GMX, …); **Server settings…** lets you set host, port,
-  security and user name yourself. Maze connects, logs in and lists the folders before
-  it saves anything, so a wrong password or an unreachable server keeps the dialog open
-  with the error.
+  iCloud, Yahoo, Fastmail, GMX, …), and so is the SMTP server for sending (see
+  [SMTP servers](#smtp-servers)); **Server settings…** lets you set host, port,
+  security and user name of both yourself. Maze connects, logs in and lists the folders
+  before it saves anything, so a wrong password or an unreachable server keeps the
+  dialog open with the error. **Test Connection** checks the IMAP login and then the
+  SMTP login, without saving or sending anything.
 - **From the command line** (needs a **writer** token, and you approve every account
   in Maze):
 
@@ -251,6 +254,7 @@ labels and threads. Which message bodies are kept offline is set with `"offline"
   mazemail account add anna@company.com --oauth microsoft  # browser sign-in
   mazemail account add anna@gmail.com --oauth google       # needs auth.google.client_id
   mazemail account add me@example.org --host mail.example.org --port 143 --security starttls
+  mazemail account add me@example.org --smtp-host mail.example.org --smtp-port 465 --smtp-security tls
 
   mazemail account list      # accounts and their sync state
   mazemail sync              # look for new mail now
@@ -260,7 +264,8 @@ labels and threads. Which message bodies are kept offline is set with `"offline"
   The password is read from the terminal without echo, or with `--password-stdin` from
   the first line of stdin; it is never a command-line argument. `--name`, `--host`,
   `--port`, `--security` (`tls`, `starttls`, `none`) and `--username` override the
-  detected settings.
+  detected settings; `--smtp-host`, `--smtp-port` and `--smtp-security` the SMTP
+  server's.
 - **From Thunderbird:** the [Thunderbird import](#import-mail) takes over your
   accounts with their server settings. Passwords aren't imported; Maze lists the
   accounts that still need one.
@@ -274,6 +279,29 @@ folders, plus the Inbox and the special folders (Sent, Drafts, Trash, Junk, Arch
 like Thunderbird. Subscribe to a folder on the server's webmail or in another client to
 get it into Maze. Servers that report no subscriptions at all, and Gmail (whose labels
 are folders), get every folder synced.
+
+### SMTP servers
+
+Every identity sends through an SMTP server with the account's login (the password from
+the keychain, or the Google/Microsoft sign-in). Maze sets it up by itself, for new
+accounts and for accounts you added before Maze could send:
+
+| Provider                                   | SMTP server                                    |
+| ------------------------------------------ | ---------------------------------------------- |
+| Gmail and Google Workspace                 | `smtp.gmail.com`, TLS on 465                   |
+| Outlook.com and Microsoft 365              | `smtp.office365.com`, STARTTLS on 587          |
+| iCloud, Yahoo, Fastmail, GMX, web.de, …    | the provider's (built-in list)                 |
+| everything else                            | `smtp.<domain>` (or the IMAP host with `imap.` → `smtp.`), STARTTLS on 587 |
+
+Use **Server settings…** in Add Account (or `--smtp-host` and friends) when your
+provider uses something else. Maze never falls back to an unencrypted connection when
+STARTTLS fails.
+
+**Sent copies:** Gmail and Microsoft 365 file the copy of a sent message in your Sent
+folder themselves, so Maze doesn't upload one. For every other server Maze uploads the
+copy into the identity's Sent folder (`APPEND`) right after sending. This follows the
+SMTP server's `saves_sent` setting (`auto`, `yes`, `no`), which is `auto` for servers
+Maze sets up.
 
 ### Gmail and Google Workspace
 
@@ -353,6 +381,36 @@ Then sign-in fails with a message to forward to your IT department: an administr
 has to grant admin consent for Maze in Microsoft Entra ID under *Enterprise
 applications*, or assign you to it. Sign in again once they have.
 
+## Writing mail
+
+Press `cmd-n`, click **+** next to the folder name in the title bar, or choose
+**Message → New Message**. A compose window opens, like Thunderbird's:
+
+- **From** picks the identity you send as. Replies pick it for you: the identity whose
+  address the message was sent to (To, Cc or `Delivered-To`), else the account's default.
+- **To**, **Cc** and **Bcc** (click **Cc Bcc** or press `cmd-shift-c`) take addresses
+  separated by commas: `anna@example.com, "Doe, John" <john@example.com>`.
+- The body is **Markdown**: `**bold**`, `*italic*`, lists, `> quotes`, links. Maze sends
+  your text as the plain-text part and renders it as the HTML part, so recipients see
+  normal formatted mail. Single line breaks are kept.
+- **Attach…** (`cmd-shift-a`) adds files; they are read when the message is sent.
+- `cmd-enter` sends. Escape or closing the window asks whether to keep a draft when
+  something changed.
+
+Reply (`cmd-r`), reply all (`cmd-shift-r`) and forward (`cmd-l`) open the same window
+with the recipients, `Re:`/`Fwd:` subject and the quoted message filled in (HTML mail is
+quoted as Markdown). Messages are sent right away. When the server can't be reached,
+the message waits in the outbox and goes out by itself when it can; a message the server
+refuses (a wrong password, a rejected recipient, Microsoft 365's *SendAsDenied* for an
+address you aren't allowed to send from) keeps the window open with the explanation.
+Maze records every message the server accepted, so even a crash in the middle of sending
+never sends it twice.
+
+Drafts are saved on your computer (encrypted, like your mail) a moment after you stop
+typing. Not there yet: drafts in the server's Drafts folder, forwarding the original's
+attachments, signatures switching with the identity, spell check, address completion,
+send later and undo send.
+
 ## Updates
 
 Maze updates itself like Zed. It checks for a new version every hour and after your
@@ -429,14 +487,17 @@ Maze uses Thunderbird's shortcuts and fills the gaps with Zed's. These are bound
 | Open / close a thread                | `right` / `left`            |
 | Open / close all threads             | `*` / `\`                   |
 | Select the whole thread              | `cmd-shift-a`               |
+| New message                          | `cmd-n`                     |
+| Reply / reply all / forward          | `cmd-r` / `cmd-shift-r` / `cmd-l` |
+| Send (compose window)                | `cmd-enter`                 |
+| Save draft / attach / Cc and Bcc     | `cmd-s` / `cmd-shift-a` / `cmd-shift-c` |
 | Table view / threads on or off       | `cmd-alt-t` / `cmd-alt-g`   |
 | Hide Maze / hide others / minimize   | `cmd-h` / `cmd-alt-h` / `cmd-m` |
 | Quit                                 | `cmd-q`                     |
 
 Single-letter shortcuts work when the message list or a message has focus, never inside
-a text field. Reply (`cmd-r`), reply all (`cmd-shift-r`) and forward (`cmd-l`) are bound
-but only show a notice until the composer lands. The rest of Thunderbird's keymap
-(tags `1`–`9`, junk, delete, history) follows as the features arrive.
+a text field. The rest of Thunderbird's keymap (tags `1`–`9`, junk, delete, history)
+follows as the features arrive.
 
 ## Getting help
 

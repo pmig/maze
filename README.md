@@ -40,13 +40,16 @@ Works today:
 - search with Gmail-style operators (`from:`, `has:attachment`, `after:` …)
 - reading mail in a sanitized reader view, with DKIM/SPF/DMARC results
 - archive, move, tag, flag and mark read, with undo
+- writing mail in a compose window (Markdown, sent as plain text + HTML), replies and
+  forwards, local drafts, sending over SMTP (password or OAuth) with an outbox that
+  never sends twice
 - the `mazemail` CLI and `mazemail --headless` for scripts and agents
 - updates in the background with a "Restart to update" button, and a rollback if a new
   version keeps failing to start
 
 Not there yet:
 
-- writing mail: the composer, SMTP sending and the outbox
+- drafts on the server, send later, undo send, spell check, signatures per identity
 - the agents column (the panel is visible, but no agent can be connected yet)
 - filter rules (imported Thunderbird filters are kept, disabled)
 - a settings window, showing the recovery key

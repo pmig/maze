@@ -26,13 +26,13 @@ use vault::MemoryKeyStore;
 
 use crate::common;
 
-const PASSWORD: &str = "correct horse";
+pub(crate) const PASSWORD: &str = "correct horse";
 
 /// Hands out sessions on a [`FakeServer`] after checking the password, like a server.
 #[derive(Debug, Clone)]
-struct FakeConnector {
-    server: FakeServer,
-    reachable: bool,
+pub(crate) struct FakeConnector {
+    pub(crate) server: FakeServer,
+    pub(crate) reachable: bool,
 }
 
 struct FakeSessions {
@@ -82,7 +82,7 @@ impl ImapConnector for FakeConnector {
     }
 }
 
-fn timing() -> SyncTiming {
+pub(crate) fn timing() -> SyncTiming {
     SyncTiming {
         idle_reissue: Duration::from_secs(25 * 60),
         poll_interval: Duration::from_secs(3600),
@@ -125,13 +125,14 @@ async fn open(server: &FakeServer) -> Setup {
     open_with(server, true, tempfile::tempdir().unwrap()).await
 }
 
-fn input(password: &str) -> AddImapAccount {
+pub(crate) fn input(password: &str) -> AddImapAccount {
     AddImapAccount {
         display_name: Some("Work".into()),
         email: "alice@example.org".into(),
         server: ImapServer::new("imap.example.org", ImapSecurity::Tls),
         username: None,
         password: Sensitive::new(password.to_owned()),
+        smtp: None,
     }
 }
 
@@ -149,7 +150,7 @@ fn mail(n: u32, date: &str) -> FakeMessage {
 const OLD: &str = "Mon, 6 Jan 2020 09:00:00 +0000";
 
 /// Waits until `check` holds, for at most 10 s.
-async fn wait_for(what: &str, mut check: impl FnMut() -> bool) {
+pub(crate) async fn wait_for(what: &str, mut check: impl FnMut() -> bool) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     while !check() {
         assert!(
@@ -694,6 +695,9 @@ async fn the_local_api_adds_lists_syncs_and_removes_accounts() {
             security: None,
             username: None,
             password: Some(Sensitive::new(password.into())),
+            smtp_host: None,
+            smtp_port: None,
+            smtp_security: None,
         })
     };
 

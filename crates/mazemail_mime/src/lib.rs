@@ -14,6 +14,9 @@
 //! - [`client`] detects the sender's mail client from `User-Agent`, `X-Mailer` and
 //!   other header traces.
 //! - [`lang`] gives the search index a language hint.
+//! - [`compose`] builds outgoing mail: Markdown to HTML, `multipart/alternative` via
+//!   `mail-builder`, reply/forward subjects, `References` and quoting (HTML quotes
+//!   become Markdown with `htmd`).
 //!
 //! # Privacy
 //!
@@ -30,6 +33,7 @@
 //! budget, so regressions to quadratic behavior show up in CI.
 
 pub mod client;
+pub mod compose;
 pub mod html;
 pub mod lang;
 mod parse;

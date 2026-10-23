@@ -5,6 +5,8 @@
 
 use std::fmt;
 
+pub use mazemail_types::DraftId;
+use mazemail_types::compose::Draft;
 use mazemail_types::{
     AccountId, Address, BlobId, FolderId, FolderRole, IdentityId, MessageId, TagId, ThreadId,
 };
@@ -1076,6 +1078,24 @@ text_enum!(
     }
 );
 
+/// The SMTP envelope of an outbox item: the sender (`MAIL FROM`) and every recipient
+/// (`RCPT TO`), Bcc included, since the message itself carries no Bcc header.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutboxEnvelope {
+    /// The sender's address.
+    pub from: String,
+    /// The recipients' addresses.
+    pub to: Vec<String>,
+}
+
+impl fmt::Debug for OutboxEnvelope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OutboxEnvelope")
+            .field("to", &self.to.len())
+            .finish_non_exhaustive()
+    }
+}
+
 /// A message waiting to be sent (or sent, until it is removed).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutboxItem {
@@ -1088,7 +1108,25 @@ pub struct OutboxItem {
     pub attempts: u32,
     pub last_error: Option<String>,
     pub created: UnixTime,
+    /// The SMTP envelope; `None` for items queued without one (the sender then has to
+    /// take it from the message headers).
+    pub envelope: Option<OutboxEnvelope>,
 }
+
+/// A local draft (PLAN §4.10), as autosaved by the composer.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StoredDraft {
+    pub id: DraftId,
+    pub draft: Draft,
+    pub created: UnixTime,
+    pub updated: UnixTime,
+}
+redacted_debug!(StoredDraft {
+    id,
+    draft,
+    created,
+    updated
+});
 
 /// A send log entry: the SMTP server accepted this message.
 #[derive(Debug, Clone, PartialEq, Eq)]

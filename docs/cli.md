@@ -143,9 +143,11 @@ Only one Maze (app or headless) can open a data directory at a time.
 
 `status`, `help`, `login`, `token`, `search`, `show`, `folders`, `tags`, `contacts`,
 `identities`, `archive`, `move`, `tag`, `flag`, `read`, `propose`, `import`,
-`export`, `account list`, `account add`, `account remove` and `sync` work. The commands whose features aren't in Maze yet (`draft new`,
-`draft edit`, `send`, `rule add`, `attachment save`) fail with "not available in this
-version" (exit code 1). Proposals (from `propose` and from a triage token's
+`export`, `account list`, `account add` (with `--smtp-host`, `--smtp-port` and
+`--smtp-security` for the server Maze sends through), `account remove` and `sync` work.
+Writing and sending mail works in the app; the CLI commands for it (`draft new`,
+`draft edit`, `send`) and `rule add` and `attachment save` fail with "not available in
+this version" (exit code 1). Proposals (from `propose` and from a triage token's
 `archive`, `move`, `tag`, `flag` and `read`) are stored, but the review view in Maze
 that accepts or rejects them isn't there yet, so nothing changes for now.
 

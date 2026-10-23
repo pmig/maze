@@ -255,11 +255,32 @@ impl Store {
         rfc_message_id: &str,
         identity: Option<mazemail_types::IdentityId>,
     ) -> Result<crate::model::SentReceipt> {
+        self.record_sent_with(outbox, rfc_message_id, identity, |_| Ok(()))
+            .await
+    }
+
+    /// [`Store::record_sent`] that also runs `then` in the transaction that marks the
+    /// outbox row sent, for what has to follow a delivery exactly once (queueing the
+    /// Sent copy's `APPEND`, flagging the replied-to message).
+    pub async fn record_sent_with<F>(
+        &self,
+        outbox: crate::model::OutboxId,
+        rfc_message_id: &str,
+        identity: Option<mazemail_types::IdentityId>,
+        then: F,
+    ) -> Result<crate::model::SentReceipt>
+    where
+        F: FnOnce(&mut WriteTx<'_>) -> Result<()> + Send + 'static,
+    {
         let receipt = self
             .inner
             .sendlog
             .record(rfc_message_id, identity, Some(outbox))?;
-        self.write(move |w| w.outbox_mark_sent(outbox)).await?;
+        self.write(move |w| {
+            w.outbox_mark_sent(outbox)?;
+            then(w)
+        })
+        .await?;
         Ok(receipt)
     }
 

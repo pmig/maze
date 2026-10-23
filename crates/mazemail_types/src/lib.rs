@@ -3,16 +3,18 @@
 //! This crate is layer L0: no IO, no async, no heavy dependencies.
 
 mod address;
+pub mod compose;
 mod flags;
 mod folder;
 mod ids;
 mod sensitive;
 
-pub use address::{Address, AddressParseError};
+pub use address::{Address, AddressListError, AddressParseError};
 pub use flags::Flags;
 pub use folder::FolderRole;
 pub use ids::{
-    AccountId, BlobId, FolderId, IdentityId, MessageId, ParseIdError, PublicId, TagId, ThreadId,
+    AccountId, BlobId, DraftId, FolderId, IdentityId, MessageId, ParseIdError, PublicId, TagId,
+    ThreadId,
 };
 pub use sensitive::Sensitive;
 

@@ -121,6 +121,10 @@ define_id!(
     /// A tag (IMAP keyword).
     TagId, "g"
 );
+define_id!(
+    /// A message being written (a local draft, PLAN §4.10).
+    DraftId, "d"
+);
 
 /// Content address of a stored blob: a keyed BLAKE3 hash (32 bytes).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

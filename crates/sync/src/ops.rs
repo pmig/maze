@@ -46,6 +46,7 @@
 //! {"v":1,"op":"subscribe","name":"Lists/rust","subscribed":true}
 //! {"v":1,"op":"append_draft","folder":4,"blob":"<64 hex chars>","flags":["\\Seen","\\Draft"],
 //!  "message":88,"replaces":{"message":87,"folder":4,"uid":31}}
+//! {"v":1,"op":"append","folder":5,"blob":"<64 hex chars>","flags":["\\Seen"]}
 //! ```
 //!
 //! # Semantics per op
@@ -64,9 +65,10 @@
 //! | `delete_folder` | `DELETE`; gone already = done | deletes a label |
 //! | `subscribe` | `SUBSCRIBE` / `UNSUBSCRIBE` | same |
 //! | `append_draft` | `APPEND` the blob with the flags; APPENDUID sets the UID; then expunges `replaces` | same |
+//! | `append` | `APPEND` the blob with exactly the flags (the Sent copy of a sent message, PLAN §4.5); the folder's next sync picks it up | same |
 //!
-//! `append_draft` is the only op that is not idempotent: if Maze dies between the
-//! server's `OK` and removing the op, the draft is appended twice.
+//! `append_draft` and `append` are the only ops that are not idempotent: if Maze dies
+//! between the server's `OK` and removing the op, the message is appended twice.
 
 use std::fmt;
 
@@ -244,6 +246,18 @@ pub enum OpPayload {
         /// The previous version of the draft, expunged after the upload.
         replaces: Option<LocationRef>,
     },
+    /// Upload a message to a folder as it is (the Sent copy of a sent message). The
+    /// blob must stay referenced until the op is done (the outbox keeps it).
+    Append {
+        /// The target folder (the identity's Sent folder).
+        folder: FolderId,
+        /// The raw message in the blob store.
+        #[serde(with = "blob_hex")]
+        blob: BlobId,
+        /// Flags to store it with (no `\Draft`).
+        #[serde(with = "flag_names")]
+        flags: Flags,
+    },
 }
 
 /// A payload that can't be decoded.
@@ -302,6 +316,7 @@ impl OpPayload {
             Self::DeleteFolder { .. } => "delete_folder",
             Self::Subscribe { .. } => "subscribe",
             Self::AppendDraft { .. } => "append_draft",
+            Self::Append { .. } => "append",
         }
     }
 
@@ -399,7 +414,8 @@ impl OpPayload {
             | Self::CreateFolder { .. }
             | Self::RenameFolder { .. }
             | Self::DeleteFolder { .. }
-            | Self::Subscribe { .. } => Vec::new(),
+            | Self::Subscribe { .. }
+            | Self::Append { .. } => Vec::new(),
         }
     }
 
@@ -580,6 +596,11 @@ mod tests {
                 flags: Flags::SEEN | Flags::DRAFT,
                 message: Some(MessageId(88)),
                 replaces: Some(loc(87, 4, Some(31))),
+            },
+            OpPayload::Append {
+                folder: FolderId(5),
+                blob: BlobId([0xcd; 32]),
+                flags: Flags::SEEN,
             },
         ]
     }

@@ -9,18 +9,20 @@ use std::time::Instant;
 
 use gpui::{
     AnyView, AnyWindowHandle, App, AppContext as _, Axis, Context, DragMoveEvent, Empty, Entity,
-    FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement, PromptLevel, Render,
-    SharedString, Styled, Subscription, Window, WindowBounds, WindowOptions, canvas, div, point,
-    prelude::FluentBuilder as _, px, size,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
+    PromptLevel, Render, SharedString, Styled, Subscription, Window, WindowBounds, WindowOptions,
+    canvas, div, point, prelude::FluentBuilder as _, px, size,
 };
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, Sizable as _, TitleBar, WindowExt as _, h_flex,
+    ActiveTheme as _, Icon, Sizable as _, TitleBar, WindowExt as _,
+    button::{Button, ButtonVariants as _},
+    h_flex,
     input::{Input, InputEvent, InputState},
     notification::Notification,
     resizable::{HandleEdge, resize_handle},
     v_flex,
 };
-use mazemail_types::{FolderRole, PRODUCT_NAME};
+use mazemail_types::{FolderRole, MessageId, PRODUCT_NAME};
 use time::UtcOffset;
 use ui::assets::IconName;
 
@@ -107,6 +109,28 @@ pub fn open_main_window(
     })
     .map_err(|error| OpenWindowError(error.to_string()))
 }
+
+/// What the window asks the app to open a compose window for (Reply, Reply All,
+/// Forward on the message shown). New messages are the app-level
+/// [`NewMessage`](crate::actions::NewMessage) action. The app opens the composer, so
+/// this crate doesn't depend on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComposeRequest {
+    /// Reply to the sender, or to everyone.
+    Reply {
+        /// The message replied to.
+        message: MessageId,
+        /// Reply to all recipients.
+        all: bool,
+    },
+    /// Forward a message.
+    Forward {
+        /// The message forwarded.
+        message: MessageId,
+    },
+}
+
+impl EventEmitter<ComposeRequest> for MailWindow {}
 
 /// The main window couldn't be opened.
 #[derive(Debug, thiserror::Error)]
@@ -580,11 +604,24 @@ impl MailWindow {
         self.thread_list.update(cx, |list, cx| list.sort_by(by, cx));
     }
 
-    fn notify_unavailable(what: &str, window: &mut Window, cx: &mut App) {
-        window.push_notification(
-            Notification::info(format!("{what} arrives with the composer.")).title(PRODUCT_NAME),
-            cx,
-        );
+    /// Reply, Reply All, Forward: asks the app to open the composer for the message
+    /// shown (the newest of a selected thread, or the selected message).
+    fn request_compose(
+        &mut self,
+        request: impl FnOnce(MessageId) -> ComposeRequest,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let shown = (self.thread_list.read(cx).selected_count() == 1)
+            .then(|| self.message_view.read(cx).document().map(|doc| doc.message))
+            .flatten();
+        match shown {
+            Some(message) => cx.emit(request(message)),
+            None => window.push_notification(
+                Notification::info("Select one message first.").title(PRODUCT_NAME),
+                cx,
+            ),
+        }
     }
 
     fn on_column_drag(
@@ -712,6 +749,18 @@ impl MailWindow {
                     .w_full()
                     .pr_2()
                     .gap_2()
+                    .child(
+                        div().debug_selector(|| "new-message".into()).child(
+                            Button::new("new-message")
+                                .ghost()
+                                .xsmall()
+                                .icon(Icon::new(IconName::Plus))
+                                .tooltip("New Message (⌘N)")
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(Box::new(NewMessage), cx);
+                                }),
+                        ),
+                    )
                     .child(
                         h_flex()
                             .gap_1p5()
@@ -1004,9 +1053,26 @@ impl Render for MailWindow {
             .on_action(cx.listener(|this, _: &SelectAll, _, cx| {
                 this.thread_list.update(cx, |list, cx| list.select_all(cx));
             }))
-            .on_action(|_: &Reply, window, cx| Self::notify_unavailable("Reply", window, cx))
-            .on_action(|_: &ReplyAll, window, cx| Self::notify_unavailable("Reply all", window, cx))
-            .on_action(|_: &Forward, window, cx| Self::notify_unavailable("Forward", window, cx))
+            .on_action(cx.listener(|this, _: &Reply, window, cx| {
+                this.request_compose(
+                    |message| ComposeRequest::Reply {
+                        message,
+                        all: false,
+                    },
+                    window,
+                    cx,
+                );
+            }))
+            .on_action(cx.listener(|this, _: &ReplyAll, window, cx| {
+                this.request_compose(
+                    |message| ComposeRequest::Reply { message, all: true },
+                    window,
+                    cx,
+                );
+            }))
+            .on_action(cx.listener(|this, _: &Forward, window, cx| {
+                this.request_compose(|message| ComposeRequest::Forward { message }, window, cx);
+            }))
             .on_action(|_: &Minimize, window, _| window.minimize_window())
             .on_action(|_: &Zoom, window, _| window.zoom_window())
             .on_action(|_: &About, window, cx| {
@@ -1727,6 +1793,54 @@ mod tests {
         view.update(cx, |_, cx| cx.notify());
         cx.run_until_parked();
         assert_eq!(ran.get(), 1);
+    }
+
+    /// The title bar's "+" and `cmd-n` both run the app-level New Message action;
+    /// Reply, Reply All and Forward ask the app to compose for the shown message.
+    #[gpui::test]
+    fn new_message_and_replies_reach_the_app(cx: &mut TestAppContext) {
+        let (view, cx) = open(cx);
+        cx.run_until_parked();
+        let new_messages = Rc::new(std::cell::Cell::new(0));
+        cx.update(|_, cx| {
+            let count = new_messages.clone();
+            cx.on_action(move |_: &NewMessage, _| count.set(count.get() + 1));
+        });
+        let bounds = cx.debug_bounds("new-message").expect("the + button");
+        cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert_eq!(new_messages.get(), 1, "the + button");
+        cx.simulate_keystrokes("cmd-n");
+        assert_eq!(new_messages.get(), 2, "cmd-n");
+
+        let requests: Rc<RefCell<Vec<ComposeRequest>>> = Rc::default();
+        let seen = requests.clone();
+        let _subscription = cx.update(|_, cx| {
+            cx.subscribe(&view, move |_, request: &ComposeRequest, _| {
+                seen.borrow_mut().push(*request);
+            })
+        });
+        let shown = view
+            .read_with(cx, |w, cx| {
+                w.message_view().read(cx).document().map(|d| d.message)
+            })
+            .expect("a message is shown");
+        cx.simulate_keystrokes("cmd-r cmd-shift-r cmd-l");
+        cx.run_until_parked();
+        assert_eq!(
+            *requests.borrow(),
+            vec![
+                ComposeRequest::Reply {
+                    message: shown,
+                    all: false
+                },
+                ComposeRequest::Reply {
+                    message: shown,
+                    all: true
+                },
+                ComposeRequest::Forward { message: shown },
+            ]
+        );
     }
 
     #[gpui::test]

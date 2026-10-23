@@ -9,7 +9,9 @@
       "cmd-q": "maze::Quit",
       "cmd-h": "maze::Hide",
       "cmd-alt-h": "maze::HideOthers",
-      "cmd-m": "maze::Minimize"
+      "cmd-m": "maze::Minimize",
+      // Thunderbird's "New Message"; works in every window (the compose window too).
+      "cmd-n": "mail::NewMessage"
     }
   },
   {
@@ -64,6 +66,17 @@
       "*": "mail::ExpandAllThreads",
       "shift-8": "mail::ExpandAllThreads",
       "\\": "mail::CollapseAllThreads"
+    }
+  },
+  {
+    // The compose window (Thunderbird: cmd-enter sends, Escape closes).
+    "context": "Composer",
+    "bindings": {
+      "cmd-enter": "composer::Send",
+      "escape": "composer::Close",
+      "cmd-s": "composer::SaveDraft",
+      "cmd-shift-a": "composer::Attach",
+      "cmd-shift-c": "composer::ToggleCcBcc"
     }
   },
   {

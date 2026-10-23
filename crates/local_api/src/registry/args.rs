@@ -743,15 +743,15 @@ pub enum OAuthProvider {
     Microsoft,
 }
 
-/// IMAP transport security.
+/// Transport security (IMAP or SMTP).
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum, Serialize, Deserialize, JsonSchema,
 )]
 #[serde(rename_all = "lowercase")]
 pub enum SecurityArg {
-    /// TLS from the first byte (port 993).
+    /// TLS from the first byte (IMAP port 993, SMTP 465).
     Tls,
-    /// STARTTLS (port 143).
+    /// STARTTLS (IMAP port 143, SMTP 587).
     Starttls,
     /// No encryption: only for local test servers.
     None,
@@ -788,6 +788,15 @@ pub struct AccountAddArgs {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub password: Option<Sensitive<String>>,
+    /// SMTP host for sending (default: derived from the address and the IMAP host).
+    #[serde(default)]
+    pub smtp_host: Option<String>,
+    /// SMTP port (default: 465 for TLS, 587 for STARTTLS).
+    #[serde(default)]
+    pub smtp_port: Option<u16>,
+    /// SMTP transport security (default: starttls, or the provider's).
+    #[serde(default)]
+    pub smtp_security: Option<SecurityArg>,
 }
 
 /// `mazemail account add` on the command line.
@@ -800,7 +809,7 @@ pub struct AccountAddCliArgs {
     #[arg(long)]
     pub name: Option<String>,
     /// Sign in with Google or Microsoft in the browser (no password).
-    #[arg(long, value_enum, conflicts_with_all = ["password_stdin", "host", "port", "security", "username"])]
+    #[arg(long, value_enum, conflicts_with_all = ["password_stdin", "host", "port", "security", "username", "smtp_host", "smtp_port", "smtp_security"])]
     pub oauth: Option<OAuthProvider>,
     /// IMAP host (default: detected from the address).
     #[arg(long)]
@@ -817,6 +826,15 @@ pub struct AccountAddCliArgs {
     /// Read the password from stdin (first line) instead of prompting on the terminal.
     #[arg(long)]
     pub password_stdin: bool,
+    /// SMTP host for sending (default: derived from the address and the IMAP host).
+    #[arg(long)]
+    pub smtp_host: Option<String>,
+    /// SMTP port (default: 465 for TLS, 587 for STARTTLS).
+    #[arg(long)]
+    pub smtp_port: Option<u16>,
+    /// SMTP transport security.
+    #[arg(long, value_enum)]
+    pub smtp_security: Option<SecurityArg>,
 }
 
 /// `mazemail account remove`.

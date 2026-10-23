@@ -242,7 +242,15 @@ impl<'a> Replayer<'a> {
                 flags,
                 message,
                 replaces,
-            } => self.append(folder, blob, flags, message, replaces).await,
+            } => {
+                self.append(folder, blob, flags | Flags::DRAFT, message, replaces)
+                    .await
+            }
+            OpPayload::Append {
+                folder,
+                blob,
+                flags,
+            } => self.append(folder, blob, flags, None, None).await,
         }
     }
 
@@ -850,8 +858,9 @@ impl<'a> Replayer<'a> {
         Ok(())
     }
 
-    // ---- drafts -------------------------------------------------------------------------
+    // ---- drafts and sent copies ----------------------------------------------------------
 
+    /// `APPEND`s a stored message with exactly `flags`.
     async fn append(
         &mut self,
         folder: FolderId,
@@ -865,11 +874,7 @@ impl<'a> Replayer<'a> {
         let raw = tokio::task::spawn_blocking(move || store.blobs().read(&blob))
             .await
             .map_err(|e| SyncError::Internal(format!("blob read task: {e}")))??;
-        let result = self
-            .conn
-            .session
-            .append(&remote, &raw, flags | Flags::DRAFT)
-            .await;
+        let result = self.conn.session.append(&remote, &raw, flags).await;
         let appended = self.conn.track(result)?;
         self.out.touched.insert(folder);
         let label_folder = self.gmail.as_ref().is_some_and(|g| g.is_label(folder));

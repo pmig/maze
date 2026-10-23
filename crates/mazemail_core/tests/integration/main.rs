@@ -10,6 +10,7 @@ mod api;
 mod bench;
 mod commands;
 mod common;
+mod compose;
 mod events;
 mod index;
 mod lifecycle;
