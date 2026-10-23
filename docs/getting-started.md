@@ -272,7 +272,7 @@ explains them.
   there is never a half-installed Maze. The previous version is kept in
   `<data directory>/updates/previous/`.
 - If a new version keeps failing to start (three launches in a row), Maze offers
-  **Roll back to <previous version>** and restarts with the version it kept. Your mail
+  **Roll back to _previous version_** and restarts with the version it kept. Your mail
   stays as it is.
 - If Maze runs from the `.dmg`, from Downloads (macOS runs such apps from a temporary
   read-only copy) or from a folder you can't write to, it can't replace itself. It then

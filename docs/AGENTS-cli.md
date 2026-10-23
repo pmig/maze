@@ -913,7 +913,7 @@ mazemail rule add [OPTIONS] --name <NAME> --when <QUERY> --then <ACTION>...
 | -------- | ----------- |
 | `--name <NAME>` | Name shown in the rules list. Required. |
 | `--when <QUERY>` | Which messages the rule matches, as a search query. Required. |
-| `--then <ACTION>...` | What to do (repeatable): archive, read, flag, move:<folder-id>, tag:<name>. Required. |
+| `--then <ACTION>...` | What to do (repeatable): archive, read, flag, move:&lt;folder-id&gt;, tag:&lt;name&gt;. Required. |
 | `--account <ACCOUNT>` | Limit the rule to one account. |
 | `--apply-now` | Also run the rule on existing messages now. |
 
