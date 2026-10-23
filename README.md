@@ -80,7 +80,7 @@ packages.
 
 ```sh
 mise install          # Rust 1.99.1, cargo-nextest, cargo-deny, cargo-insta
-mise start            # starts Maze (a dev build, with its own data directory)
+mise start            # starts a dev build of Maze, with its own data directory
 script/bundle-mac     # builds dist/mac-<arch>/Maze.app, the .dmg and the .app.tar.zst
 ```
 

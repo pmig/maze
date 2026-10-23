@@ -5,8 +5,8 @@ rust = { version = "1.99.1", components = "rustfmt,clippy,rust-src", profile = "
 "cargo:cargo-insta" = "latest"
 
 [tasks.start]
-description = "Build and start Maze (release build, dev data directory)"
-run = "cargo run --release --locked -p mazemail --"
+description = "Build and start Maze (dev build: fast incremental rebuilds)"
+run = "cargo run --locked -p mazemail --"
 
 [tasks.fmt]
 description = "Format all crates"
