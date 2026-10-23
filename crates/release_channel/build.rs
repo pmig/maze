@@ -1,10 +1,13 @@
 //! Build script for `release_channel`.
 //!
-//! - Validates `version.txt` (must be semver) so the embedded version can't fail to
-//!   parse at runtime.
+//! - Reads `version.txt`, checks that it is semver (so the embedded version can't fail
+//!   to parse at runtime) and embeds it as `MAZEMAIL_VERSION`.
 //! - Reads the channel from `crates/mazemail/RELEASE_CHANNEL` (Zed's convention; the
 //!   release workflow overwrites it) and embeds it as `MAZEMAIL_RELEASE_CHANNEL`. A
 //!   missing or empty file means `dev`, so vendored builds without it still work.
+//! - For tests only (the end-to-end update test builds two versions of the app from one
+//!   checkout): `MAZEMAIL_BUILD_VERSION` and `MAZEMAIL_BUILD_CHANNEL` replace the
+//!   contents of `version.txt` and `RELEASE_CHANNEL`. Release builds never set them.
 //! - Embeds the git commit as `MAZEMAIL_COMMIT_SHA`: the env var of the same name wins
 //!   (CI, Nix-style builds without `.git`), then `git rev-parse --short HEAD`, then
 //!   `unknown`.
@@ -24,13 +27,19 @@ use std::{env, fs};
 
 const COMMIT_ENV: &str = "MAZEMAIL_COMMIT_SHA";
 const CHANNEL_ENV: &str = "MAZEMAIL_RELEASE_CHANNEL";
+const VERSION_ENV: &str = "MAZEMAIL_VERSION";
+/// Test-only override of `version.txt`.
+const VERSION_OVERRIDE_ENV: &str = "MAZEMAIL_BUILD_VERSION";
+/// Test-only override of `crates/mazemail/RELEASE_CHANNEL`.
+const CHANNEL_OVERRIDE_ENV: &str = "MAZEMAIL_BUILD_CHANNEL";
 
 fn main() {
     let manifest_dir =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap_or_else(|| ".".into()));
     let repo_root = manifest_dir.join("../..");
 
-    validate_version(&repo_root.join("version.txt"));
+    let version = read_version(&repo_root.join("version.txt"));
+    println!("cargo::rustc-env={VERSION_ENV}={version}");
     let channel = read_channel(&repo_root.join("crates/mazemail/RELEASE_CHANNEL"));
     println!("cargo::rustc-env={CHANNEL_ENV}={channel}");
 
@@ -48,22 +57,36 @@ fn main() {
     println!("cargo::rustc-env={COMMIT_ENV}={commit}");
 }
 
-fn validate_version(path: &Path) {
+/// Non-empty value of an override variable (and rerun when it changes).
+fn override_value(name: &str) -> Option<String> {
+    println!("cargo::rerun-if-env-changed={name}");
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+fn read_version(path: &Path) -> String {
     println!("cargo::rerun-if-changed={}", path.display());
-    let text = fs::read_to_string(path)
-        .unwrap_or_else(|err| panic!("cannot read {}: {err}", path.display()));
-    if let Err(err) = semver::Version::parse(text.trim()) {
-        panic!(
-            "{} is not a semantic version ({:?}): {err}",
-            path.display(),
-            text.trim()
-        );
+    let (source, text) = match override_value(VERSION_OVERRIDE_ENV) {
+        Some(version) => (VERSION_OVERRIDE_ENV.to_owned(), version),
+        None => (
+            path.display().to_string(),
+            fs::read_to_string(path)
+                .unwrap_or_else(|err| panic!("cannot read {}: {err}", path.display())),
+        ),
+    };
+    let version = text.trim();
+    if let Err(err) = semver::Version::parse(version) {
+        panic!("{source} is not a semantic version ({version:?}): {err}");
     }
+    version.to_owned()
 }
 
 fn read_channel(path: &Path) -> String {
     println!("cargo::rerun-if-changed={}", path.display());
-    let text = fs::read_to_string(path).unwrap_or_default();
+    let text = override_value(CHANNEL_OVERRIDE_ENV)
+        .unwrap_or_else(|| fs::read_to_string(path).unwrap_or_default());
     let channel = match text.trim() {
         "" => "dev",
         channel => channel,

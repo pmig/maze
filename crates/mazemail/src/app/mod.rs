@@ -12,6 +12,9 @@
 //!    quits; a missing key opens the [lost-key dialog](lost_key); anything else shows
 //!    the error in the window.
 //! 4. On quit the server stops (removing the socket) and the core shuts down cleanly.
+//! 5. The [auto-updater](updates) starts with the window (before the core is open),
+//!    follows the core's settings once it is, and the crash guard is disarmed after
+//!    the window painted with the core open.
 //!
 //! `MAZEMAIL_DEMO=1` runs the window on synthetic mail (`FakeMailSource`) without a
 //! core, a key or a socket.
@@ -19,6 +22,7 @@
 mod add_account;
 mod approval;
 mod lost_key;
+mod updates;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -105,6 +109,10 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
     app.run(move |cx| {
         ui::init(cx);
         mail_ui::init(cx);
+        auto_update_ui::init(cx);
+        let mut menus = mail_ui::app_menus();
+        auto_update_ui::add_menu_item(&mut menus);
+        cx.set_menus(menus);
         cx.on_action(|_: &mail_ui::actions::AddAccount, cx| {
             match cx.global::<AppState>().core.clone() {
                 Some(core) => add_account::show(core, cx),
@@ -121,6 +129,7 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
         });
         open_window(cx);
         cx.activate(true);
+        updates::start(&paths, cx);
         tracing::debug!(
             elapsed_ms = options.process_start.elapsed().as_secs_f64() * 1e3,
             "window opened"
@@ -181,7 +190,10 @@ fn open_window(cx: &mut App) {
         )
     };
     match mail_ui::open_main_window(source, options, cx) {
-        Ok(window) => cx.global_mut::<AppState>().window = Some(window),
+        Ok(window) => {
+            updates::add_button(&window.1, cx);
+            cx.global_mut::<AppState>().window = Some(window);
+        }
         Err(error) => {
             tracing::error!(%error, "could not open the main window");
             cx.quit();
@@ -295,9 +307,13 @@ pub(crate) fn core_ready(core: &CoreHandle, cx: &mut App) {
     });
     cx.global_mut::<AppState>().server = Some(RunningServer { stop, task });
 
-    if let Err(error) = core.mark_healthy() {
-        tracing::warn!(%error, "clearing the startup sentinel");
-    }
+    updates::follow_core_settings(core, cx);
+    let window = cx
+        .global::<AppState>()
+        .window
+        .as_ref()
+        .map(|(_, view)| view.clone());
+    updates::arm_crash_guard(core, window.as_ref(), cx);
 }
 
 /// Feeds the core's event batches into the window, merging what queued up meanwhile.

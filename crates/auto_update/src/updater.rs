@@ -20,6 +20,7 @@ use crate::manifest::{
     DEFAULT_MANIFEST_BASE_URL, Manifest, ManifestError, Platform, UpdateDecision, check_manifest,
     manifest_url, verify_manifest,
 };
+use crate::notice::{InstalledUpdate, record_installed};
 use crate::{embedded_public_keys, update_explanation};
 
 /// Manifests larger than this are rejected without parsing.
@@ -285,6 +286,7 @@ pub struct Updater {
     installer: Arc<dyn Installer>,
     status: watch::Sender<UpdateStatus>,
     run_lock: tokio::sync::Mutex<()>,
+    offered: Mutex<Option<Manifest>>,
 }
 
 impl Updater {
@@ -310,7 +312,20 @@ impl Updater {
             installer,
             status: watch::Sender::new(UpdateStatus::Idle),
             run_lock: tokio::sync::Mutex::new(()),
+            offered: Mutex::new(None),
         })
+    }
+
+    /// The configuration the updater was created with (the channel and install mode
+    /// may have changed since, see [`Updater::set_options`]).
+    pub fn config(&self) -> &UpdaterConfig {
+        &self.config
+    }
+
+    /// The verified manifest of the newer version the last check found, if any (for
+    /// its release notes and the `.dmg` of a manual install).
+    pub fn offered_manifest(&self) -> Option<Manifest> {
+        self.offered.lock().ok().and_then(|offered| offered.clone())
     }
 
     /// The current status.
@@ -354,14 +369,18 @@ impl Updater {
         });
     }
 
-    /// Checks hourly (or at `interval`) for as long as the future is polled.
-    /// Errors are reported through the status.
+    /// Checks now, then hourly (or at `interval`) and after the computer woke from
+    /// sleep, for as long as the future is polled. Errors are reported through the
+    /// status.
     pub async fn poll(&self, interval: Duration) {
         loop {
             if let Err(err) = self.check_and_download().await {
                 tracing::warn!(%err, "update check failed");
             }
-            tokio::time::sleep(interval).await;
+            tokio::select! {
+                () = tokio::time::sleep(interval) => {}
+                () = crate::wake::wait_for_wake() => {}
+            }
         }
     }
 
@@ -466,6 +485,9 @@ impl Updater {
             });
         }
 
+        if let Ok(mut offered) = self.offered.lock() {
+            *offered = Some(manifest.clone());
+        }
         let version = manifest.version.clone();
         if mode == InstallMode::NotifyOnly {
             guard.restore = None;
@@ -489,7 +511,12 @@ impl Updater {
         });
         let installer = self.installer.clone();
         let status = self.status.clone();
-        let download_dir = self.config.updates_dir.join(version.to_string());
+        let updates_dir = self.config.updates_dir.clone();
+        let download_dir = updates_dir.join(version.to_string());
+        let installed = InstalledUpdate {
+            version: version.clone(),
+            notes_url: Some(manifest.notes_url.clone()),
+        };
         let request = InstallRequest {
             artifact,
             version: version.clone(),
@@ -499,6 +526,10 @@ impl Updater {
             if result.is_ok() {
                 if let Err(err) = std::fs::remove_dir_all(&download_dir) {
                     tracing::debug!(%err, "cannot remove the downloaded update");
+                }
+                // For the "Updated to x.y.z" toast after the restart.
+                if let Err(err) = record_installed(&updates_dir, &installed) {
+                    tracing::warn!(%err, "cannot record the installed update");
                 }
                 status.send_replace(UpdateStatus::Updated {
                     version: request.version.clone(),

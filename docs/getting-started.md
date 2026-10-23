@@ -2,7 +2,7 @@
 
 Maze is a local-first email client: your mail is stored on your computer, encrypted,
 and the app behaves like Thunderbird. This guide covers installing, the first launch,
-importing mail, accounts and the keyboard shortcuts.
+importing mail, accounts, updates and the keyboard shortcuts.
 
 Maze is **pre-alpha**. Reading, searching and triaging work; writing and sending mail
 don't yet. Keep your mail on the server.
@@ -22,10 +22,10 @@ build that isn't (for example a CI artifact), macOS refuses to open it the first
 try to open it once, then click **Open Anyway** in System Settings → Privacy & Security.
 Builds you make yourself aren't affected.
 
-Maze is distributed only as this `.dmg`, followed by its own updater. There is
-deliberately no Homebrew cask or other package manager, because it would fight the
-updater over the same app ([ADR-010](adr/0010-auto-update.md)). The updater isn't part
-of the app yet; until it is, install new versions the same way.
+Maze is distributed only as this `.dmg`, followed by its own [updater](#updates). There
+is deliberately no Homebrew cask or other package manager, because it would fight the
+updater over the same app ([ADR-010](adr/0010-auto-update.md)). Keep Maze in
+Applications (or another folder you can write to), so it can update itself.
 
 ### Linux
 
@@ -154,8 +154,50 @@ labels and threads. Which message bodies are kept offline is set with `"offline"
 `settings.json` (`headers_only`, `recent` with `offline_recent_days`, `all` or
 `on_demand`), per account under `"accounts"`.
 
-Today, accounts come into Maze through the Thunderbird import above. Passwords and
-OAuth refresh tokens are stored in the keychain, never in the database or settings.
+### Adding an account
+
+- **In the app:** **Add Account…** in the folder pane (or the button in an empty
+  Maze, or "Maze: Add Account" in the command palette). Enter your address and
+  password for any IMAP server, or use **Sign in with Google** / **Sign in with
+  Microsoft**. The server is detected for well-known providers (Gmail, Outlook.com,
+  iCloud, Yahoo, Fastmail, GMX, …); **Server settings…** lets you set host, port,
+  security and user name yourself. Maze connects, logs in and lists the folders before
+  it saves anything, so a wrong password or an unreachable server keeps the dialog open
+  with the error.
+- **From the command line** (needs a **writer** token, and you approve every account
+  in Maze):
+
+  ```sh
+  eval "$(mazemail login --profile writer)"
+
+  mazemail account add anna@example.com                    # asks for the password
+  security find-generic-password -s mail -w | mazemail account add anna@example.com --password-stdin
+  mazemail account add anna@company.com --oauth microsoft  # browser sign-in
+  mazemail account add anna@gmail.com --oauth google       # needs auth.google.client_id
+  mazemail account add me@example.org --host mail.example.org --port 143 --security starttls
+
+  mazemail account list      # accounts and their sync state
+  mazemail sync              # look for new mail now
+  mazemail account remove a_…
+  ```
+
+  The password is read from the terminal without echo, or with `--password-stdin` from
+  the first line of stdin; it is never a command-line argument. `--name`, `--host`,
+  `--port`, `--security` (`tls`, `starttls`, `none`) and `--username` override the
+  detected settings.
+- **From Thunderbird:** the [Thunderbird import](#import-mail) takes over your
+  accounts with their server settings. Passwords aren't imported; Maze lists the
+  accounts that still need one.
+
+Passwords and OAuth refresh tokens are stored in the keychain, never in the database or
+settings. Removing an account deletes its local mail and keychain items; nothing changes
+on the server.
+
+On servers that keep track of subscriptions, Maze syncs only your **subscribed**
+folders, plus the Inbox and the special folders (Sent, Drafts, Trash, Junk, Archive),
+like Thunderbird. Subscribe to a folder on the server's webmail or in another client to
+get it into Maze. Servers that report no subscriptions at all, and Gmail (whose labels
+are folders), get every folder synced.
 
 ### Gmail and Google Workspace: bring your own OAuth client ID
 
@@ -168,7 +210,8 @@ common practice for open source mail clients:
 2. Configure the **OAuth consent screen**: user type *External* (or *Internal* for a
    Workspace domain), leave it in *Testing* and add your own address as a test user.
 3. Under **Credentials**, create an **OAuth client ID** of type **Desktop app**.
-4. Put the client ID and secret into `~/.config/mazemail/settings.json`:
+4. Put the client ID and secret into `~/.config/mazemail/settings.json` (Maze reads
+   them as `auth.google.client_id` and `auth.google.client_secret`):
 
    ```jsonc
    {
@@ -192,6 +235,48 @@ Thunderbird. Many company tenants don't allow apps an administrator hasn't appro
 Then sign-in fails with a message to forward to your IT department: an administrator
 has to grant admin consent for Maze in Microsoft Entra ID under *Enterprise
 applications*, or assign you to it. Sign in again once they have.
+
+## Updates
+
+Maze updates itself like Zed. It checks for a new version every hour and after your
+computer wakes from sleep, downloads and installs it in the background while you keep
+working, and then shows a small **Restart to update** button in the title bar. Nothing
+changes until you restart (or quit and start Maze again); afterwards a notice says
+"Updated to x.y.z" with a link to the release notes. While a download runs, a small
+progress circle sits in the same place; problems show as a warning icon whose tooltip
+explains them.
+
+- **Maze: Check for Updates** (in the command palette and the **Maze** menu) checks
+  right away.
+- Every update is verified before it's installed: the update manifest must be signed
+  with Maze's key, the download must match its SHA-256, and on macOS the new app must be
+  signed by the same Apple team. The new app replaces the old one in a single step, so
+  there is never a half-installed Maze. The previous version is kept in
+  `<data directory>/updates/previous/`.
+- If a new version keeps failing to start (three launches in a row), Maze offers
+  **Roll back to <previous version>** and restarts with the version it kept. Your mail
+  stays as it is.
+- If Maze runs from the `.dmg`, from Downloads (macOS runs such apps from a temporary
+  read-only copy) or from a folder you can't write to, it can't replace itself. It then
+  tells you about new versions with "Move Maze to Applications to get automatic
+  updates" and offers the new `.dmg` instead.
+- Builds from source (dev builds) never update themselves; "Check for Updates" says so.
+
+The settings, with their defaults:
+
+```jsonc
+{
+  "auto_update": true,                 // false: only check when you ask
+  "update_channel": null,              // "stable" or "preview"; null: the channel of the installed build
+  "auto_update_install": "background"  // "notify_only": show "Update to x.y.z" instead of installing
+}
+```
+
+Alphas, betas and release candidates are published on the **preview** channel, final
+versions on **stable**. Preview users also get a stable release when it's newer. Changes
+to these settings apply while Maze runs.
+
+On Linux the updater replaces `~/.local/mazemail.app` the same way.
 
 ## Searching
 

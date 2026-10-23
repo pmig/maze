@@ -121,7 +121,7 @@ pub struct TokenRevokeArgs {
 #[serde(deny_unknown_fields)]
 pub struct SearchArgs {
     /// The query: words plus `from:`, `to:`, `subject:`, `has:attachment`, `is:unread`,
-    /// `tag:`, `folder:`, `list:`, `after:`, `before:`, `older_than:`.
+    /// `tag:`, `in:`, `list:`, `after:`, `before:`, `older_than:`.
     #[arg(value_name = "QUERY")]
     #[schemars(with = "String")]
     pub query: Sensitive<String>,
@@ -681,7 +681,7 @@ pub enum ExportFormat {
 #[derive(Debug, Clone, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExportArgs {
-    /// Which messages, as a search query (`folder:Inbox`, `tag:receipts after:2026-01-01`).
+    /// Which messages, as a search query (`in:inbox`, `tag:receipts after:2026-01-01`).
     #[arg(value_name = "QUERY")]
     #[schemars(with = "String")]
     pub query: Sensitive<String>,

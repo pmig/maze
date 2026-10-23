@@ -14,6 +14,8 @@ use base64::engine::general_purpose::STANDARD;
 
 const KEYS_ENV: &str = "MAZEMAIL_UPDATE_PUBLIC_KEYS";
 const MAX_KEYS: usize = 2;
+/// Test-only override of `RELEASE_CHANNEL` (see `release_channel`'s build script).
+const CHANNEL_OVERRIDE_ENV: &str = "MAZEMAIL_BUILD_CHANNEL";
 
 fn main() {
     let manifest_dir =
@@ -23,6 +25,7 @@ fn main() {
     println!("cargo::rerun-if-changed={}", keys_file.display());
     println!("cargo::rerun-if-changed={}", channel_file.display());
     println!("cargo::rerun-if-env-changed={KEYS_ENV}");
+    println!("cargo::rerun-if-env-changed={CHANNEL_OVERRIDE_ENV}");
 
     let (source, text) = match env::var(KEYS_ENV) {
         Ok(value) if !value.trim().is_empty() => (KEYS_ENV.to_owned(), value),
@@ -53,7 +56,10 @@ fn main() {
         keys.len()
     );
 
-    let channel = fs::read_to_string(&channel_file).unwrap_or_default();
+    let channel = env::var(CHANNEL_OVERRIDE_ENV)
+        .ok()
+        .filter(|channel| !channel.trim().is_empty())
+        .unwrap_or_else(|| fs::read_to_string(&channel_file).unwrap_or_default());
     if keys.is_empty() && matches!(channel.trim(), "preview" | "stable") {
         println!(
             "cargo::warning=no update public keys embedded ({source}); this {} build will not update itself",

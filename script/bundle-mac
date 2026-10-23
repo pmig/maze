@@ -15,6 +15,10 @@
 # Environment:
 #   RELEASE_CHANNEL_FILE   file holding dev|preview|stable
 #                          (default: crates/mazemail/RELEASE_CHANNEL; missing means dev)
+#   MAZEMAIL_BUILD_VERSION, MAZEMAIL_BUILD_CHANNEL
+#                          test-only overrides of version.txt and the channel file, for
+#                          the end-to-end update test (cargo xtask update-e2e); the
+#                          binary must have been built with the same values
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -60,7 +64,7 @@ case $target in
   *) echo "error: unsupported target $target" >&2; exit 1 ;;
 esac
 
-version=$(tr -d '[:space:]' < version.txt)
+version=${MAZEMAIL_BUILD_VERSION:-$(tr -d '[:space:]' < version.txt)}
 if [ -z "$version" ]; then
   echo "error: version.txt is empty" >&2
   exit 1
@@ -70,7 +74,9 @@ build_number=${build_number:-$(git rev-list --count HEAD)}
 
 channel_file=${RELEASE_CHANNEL_FILE:-crates/mazemail/RELEASE_CHANNEL}
 channel=dev
-if [ -f "$channel_file" ]; then
+if [ -n "${MAZEMAIL_BUILD_CHANNEL:-}" ]; then
+  channel=$MAZEMAIL_BUILD_CHANNEL
+elif [ -f "$channel_file" ]; then
   channel=$(tr -d '[:space:]' < "$channel_file")
 fi
 case $channel in

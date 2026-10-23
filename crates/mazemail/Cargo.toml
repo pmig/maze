@@ -23,6 +23,8 @@ anyhow = { workspace = true }
 async-channel = { workspace = true }
 async-trait = { workspace = true }
 auth = { workspace = true }
+auto_update = { workspace = true }
+auto_update_ui = { workspace = true }
 clap = { workspace = true }
 gpui = { workspace = true }
 local_api = { workspace = true }

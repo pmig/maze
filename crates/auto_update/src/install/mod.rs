@@ -12,7 +12,8 @@
 //!    `<data_dir>/updates/previous/` for rollback.
 //!
 //! [`BundleInstaller`] runs them in order. The running process keeps executing the old
-//! binary until it restarts.
+//! binary until it restarts. [`BundleInstaller::restore_previous`] undoes an install
+//! (see [`crate::rollback`]).
 
 #[allow(unsafe_code)]
 mod swap;
@@ -165,6 +166,42 @@ impl BundleInstaller {
     pub fn installed_bundle(&self) -> &Path {
         &self.installed
     }
+
+    /// Where the replaced bundle is kept for rollback.
+    pub fn previous_bundle(&self) -> PathBuf {
+        crate::rollback::previous_bundle_path(&self.installed, &self.previous_dir)
+    }
+
+    /// Checks that the folder of the installed bundle is writable, so an update can be
+    /// staged and swapped there. `/Applications` owned by an admin on a managed Mac
+    /// fails this; Maze then offers the `.dmg` instead (PLAN §4.15).
+    pub fn check_writable(&self) -> Result<(), InstallError> {
+        let parent = self
+            .installed
+            .parent()
+            .ok_or_else(|| InstallError::NotInBundle(self.installed.clone()))?;
+        let probe = parent.join(format!("{STAGING_PREFIX}write-test-{}", std::process::id()));
+        match fs::create_dir(&probe) {
+            Ok(()) => {
+                remove_all(&probe);
+                Ok(())
+            }
+            Err(source) if source.kind() == io::ErrorKind::AlreadyExists => {
+                remove_all(&probe);
+                Ok(())
+            }
+            Err(source) => Err(InstallError::NotWritable {
+                path: parent.to_path_buf(),
+                source,
+            }),
+        }
+    }
+
+    /// Puts the kept previous bundle back (rollback). See
+    /// [`crate::rollback::restore_previous_bundle`].
+    pub fn restore_previous(&self) -> Result<(), InstallError> {
+        crate::rollback::restore_previous_bundle(&self.previous_bundle(), &self.installed)
+    }
 }
 
 impl Installer for BundleInstaller {
@@ -193,15 +230,21 @@ impl Installer for BundleInstaller {
         tracing::info!(version = %request.version, bundle = %self.installed.display(), "update installed");
 
         // The update is in place; failing to keep the old bundle only loses rollback.
-        let name = self
-            .installed
-            .file_name()
-            .map_or_else(|| ARCHIVE_BUNDLE_NAME.into(), ToOwned::to_owned);
-        if let Err(err) = keep_previous(&staging, &self.previous_dir.join(name)) {
+        if let Err(err) = keep_previous(&staging, &self.previous_bundle()) {
             tracing::warn!(%err, "cannot keep the previous bundle for rollback");
             remove_all(&staging);
         }
         Ok(())
+    }
+}
+
+/// What to start to run the app in `bundle` after an update: the bundle itself on
+/// macOS (`open Maze.app`), its binary elsewhere (`mazemail.app/bin/mazemail`).
+pub fn restart_path(bundle: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        bundle.to_path_buf()
+    } else {
+        bundle.join("bin/mazemail")
     }
 }
 
@@ -405,7 +448,7 @@ pub fn keep_previous(old_bundle: &Path, destination: &Path) -> Result<(), Instal
 }
 
 /// Copies a directory tree, keeping symlinks as symlinks and file permissions.
-fn copy_dir_all(from: &Path, to: &Path) -> Result<(), InstallError> {
+pub(crate) fn copy_dir_all(from: &Path, to: &Path) -> Result<(), InstallError> {
     fs::create_dir(to).map_err(|err| InstallError::io(to, err))?;
     for entry in fs::read_dir(from).map_err(|err| InstallError::io(from, err))? {
         let entry = entry.map_err(|err| InstallError::io(from, err))?;
@@ -520,7 +563,7 @@ fn remove_old_entries(dir: &Path, max_age: Duration, select: impl Fn(&str) -> bo
     }
 }
 
-fn remove_all(path: &Path) {
+pub(crate) fn remove_all(path: &Path) {
     let result = match fs::symlink_metadata(path) {
         Ok(meta) if meta.is_dir() => fs::remove_dir_all(path),
         Ok(_) => fs::remove_file(path),
@@ -607,6 +650,16 @@ pub(crate) mod tests {
             "/private/var/folders/x/AppTranslocation/ABC/d/Maze.app"
         )));
         assert!(!is_translocated(Path::new("/Applications/Maze.app")));
+    }
+
+    #[test]
+    fn restarts_the_bundle_or_its_binary() {
+        let path = restart_path(Path::new("/Applications/Maze.app"));
+        if cfg!(target_os = "macos") {
+            assert_eq!(path, Path::new("/Applications/Maze.app"));
+        } else {
+            assert_eq!(path, Path::new("/Applications/Maze.app/bin/mazemail"));
+        }
     }
 
     #[test]
@@ -744,6 +797,70 @@ pub(crate) mod tests {
         assert_eq!(
             fs::read_to_string(previous.join("Maze.app/Contents/version")).unwrap(),
             "2.0.0"
+        );
+    }
+
+    #[test]
+    fn checks_that_the_app_folder_is_writable() {
+        let dir = tempfile::tempdir().unwrap();
+        let apps = dir.path().join("Applications");
+        let installed = make_installed(&apps, "1.0.0");
+        let installer = BundleInstaller::new(&installed, dir.path().join("prev"));
+        installer.check_writable().unwrap();
+        assert_eq!(fs::read_dir(&apps).unwrap().count(), 1);
+        assert_eq!(
+            installer.previous_bundle(),
+            dir.path().join("prev/Maze.app")
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&apps, fs::Permissions::from_mode(0o555)).unwrap();
+            let result = installer.check_writable();
+            fs::set_permissions(&apps, fs::Permissions::from_mode(0o755)).unwrap();
+            // Root may write anyway (CI containers); otherwise this must fail.
+            if !is_root() {
+                assert!(
+                    matches!(result, Err(InstallError::NotWritable { .. })),
+                    "{result:?}"
+                );
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn is_root() -> bool {
+        std::env::var("USER").is_ok_and(|user| user == "root")
+    }
+
+    #[test]
+    fn rolls_back_an_install() {
+        let dir = tempfile::tempdir().unwrap();
+        let apps = dir.path().join("Applications");
+        let installed = make_installed(&apps, "1.0.0");
+        let archive = dir.path().join("update.tar.zst");
+        make_archive(&archive, ARCHIVE_BUNDLE_NAME, "2.0.0");
+        let installer = BundleInstaller::new(&installed, dir.path().join("data/updates/previous"))
+            .with_codesign(CodesignCheck::Skip);
+        installer
+            .install(&InstallRequest {
+                artifact: archive,
+                version: Version::new(2, 0, 0),
+            })
+            .unwrap();
+        installer.restore_previous().unwrap();
+        assert_eq!(
+            fs::read_to_string(installed.join("Contents/version")).unwrap(),
+            "1.0.0"
+        );
+        assert!(!installer.previous_bundle().exists());
+        assert_eq!(fs::read_dir(&apps).unwrap().count(), 1);
+        // Nothing left to roll back to.
+        assert!(installer.restore_previous().is_err());
+        assert_eq!(
+            fs::read_to_string(installed.join("Contents/version")).unwrap(),
+            "1.0.0"
         );
     }
 

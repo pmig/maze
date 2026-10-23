@@ -14,6 +14,7 @@ publish = false
 [workspace.dependencies]
 # Internal crates (layering: see AGENTS.md)
 auth = { path = "crates/auth" }
+auto_update_ui = { path = "crates/auto_update_ui" }
 import = { path = "crates/import" }
 ingest = { path = "crates/ingest" }
 local_api = { path = "crates/local_api" }

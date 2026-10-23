@@ -249,6 +249,13 @@ async fn downloads_verifies_and_installs() {
     );
     // The download is removed after installing.
     assert!(!h.download_dir().exists());
+    // The offered manifest and the release notes for the toast after the restart.
+    assert_eq!(updater.offered_manifest(), Some(h.manifest("0.4.0")));
+    let updates = h.data_dir.path().join("updates");
+    let notice = auto_update::take_update_notice(&updates, &v("0.3.0"));
+    assert_eq!(notice, None);
+    let notice = auto_update::take_update_notice(&updates, &v("0.4.0")).unwrap();
+    assert_eq!(notice.notes_url, Some(h.manifest("0.4.0").notes_url));
 
     // Phases only move forward, and progress only grows.
     tokio::time::sleep(Duration::from_millis(50)).await;

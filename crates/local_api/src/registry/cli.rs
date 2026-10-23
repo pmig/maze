@@ -906,7 +906,7 @@ mod tests {
     #[test]
     fn paths_are_made_absolute() {
         let env = FakeEnv::default();
-        let export = invoke(&["export", "folder:Inbox", "--to", "out.mbox"], &env);
+        let export = invoke(&["export", "in:inbox", "--to", "out.mbox"], &env);
         assert_eq!(export.args["to"], "/work/out.mbox");
         let import = invoke(&["import", "/abs/mail"], &env);
         assert_eq!(import.args["path"], "/abs/mail");
