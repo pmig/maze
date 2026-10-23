@@ -403,6 +403,13 @@ impl CoreHandle {
         Ok(slots.into_iter().flatten().collect())
     }
 
+    /// The messages of a thread, oldest first: what a thread-level command (mark read,
+    /// archive) in the UI applies to.
+    pub fn thread_message_ids(&self, thread: ThreadId) -> Result<Vec<MessageId>> {
+        self.ensure_open()?;
+        Ok(self.inner.store.reader()?.thread_message_ids(thread)?)
+    }
+
     /// Row cache statistics.
     pub fn row_cache_stats(&self) -> RowCacheStats {
         self.inner.rows.stats()

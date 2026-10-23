@@ -6,7 +6,8 @@
 //! them from a reader connection); slow ones (text search) run on a background
 //! thread, which is why the trait is `Send + Sync`.
 //!
-//! [`crate::FakeMailSource`] implements it with synthetic data until the core does.
+//! The `mazemail` binary implements it over the core (`CoreMailSource`);
+//! [`crate::FakeMailSource`] implements it with synthetic data.
 
 use std::sync::Arc;
 
@@ -228,6 +229,10 @@ pub struct MessageDocument {
 pub enum MessageBody {
     /// Sanitized reader-mode HTML (PLAN §4.8), rendered with gpui-kit's `TextView`.
     Html(Sensitive<SharedString>),
+    /// The reader document as Markdown, rendered natively with gpui-kit's `TextView`.
+    /// The source must escape mail text and must not use image syntax: the view
+    /// renders what it gets, and remote content is never loaded (PLAN §4.8).
+    Markdown(Sensitive<SharedString>),
     /// Plain text.
     PlainText(Sensitive<SharedString>),
 }
@@ -293,6 +298,52 @@ pub struct SourceStatus {
     pub online: bool,
 }
 
+/// What changed in the data behind the window, from the backend's change events.
+/// [`MailWindow::apply_changes`](crate::MailWindow::apply_changes) re-reads only what
+/// is affected.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DataChanges {
+    /// Folders or accounts were added, renamed or removed: rebuild the folder pane.
+    pub folders: bool,
+    /// Unread counts changed: re-render the folder pane's badges.
+    pub counts: bool,
+    /// Threads were added, moved or removed: re-read the open list's keys.
+    pub threads: bool,
+    /// Threads whose rows or messages changed: re-show the message if it belongs to
+    /// one of them.
+    pub threads_updated: Vec<ThreadId>,
+    /// Changes were lost (or the backend just became available): reload everything.
+    pub everything: bool,
+}
+
+impl DataChanges {
+    /// Everything changed.
+    pub fn everything() -> Self {
+        Self {
+            everything: true,
+            ..Self::default()
+        }
+    }
+
+    /// Whether nothing changed.
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+
+    /// Adds `other`'s changes.
+    pub fn merge(&mut self, other: Self) {
+        self.folders |= other.folders;
+        self.counts |= other.counts;
+        self.threads |= other.threads;
+        self.everything |= other.everything;
+        for thread in other.threads_updated {
+            if !self.threads_updated.contains(&thread) {
+                self.threads_updated.push(thread);
+            }
+        }
+    }
+}
+
 /// Errors from a [`MailSource`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SourceError {
@@ -307,8 +358,8 @@ pub enum SourceError {
     Unavailable(String),
 }
 
-/// Everything the mail UI reads and changes. Implemented by the core later, and by
-/// [`crate::FakeMailSource`] now.
+/// Everything the mail UI reads and changes. Implemented over the core by the
+/// `mazemail` binary, and with synthetic data by [`crate::FakeMailSource`].
 pub trait MailSource: Send + Sync + 'static {
     /// The folder pane content.
     fn folder_tree(&self) -> FolderTree;
@@ -387,4 +438,11 @@ pub trait MailSource: Send + Sync + 'static {
 
     /// Connection, sync and outbox state.
     fn status(&self) -> SourceStatus;
+
+    /// Text shown instead of the message list when there is no mail to show at all:
+    /// while the backend opens, when it failed, or before any account exists. `None`
+    /// when mail can be shown (an empty folder still says "No messages").
+    fn placeholder(&self) -> Option<SharedString> {
+        None
+    }
 }

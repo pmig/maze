@@ -2,11 +2,17 @@
 //!
 //! - `cargo xtask release-manifest …` writes a signed update manifest (PLAN §4.15).
 //! - `cargo xtask gen-update-key --out-dir <dir>` creates an update signing keypair.
+//! - `cargo xtask seed-demo --data-dir <dir>` fills a data directory with a realistic
+//!   synthetic mailbox through the real import pipeline ([`seed`]).
+//! - `cargo xtask gen-agents-md` writes `docs/AGENTS-cli.md` from the command registry
+//!   (`--check` fails if it is out of date).
 //!
 //! The manifest type, canonical JSON, signing and key formats come from the
 //! `auto_update` crate, so what CI signs is exactly what the updater verifies.
 
 #![allow(clippy::print_stdout, clippy::print_stderr, reason = "a CLI")]
+
+mod seed;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -48,6 +54,30 @@ enum Command {
         /// Directory for `update-key.secret` (mode 0600) and `update-key.pub`.
         #[arg(long)]
         out_dir: PathBuf,
+    },
+    /// Fill a data directory with a synthetic demo mailbox (imported like real mail).
+    ///
+    /// The directory uses the insecure development key file, never the keychain; run
+    /// Maze on it with the printed environment variables.
+    SeedDemo {
+        /// The data directory (created if missing; must not be in use).
+        #[arg(long)]
+        data_dir: PathBuf,
+        /// The config directory for `settings.json` (default: `<data-dir>/config`).
+        #[arg(long)]
+        config_dir: Option<PathBuf>,
+        /// How many messages to generate.
+        #[arg(long, default_value_t = 400)]
+        messages: usize,
+        /// Seed of the generator (the same seed gives the same mail).
+        #[arg(long, default_value_t = 2026)]
+        seed: u64,
+    },
+    /// Write docs/AGENTS-cli.md from the command registry.
+    GenAgentsMd {
+        /// Fail if the file is missing or out of date instead of writing it.
+        #[arg(long)]
+        check: bool,
     },
 }
 
@@ -123,10 +153,50 @@ fn parse_rfc3339(value: &str) -> Result<OffsetDateTime, String> {
     OffsetDateTime::parse(value, &Rfc3339).map_err(|err| err.to_string())
 }
 
+/// `docs/AGENTS-cli.md` in the workspace.
+fn agents_md_path() -> PathBuf {
+    let xtask = Path::new(env!("CARGO_MANIFEST_DIR"));
+    xtask
+        .parent()
+        .unwrap_or(xtask)
+        .join("docs")
+        .join("AGENTS-cli.md")
+}
+
+fn gen_agents_md(check: bool) -> Result<()> {
+    let path = agents_md_path();
+    let content = local_api::registry::agents_md();
+    if check {
+        let current = fs::read_to_string(&path).unwrap_or_default();
+        ensure!(
+            current == content,
+            "{} is out of date; run `cargo xtask gen-agents-md`",
+            path.display()
+        );
+        println!("{} is up to date", path.display());
+        return Ok(());
+    }
+    fs::write(&path, content).with_context(|| format!("writing {}", path.display()))?;
+    println!("wrote {}", path.display());
+    Ok(())
+}
+
 fn main() -> Result<()> {
     match Cli::parse().command {
         Command::ReleaseManifest(args) => release_manifest(&args),
         Command::GenUpdateKey { out_dir } => gen_update_key(&out_dir),
+        Command::SeedDemo {
+            data_dir,
+            config_dir,
+            messages,
+            seed,
+        } => seed::seed_demo(&seed::SeedOptions {
+            config_dir: config_dir.unwrap_or_else(|| data_dir.join("config")),
+            data_dir,
+            messages,
+            seed,
+        }),
+        Command::GenAgentsMd { check } => gen_agents_md(check),
     }
 }
 

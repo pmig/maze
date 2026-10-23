@@ -1,0 +1,536 @@
+//! [`CoreMailSource`]: the mail UI's [`MailSource`] over [`CoreHandle`].
+//!
+//! - **Folders**: [`CoreHandle::folders`] (unified folders, favorites, each account's
+//!   tree) with their unread counts, cached for the folder pane's badges and refreshed
+//!   on change events.
+//! - **Lists**: [`CoreHandle::thread_list`] for folders and unified folders (keys only),
+//!   [`CoreHandle::quick_filter_body`] when the Quick Filter has text, and
+//!   [`CoreHandle::search`] for global search. Rows come from [`CoreHandle::rows`] in
+//!   the context folder of the open list.
+//! - **Messages**: [`CoreHandle::message`], with the reader document rendered as escaped
+//!   Markdown ([`reader_text::display_markdown`]) that the view draws natively; remote
+//!   content is never loaded.
+//! - **Changes**: flags and archive go through [`CoreHandle::apply`] with
+//!   [`Origin::User`] (undoable), applied before the call returns, so the list shows
+//!   the new state at once.
+//! - **Live updates**: [`CoreMailSource::changes`] turns a [`CoreEventBatch`] into the
+//!   window's [`DataChanges`].
+//!
+//! The UI is synchronous and runs on GPUI's thread; the core's async calls are run on
+//! the core's own runtime and waited for ([`WAIT_TIMEOUT`] at most), which is cheap
+//! for local reads and writes.
+//!
+//! The source can exist before the core does ([`CoreMailSource::opening`]), so the
+//! window opens while the key is read and the store opens (PLAN §4.17);
+//! [`CoreMailSource::attach`] makes the mail appear.
+
+use std::collections::HashMap;
+use std::future::Future;
+use std::sync::{Mutex, PoisonError, RwLock};
+use std::time::Duration;
+
+use gpui::SharedString;
+use mail_ui::DataChanges;
+use mail_ui::source::{
+    AccountEntry, AccountKind, AttachmentInfo, FolderEntry, FolderKey, FolderTree, MailSource,
+    MessageBody, MessageDocument, SourceError, SourceStatus, SyncState, ThreadFilter, ThreadKeys,
+    ThreadRow, ThreadScope,
+};
+use mazemail_core::{
+    Body, CoreEventBatch, CoreHandle, FolderNode, FolderNodeKind, ListQuery, ListScope,
+    MailCommand, Origin, QuickFilter, SearchOpts, SearchSort, SortOrder, reader_text,
+};
+use mazemail_types::{AccountId, Address, Flags, FolderId, MessageId, Sensitive, ThreadId};
+use time::OffsetDateTime;
+
+/// How long a UI call waits for the core.
+pub const WAIT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Threads a global search shows at most.
+pub const SEARCH_LIMIT: usize = 2_000;
+
+/// What the list shows before any account exists.
+pub const NO_ACCOUNTS: &str =
+    "No accounts yet — import mail with `mazemail import <file.mbox>` (Maze must be running).";
+
+enum State {
+    Opening,
+    Ready(CoreHandle),
+    Failed(SharedString),
+}
+
+/// The mail UI's data over the core. See the [module docs](self).
+pub struct CoreMailSource {
+    state: RwLock<State>,
+    /// The context folder of the list opened last ([`CoreHandle::rows`] shows dates and
+    /// counts of that folder).
+    context: Mutex<Option<FolderId>>,
+    /// Unread counts of the folder pane entries, from the last folder tree.
+    counts: RwLock<HashMap<FolderKey, u64>>,
+    /// The last folder tree, to tell structure changes from count changes.
+    tree: Mutex<Option<FolderTree>>,
+}
+
+impl std::fmt::Debug for CoreMailSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state = match &*read(&self.state) {
+            State::Opening => "opening",
+            State::Ready(_) => "ready",
+            State::Failed(_) => "failed",
+        };
+        f.debug_struct("CoreMailSource")
+            .field("state", &state)
+            .finish_non_exhaustive()
+    }
+}
+
+fn read<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn write<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+    lock.write().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn unavailable(error: impl std::fmt::Display) -> SourceError {
+    SourceError::Unavailable(error.to_string())
+}
+
+/// Runs `future` on the core's runtime and waits for it from a non-Tokio thread.
+fn wait<T: Send + 'static>(
+    core: &CoreHandle,
+    future: impl Future<Output = T> + Send + 'static,
+) -> Result<T, SourceError> {
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    core.runtime().spawn(async move {
+        let _ = tx.send(future.await);
+    });
+    rx.recv_timeout(WAIT_TIMEOUT).map_err(|_| {
+        unavailable(format!(
+            "{} didn't answer in time",
+            mazemail_types::PRODUCT_NAME
+        ))
+    })
+}
+
+impl CoreMailSource {
+    /// A source whose core is still opening: the window shows "Opening Maze…".
+    pub fn opening() -> Self {
+        Self::with_state(State::Opening)
+    }
+
+    /// A source over an open core.
+    pub fn new(core: CoreHandle) -> Self {
+        Self::with_state(State::Ready(core))
+    }
+
+    fn with_state(state: State) -> Self {
+        Self {
+            state: RwLock::new(state),
+            context: Mutex::new(None),
+            counts: RwLock::new(HashMap::new()),
+            tree: Mutex::new(None),
+        }
+    }
+
+    /// The core opened: show its mail. Follow with
+    /// [`MailWindow::apply_changes`](mail_ui::MailWindow::apply_changes) with
+    /// [`DataChanges::everything`].
+    pub fn attach(&self, core: CoreHandle) {
+        *write(&self.state) = State::Ready(core);
+    }
+
+    /// The core couldn't be opened: show `message` instead of mail.
+    pub fn fail(&self, message: impl Into<SharedString>) {
+        *write(&self.state) = State::Failed(message.into());
+    }
+
+    /// The core, once it is open.
+    pub fn core(&self) -> Option<CoreHandle> {
+        match &*read(&self.state) {
+            State::Ready(core) => Some(core.clone()),
+            State::Opening | State::Failed(_) => None,
+        }
+    }
+
+    fn ready(&self) -> Result<CoreHandle, SourceError> {
+        self.core().ok_or_else(|| match &*read(&self.state) {
+            State::Failed(message) => unavailable(message),
+            _ => unavailable(format!("{} is still opening", mazemail_types::PRODUCT_NAME)),
+        })
+    }
+
+    /// What `batch` means for the window. Folder changes re-read the folder tree here
+    /// (refreshing the cached counts) to tell a structure change, which rebuilds the
+    /// pane, from a count change, which only re-renders its badges.
+    pub fn changes(&self, batch: &CoreEventBatch) -> DataChanges {
+        let folders_touched = !batch.folders_changed.is_empty()
+            || !batch.counts.is_empty()
+            || !batch.accounts_changed.is_empty()
+            || batch.settings;
+        let mut folders = false;
+        if folders_touched || batch.reload {
+            let before = lock(&self.tree).clone();
+            let after = self.folder_tree();
+            folders = before.as_ref() != Some(&after);
+        }
+        DataChanges {
+            folders,
+            counts: folders_touched,
+            threads: !batch.threads_changed.is_empty() || !batch.removed.is_empty(),
+            threads_updated: batch.threads_updated.clone(),
+            everything: batch.reload,
+        }
+    }
+
+    /// The message ids of `threads`.
+    fn messages_of(core: &CoreHandle, threads: &[ThreadId]) -> Result<Vec<MessageId>, SourceError> {
+        let mut ids = Vec::new();
+        for thread in threads {
+            ids.extend(core.thread_message_ids(*thread).map_err(unavailable)?);
+        }
+        Ok(ids)
+    }
+
+    fn apply(
+        &self,
+        command: impl FnOnce(Vec<MessageId>) -> MailCommand,
+        threads: &[ThreadId],
+    ) -> Result<(), SourceError> {
+        let core = self.ready()?;
+        let ids = Self::messages_of(&core, threads)?;
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let command = command(ids);
+        let runner = core.clone();
+        wait(
+            &core,
+            async move { runner.apply(command, Origin::User).await },
+        )?
+        .map(drop)
+        .map_err(unavailable)
+    }
+}
+
+fn account_kind(kind: mazemail_core::AccountKind) -> AccountKind {
+    match kind {
+        mazemail_core::AccountKind::Gmail => AccountKind::Gmail,
+        mazemail_core::AccountKind::M365 => AccountKind::Microsoft,
+        mazemail_core::AccountKind::Local => AccountKind::Local,
+        _ => AccountKind::Imap,
+    }
+}
+
+/// A folder pane entry for a unified folder or folder node, recording its count.
+fn entry(node: &FolderNode, counts: &mut HashMap<FolderKey, u64>) -> Option<FolderEntry> {
+    let key = match node.kind {
+        FolderNodeKind::Unified(role) => FolderKey::Unified(role),
+        FolderNodeKind::Folder(id) => FolderKey::Folder(id),
+        FolderNodeKind::UnifiedSection
+        | FolderNodeKind::FavoritesSection
+        | FolderNodeKind::Account(_) => return None,
+    };
+    counts.insert(key.clone(), node.unread);
+    Some(FolderEntry {
+        key,
+        name: node.name.clone().into(),
+        role: node.role,
+        children: node
+            .children
+            .iter()
+            .filter_map(|child| entry(child, counts))
+            .collect(),
+    })
+}
+
+fn timestamp(seconds: i64) -> OffsetDateTime {
+    OffsetDateTime::from_unix_timestamp(seconds).unwrap_or(OffsetDateTime::UNIX_EPOCH)
+}
+
+fn row(row: mazemail_core::ThreadRow) -> ThreadRow {
+    // Participants are the distinct senders, oldest first: the last is the newest.
+    let sender = row
+        .participants
+        .last()
+        .map(|p| {
+            p.name
+                .clone()
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| p.email.clone())
+        })
+        .unwrap_or_default();
+    let mut flags = Flags::empty();
+    if row.unread_count == 0 {
+        flags |= Flags::SEEN;
+    }
+    if row.flagged {
+        flags |= Flags::FLAGGED;
+    }
+    ThreadRow {
+        id: row.id,
+        subject: Sensitive::new(
+            row.subject
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "(no subject)".to_owned())
+                .into(),
+        ),
+        sender: Sensitive::new(sender.into()),
+        date: timestamp(row.date),
+        flags,
+        has_attachments: row.has_attachments,
+        message_count: row.message_count,
+        // Rows don't carry sizes; the table's size column stays empty.
+        size: 0,
+    }
+}
+
+/// The global search query for the UI's filter: its text plus the toggles as
+/// operators.
+fn search_query(filter: &ThreadFilter) -> String {
+    let mut query = filter.text.clone().unwrap_or_default();
+    for (on, operator) in [
+        (filter.unread, "is:unread"),
+        (filter.starred, "is:flagged"),
+        (filter.attachments, "has:attachment"),
+    ] {
+        if on {
+            query.push(' ');
+            query.push_str(operator);
+        }
+    }
+    query.trim().to_owned()
+}
+
+impl MailSource for CoreMailSource {
+    fn folder_tree(&self) -> FolderTree {
+        let Ok(core) = self.ready() else {
+            return FolderTree::default();
+        };
+        let (nodes, accounts) = match (core.folders(), core.accounts()) {
+            (Ok(nodes), Ok(accounts)) => (nodes, accounts),
+            (Err(error), _) | (_, Err(error)) => {
+                tracing::warn!(%error, "cannot read the folder tree");
+                return FolderTree::default();
+            }
+        };
+        let kinds: HashMap<AccountId, AccountKind> = accounts
+            .iter()
+            .map(|a| (a.id, account_kind(a.kind)))
+            .collect();
+        let mut counts = HashMap::new();
+        let mut tree = FolderTree::default();
+        for node in &nodes {
+            match node.kind {
+                FolderNodeKind::UnifiedSection => {
+                    tree.unified = node
+                        .children
+                        .iter()
+                        .filter_map(|c| entry(c, &mut counts))
+                        .collect();
+                }
+                FolderNodeKind::FavoritesSection => {
+                    tree.favorites = node
+                        .children
+                        .iter()
+                        .filter_map(|c| entry(c, &mut counts))
+                        .collect();
+                }
+                FolderNodeKind::Account(id) => tree.accounts.push(AccountEntry {
+                    id,
+                    name: node.name.clone().into(),
+                    kind: kinds.get(&id).copied().unwrap_or(AccountKind::Imap),
+                    folders: node
+                        .children
+                        .iter()
+                        .filter_map(|c| entry(c, &mut counts))
+                        .collect(),
+                }),
+                FolderNodeKind::Unified(_) | FolderNodeKind::Folder(_) => {}
+            }
+        }
+        *write(&self.counts) = counts;
+        *lock(&self.tree) = Some(tree.clone());
+        tree
+    }
+
+    fn unread_count(&self, folder: &FolderKey) -> u64 {
+        read(&self.counts).get(folder).copied().unwrap_or(0)
+    }
+
+    fn thread_keys(
+        &self,
+        scope: &ThreadScope,
+        filter: &ThreadFilter,
+    ) -> Result<ThreadKeys, SourceError> {
+        let core = self.ready()?;
+        match scope {
+            ThreadScope::Folder(key) => {
+                let scope = match key {
+                    FolderKey::Folder(id) => ListScope::Folder(*id),
+                    FolderKey::Unified(role) => ListScope::Unified(*role),
+                };
+                let query = ListQuery {
+                    scope,
+                    sort: SortOrder::NewestFirst,
+                    quick_filter: QuickFilter {
+                        unread: filter.unread,
+                        flagged: filter.starred,
+                        has_attachment: filter.attachments,
+                        tag: None,
+                        text: filter
+                            .text
+                            .clone()
+                            .filter(|t| !t.trim().is_empty())
+                            .map(Sensitive::new),
+                    },
+                };
+                let snapshot = if query.quick_filter.text.is_some() {
+                    let runner = core.clone();
+                    wait(&core, async move { runner.quick_filter_body(&query).await })?
+                } else {
+                    core.thread_list(&query)
+                }
+                .map_err(unavailable)?;
+                *lock(&self.context) = snapshot.context();
+                Ok(snapshot.keys().iter().map(|k| k.thread).collect())
+            }
+            ThreadScope::AllFolders => {
+                let query = search_query(filter);
+                *lock(&self.context) = None;
+                if query.is_empty() {
+                    return Ok(ThreadKeys::from([]));
+                }
+                let opts = SearchOpts {
+                    limit: SEARCH_LIMIT,
+                    sort: SearchSort::NewestFirst,
+                    snippets: false,
+                    ..SearchOpts::default()
+                };
+                let runner = core.clone();
+                let results = wait(&core, async move { runner.search(&query, opts).await })?
+                    .map_err(unavailable)?;
+                Ok(results.threads.iter().map(|t| t.thread).collect())
+            }
+        }
+    }
+
+    fn thread_rows(&self, keys: &[ThreadId]) -> Vec<ThreadRow> {
+        let Ok(core) = self.ready() else {
+            return Vec::new();
+        };
+        let context = *lock(&self.context);
+        match core.rows(keys, context) {
+            Ok(rows) => rows.into_iter().map(row).collect(),
+            Err(error) => {
+                tracing::warn!(%error, "cannot read thread rows");
+                Vec::new()
+            }
+        }
+    }
+
+    fn message(&self, thread: ThreadId) -> Result<MessageDocument, SourceError> {
+        let core = self.ready()?;
+        let context = *lock(&self.context);
+        let newest = core
+            .rows(&[thread], context)
+            .map_err(unavailable)?
+            .into_iter()
+            .next()
+            .and_then(|row| row.last_message)
+            .ok_or(SourceError::ThreadNotFound(thread))?;
+        let runner = core.clone();
+        let view =
+            wait(&core, async move { runner.message(newest).await })?.map_err(unavailable)?;
+        let (body, attachments) = match &view.body {
+            Body::Ready(rendered) => (
+                MessageBody::Markdown(Sensitive::new(
+                    reader_text::display_markdown(&rendered.reader).into(),
+                )),
+                rendered
+                    .attachments
+                    .iter()
+                    .filter(|a| a.counts_as_attachment())
+                    .map(|a| AttachmentInfo {
+                        name: Sensitive::new(
+                            a.filename
+                                .clone()
+                                .unwrap_or_else(|| "Unnamed attachment".to_owned())
+                                .into(),
+                        ),
+                        size: u64::try_from(a.size).unwrap_or(u64::MAX),
+                    })
+                    .collect(),
+            ),
+            Body::Pending => (
+                MessageBody::PlainText(Sensitive::new(
+                    "This message hasn't been downloaded yet.".into(),
+                )),
+                Vec::new(),
+            ),
+            Body::Unreadable => (
+                MessageBody::PlainText(Sensitive::new("This message can't be displayed.".into())),
+                Vec::new(),
+            ),
+        };
+        Ok(MessageDocument {
+            thread: view.thread,
+            message: view.id,
+            subject: Sensitive::new(
+                view.subject
+                    .clone()
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_else(|| "(no subject)".to_owned())
+                    .into(),
+            ),
+            from: Sensitive::new(
+                view.from
+                    .clone()
+                    .unwrap_or_else(|| Address::new(None::<String>, "")),
+            ),
+            to: Sensitive::new(view.to.clone()),
+            cc: Sensitive::new(view.cc.clone()),
+            date: timestamp(view.date),
+            body,
+            attachments,
+        })
+    }
+
+    fn set_flags(
+        &self,
+        threads: &[ThreadId],
+        add: Flags,
+        remove: Flags,
+    ) -> Result<(), SourceError> {
+        self.apply(|ids| MailCommand::SetFlags { ids, add, remove }, threads)
+    }
+
+    fn archive(&self, threads: &[ThreadId]) -> Result<(), SourceError> {
+        self.apply(|ids| MailCommand::Archive { ids }, threads)
+    }
+
+    fn status(&self) -> SourceStatus {
+        // No sync engine is wired in yet: local mail only.
+        SourceStatus {
+            sync: SyncState::Idle,
+            outbox: 0,
+            online: false,
+        }
+    }
+
+    fn placeholder(&self) -> Option<SharedString> {
+        match &*read(&self.state) {
+            State::Opening => Some(format!("Opening {}…", mazemail_types::PRODUCT_NAME).into()),
+            State::Failed(message) => Some(message.clone()),
+            State::Ready(core) => match core.accounts() {
+                Ok(accounts) if accounts.is_empty() => Some(NO_ACCOUNTS.into()),
+                Ok(_) => None,
+                Err(error) => Some(format!("Mail can't be read: {error}").into()),
+            },
+        }
+    }
+}

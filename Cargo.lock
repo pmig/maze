@@ -4987,14 +4987,29 @@ name = "mazemail"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "async-channel 2.5.0",
+ "async-trait",
  "clap",
  "gpui-pre",
+ "gpui-pre-platform",
+ "image",
+ "import",
+ "ingest",
+ "local_api",
  "mail_ui",
+ "mazemail_core",
  "mazemail_types",
+ "release_channel",
+ "serde_json",
+ "settings",
+ "tempfile",
+ "thiserror 2.0.21",
  "time",
+ "tokio",
  "tracing",
  "tracing-subscriber",
  "ui",
+ "vault",
 ]
 
 [[package]]
@@ -5002,6 +5017,10 @@ name = "mazemail_core"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "import",
+ "ingest",
+ "local_api",
  "mazemail_mime",
  "mazemail_types",
  "pretty_assertions",
@@ -10630,11 +10649,19 @@ dependencies = [
  "clap",
  "ed25519-dalek",
  "getrandom 0.4.3",
+ "import",
+ "ingest",
+ "local_api",
+ "mazemail_core",
+ "mazemail_mime",
+ "mazemail_types",
  "release_channel",
  "semver",
  "tempfile",
  "time",
+ "tokio",
  "url",
+ "vault",
 ]
 
 [[package]]

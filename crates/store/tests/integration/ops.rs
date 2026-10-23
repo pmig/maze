@@ -6,7 +6,8 @@ use pretty_assertions::assert_eq;
 use store::{
     AccountKind, AuditQuery, IdentityInput, IdentityRuleKind, MAX_OP_ATTEMPTS, NewApiToken,
     NewProposalItem, OpState, OutboxState, ProposalItemState, ProposalState, Queries, RuleInput,
-    RuleTrigger, SavesSent, SignatureInput, SmtpAuth, SmtpSecurity, SmtpServerInput, token_hash,
+    RuleTrigger, SavesSent, SignatureInput, SmtpAuth, SmtpSecurity, SmtpServerInput, TokenId,
+    token_hash,
 };
 
 use crate::common::{self, message};
@@ -190,6 +191,31 @@ fn tokens_store_only_hashes() {
         .unwrap()
         .unwrap();
     assert!(!found.is_valid_at(0));
+}
+
+#[test]
+fn tokens_can_be_found_by_precomputed_hash_and_id() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = common::open(tmp.path());
+    // A caller-side keyed hash: the store treats it as opaque bytes.
+    let hash = [7u8; 32];
+    let token = NewApiToken {
+        hash,
+        profile: "triage".to_owned(),
+        scope_json: r#"{"id":"tk_abc"}"#.to_owned(),
+        expires: None,
+        label: None,
+    };
+    let id = store
+        .write_blocking(move |w| w.create_api_token(&token))
+        .unwrap();
+    let reader = store.reader().unwrap();
+    let found = reader.api_token_by_hash(&hash).unwrap().unwrap();
+    assert_eq!(found.id, id);
+    assert_eq!(found.profile, "triage");
+    assert_eq!(reader.api_token(id).unwrap().unwrap(), found);
+    assert!(reader.api_token_by_hash(&[8u8; 32]).unwrap().is_none());
+    assert!(reader.api_token(TokenId(id.0 + 1)).unwrap().is_none());
 }
 
 #[test]

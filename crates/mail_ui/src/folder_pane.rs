@@ -207,6 +207,21 @@ impl FolderPane {
         }
     }
 
+    /// Rebuilds the tree from the source after folders or accounts were added,
+    /// renamed or removed. The selected folder stays selected if it still exists;
+    /// no event is emitted.
+    pub fn reload(&mut self, cx: &mut Context<'_, Self>) {
+        let (items, nodes) = build(&self.source.folder_tree());
+        self.nodes = Rc::new(nodes);
+        let selected = self.selected.as_ref().map(FolderKey::tree_id);
+        self.tree.update(cx, |tree, cx| {
+            tree.set_items(items, cx);
+            let ix = selected.and_then(|id| tree.index_of(&id));
+            tree.set_selected_index(ix, cx);
+        });
+        cx.notify();
+    }
+
     /// Re-renders the rows after unread counts changed.
     pub fn refresh_counts(&mut self, cx: &mut Context<'_, Self>) {
         self.tree.update(cx, |_, cx| cx.notify());

@@ -350,6 +350,66 @@ impl CoreIndexSink {
     }
 }
 
+/// `ingest`'s documents go straight to the indexer thread. A document that arrives
+/// after shutdown is dropped (and logged): the next start's
+/// [`CoreHandle::check_index`](crate::CoreHandle::check_index) or rebuild picks the
+/// message up from the store.
+impl ingest::IndexSink for CoreIndexSink {
+    fn add(&self, doc: ingest::IndexDoc) {
+        if let Err(err) = CoreIndexSink::add(self, IndexDocument::from(doc)) {
+            tracing::warn!(%err, "an index document arrived after shutdown");
+        }
+    }
+
+    fn delete(&self, message: MessageId) {
+        if let Err(err) = CoreIndexSink::delete(self, message) {
+            tracing::warn!(%err, "an index delete arrived after shutdown");
+        }
+    }
+}
+
+/// One `ingest` participant as an [`Address`]: the display form carries the name, the
+/// lowercased address is the fallback when the display form doesn't parse.
+fn index_address(address: ingest::IndexAddress) -> Address {
+    match Address::parse(&address.display) {
+        Ok(parsed) => parsed,
+        Err(_) => Address {
+            name: None,
+            email: address.address,
+        },
+    }
+}
+
+impl From<ingest::IndexDoc> for IndexDocument {
+    fn from(doc: ingest::IndexDoc) -> Self {
+        let addresses =
+            |list: Vec<ingest::IndexAddress>| list.into_iter().map(index_address).collect();
+        Self {
+            message_id: doc.message,
+            thread_id: doc.thread,
+            account_id: doc.account,
+            date: doc.date,
+            size: doc.size,
+            from: addresses(doc.from),
+            to: addresses(doc.to),
+            cc: addresses(doc.cc),
+            subject: Sensitive::new(doc.subject),
+            body_text: Sensitive::new(doc.body),
+            attachment_names: doc
+                .attachment_names
+                .into_iter()
+                .map(Sensitive::new)
+                .collect(),
+            list_id: doc.list_id,
+            has_attachment: doc.has_attachment,
+            language: doc.language.map(|lang| match lang {
+                ingest::IndexLanguage::De => Lang::De,
+                ingest::IndexLanguage::En => Lang::En,
+            }),
+        }
+    }
+}
+
 /// What [`CoreHandle::reindex_all`](crate::CoreHandle::reindex_all) did.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ReindexReport {

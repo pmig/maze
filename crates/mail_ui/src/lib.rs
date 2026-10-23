@@ -5,9 +5,11 @@
 //! ```
 //!
 //! The UI reads everything through the [`MailSource`] trait, so it doesn't depend on
-//! any non-UI Maze crate except `mazemail_types`. [`FakeMailSource`] provides
-//! synthetic data (including a 1,000,000-thread folder) until the core implements
-//! the trait.
+//! any non-UI Maze crate except `mazemail_types`. The `mazemail` binary implements it
+//! over the core (`CoreMailSource`) and feeds the core's change events in through
+//! [`MailWindow::apply_changes`]; [`FakeMailSource`] provides synthetic data
+//! (including a 1,000,000-thread folder) for demos (`MAZEMAIL_DEMO=1`), tests and
+//! benchmarks.
 //!
 //! Start-up: [`ui::init`], then [`init`], then [`open_main_window`].
 
@@ -30,7 +32,7 @@ use gpui_kit::component::input;
 use mazemail_types::PRODUCT_NAME;
 
 pub use fake::FakeMailSource;
-pub use source::MailSource;
+pub use source::{DataChanges, MailSource};
 pub use window::{MailWindow, MailWindowOptions, OpenWindowError, open_main_window};
 
 use crate::actions::{
