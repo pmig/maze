@@ -80,11 +80,11 @@ packages.
 
 ```sh
 mise install          # Rust 1.99.1, cargo-nextest, cargo-deny, cargo-insta
-cargo run --release   # starts Maze (a dev build, with its own data directory)
+mise start            # starts Maze (a dev build, with its own data directory)
 script/bundle-mac     # builds dist/mac-<arch>/Maze.app, the .dmg and the .app.tar.zst
 ```
 
-Want to look around without your own mail? `MAZEMAIL_DEMO=1 cargo run` shows a
+Want to look around without your own mail? `MAZEMAIL_DEMO=1 mise start` shows a
 synthetic mailbox, and `cargo xtask seed-demo --data-dir /tmp/maze-demo` creates a
 real (encrypted) store with demo mail that the CLI can talk to.
 

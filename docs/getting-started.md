@@ -46,7 +46,7 @@ which must be running.
 ```sh
 git clone https://github.com/pmig/mazemail && cd mazemail
 mise install            # the pinned Rust toolchain and the test tools
-cargo run --release     # starts Maze
+mise start              # starts Maze
 script/bundle-mac       # optional: dist/mac-<arch>/Maze.app, .dmg and .app.tar.zst
 ```
 
