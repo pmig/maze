@@ -208,6 +208,9 @@ fn arg_description(arg: &clap::Arg) -> String {
         .map(|help| help.to_string())
         .unwrap_or_default()
         .replace('|', "\\|")
+        // Placeholders such as `move:<folder-id>` would be read as HTML tags.
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
         .replace('\n', " ");
     if !text.is_empty() && !text.ends_with(['.', '!', '?']) {
         text.push('.');
