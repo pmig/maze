@@ -1,0 +1,173 @@
+---
+import Logo from "./Logo.astro";
+import { SITE, repoFile } from "../data/site";
+
+const year = new Date().getFullYear();
+const COLUMNS = [
+  {
+    title: "Maze",
+    links: [
+      { href: "/download/", label: "Download" },
+      { href: "/roadmap/", label: "Roadmap" },
+      { href: "/changelog/", label: "Changelog" },
+      { href: SITE.releases, label: "Releases" },
+    ],
+  },
+  {
+    title: "Docs",
+    links: [
+      { href: "/docs/getting-started/", label: "Getting started" },
+      { href: "/docs/cli/", label: "The mazemail CLI" },
+      { href: "/docs/agents-cli/", label: "CLI reference" },
+      { href: "/docs/security/", label: "Security" },
+    ],
+  },
+  {
+    title: "Project",
+    links: [
+      { href: SITE.repo, label: "Source code" },
+      { href: SITE.issues, label: "Issues" },
+      { href: repoFile("CONTRIBUTING.md"), label: "Contributing" },
+      { href: repoFile("SECURITY.md"), label: "Report a vulnerability" },
+    ],
+  },
+];
+---
+
+<footer class="site-footer">
+  <div class="frame inner">
+    <div class="intro">
+      <a class="brand" href="/" aria-label="Maze, home">
+        <Logo size={20} />
+        <span>Maze</span>
+      </a>
+      <p class="muted">A local-first email client. Open source under the {SITE.license}.</p>
+      <p class="privacy">
+        <span class="dot" aria-hidden="true"></span>
+        No cookies, no tracking. This site loads nothing from anyone else.
+      </p>
+    </div>
+    {
+      COLUMNS.map((col) => (
+        <nav aria-label={col.title}>
+          <h2>{col.title}</h2>
+          <ul>
+            {col.links.map((link) => (
+              <li>
+                <a href={link.href}>{link.label}</a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      ))
+    }
+  </div>
+  <div class="frame legal">
+    <p>
+      © {year} {SITE.author}. Contact: <a href={`mailto:${SITE.contact}`}>{SITE.contact}</a>
+    </p>
+    <p>
+      <a href={repoFile("LICENSE")}>{SITE.license}</a> · Type: IBM Plex Sans and Lilex (SIL OFL)
+    </p>
+  </div>
+</footer>
+
+<style>
+  .site-footer {
+    border-top: 1px solid var(--border);
+  }
+
+  .inner {
+    display: grid;
+    grid-template-columns: 1.6fr repeat(3, 1fr);
+    gap: 2rem;
+    padding: 2.5rem var(--gutter);
+  }
+
+  .intro {
+    display: grid;
+    gap: 0.6rem;
+    align-content: start;
+    font-size: 0.875rem;
+    max-width: 34ch;
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-strong);
+    text-decoration: none;
+    font-weight: 600;
+  }
+
+  .privacy {
+    display: inline-flex;
+    gap: 0.5rem;
+    align-items: baseline;
+    color: var(--text);
+  }
+
+  .dot {
+    flex: none;
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 50%;
+    background: var(--amber);
+    transform: translateY(-0.05rem);
+  }
+
+  h2 {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 0.75rem;
+  }
+
+  ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.4rem;
+    font-size: 0.875rem;
+  }
+
+  ul a {
+    color: var(--muted);
+    text-decoration: none;
+  }
+
+  ul a:hover {
+    color: var(--text-strong);
+    text-decoration: underline;
+  }
+
+  .legal {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.5rem 1.5rem;
+    padding: 1rem var(--gutter) 1.25rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.8125rem;
+    color: var(--faint);
+  }
+
+  .legal a {
+    color: inherit;
+  }
+
+  @media (max-width: 860px) {
+    .inner {
+      grid-template-columns: 1fr 1fr;
+    }
+    .intro {
+      grid-column: 1 / -1;
+      max-width: none;
+    }
+  }
+</style>

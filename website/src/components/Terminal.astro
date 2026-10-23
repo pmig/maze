@@ -1,0 +1,90 @@
+---
+// A terminal-style transcript. Lines starting with "$ " are commands, lines starting
+// with "# " are comments, everything else is output.
+interface Props {
+  title?: string | undefined;
+  lines: string[];
+}
+const { title = "zsh", lines } = Astro.props;
+---
+
+<figure class="terminal">
+  <figcaption>
+    <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
+    <span>{title}</span>
+  </figcaption>
+  <pre><code>{
+    lines.map((line) =>
+      line.startsWith("$ ") ? (
+        <span class="cmd"><span class="prompt" aria-hidden="true">$ </span>{line.slice(2)}{"\n"}</span>
+      ) : line.startsWith("# ") ? (
+        <span class="comment">{line}{"\n"}</span>
+      ) : (
+        <span class="out">{line}{"\n"}</span>
+      ),
+    )
+  }</code></pre>
+</figure>
+
+<style>
+  .terminal {
+    margin: 0;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    background: #0d0e13;
+    color: #e6e6ef;
+    box-shadow: var(--shot-shadow);
+  }
+
+  figcaption {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    height: 2.1rem;
+    padding: 0 0.85rem;
+    border-bottom: 1px solid #23242e;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: #9a9aab;
+  }
+
+  .lights {
+    display: inline-flex;
+    gap: 0.35rem;
+  }
+
+  .lights i {
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    background: #33343f;
+  }
+
+  pre {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 1rem 1.1rem 1.15rem;
+    font-size: 0.75rem;
+    line-height: 1.65;
+    color: inherit;
+  }
+
+  .prompt {
+    color: #8f8cff;
+    user-select: none;
+  }
+
+  .cmd {
+    color: #f4f4fa;
+  }
+
+  .out {
+    color: #a6a6b8;
+  }
+
+  .comment {
+    color: #7d7e92;
+  }
+</style>

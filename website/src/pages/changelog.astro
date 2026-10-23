@@ -1,0 +1,40 @@
+---
+import type { MarkdownInstance } from "astro";
+import Docs from "../layouts/Docs.astro";
+import { SITE } from "../data/site";
+
+// release-please writes CHANGELOG.md at the repository root with the first release.
+// A glob (rather than a direct import) keeps the build working while it doesn't exist.
+const files = import.meta.glob<MarkdownInstance<Record<string, unknown>>>("../../../CHANGELOG.md", {
+  eager: true,
+});
+const changelog = Object.values(files)[0];
+const headings = changelog?.getHeadings() ?? [];
+---
+
+<Docs
+  title="Changelog"
+  id="changelog"
+  description="What changed in each Maze release."
+  headings={headings}
+  source={changelog ? "CHANGELOG.md" : undefined}
+>
+  {
+    changelog ? (
+      <changelog.Content />
+    ) : (
+      <>
+        <h1>Changelog</h1>
+        <p>
+          No release yet. The first one, <strong>0.1.0-alpha.1</strong>, is being prepared. Every
+          release lists its changes here and on <a href={SITE.releases}>GitHub Releases</a>, and
+          Maze links to the release notes after it updates itself.
+        </p>
+        <p>
+          Until then, the <a href={`${SITE.repo}/commits/main`}>commit history</a> shows what's
+          happening, and the <a href="/roadmap/">roadmap</a> what's next.
+        </p>
+      </>
+    )
+  }
+</Docs>

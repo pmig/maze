@@ -1,0 +1,83 @@
+---
+import { DOC_NAV } from "../data/docs";
+import { repoFile } from "../data/site";
+
+interface Props {
+  /** The current doc's id; undefined on the overview page. */
+  id?: string | undefined;
+  label: string;
+}
+const { id, label } = Astro.props;
+---
+
+<nav class="docs-nav" aria-label={label}>
+  <a href="/docs/" aria-current={id === undefined ? "page" : undefined}>Overview</a>
+  {
+    DOC_NAV.map((group) => (
+      <div>
+        <p class="group-title">{group.group}</p>
+        <ul>
+          {group.items.map((item) => (
+            <li>
+              <a href={`/docs/${item.id}/`} aria-current={item.id === id ? "page" : undefined}>
+                {item.title}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </div>
+    ))
+  }
+  <div>
+    <p class="group-title">On GitHub</p>
+    <ul>
+      <li><a href={repoFile("docs/adr/README.md")}>Architecture decisions</a></li>
+      <li><a href={repoFile("CONTRIBUTING.md")}>Contributing</a></li>
+      <li><a href={repoFile("docs/releasing.md")}>Releasing</a></li>
+    </ul>
+  </div>
+</nav>
+
+<style>
+  .docs-nav {
+    display: grid;
+    gap: 1.25rem;
+  }
+
+  .group-title {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 0.4rem;
+  }
+
+  ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.1rem;
+  }
+
+  a {
+    display: block;
+    padding: 0.3rem 0.6rem;
+    margin-inline: -0.6rem;
+    border-radius: var(--radius);
+    color: var(--muted);
+    text-decoration: none;
+  }
+
+  a:hover {
+    color: var(--text-strong);
+    background: var(--surface-2);
+  }
+
+  a[aria-current="page"] {
+    color: var(--accent);
+    background: var(--accent-soft);
+    font-weight: 500;
+  }
+</style>

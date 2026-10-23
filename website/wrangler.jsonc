@@ -1,0 +1,28 @@
+// Cloudflare Workers with static assets: an assets-only Worker (no script) that serves
+// the files `astro build` writes to dist/. This is what Cloudflare recommends for new
+// static sites instead of Pages. _headers and _redirects in dist/ (from public/) are
+// applied by the asset server. Deploy: `pnpm run deploy` or the website workflow.
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "mazemail-website",
+  "compatibility_date": "2026-10-23",
+  "assets": {
+    "directory": "./dist",
+    // dist/404.html with status 404 for unknown paths.
+    "not_found_handling": "404-page",
+    // /docs/cli → /docs/cli/ (Astro builds directories with index.html).
+    "html_handling": "auto-trailing-slash"
+  },
+  // The site is only reachable on its own domain: no *.workers.dev URL, no preview URLs.
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    // Creates the DNS record and certificate for the apex on deploy. The zone
+    // mazemail.dev must be on Cloudflare, and the hostname must not already have a
+    // DNS record. www is redirected by a zone Redirect Rule (README.md).
+    { "pattern": "mazemail.dev", "custom_domain": true }
+  ],
+  "observability": { "enabled": false },
+  // In keeping with the site: no usage metrics from wrangler either.
+  "send_metrics": false
+}

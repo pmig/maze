@@ -1,0 +1,84 @@
+---
+import Docs from "../../layouts/Docs.astro";
+import { DOC_NAV } from "../../data/docs";
+import { SITE } from "../../data/site";
+---
+
+<Docs title="Documentation" description="How to install Maze, import your mail, use the mazemail CLI and how Maze keeps your mail safe.">
+  <h1>Documentation</h1>
+  <p>
+    Maze is <strong>pre-alpha</strong>: reading, searching and triaging work; writing and sending
+    mail don't yet. These pages are rendered straight from the <code>docs/</code> folder of the
+    <a href={SITE.repo}>repository</a>, so they always describe the code next to them.
+  </p>
+
+  {
+    DOC_NAV.map((group) => (
+      <section class="group">
+        <h2>{group.group}</h2>
+        <ul class="cards">
+          {group.items.map((item) => (
+            <li>
+              <a href={`/docs/${item.id}/`}>
+                <span class="title">{item.title}</span>
+                <span class="desc">{item.description}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      </section>
+    ))
+  }
+
+  <h2>Quick start</h2>
+  <ol>
+    <li><a href="/download/">Download Maze</a>, drag it to Applications and start it.</li>
+    <li>
+      Sign in the CLI with a token you approve in Maze:
+      <code>eval "$(mazemail login --profile triage --ttl 8h)"</code>
+    </li>
+    <li>Import mail: <code>mazemail import ~/old-mail.mbox</code>, or a whole Thunderbird profile.</li>
+    <li>Or add an account with <strong>Add Account…</strong> in the folder pane.</li>
+    <li>Search: <code>mazemail search 'from:anna has:attachment after:2026-09-01'</code></li>
+  </ol>
+</Docs>
+
+<style>
+  .cards {
+    list-style: none;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    gap: 0.75rem;
+  }
+
+  .cards li + li {
+    margin-top: 0;
+  }
+
+  .cards a {
+    display: grid;
+    gap: 0.3rem;
+    height: 100%;
+    padding: 1rem 1.1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    text-decoration: none;
+    background: var(--surface);
+  }
+
+  .cards a:hover {
+    border-color: var(--accent);
+  }
+
+  .title {
+    color: var(--text-strong);
+    font-weight: 600;
+  }
+
+  .desc {
+    color: var(--muted);
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+</style>

@@ -1,0 +1,26 @@
+---
+// The Maze mark, redrawn small from the app icon (assets/icons/maze.svg): an envelope
+// whose flap is a maze, with the amber goal in its center.
+interface Props {
+  size?: number | undefined;
+}
+const { size = 24 } = Astro.props;
+const id = `maze-g-${size}`;
+---
+
+<svg width={size} height={size} viewBox="100 100 824 824" aria-hidden="true" focusable="false">
+  <defs>
+    <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6E6BF8"></stop>
+      <stop offset="1" stop-color="#3A2CB5"></stop>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill={`url(#${id})`}></rect>
+  <g fill="none" stroke="#FFFFFF" stroke-width="52" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="204" y="304" width="616" height="416" rx="60"></rect>
+    <path d="M276 376 H356 V456 H436 V536 H588 V456 H668 V376 H748"></path>
+    <path d="M276 476 V636 H448"></path>
+    <path d="M576 636 H748 V476"></path>
+  </g>
+  <circle cx="512" cy="436" r="40" fill="#FFB86B"></circle>
+</svg>

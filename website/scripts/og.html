@@ -1,0 +1,156 @@
+<!doctype html>
+<!--
+  The social card (public/og.png, 1200x630). Not part of the build: regenerate it
+  after changing this file, from the website/ directory, with any Chromium:
+
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless \
+      --hide-scrollbars --window-size=1200,630 --force-device-scale-factor=1 \
+      --screenshot="$PWD/public/og.png" "file://$PWD/scripts/og.html"
+
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Maze social card</title>
+    <style>
+      @font-face {
+        font-family: "IBM Plex Sans";
+        font-weight: 100 700;
+        src: url("../node_modules/@fontsource-variable/ibm-plex-sans/files/ibm-plex-sans-latin-wght-normal.woff2")
+          format("woff2");
+      }
+      @font-face {
+        font-family: "Lilex";
+        font-weight: 100 700;
+        src: url("../node_modules/@fontsource-variable/lilex/files/lilex-latin-wght-normal.woff2") format("woff2");
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1200px;
+        height: 630px;
+        overflow: hidden;
+      }
+      body {
+        position: relative;
+        background: #0b0c10;
+        color: #e4e4ec;
+        font-family: "IBM Plex Sans", sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .frame {
+        position: absolute;
+        inset: 0 56px;
+        border-inline: 1px solid #23242d;
+        background:
+          radial-gradient(70% 90% at 85% 110%, rgb(110 107 248 / 0.28), transparent 70%),
+          #0f1015;
+      }
+      .text {
+        position: absolute;
+        left: 104px;
+        top: 84px;
+        width: 520px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        font-size: 34px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: #f6f6fa;
+      }
+      .badge {
+        margin-left: 6px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 3px 12px;
+        border: 1px solid #33343f;
+        border-radius: 999px;
+        font-family: "Lilex", monospace;
+        font-size: 15px;
+        font-weight: 400;
+        color: #a3a3b3;
+      }
+      .badge::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #ffb86b;
+      }
+      h1 {
+        margin: 48px 0 0;
+        font-size: 58px;
+        line-height: 1.06;
+        letter-spacing: -0.03em;
+        font-weight: 600;
+        color: #f6f6fa;
+      }
+      h1 span {
+        display: block;
+        color: #a3a3b3;
+        font-weight: 500;
+      }
+      p {
+        margin: 28px 0 0;
+        font-size: 21px;
+        line-height: 1.5;
+        color: #a3a3b3;
+      }
+      .url {
+        position: absolute;
+        left: 104px;
+        bottom: 56px;
+        font-family: "Lilex", monospace;
+        font-size: 18px;
+        color: #a9a7ff;
+      }
+      .shot {
+        position: absolute;
+        left: 660px;
+        top: 96px;
+        width: 860px;
+        border: 1px solid #33343f;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 30px 80px -20px rgb(0 0 0 / 0.8);
+      }
+      .shot img {
+        display: block;
+        width: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="frame"></div>
+    <div class="text">
+      <div class="brand">
+        <svg width="48" height="48" viewBox="100 100 824 824" aria-hidden="true">
+          <defs>
+            <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#6E6BF8" />
+              <stop offset="1" stop-color="#3A2CB5" />
+            </linearGradient>
+          </defs>
+          <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#g)" />
+          <g fill="none" stroke="#fff" stroke-width="48" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="204" y="304" width="616" height="416" rx="60" />
+            <path d="M276 376 H356 V456 H436 V536 H588 V456 H668 V376 H748" />
+            <path d="M276 476 V636 H448" />
+            <path d="M576 636 H748 V476" />
+          </g>
+          <circle cx="512" cy="436" r="38" fill="#FFB86B" />
+        </svg>
+        Maze
+        <span class="badge">open source</span>
+      </div>
+      <h1>Your mail, on your machine.<span>Fast like Zed.</span></h1>
+      <p>A local-first email client in Rust. Encrypted at rest, familiar like Thunderbird, ready for agents.</p>
+    </div>
+    <div class="url">mazemail.dev</div>
+    <div class="shot"><img src="../../docs/screenshots/s1-main-window-dark-table.png" alt="" /></div>
+  </body>
+</html>

@@ -1,0 +1,240 @@
+---
+import Base from "../layouts/Base.astro";
+import Icon from "../components/Icon.astro";
+import { SITE, repoFile } from "../data/site";
+import { getRelease } from "../lib/release";
+
+const release = await getRelease();
+const version = release.version;
+const published = release.publishedAt
+  ? new Date(release.publishedAt).toLocaleDateString("en", { year: "numeric", month: "long", day: "numeric" })
+  : null;
+const file = (os: string, arch: string, ext: string) =>
+  `Maze-${version ?? "<version>"}-${os}-${arch}.${ext}`;
+---
+
+<Base title="Download" description="Download Maze for macOS (Apple Silicon and Intel). Maze updates itself in the background.">
+  <div class="frame">
+    <section class="section head">
+      <p class="eyebrow">Download</p>
+      <h1>Get Maze.</h1>
+      <p class="lede">
+        {
+          version ? (
+            <>
+              The latest release is <strong>{version}</strong>
+              {published && <> from {published}</>}
+              {release.prerelease && <> (a preview release)</>}.{" "}
+            </>
+          ) : (
+            <>The first release is on its way; until then, the links lead to GitHub Releases. </>
+          )
+        }
+        Maze is pre-alpha: reading, search and triage work, writing mail doesn't yet. Keep your mail
+        on the server.
+      </p>
+    </section>
+
+    <section class="section platforms" aria-label="Platforms">
+      <article class="platform">
+        <div class="platform-head">
+          <h2>macOS</h2>
+          <span class="badge">{SITE.macosMinimum} or later</span>
+        </div>
+        <p class="muted">A signed and notarized <code>.dmg</code>. Open it and drag Maze to Applications.</p>
+        <div class="buttons">
+          <a class="button button--primary" href={release.mac.aarch64}>
+            <Icon name="download" /> Apple Silicon
+          </a>
+          <a class="button" href={release.mac.x86_64}>
+            <Icon name="download" /> Intel
+          </a>
+        </div>
+        <p class="files"><code>{file("macos", "aarch64", "dmg")}</code><br /><code>{file("macos", "x86_64", "dmg")}</code></p>
+      </article>
+
+      <article class="platform">
+        <div class="platform-head">
+          <h2>Linux</h2>
+          <span class="badge badge--planned">preview</span>
+        </div>
+        <p class="muted">
+          A tarball for x86_64 and aarch64 is built with every release. Linux gets less testing
+          than macOS for now, and packaging (desktop integration, Flatpak) is coming.
+        </p>
+        <div class="buttons">
+          <a class="button" href={release.linux.x86_64}><Icon name="download" /> x86_64</a>
+          <a class="button" href={release.linux.aarch64}><Icon name="download" /> aarch64</a>
+        </div>
+        <pre class="snippet"><code>tar --zstd -C ~/.local \
+  -xf Maze-*-linux-x86_64.tar.zst
+~/.local/mazemail.app/bin/mazemail</code></pre>
+      </article>
+
+      <article class="platform">
+        <div class="platform-head">
+          <h2>From source</h2>
+          <span class="badge">Rust</span>
+        </div>
+        <p class="muted">
+          The toolchain is pinned with <a href="https://mise.jdx.dev">mise</a>. On macOS you also need
+          the Xcode Command Line Tools.
+        </p>
+        <pre class="snippet"><code>git clone {SITE.repo}
+cd mazemail &amp;&amp; mise install
+cargo run --release</code></pre>
+        <p class="muted small">A source build is a dev build with its own data directory and keychain item, and never updates itself.</p>
+      </article>
+    </section>
+
+    <section class="section details">
+      <div class="detail">
+        <h2>Maze keeps itself current</h2>
+        <p>
+          Maze checks for updates every hour and after your Mac wakes, installs them in the
+          background and shows <strong>Restart to update</strong> in the title bar. Every update is
+          verified (a signed manifest, the SHA-256 of the download, and the same Apple team
+          signature) and swapped in one step. If a new version keeps failing to start, Maze offers
+          to roll back. Keep Maze in Applications so it can replace itself.
+        </p>
+        <p><a href="/docs/getting-started/#updates">How updates work <span aria-hidden="true">→</span></a></p>
+      </div>
+
+      <div class="detail">
+        <h2>No Homebrew, on purpose</h2>
+        <p>
+          The <code>.dmg</code> is the only way in, followed by the built-in updater. A package
+          manager would fight the updater over the same app, so there is deliberately no Homebrew
+          cask (<a href={repoFile("docs/adr/0010-auto-update.md")}>ADR-010</a>).
+        </p>
+      </div>
+
+      <div class="detail">
+        <h2>Requirements</h2>
+        <ul>
+          <li>macOS 13 Ventura or later, on Apple Silicon or Intel.</li>
+          <li>Linux: x86_64 or aarch64, with a running Secret Service (GNOME Keyring or KWallet), which holds Maze's storage key.</li>
+          <li>An IMAP account (Gmail, Microsoft 365, iCloud, Fastmail and others are detected), or mail to import.</li>
+          <li>Gmail needs your own Google OAuth client ID for now (<a href="/docs/getting-started/#gmail-and-google-workspace-bring-your-own-oauth-client-id">how</a>).</li>
+        </ul>
+      </div>
+
+      <div class="detail">
+        <h2>Verifying a download</h2>
+        <p>
+          Release builds are signed with a Developer ID and notarized by Apple. After installing,
+          check the signature and the notarization:
+        </p>
+        <pre class="snippet"><code>spctl --assess --type execute -vv /Applications/Maze.app
+codesign -dv /Applications/Maze.app
+xcrun stapler validate /Applications/Maze.app</code></pre>
+        <p>
+          <code>spctl</code> should say <em>accepted</em> and <em>source=Notarized Developer ID</em>.
+          GitHub shows the SHA-256 of every file on the <a href={release.page}>release page</a>;
+          compare it with <code>shasum -a 256 Maze-*.dmg</code>. Builds that aren't notarized (CI
+          artifacts) need a one-time <strong>Open Anyway</strong> in System Settings → Privacy &amp;
+          Security.
+        </p>
+      </div>
+    </section>
+  </div>
+</Base>
+
+<style>
+  .head h1 {
+    font-size: clamp(2rem, 4.5vw, 3rem);
+    letter-spacing: -0.03em;
+  }
+
+  .platforms {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1px;
+    padding: 0;
+    background: var(--border);
+  }
+
+  .platform {
+    display: grid;
+    gap: 1rem;
+    align-content: start;
+    padding: 1.75rem var(--gutter);
+    background: var(--bg-frame);
+    font-size: 0.9375rem;
+  }
+
+  .platform-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .platform h2 {
+    font-size: 1.25rem;
+  }
+
+  .buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .files {
+    font-size: 0.75rem;
+    color: var(--faint);
+    line-height: 1.8;
+  }
+
+  .snippet {
+    font-size: 0.75rem;
+    color: var(--text);
+  }
+
+  .small {
+    font-size: 0.8125rem;
+  }
+
+  .details {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2.5rem 3rem;
+  }
+
+  .detail {
+    display: grid;
+    gap: 0.85rem;
+    align-content: start;
+    color: var(--muted);
+    font-size: 0.9375rem;
+  }
+
+  .detail h2 {
+    font-size: 1.125rem;
+  }
+
+  .detail strong,
+  .detail em {
+    color: var(--text);
+  }
+
+  .detail ul {
+    margin: 0;
+    padding-left: 1.2rem;
+    display: grid;
+    gap: 0.4rem;
+  }
+
+  .detail :not(pre) > code {
+    color: var(--text);
+  }
+
+  @media (max-width: 960px) {
+    .platforms {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .details {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>

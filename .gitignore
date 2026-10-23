@@ -4,3 +4,7 @@
 .DS_Store
 /fixtures/generated
 /.env
+/website/node_modules
+/website/dist
+/website/.astro
+/website/.wrangler

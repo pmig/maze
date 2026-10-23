@@ -1,0 +1,49 @@
+---
+import Base from "../layouts/Base.astro";
+import Logo from "../components/Logo.astro";
+---
+
+<Base title="Page not found" description="This page doesn't exist." noindex>
+  <div class="frame">
+    <section class="section lost">
+      <Logo size={56} />
+      <p class="eyebrow">404</p>
+      <h1>Lost in the maze.</h1>
+      <p class="lede">This page doesn't exist, or it moved. One of these should get you out:</p>
+      <ul class="ways">
+        <li><a href="/">Home</a></li>
+        <li><a href="/download/">Download</a></li>
+        <li><a href="/docs/">Documentation</a></li>
+        <li><a href="/roadmap/">Roadmap</a></li>
+      </ul>
+    </section>
+  </div>
+</Base>
+
+<style>
+  .lost {
+    min-height: 60vh;
+    display: grid;
+    align-content: center;
+    justify-items: start;
+    gap: 0.5rem;
+  }
+
+  .lost .eyebrow {
+    margin-top: 1.5rem;
+  }
+
+  h1 {
+    font-size: clamp(2rem, 4.5vw, 3rem);
+    letter-spacing: -0.03em;
+  }
+
+  .ways {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.25rem;
+    margin: 1rem 0 0;
+    padding: 0;
+  }
+</style>

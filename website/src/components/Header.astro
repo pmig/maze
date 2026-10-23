@@ -1,0 +1,254 @@
+---
+import Icon from "./Icon.astro";
+import Logo from "./Logo.astro";
+import { SITE } from "../data/site";
+
+const path = Astro.url.pathname;
+const NAV = [
+  { href: "/docs/", label: "Docs" },
+  { href: "/roadmap/", label: "Roadmap" },
+  { href: "/changelog/", label: "Changelog" },
+];
+const current = (href: string) => path === href || (href !== "/" && path.startsWith(href));
+---
+
+<header class="site-header">
+  <div class="bar">
+    <a class="brand" href="/" aria-label="Maze, home">
+      <Logo size={22} />
+      <span class="brand-name">Maze</span>
+    </a>
+    <span class="badge badge--dot status" title="Reading, search and triage work. Writing mail doesn't yet.">
+      {SITE.status}
+    </span>
+
+    <nav class="nav" aria-label="Main">
+      <ul>
+        {
+          NAV.map((item) => (
+            <li>
+              <a href={item.href} aria-current={current(item.href) ? "page" : undefined}>
+                {item.label}
+              </a>
+            </li>
+          ))
+        }
+        <li>
+          <a href={SITE.repo} class="nav-icon" rel="noopener">
+            <Icon name="github" />
+            <span>GitHub</span>
+          </a>
+        </li>
+      </ul>
+    </nav>
+
+    <div class="actions">
+      <button id="theme-toggle" class="icon-button" type="button" aria-label="Switch theme" hidden>
+        <Icon name="moon" class="when-light" />
+        <Icon name="sun" class="when-dark" />
+      </button>
+      <a
+        class="button button--primary download"
+        href="/download/"
+        data-shortcut="d"
+        aria-current={current("/download/") ? "page" : undefined}
+        aria-keyshortcuts="d"
+      >
+        Download <kbd aria-hidden="true">D</kbd>
+      </a>
+      <details class="menu">
+        <summary class="icon-button" aria-label="Menu">
+          <Icon name="menu" />
+        </summary>
+        <nav class="menu-panel" aria-label="Main (compact)">
+          <a href="/download/">Download</a>
+          {NAV.map((item) => <a href={item.href}>{item.label}</a>)}
+          <a href={SITE.repo} rel="noopener">GitHub</a>
+        </nav>
+      </details>
+    </div>
+  </div>
+</header>
+
+<style>
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: color-mix(in oklab, var(--bg) 86%, transparent);
+    backdrop-filter: saturate(1.4) blur(10px);
+    -webkit-backdrop-filter: saturate(1.4) blur(10px);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .bar {
+    max-width: var(--frame);
+    height: var(--header-h);
+    margin-inline: auto;
+    padding-inline: var(--gutter);
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    border-inline: 1px solid var(--border);
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    color: var(--text-strong);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 1.0625rem;
+    letter-spacing: -0.01em;
+  }
+
+  .brand:hover {
+    color: var(--text-strong);
+  }
+
+  .nav {
+    margin-left: auto;
+  }
+
+  .nav ul {
+    display: flex;
+    gap: 0.25rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .nav a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    height: 2rem;
+    padding: 0 0.65rem;
+    border-radius: var(--radius);
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.9375rem;
+  }
+
+  .nav a:hover {
+    color: var(--text-strong);
+    background: var(--surface-2);
+  }
+
+  .nav a[aria-current="page"] {
+    color: var(--text-strong);
+    font-weight: 500;
+  }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .download {
+    height: 2.125rem;
+    padding-inline: 0.8rem;
+    font-size: 0.875rem;
+  }
+
+  .icon-button {
+    display: inline-grid;
+    place-items: center;
+    width: 2.125rem;
+    height: 2.125rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+  }
+
+  .icon-button:hover {
+    color: var(--text-strong);
+    background: var(--surface-2);
+  }
+
+  .icon-button[hidden] {
+    display: none;
+  }
+
+  /* The toggle shows the icon of the theme you'd switch to. */
+  .icon-button :global(.when-dark) {
+    display: none;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :global(:root:not([data-theme="light"])) .icon-button :global(.when-dark) {
+      display: block;
+    }
+    :global(:root:not([data-theme="light"])) .icon-button :global(.when-light) {
+      display: none;
+    }
+  }
+
+  :global(:root[data-theme="dark"]) .icon-button :global(.when-dark) {
+    display: block;
+  }
+
+  :global(:root[data-theme="dark"]) .icon-button :global(.when-light) {
+    display: none;
+  }
+
+  .menu {
+    display: none;
+    position: relative;
+  }
+
+  .menu summary {
+    list-style: none;
+  }
+
+  .menu summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .menu-panel {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 0.5rem);
+    min-width: 12rem;
+    display: grid;
+    padding: 0.35rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shot-shadow);
+  }
+
+  .menu-panel a {
+    padding: 0.5rem 0.65rem;
+    border-radius: var(--radius);
+    color: var(--text);
+    text-decoration: none;
+  }
+
+  .menu-panel a:hover {
+    background: var(--surface-2);
+  }
+
+  @media (max-width: 760px) {
+    .nav,
+    .download {
+      display: none;
+    }
+    .menu {
+      display: block;
+    }
+    .actions {
+      margin-left: auto;
+    }
+  }
+
+  @media (max-width: 340px) {
+    .status {
+      display: none;
+    }
+  }
+</style>
