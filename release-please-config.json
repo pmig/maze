@@ -2,6 +2,7 @@
   "packages": {
     ".": {
       "release-type": "simple",
+      "exclude-paths": ["website"],
       "include-v-in-tag": false,
       "prerelease": true,
       "versioning": "prerelease",

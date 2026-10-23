@@ -13,6 +13,10 @@ release PR merged ──▶ tag 0.1.0-alpha.1 + GitHub Release (prerelease)
                   ──▶ release-artifacts.yaml: build, sign, notarize, upload, publish manifests
 ```
 
+Commits that only touch `website/` (`exclude-paths` in `release-please-config.json`)
+don't appear in the changelog and don't trigger a release; the site deploys on its own
+(`website.yaml`).
+
 ## 1. One-time repository setup
 
 ### Settings
