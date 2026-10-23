@@ -4,6 +4,10 @@ rust = { version = "1.99.1", components = "rustfmt,clippy,rust-src", profile = "
 "cargo:cargo-deny" = "latest"
 "cargo:cargo-insta" = "latest"
 
+[tasks.start]
+description = "Build and start Maze (release build, dev data directory)"
+run = "cargo run --release --locked -p mazemail --"
+
 [tasks.fmt]
 description = "Format all crates"
 run = "cargo fmt --all"
