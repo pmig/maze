@@ -23,6 +23,7 @@ pub mod layout;
 pub mod list_model;
 pub mod message_view;
 pub mod perf;
+pub mod quick_move;
 pub mod selection;
 pub mod source;
 pub mod thread_list;

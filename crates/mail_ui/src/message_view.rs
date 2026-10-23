@@ -15,7 +15,7 @@ use time::UtcOffset;
 use ui::assets::IconName;
 
 use crate::actions::{Archive, Forward, Reply, ReplyAll};
-use crate::format::{DateFormatter, format_size, initials};
+use crate::format::{DateFormatter, format_size, format_thousands, initials};
 use crate::source::{MessageBody, MessageDocument, SenderClient, Verdict, Verification};
 
 /// The message view.
@@ -24,6 +24,8 @@ pub struct MessageView {
     offset: UtcOffset,
     document: Option<MessageDocument>,
     error: Option<SharedString>,
+    /// Rows selected in the list, when there are several (no message is shown then).
+    selection: Option<usize>,
 }
 
 impl std::fmt::Debug for MessageView {
@@ -40,6 +42,7 @@ impl MessageView {
             offset,
             document: None,
             error: None,
+            selection: None,
         }
     }
 
@@ -47,6 +50,7 @@ impl MessageView {
     pub fn show(&mut self, document: Option<MessageDocument>, cx: &mut Context<'_, Self>) {
         self.document = document;
         self.error = None;
+        self.selection = None;
         cx.notify();
     }
 
@@ -54,7 +58,21 @@ impl MessageView {
     pub fn show_error(&mut self, error: impl Into<SharedString>, cx: &mut Context<'_, Self>) {
         self.document = None;
         self.error = Some(error.into());
+        self.selection = None;
         cx.notify();
+    }
+
+    /// Shows "N selected" instead of a message: several rows are selected in the list.
+    pub fn show_selection(&mut self, count: usize, cx: &mut Context<'_, Self>) {
+        self.document = None;
+        self.error = None;
+        self.selection = Some(count);
+        cx.notify();
+    }
+
+    /// The number of selected rows shown instead of a message, if any.
+    pub fn selection(&self) -> Option<usize> {
+        self.selection
     }
 
     /// The displayed message.
@@ -292,6 +310,22 @@ impl MessageView {
 
     fn render_empty(&self, cx: &App) -> impl IntoElement {
         let theme = cx.theme();
+        if let Some(count) = self.selection {
+            return v_flex()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .gap_2()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(Icon::new(IconName::Mails).large())
+                .child(
+                    div()
+                        .text_color(theme.foreground)
+                        .child(format!("{} selected", format_thousands(count as u64))),
+                )
+                .child("a archives them, ⇧M moves them, m marks them read, s stars them.");
+        }
         v_flex()
             .size_full()
             .items_center()

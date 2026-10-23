@@ -78,8 +78,11 @@ actions!(
         ToggleRead,
         /// Toggle the star (`s`).
         ToggleStar,
-        /// Archive the selected thread (`a`).
+        /// Archive the selected threads (`a`).
         Archive,
+        /// Move the selected threads to a folder picked by typing part of its name
+        /// (`shift-m`, Quick Move).
+        MoveToFolder,
         /// Reply to the sender (`cmd-r`).
         Reply,
         /// Reply to all (`cmd-shift-r`).
@@ -96,6 +99,12 @@ actions!(
         CollapseAllThreads,
         /// Select the whole thread of the selected message (`cmd-shift-a`).
         SelectThread,
+        /// Extend the selection to the next row (`shift-down`).
+        ExtendSelectionDown,
+        /// Extend the selection to the previous row (`shift-up`).
+        ExtendSelectionUp,
+        /// Select every row of the list (`cmd-a`).
+        SelectAll,
     ]
 );
 

@@ -11,9 +11,10 @@
 //! the unthreaded view and the Correspondents column ("sent" rows) have something to
 //! show. Message ids encode their thread and position.
 //!
-//! Changes (read, starred, archived; per thread or per message) are kept in memory.
-//! Archiving hides a thread or message from its folder; the fake doesn't add it to an
-//! Archives folder.
+//! Changes (read, starred, archived, moved; per thread or per message) are kept in
+//! memory. Archiving and moving hide a thread or message from its folder; the fake
+//! doesn't add it to the Archives or target folder, but remembers where a move sent it
+//! ([`FakeMailSource::moved_to`]).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
@@ -353,8 +354,19 @@ struct State {
     message_flags: HashMap<ThreadId, HashMap<u32, Flags>>,
     archived: HashSet<ThreadId>,
     archived_messages: HashSet<MessageId>,
+    /// Where moved threads and messages went.
+    moves: HashMap<MoveItem, FolderId>,
     /// Unread count changes per folder, relative to the generated counts.
     unread_delta: Vec<i64>,
+}
+
+/// A thread or message the fake moved, see [`FakeMailSource::moved_to`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MoveItem {
+    /// A whole thread.
+    Thread(ThreadId),
+    /// One message.
+    Message(MessageId),
 }
 
 /// Synthetic mail for development and benchmarks. See the module docs.
@@ -419,6 +431,24 @@ impl FakeMailSource {
     /// The key of the 1,000,000-thread folder.
     pub fn large_folder() -> FolderKey {
         FolderKey::Folder(folder_id(3))
+    }
+
+    /// The folder a thread or message was moved to, if it was.
+    pub fn moved_to(&self, item: MoveItem) -> Option<FolderId> {
+        self.read_state().moves.get(&item).copied()
+    }
+
+    /// The account of a folder index, as the folder tree numbers them.
+    fn account_id(folder: usize) -> AccountId {
+        AccountId(FOLDERS[folder].account as i64 + 1)
+    }
+
+    /// Checks that `to` is a folder of `account` (moves stay within an account).
+    fn check_target(account: AccountId, to: FolderId) -> Result<(), SourceError> {
+        match folder_index(to) {
+            Some(ix) if Self::account_id(ix) == account => Ok(()),
+            _ => Err(SourceError::FolderNotFound),
+        }
     }
 
     fn hash(folder: usize, row: u32) -> u64 {
@@ -1343,6 +1373,54 @@ impl MailSource for FakeMailSource {
         Ok(())
     }
 
+    fn thread_account(&self, thread: ThreadId) -> Option<AccountId> {
+        decode(thread).map(|(folder, _)| Self::account_id(folder))
+    }
+
+    fn message_account(&self, message: MessageId) -> Option<AccountId> {
+        decode_message(message).and_then(|(thread, _)| self.thread_account(thread))
+    }
+
+    fn move_threads(
+        &self,
+        threads: &[ThreadId],
+        to: FolderId,
+        _from: Option<FolderId>,
+    ) -> Result<(), SourceError> {
+        for id in threads {
+            let account = self
+                .thread_account(*id)
+                .ok_or(SourceError::ThreadNotFound(*id))?;
+            Self::check_target(account, to)?;
+        }
+        self.archive(threads)?;
+        let mut state = self.write_state();
+        for id in threads {
+            state.moves.insert(MoveItem::Thread(*id), to);
+        }
+        Ok(())
+    }
+
+    fn move_messages(
+        &self,
+        messages: &[MessageId],
+        to: FolderId,
+        _from: Option<FolderId>,
+    ) -> Result<(), SourceError> {
+        for id in messages {
+            let account = self
+                .message_account(*id)
+                .ok_or(SourceError::MessageNotFound(*id))?;
+            Self::check_target(account, to)?;
+        }
+        self.archive_messages(messages)?;
+        let mut state = self.write_state();
+        for id in messages {
+            state.moves.insert(MoveItem::Message(*id), to);
+        }
+        Ok(())
+    }
+
     fn status(&self) -> SourceStatus {
         SourceStatus {
             sync: SyncState::Idle,
@@ -1555,6 +1633,28 @@ mod tests {
             }
             fn archive_messages(&self, m: &[MessageId]) -> Result<(), SourceError> {
                 self.0.archive_messages(m)
+            }
+            fn thread_account(&self, thread: ThreadId) -> Option<AccountId> {
+                self.0.thread_account(thread)
+            }
+            fn message_account(&self, message: MessageId) -> Option<AccountId> {
+                self.0.message_account(message)
+            }
+            fn move_threads(
+                &self,
+                t: &[ThreadId],
+                to: FolderId,
+                from: Option<FolderId>,
+            ) -> Result<(), SourceError> {
+                self.0.move_threads(t, to, from)
+            }
+            fn move_messages(
+                &self,
+                m: &[MessageId],
+                to: FolderId,
+                from: Option<FolderId>,
+            ) -> Result<(), SourceError> {
+                self.0.move_messages(m, to, from)
             }
             fn status(&self) -> SourceStatus {
                 self.0.status()

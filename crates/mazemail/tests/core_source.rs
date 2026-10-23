@@ -435,3 +435,67 @@ fn threads_off_trees_and_message_commands() {
     drop(t.source);
     t.runtime.block_on(t.core.shutdown()).unwrap();
 }
+
+#[test]
+fn quick_move_moves_threads_and_messages_undoably() {
+    let t = seeded();
+    let tree = t.source.folder_tree();
+    let account = tree.accounts[0].id;
+    let inbox = tree.accounts[0]
+        .folders
+        .iter()
+        .find(|f| f.role == Some(FolderRole::Inbox))
+        .unwrap()
+        .key
+        .clone();
+    let FolderKey::Folder(inbox_id) = inbox else {
+        panic!("a folder");
+    };
+    let (projects, _) = ensure_folder_path(
+        t.core.store(),
+        account,
+        &["Projects".to_owned(), "Maze".to_owned()],
+        None,
+    )
+    .unwrap();
+    let keys = |key: FolderKey| {
+        t.source
+            .thread_keys(
+                &ThreadScope::Folder(key),
+                &ThreadFilter::default(),
+                ListSort::NewestFirst,
+            )
+            .unwrap()
+    };
+    let threads = keys(INBOX);
+    let (invoice, offsite) = (threads[0], threads[1]);
+    assert_eq!(t.source.thread_account(invoice), Some(account));
+    let tree = t.source.thread_tree(offsite).unwrap();
+    assert_eq!(t.source.message_account(tree[1].message), Some(account));
+
+    // Both threads at once, out of the Inbox shown: one command, one undo.
+    t.source
+        .move_threads(&[invoice, offsite], projects, Some(inbox_id))
+        .unwrap();
+    assert!(keys(INBOX).is_empty());
+    assert_eq!(keys(FolderKey::Folder(projects)).len(), 2);
+    assert!(t.core.can_undo());
+    t.runtime.block_on(t.core.undo()).unwrap().unwrap();
+    assert_eq!(keys(INBOX).len(), 2, "undo brings both back");
+    assert!(keys(FolderKey::Folder(projects)).is_empty());
+
+    // A single message (threads off, or a message of an expanded thread).
+    t.source
+        .move_messages(&[tree[1].message], projects, Some(inbox_id))
+        .unwrap();
+    assert_eq!(&*keys(FolderKey::Folder(projects)), &[offsite]);
+    // The thread tree reads the folder listed last: only the moved reply is here.
+    assert_eq!(t.source.thread_tree(offsite).unwrap().len(), 1);
+    assert_eq!(
+        keys(INBOX).len(),
+        2,
+        "Anna's message keeps the thread in the Inbox"
+    );
+    drop(t.source);
+    t.runtime.block_on(t.core.shutdown()).unwrap();
+}
