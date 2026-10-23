@@ -15,12 +15,14 @@
 //! 5. The [auto-updater](updates) starts with the window (before the core is open),
 //!    follows the core's settings once it is, and the crash guard is disarmed after
 //!    the window painted with the core open.
+//! 6. New messages, replies and forwards open [compose windows](compose).
 //!
 //! `MAZEMAIL_DEMO=1` runs the window on synthetic mail (`FakeMailSource`) without a
 //! core, a key or a socket.
 
 mod add_account;
 mod approval;
+mod compose;
 mod lost_key;
 mod updates;
 
@@ -111,6 +113,7 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
     app.run(move |cx| {
         ui::init(cx);
         mail_ui::init(cx);
+        composer::init(cx);
         auto_update_ui::init(cx);
         let mut menus = mail_ui::app_menus();
         auto_update_ui::add_menu_item(&mut menus);
@@ -124,6 +127,9 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
                 None => tracing::info!("Add Account: the mail data isn't open yet"),
             });
         });
+        // From the title bar's "+", cmd-n (any window) or the palette: deferred, like
+        // Add Account, because the window is busy handling that event.
+        cx.on_action(|_: &mail_ui::actions::NewMessage, cx| cx.defer(compose::new_message));
         cx.set_global(AppState {
             source,
             authorizer,
@@ -199,6 +205,12 @@ fn open_window(cx: &mut App) {
     match mail_ui::open_main_window(source, options, cx) {
         Ok(window) => {
             updates::add_button(&window.1, cx);
+            // Reply, Reply All, Forward on the message the window shows.
+            cx.subscribe(&window.1, |_, request: &mail_ui::ComposeRequest, cx| {
+                let request = *request;
+                cx.defer(move |cx| compose::respond(request, cx));
+            })
+            .detach();
             cx.global_mut::<AppState>().window = Some(window);
         }
         Err(error) => {

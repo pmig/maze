@@ -610,8 +610,9 @@ static REGISTRY: &[CommandSpec] = &[
                --password-stdin; it is never a command-line argument. With --oauth google or \
                --oauth microsoft, Maze opens the browser for the sign-in instead (Google needs \
                auth.google.client_id in settings.json). Host, port and security are detected \
-               for well-known providers. Needs a writer token, and you approve every account \
-               in Maze.",
+               for well-known providers; so is the SMTP server for sending (override it with \
+               --smtp-host, --smtp-port and --smtp-security; it logs in like IMAP). Needs a \
+               writer token, and you approve every account in Maze.",
         permission: Permission::Admin,
         requires_token: true,
         touches_mail: false,

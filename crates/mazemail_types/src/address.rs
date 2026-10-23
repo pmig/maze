@@ -13,6 +13,21 @@ pub struct Address {
 #[error("not an email address")]
 pub struct AddressParseError;
 
+/// An entry of an address list that isn't an address ([`Address::parse_list`]).
+///
+/// `entry` is what was typed (user input, so don't log it).
+#[derive(Clone, PartialEq, Eq, thiserror::Error)]
+#[error("not an email address: {entry}")]
+pub struct AddressListError {
+    pub entry: String,
+}
+
+impl fmt::Debug for AddressListError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AddressListError").finish_non_exhaustive()
+    }
+}
+
 impl Address {
     pub fn new(name: Option<impl Into<String>>, email: impl Into<String>) -> Self {
         Self {
@@ -42,6 +57,65 @@ impl Address {
             name,
             email: email.to_owned(),
         })
+    }
+
+    /// Parse a comma- or semicolon-separated list as typed into a To or Cc field:
+    /// `anna@example.com, "Doe, John" <john@example.com>; bob@example.org`. Separators
+    /// inside quotes or angle brackets don't split; empty entries are skipped.
+    pub fn parse_list(input: &str) -> Result<Vec<Self>, AddressListError> {
+        let mut out = Vec::new();
+        let mut entry = String::new();
+        let (mut quoted, mut angle) = (false, false);
+        let mut finish = |entry: &mut String| -> Result<(), AddressListError> {
+            let text = entry.trim();
+            if !text.is_empty() {
+                let address = Self::parse(text).map_err(|_| AddressListError {
+                    entry: text.to_owned(),
+                })?;
+                out.push(address);
+            }
+            entry.clear();
+            Ok(())
+        };
+        let mut escaped = false;
+        for c in input.chars() {
+            if escaped {
+                escaped = false;
+                entry.push(c);
+                continue;
+            }
+            match c {
+                '\\' if quoted => {
+                    escaped = true;
+                    continue;
+                }
+                '"' => quoted = !quoted,
+                '<' if !quoted => angle = true,
+                '>' if !quoted => angle = false,
+                ',' | ';' | '\n' if !quoted && !angle => {
+                    finish(&mut entry)?;
+                    continue;
+                }
+                _ => {}
+            }
+            entry.push(c);
+        }
+        finish(&mut entry)?;
+        Ok(out)
+    }
+
+    /// Formats addresses for a To or Cc field (`a@b.example, Anna <c@d.example>`).
+    pub fn format_list(addresses: &[Self]) -> String {
+        addresses
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// Whether both addresses have the same mailbox (case-insensitive).
+    pub fn same_mailbox(&self, other: &Self) -> bool {
+        self.email.eq_ignore_ascii_case(&other.email)
     }
 
     /// The domain part, lowercased.
@@ -82,6 +156,29 @@ mod tests {
 
         assert!(Address::parse("not an address").is_err());
         assert!(Address::parse("<broken").is_err());
+    }
+
+    #[test]
+    fn parses_lists_as_typed() {
+        let list = Address::parse_list(
+            "anna@example.com, \"Doe, John\" <john@example.com>; Bob <bob@example.org>,, ",
+        )
+        .unwrap();
+        assert_eq!(
+            list,
+            vec![
+                Address::new(None::<String>, "anna@example.com"),
+                Address::new(Some("Doe, John"), "john@example.com"),
+                Address::new(Some("Bob"), "bob@example.org"),
+            ]
+        );
+        assert_eq!(Address::parse_list("  ").unwrap(), vec![]);
+        let err = Address::parse_list("anna@example.com, nobody").unwrap_err();
+        assert_eq!(err.entry, "nobody");
+        assert!(!format!("{err:?}").contains("nobody"));
+        let round = Address::format_list(&list);
+        assert_eq!(Address::parse_list(&round).unwrap(), list);
+        assert!(list[0].same_mailbox(&Address::new(None::<String>, "ANNA@example.com")));
     }
 
     #[test]

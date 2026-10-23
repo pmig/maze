@@ -101,6 +101,22 @@ pub enum Error {
         message: String,
     },
 
+    /// A draft can't be sent or saved as it is (no recipients, no identity, an
+    /// unreadable attachment). `message` is for people.
+    #[error("{message}")]
+    Compose {
+        /// What kind of problem.
+        kind: crate::compose::ComposeErrorKind,
+        /// The explanation.
+        message: String,
+    },
+
+    /// The SMTP server refused the message for good (login refused, `SendAsDenied`,
+    /// recipient rejected). The text is the server's reply, which may name a
+    /// recipient: show it, don't log it.
+    #[error(transparent)]
+    Send(#[from] smtp::SmtpError),
+
     /// Accounts can't be added or synced: this core runs without a sync engine.
     #[error("accounts can't be added here: Maze runs without its sync engine")]
     NoSyncEngine,

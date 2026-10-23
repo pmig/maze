@@ -85,6 +85,8 @@ actions!(
         MoveToFolder,
         /// Undo the last archive, move, read or star change (`cmd-z`).
         Undo,
+        /// Write a new message (`cmd-n`, the title bar's "+").
+        NewMessage,
         /// Reply to the sender (`cmd-r`).
         Reply,
         /// Reply to all (`cmd-shift-r`).

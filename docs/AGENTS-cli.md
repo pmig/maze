@@ -1073,7 +1073,7 @@ mazemail account list --json | jq -r '.[] | select(.state == "auth_required") | 
 
 Add an IMAP, Gmail or Microsoft account.
 
-Maze connects, logs in and lists the folders before it saves anything, then keeps the password (or the sign-in) in the system keychain and starts syncing. The password is read from the terminal without echo, or from stdin with --password-stdin; it is never a command-line argument. With --oauth google or --oauth microsoft, Maze opens the browser for the sign-in instead (Google needs auth.google.client_id in settings.json). Host, port and security are detected for well-known providers. Needs a writer token, and you approve every account in Maze.
+Maze connects, logs in and lists the folders before it saves anything, then keeps the password (or the sign-in) in the system keychain and starts syncing. The password is read from the terminal without echo, or from stdin with --password-stdin; it is never a command-line argument. With --oauth google or --oauth microsoft, Maze opens the browser for the sign-in instead (Google needs auth.google.client_id in settings.json). Host, port and security are detected for well-known providers; so is the SMTP server for sending (override it with --smtp-host, --smtp-port and --smtp-security; it logs in like IMAP). Needs a writer token, and you approve every account in Maze.
 
 Permission: `admin`
 
@@ -1091,6 +1091,9 @@ mazemail account add [OPTIONS] <EMAIL>
 | `--security <SECURITY>` | Transport security. One of `tls`, `starttls`, `none`. |
 | `--username <USERNAME>` | Login name (default: the address). |
 | `--password-stdin` | Read the password from stdin (first line) instead of prompting on the terminal. |
+| `--smtp-host <SMTP_HOST>` | SMTP host for sending (default: derived from the address and the IMAP host). |
+| `--smtp-port <SMTP_PORT>` | SMTP port (default: 465 for TLS, 587 for STARTTLS). |
+| `--smtp-security <SMTP_SECURITY>` | SMTP transport security. One of `tls`, `starttls`, `none`. |
 
 Output (`--json`):
 

@@ -100,8 +100,8 @@ fn outbox_send_log_and_rollback_reconciliation() {
     let (one, two) = store
         .write_blocking(move |w| {
             Ok((
-                w.outbox_enqueue(None, &raw, "one@x", 100)?,
-                w.outbox_enqueue(None, &raw2, "two@x", 200)?,
+                w.outbox_enqueue(None, &raw, "one@x", 100, None)?,
+                w.outbox_enqueue(None, &raw2, "two@x", 200, None)?,
             ))
         })
         .unwrap();
@@ -153,6 +153,134 @@ fn outbox_send_log_and_rollback_reconciliation() {
     let store = common::open(tmp.path());
     assert!(store.sendlog().was_sent("one@x").unwrap().is_some());
     assert!(tmp.path().join("mail/sendlog.db").exists());
+}
+
+#[test]
+fn outbox_claims_once_keeps_the_envelope_retries_and_prunes() {
+    use store::OutboxEnvelope;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let store = common::open(tmp.path());
+    let raw = store.blobs().put(b"Message-ID: <e@x>\r\n\r\nhi").unwrap();
+    let blob = raw.id();
+    let envelope = OutboxEnvelope {
+        from: "me@example.org".into(),
+        to: vec!["anna@example.com".into(), "hidden@example.net".into()],
+    };
+    let stored = envelope.clone();
+    let id = store
+        .write_blocking(move |w| w.outbox_enqueue(None, &raw, "e@x", 0, Some(&stored)))
+        .unwrap();
+    let item = store.reader().unwrap().outbox_item(id).unwrap().unwrap();
+    assert_eq!(item.envelope.as_ref(), Some(&envelope));
+    assert!(!format!("{item:?}").contains("anna"));
+
+    // Only one sender gets it.
+    assert!(store.write_blocking(move |w| w.outbox_claim(id)).unwrap());
+    assert!(!store.write_blocking(move |w| w.outbox_claim(id)).unwrap());
+    let reader = store.reader().unwrap();
+    assert_eq!(
+        reader.outbox_in_state(OutboxState::Sending).unwrap().len(),
+        1
+    );
+    assert_eq!(reader.outbox_item(id).unwrap().unwrap().attempts, 1);
+    drop(reader);
+
+    // A temporary failure queues it again for later.
+    store
+        .write_blocking(move |w| w.outbox_retry_later(id, 500, "connection refused"))
+        .unwrap();
+    let item = store.reader().unwrap().outbox_item(id).unwrap().unwrap();
+    assert_eq!(item.state, OutboxState::Queued);
+    assert_eq!(item.send_at, 500);
+    assert_eq!(item.last_error.as_deref(), Some("connection refused"));
+    assert!(store.reader().unwrap().outbox_due(499).unwrap().is_empty());
+
+    // Sent, but the Sent copy's APPEND still needs the blob: kept.
+    store
+        .write_blocking(move |w| {
+            w.outbox_mark_sent(id)?;
+            let account = w.create_account(&store::NewAccount {
+                kind: AccountKind::Imap,
+                name: "a".into(),
+                config_json: "{}".into(),
+                ordinal: 0,
+            })?;
+            w.enqueue_op(
+                account,
+                "append",
+                &format!(r#"{{"v":1,"op":"append","blob":"{}"}}"#, blob.to_hex()),
+                "user",
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let pruned = store
+        .write_blocking(|w| w.outbox_prune_sent(i64::MAX))
+        .unwrap();
+    assert_eq!(pruned, 0);
+    store
+        .write_blocking(move |w| {
+            let account = w.accounts()?[0].id;
+            for op in w.pending_ops(account)? {
+                w.op_done(op.id)?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    let pruned = store
+        .write_blocking(|w| w.outbox_prune_sent(i64::MAX))
+        .unwrap();
+    assert_eq!(pruned, 1);
+    assert!(store.reader().unwrap().outbox().unwrap().is_empty());
+}
+
+#[test]
+fn drafts_round_trip() {
+    use mazemail_types::compose::{Draft, DraftAttachment, DraftOrigin};
+    use mazemail_types::{Address, MessageId};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let store = common::open(tmp.path());
+    let mut events = store.subscribe();
+    let draft = Draft {
+        identity: None,
+        to: vec![Address::new(Some("Anna"), "anna@example.com")],
+        cc: vec![Address::new(None::<String>, "c@example.com")],
+        bcc: vec![Address::new(None::<String>, "b@example.com")],
+        subject: "Re: Plans".into(),
+        body_markdown: "Hi **Anna**".into(),
+        in_reply_to: Some("orig@example.com".into()),
+        references: vec!["root@example.com".into(), "orig@example.com".into()],
+        attachments: vec![DraftAttachment {
+            path: "/tmp/a.pdf".into(),
+            name: "a.pdf".into(),
+            size: 3,
+        }],
+        origin: Some(DraftOrigin::ReplyAll(MessageId(7))),
+    };
+    let saved = draft.clone();
+    let id = store
+        .write_blocking(move |w| w.create_draft(&saved))
+        .unwrap();
+    assert!(events.blocking_recv().unwrap().drafts);
+    let stored = store.reader().unwrap().draft(id).unwrap().unwrap();
+    assert_eq!(stored.draft, draft);
+
+    let mut edited = draft;
+    edited.subject = "Re: Plans (v2)".into();
+    edited.origin = None;
+    let saved = edited.clone();
+    store
+        .write_blocking(move |w| w.update_draft(id, &saved))
+        .unwrap();
+    let all = store.reader().unwrap().drafts().unwrap();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].draft, edited);
+
+    store.write_blocking(move |w| w.delete_draft(id)).unwrap();
+    assert!(store.reader().unwrap().draft(id).unwrap().is_none());
+    assert!(store.write_blocking(move |w| w.delete_draft(id)).is_err());
 }
 
 #[test]

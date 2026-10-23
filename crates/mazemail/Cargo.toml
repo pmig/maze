@@ -26,6 +26,7 @@ auth = { workspace = true }
 auto_update = { workspace = true }
 auto_update_ui = { workspace = true }
 clap = { workspace = true }
+composer = { workspace = true }
 gpui = { workspace = true }
 local_api = { workspace = true }
 mail_ui = { workspace = true }

@@ -40,6 +40,7 @@ use crate::message::{
 use crate::message_list::{
     MessageListRow, MessageListSnapshot, all_message_keys, order_message_keys,
 };
+use crate::outgoing::{CoreRoutes, OutboxWake};
 use crate::row_cache::{RowCache, RowCacheStats};
 use crate::runtime::RuntimeHolder;
 use crate::sync_bridge::{FetchPriority, SyncBridge, SyncStatusSink};
@@ -95,6 +96,10 @@ struct Inner {
     verifying: Mutex<HashSet<MessageId>>,
     watchlist: DomainWatchlist,
     utc_offset: UtcOffset,
+    app_version: String,
+    /// The outbox sender, with a sync engine (it has the credentials).
+    outbox: Option<smtp::Outbox>,
+    outbox_wake: Arc<OutboxWake>,
     closed: AtomicBool,
 }
 
@@ -143,7 +148,7 @@ fn retain_messages_of(
     Ok(())
 }
 
-fn map_store(err: store::Error) -> Error {
+pub(crate) fn map_store(err: store::Error) -> Error {
     match err {
         store::Error::Invalid(reason) => Error::InvalidCommand(reason),
         store::Error::NotFound { entity, id } => Error::NotFound { entity, id },
@@ -214,7 +219,7 @@ impl CoreHandle {
         }
     }
 
-    fn ensure_open(&self) -> Result<()> {
+    pub(crate) fn ensure_open(&self) -> Result<()> {
         if self.inner.closed.load(Ordering::Acquire) {
             Err(Error::Closed)
         } else {
@@ -345,6 +350,42 @@ impl CoreHandle {
             .as_ref()
             .map(|engine| engine.running())
             .unwrap_or_default()
+    }
+
+    /// Runs blocking `work` (store reads, file IO) on the core's blocking pool, from
+    /// any executor.
+    pub(crate) async fn run_blocking<F, T>(&self, work: F) -> Result<T>
+    where
+        F: FnOnce() -> Result<T> + Send + 'static,
+        T: Send + 'static,
+    {
+        self.ensure_open()?;
+        self.inner.runtime.blocking(work).await
+    }
+
+    /// Where body fetches, refreshes and op wake-ups go.
+    pub(crate) fn sync_bridge(&self) -> &Arc<dyn SyncBridge> {
+        &self.inner.sync
+    }
+
+    /// The user's UTC offset, for dates in quotes.
+    pub(crate) fn utc_offset(&self) -> UtcOffset {
+        self.inner.utc_offset
+    }
+
+    /// The app version (for `User-Agent`).
+    pub(crate) fn app_version(&self) -> &str {
+        &self.inner.app_version
+    }
+
+    /// The outbox sender, if this core runs a sync engine.
+    pub(crate) fn outbox(&self) -> Option<&smtp::Outbox> {
+        self.inner.outbox.as_ref()
+    }
+
+    /// Wakes the outbox runner (something was queued, or the network is back).
+    pub fn send_outbox_now(&self) {
+        self.inner.outbox_wake.0.notify_one();
     }
 
     /// Runs `future` on the core runtime, from any executor.
@@ -1115,6 +1156,10 @@ pub(crate) async fn finish(
         Some(engine) => Arc::clone(engine) as Arc<dyn SyncBridge>,
         None => Arc::clone(&config.sync),
     };
+    let outbox = engine
+        .as_ref()
+        .map(|engine| smtp::Outbox::new(store.clone(), engine.mailer()));
+    let outbox_wake = Arc::new(OutboxWake::default());
     let core = CoreHandle {
         inner: Arc::new(Inner {
             data_dir: config.data_dir.clone(),
@@ -1140,6 +1185,9 @@ pub(crate) async fn finish(
             verifying: Mutex::new(HashSet::new()),
             watchlist: DomainWatchlist::builtin(),
             utc_offset: config.utc_offset,
+            app_version: config.app_version.clone(),
+            outbox,
+            outbox_wake,
             closed: AtomicBool::new(false),
         }),
     };
@@ -1147,6 +1195,9 @@ pub(crate) async fn finish(
         && let Err(err) = engine.start_all()
     {
         tracing::error!(%err, "starting sync");
+    }
+    if let (Some(engine), Some(outbox)) = (&core.inner.engine, &core.inner.outbox) {
+        start_sending(&core, Arc::clone(engine), outbox.clone());
     }
     if rebuilt {
         let background = core.clone();
@@ -1161,6 +1212,33 @@ pub(crate) async fn finish(
         "core opened"
     );
     Ok(core)
+}
+
+/// Gives identities of older accounts their SMTP server, then starts the outbox runner
+/// (see [`crate::outgoing`]).
+fn start_sending(core: &CoreHandle, engine: Arc<SyncEngine>, outbox: smtp::Outbox) {
+    let routes = Arc::new(CoreRoutes {
+        store: core.inner.store.clone(),
+        engine,
+    });
+    let wake = Arc::clone(&core.inner.outbox_wake);
+    let store = core.inner.store.clone();
+    // Weak, so the runner doesn't keep the core alive.
+    let weak = Arc::downgrade(&core.inner);
+    let task = core.inner.runtime.handle().spawn(async move {
+        match store.write(crate::outgoing::ensure_smtp_servers).await {
+            Ok(0) => {}
+            Ok(assigned) => tracing::info!(assigned, "derived SMTP servers for identities"),
+            Err(err) => tracing::warn!(%err, "deriving SMTP servers"),
+        }
+        crate::outgoing::run_outbox(outbox, routes, wake, move |identities| {
+            if let Some(inner) = weak.upgrade() {
+                CoreHandle { inner }.after_sent(identities);
+            }
+        })
+        .await;
+    });
+    lock(&core.inner.tasks).push(task);
 }
 
 /// The Thunderbird body reuse index an import left behind, if any (PLAN §4.14).

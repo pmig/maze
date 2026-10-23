@@ -104,6 +104,8 @@ pub struct SyncEngineConfig {
     pub providers: Option<ProviderRegistry>,
     /// The engine's timers.
     pub timing: SyncTiming,
+    /// Submits mail (SMTP over the network in production).
+    pub mailer: Arc<dyn smtp::Mailer>,
 }
 
 impl fmt::Debug for SyncEngineConfig {
@@ -112,6 +114,7 @@ impl fmt::Debug for SyncEngineConfig {
             .field("secrets", &self.secrets)
             .field("connector", &self.connector)
             .field("timing", &self.timing)
+            .field("mailer", &self.mailer)
             .finish_non_exhaustive()
     }
 }
@@ -126,7 +129,15 @@ impl SyncEngineConfig {
             browser: Arc::new(SystemBrowser),
             providers: None,
             timing: SyncTiming::default(),
+            mailer: Arc::new(smtp::LettreMailer),
         }
+    }
+
+    /// Submits mail with `mailer`.
+    #[must_use]
+    pub fn with_mailer(mut self, mailer: Arc<dyn smtp::Mailer>) -> Self {
+        self.mailer = mailer;
+        self
     }
 
     /// Opens sessions with `connector`.
@@ -173,6 +184,9 @@ pub struct SyncEngine {
     events: mpsc::UnboundedSender<CoreEvent>,
     runtime: tokio::runtime::Handle,
     actors: Mutex<HashMap<AccountId, Running>>,
+    /// One OAuth token manager per account, shared by sync and sending, so a refresh
+    /// (which may rotate the refresh token) never races.
+    tokens: Mutex<HashMap<AccountId, Arc<OAuthTokenManager>>>,
     statuses: Arc<Mutex<HashMap<AccountId, SyncStatus>>>,
     watchdog: Mutex<Option<JoinHandle<()>>>,
 }
@@ -234,6 +248,7 @@ impl SyncEngine {
             events,
             runtime,
             actors: Mutex::new(HashMap::new()),
+            tokens: Mutex::new(HashMap::new()),
             statuses: Arc::new(Mutex::new(HashMap::new())),
             watchdog: Mutex::new(None),
         }
@@ -249,6 +264,38 @@ impl SyncEngine {
 
     pub(crate) fn browser(&self) -> &Arc<dyn BrowserOpener> {
         &self.config.browser
+    }
+
+    pub(crate) fn mailer(&self) -> Arc<dyn smtp::Mailer> {
+        Arc::clone(&self.config.mailer)
+    }
+
+    /// The OAuth token manager of an OAuth account (shared by sync and sending);
+    /// `Err` says why there is none (no client ID configured, say).
+    pub(crate) fn token_manager(
+        &self,
+        account: &Account,
+        config: &AccountConfig,
+    ) -> Result<Arc<OAuthTokenManager>, String> {
+        if let Some(tokens) = lock(&self.tokens).get(&account.id) {
+            return Ok(Arc::clone(tokens));
+        }
+        let Some(AccountAuth::OAuth(provider)) = config.auth() else {
+            return Err("this account doesn't sign in with OAuth".to_owned());
+        };
+        let manager = self
+            .registry(&self.settings.borrow().settings)
+            .client(provider)
+            .map(|client| {
+                Arc::new(OAuthTokenManager::new(
+                    client,
+                    AccountSecrets::new(self.secrets(), account.uuid),
+                ))
+            })
+            .map_err(|err| err.to_string())?;
+        Ok(Arc::clone(
+            lock(&self.tokens).entry(account.id).or_insert(manager),
+        ))
     }
 
     /// The OAuth providers: the configured ones, or the settings' client IDs.
@@ -319,13 +366,12 @@ impl SyncEngine {
         let secrets = AccountSecrets::new(self.secrets(), account.uuid);
         let method = match config.auth()? {
             AccountAuth::Password => Method::Password(secrets),
-            AccountAuth::OAuth(provider) => Method::OAuth(match tokens {
-                Some(tokens) => Ok(tokens),
-                None => self
-                    .registry(&self.settings.borrow().settings)
-                    .client(provider)
-                    .map(|client| Arc::new(OAuthTokenManager::new(client, secrets)))
-                    .map_err(|err| err.to_string()),
+            AccountAuth::OAuth(_) => Method::OAuth(match tokens {
+                Some(tokens) => {
+                    lock(&self.tokens).insert(account.id, Arc::clone(&tokens));
+                    Ok(tokens)
+                }
+                None => self.token_manager(account, config),
             }),
         };
         Some(Arc::new(AccountCredentials::new(config.login(), method)))
@@ -387,6 +433,7 @@ impl SyncEngine {
     /// Stops the actor of `account` and waits until it logged out.
     pub(crate) async fn stop(&self, account: AccountId) {
         let running = lock(&self.actors).remove(&account);
+        lock(&self.tokens).remove(&account);
         if let Some(running) = running {
             // No more status reports for an account that is going away.
             running.forwarder.abort();

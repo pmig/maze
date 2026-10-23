@@ -284,6 +284,31 @@ async fn folder_ops_and_drafts() {
     assert_eq!(drafts_on_server[0].flags, Flags::SEEN | Flags::DRAFT);
     wait_for("the draft locally", || h.uids("Drafts").len() == 1).await;
 
+    // A Sent copy goes up as it is: no \Draft flag.
+    let sent = h.folder_id("Sent");
+    let raw =
+        b"From: me@example.org\r\nSubject: Sent\r\nMessage-ID: <s1@example.org>\r\n\r\nHi\r\n";
+    let sent_blob = h.store.blobs().put(raw).unwrap();
+    let sent_blob_id = sent_blob.id();
+    let op = h
+        .store
+        .write(move |w| {
+            w.register_blob(&sent_blob)?;
+            OpPayload::Append {
+                folder: sent,
+                blob: sent_blob_id,
+                flags: Flags::SEEN,
+            }
+            .enqueue(w, account, "user")
+        })
+        .await
+        .unwrap();
+    handle.apply_op(op).unwrap();
+    wait_for("the queue to drain", || ops_empty(&h)).await;
+    let sent_on_server = server.messages("Sent");
+    assert_eq!(sent_on_server.len(), 1);
+    assert_eq!(sent_on_server[0].flags, Flags::SEEN);
+
     // Replaying the same create again is harmless (idempotent).
     let again = h
         .store

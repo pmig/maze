@@ -16,6 +16,7 @@ const MAIN: &[M<'static>] = &[
     M::up(include_str!("../migrations/main/0001_schema_v1.sql")).foreign_key_check(),
     M::up(include_str!("../migrations/main/0002_account_uuid.sql")),
     M::up(include_str!("../migrations/main/0003_message_list.sql")),
+    M::up(include_str!("../migrations/main/0004_compose.sql")),
 ];
 
 const SENDLOG: &[M<'static>] = &[M::up(include_str!(

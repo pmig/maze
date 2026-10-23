@@ -22,6 +22,7 @@ security = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 settings = { workspace = true }
+smtp = { workspace = true }
 store = { workspace = true }
 sync = { workspace = true }
 thiserror = { workspace = true }
@@ -33,6 +34,7 @@ vault = { workspace = true }
 [dev-dependencies]
 anyhow = { workspace = true }
 imap = { workspace = true, features = ["fake"] }
+mail-parser = { workspace = true }
 pretty_assertions = { workspace = true }
 reqwest = { workspace = true }
 tempfile = { workspace = true }

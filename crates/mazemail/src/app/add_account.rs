@@ -3,8 +3,10 @@
 //!
 //! The server is detected from the address for well-known providers
 //! ([`suggest_imap_server`]: Gmail, Outlook.com, iCloud, Yahoo, Fastmail, GMX, …, else
-//! `imap.<domain>` with TLS on 993) and shown under the fields; "Server settings…"
-//! opens host, port, security and user name to override it. When the address belongs
+//! `imap.<domain>` with TLS on 993) and shown under the fields, with the SMTP server
+//! for sending ([`suggest_smtp_server`], else `smtp.<domain>` with STARTTLS on 587);
+//! "Server settings…" opens host, port, security and user name of both to override
+//! them (SMTP logs in like IMAP). When the address belongs
 //! to Google or Microsoft (by domain, or by the host for Microsoft 365), the matching
 //! sign-in button is highlighted.
 //!
@@ -12,7 +14,8 @@
 //! [`CoreHandle::add_oauth_account`]), which connects and lists the folders before it
 //! saves anything; errors (wrong password, unreachable server, no OAuth client ID)
 //! keep the dialog open with the message. "Test Connection" does the same check for a
-//! password account ([`CoreHandle::test_imap_account`]) and saves nothing. The dialog opens from the empty state's
+//! password account ([`CoreHandle::test_imap_account`]), then logs in to the SMTP
+//! server ([`CoreHandle::test_smtp_account`]), and saves nothing. The dialog opens from the empty state's
 //! button, the folder pane's "Add Account…" and the command palette
 //! ("Maze: Add Account").
 
@@ -26,7 +29,7 @@ use gpui::{
 use mail_ui::DataChanges;
 use mazemail_core::{
     AddImapAccount, AddOAuthAccount, ConnectionTest, CoreHandle, ImapSecurity, ImapServer,
-    ProviderKind, suggest_imap_server,
+    ProviderKind, SmtpServerSettings, smtp_default_port, suggest_imap_server, suggest_smtp_server,
 };
 use mazemail_types::{PRODUCT_NAME, Sensitive};
 use ui::kit::component::{
@@ -46,8 +49,12 @@ struct Form {
     host: Entity<InputState>,
     port: Entity<InputState>,
     username: Entity<InputState>,
+    smtp_host: Entity<InputState>,
+    smtp_port: Entity<InputState>,
     /// `None`: as detected.
     security: Option<ImapSecurity>,
+    /// `None`: as detected.
+    smtp_security: Option<ImapSecurity>,
     advanced: bool,
     busy: Option<SharedString>,
     error: Option<SharedString>,
@@ -103,6 +110,50 @@ pub(crate) fn plan(email: &str, host: &str, port: &str, security: Option<ImapSec
     }
 }
 
+/// The SMTP server the dialog will use: the typed one, else the one derived from the
+/// address and the IMAP host. A typed host without a port gets the security's port.
+pub(crate) fn smtp_plan(
+    email: &str,
+    imap_host: Option<&str>,
+    host: &str,
+    port: &str,
+    security: Option<ImapSecurity>,
+) -> Option<SmtpServerSettings> {
+    let host = host.trim();
+    let base = if host.is_empty() {
+        suggest_smtp_server(email, imap_host)?.server
+    } else {
+        SmtpServerSettings::new(host, security.unwrap_or(ImapSecurity::Starttls))
+    };
+    let security = security.unwrap_or(base.security);
+    let port = port.trim().parse().unwrap_or(if security == base.security {
+        base.port
+    } else {
+        smtp_default_port(security)
+    });
+    Some(SmtpServerSettings {
+        host: base.host,
+        port,
+        security,
+    })
+}
+
+/// The SMTP server the fields describe.
+fn form_smtp(
+    form: &Form,
+    email: &str,
+    imap: Option<&ImapServer>,
+    cx: &App,
+) -> Option<SmtpServerSettings> {
+    smtp_plan(
+        email,
+        imap.map(|s| s.host.as_str()),
+        &value(&form.smtp_host, cx),
+        &value(&form.smtp_port, cx),
+        form.smtp_security,
+    )
+}
+
 /// Opens the dialog in the main window (no-op while the core isn't open).
 pub(crate) fn show(core: CoreHandle, cx: &mut App) {
     let Some(window) = super::main_window(cx) else {
@@ -125,7 +176,10 @@ pub(crate) fn show(core: CoreHandle, cx: &mut App) {
             host: input("IMAP server (detected)", window, cx),
             port: input("Port", window, cx),
             username: input("User name (default: the address)", window, cx),
+            smtp_host: input("SMTP server (detected)", window, cx),
+            smtp_port: input("Port", window, cx),
             security: None,
+            smtp_security: None,
             advanced: false,
             busy: None,
             error: None,
@@ -162,10 +216,21 @@ fn open(state: Shared, window: &mut Window, cx: &mut App) {
             &value(&form.port, cx),
             form.security,
         );
+        let smtp = form_smtp(&form, &email, plan.server.as_ref(), cx);
         let busy = form.busy.clone();
         let error = form.error.clone();
         let success = form.success.clone();
         let advanced = form.advanced;
+        let smtp_line: Option<SharedString> = smtp.as_ref().map(|server| {
+            format!(
+                "Sending: {}:{} · {}",
+                server.host,
+                server.port,
+                security_label(server.security)
+            )
+            .into()
+        });
+        let selected_smtp_security = smtp.as_ref().map(|s| s.security);
         let server_line: SharedString = match &plan.server {
             Some(server) => format!(
                 "Server: {}:{} · {}{}",
@@ -197,6 +262,20 @@ fn open(state: Shared, window: &mut Window, cx: &mut App) {
             .selected(selected_security == Some(security))
             .on_click(move |_, window, _| {
                 state.borrow_mut().security = Some(security);
+                window.refresh();
+            })
+        };
+        let smtp_security_button = |security: ImapSecurity| {
+            let state = state.clone();
+            Button::new(SharedString::from(format!(
+                "smtp-security-{}",
+                security.as_str()
+            )))
+            .small()
+            .label(security_label(security))
+            .selected(selected_smtp_security == Some(security))
+            .on_click(move |_, window, _| {
+                state.borrow_mut().smtp_security = Some(security);
                 window.refresh();
             })
         };
@@ -246,6 +325,14 @@ fn open(state: Shared, window: &mut Window, cx: &mut App) {
                             .text_color(theme.muted_foreground)
                             .child(server_line),
                     )
+                    .when_some(smtp_line, |this, line| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(line),
+                        )
+                    })
                     .when_some(oauth_hint, |this, hint| {
                         this.child(
                             div()
@@ -282,6 +369,19 @@ fn open(state: Shared, window: &mut Window, cx: &mut App) {
                                 .child(security_button(ImapSecurity::Insecure)),
                         )
                         .child(Input::new(&form.username))
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(div().flex_1().child(Input::new(&form.smtp_host)))
+                                .child(div().w_20().child(Input::new(&form.smtp_port))),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(smtp_security_button(ImapSecurity::Tls))
+                                .child(smtp_security_button(ImapSecurity::Starttls))
+                                .child(smtp_security_button(ImapSecurity::Insecure)),
+                        )
                     })
                     .when_some(busy.clone(), |this, busy| {
                         this.child(div().text_color(theme.muted_foreground).child(busy))
@@ -395,6 +495,7 @@ fn password_input(
         let password = form.password.read(cx).value().to_string();
         let username = value(&form.username, cx);
         let name = value(&form.name, cx);
+        let smtp = form_smtp(&form, &email, plan.server.as_ref(), cx);
         let Some(server) = plan.server else {
             drop(form);
             set_status(
@@ -423,6 +524,7 @@ fn password_input(
                 server,
                 username: (!username.is_empty()).then_some(username),
                 password: Sensitive::new(password),
+                smtp,
             },
         )
     };
@@ -450,16 +552,36 @@ fn test_with_password(state: &Shared, window: &mut Window, cx: &mut App) {
     };
     let host = input.server.host.clone();
     set_status(state, Some(format!("Testing {host}…").into()), None, window);
-    let attempt = cx.background_spawn(async move { core.test_imap_account(input).await });
+    // IMAP first; SMTP only if IMAP works (same login).
+    let attempt = cx.background_spawn(async move {
+        let imap = core.test_imap_account(input.clone()).await?;
+        let smtp = core.test_smtp_account(input).await;
+        Ok::<_, mazemail_core::Error>((imap, smtp))
+    });
     let handle = window.window_handle();
     let state = state.clone();
     cx.spawn(async move |cx| {
         let result = attempt.await;
         cx.update(|cx| {
             let _ = handle.update(cx, |_, window, _| match result {
-                Ok(test) => {
-                    set_status(&state, None, None, window);
-                    state.borrow_mut().success = Some(connection_ok(&host, test).into());
+                Ok((test, smtp)) => {
+                    let imap = connection_ok(&host, test);
+                    match smtp {
+                        Ok(server) => {
+                            set_status(&state, None, None, window);
+                            state.borrow_mut().success = Some(
+                                format!("{imap} Sending through {} works too.", server.host).into(),
+                            );
+                        }
+                        Err(error) => {
+                            set_status(
+                                &state,
+                                None,
+                                Some(format!("{imap} But {error}").into()),
+                                window,
+                            );
+                        }
+                    }
                     window.refresh();
                 }
                 Err(error) => set_status(&state, None, Some(error.to_string().into()), window),
@@ -552,6 +674,45 @@ mod tests {
         );
         assert!(!guessed.detected);
         assert_eq!(plan("nothing", "", "", None).server, None);
+    }
+
+    #[test]
+    fn the_smtp_server_is_derived_and_can_be_overridden() {
+        let gmail = smtp_plan("anna@gmail.com", Some("imap.gmail.com"), "", "", None).unwrap();
+        assert_eq!(
+            (gmail.host.as_str(), gmail.port, gmail.security),
+            ("smtp.gmail.com", 465, ImapSecurity::Tls)
+        );
+        let m365 = smtp_plan(
+            "bob@contoso.example",
+            Some("outlook.office365.com"),
+            "",
+            "",
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            (m365.host.as_str(), m365.port, m365.security),
+            ("smtp.office365.com", 587, ImapSecurity::Starttls)
+        );
+        let own = smtp_plan("c@example.org", Some("imap.example.org"), "", "", None).unwrap();
+        assert_eq!((own.host.as_str(), own.port), ("smtp.example.org", 587));
+        // Switching the derived server to TLS takes TLS's port.
+        let tls = smtp_plan(
+            "c@example.org",
+            Some("imap.example.org"),
+            "",
+            "",
+            Some(ImapSecurity::Tls),
+        )
+        .unwrap();
+        assert_eq!((tls.port, tls.security), (465, ImapSecurity::Tls));
+        let typed = smtp_plan("c@example.org", None, "mail.example.org", "2525", None).unwrap();
+        assert_eq!(
+            (typed.host.as_str(), typed.port, typed.security),
+            ("mail.example.org", 2525, ImapSecurity::Starttls)
+        );
+        assert_eq!(smtp_plan("nothing", None, "", "", None), None);
     }
 
     #[test]

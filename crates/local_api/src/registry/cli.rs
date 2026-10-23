@@ -502,6 +502,9 @@ impl CliCommand {
                     security: args.security,
                     username: args.username.map(Sensitive::new),
                     password,
+                    smtp_host: args.smtp_host,
+                    smtp_port: args.smtp_port,
+                    smtp_security: args.smtp_security,
                 };
                 Invocation::new(name, &wire)
             }

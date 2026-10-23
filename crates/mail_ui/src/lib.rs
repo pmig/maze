@@ -37,12 +37,14 @@ use mazemail_types::PRODUCT_NAME;
 pub use fake::FakeMailSource;
 pub use source::{DataChanges, MailSource};
 pub use ui_state::{ListDefaults, ListMode, UI_STATE_FILE, UiStateStore};
-pub use window::{MailWindow, MailWindowOptions, OpenWindowError, open_main_window};
+pub use window::{
+    ComposeRequest, MailWindow, MailWindowOptions, OpenWindowError, open_main_window,
+};
 
 use crate::actions::{
-    About, CollapseAllThreads, ExpandAllThreads, Hide, HideOthers, Minimize, Quit,
-    ReverseSortOrder, ShowAll, Toggle, ToggleAgentColumn, ToggleFolderPane, ToggleMessagePane,
-    ToggleTableView, ToggleThreads, Zoom, sort_action,
+    About, CollapseAllThreads, ExpandAllThreads, Forward, Hide, HideOthers, Minimize, NewMessage,
+    Quit, Reply, ReplyAll, ReverseSortOrder, ShowAll, Toggle, ToggleAgentColumn, ToggleFolderPane,
+    ToggleMessagePane, ToggleTableView, ToggleThreads, Zoom, sort_action,
 };
 use crate::source::SortBy;
 
@@ -115,6 +117,13 @@ pub fn app_menus() -> Vec<Menu> {
                         ]),
                 ),
             ),
+        ]),
+        Menu::new("Message").items([
+            MenuItem::action("New Message", NewMessage),
+            MenuItem::separator(),
+            MenuItem::action("Reply", Reply),
+            MenuItem::action("Reply All", ReplyAll),
+            MenuItem::action("Forward", Forward),
         ]),
         Menu::new("Window").items([
             MenuItem::action("Minimize", Minimize),

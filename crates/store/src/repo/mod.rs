@@ -3,6 +3,7 @@
 
 pub(crate) mod accounts;
 pub(crate) mod agents;
+pub(crate) mod drafts;
 pub(crate) mod folders;
 pub(crate) mod lists;
 pub(crate) mod messages;
@@ -14,16 +15,17 @@ pub(crate) mod threads;
 use std::collections::BTreeSet;
 
 use mazemail_types::{
-    AccountId, Flags, FolderId, FolderRole, IdentityId, MessageId, TagId, ThreadId,
+    AccountId, DraftId, Flags, FolderId, FolderRole, IdentityId, MessageId, TagId, ThreadId,
 };
 use rusqlite::Connection;
 
 use crate::model::{
     Account, AgentThread, AgentThreadId, ApiToken, AuditEntry, AuditQuery, Contact, Folder,
     FolderNode, Identity, IdentityRule, ListFilter, ListKey, ListOrder, ListScope, MessageDetail,
-    MessageKey, MessagePage, MessageRow, MessageScope, MetadataFilter, OutboxId, OutboxItem, Page,
-    PendingOp, Proposal, ProposalId, ProposalState, Rule, SavedSearch, Signature, SignatureId,
-    SmtpServer, SmtpServerId, SortOrder, Tag, ThreadRow, TokenId, TreeMessage, UnixTime,
+    MessageKey, MessagePage, MessageRow, MessageScope, MetadataFilter, OutboxId, OutboxItem,
+    OutboxState, Page, PendingOp, Proposal, ProposalId, ProposalState, Rule, SavedSearch,
+    Signature, SignatureId, SmtpServer, SmtpServerId, SortOrder, StoredDraft, Tag, ThreadRow,
+    TokenId, TreeMessage, UnixTime,
 };
 use crate::{Reader, Result, WriteTx};
 
@@ -384,6 +386,23 @@ pub trait Queries: sealed::Sealed {
     /// Queued outbox items due at `now`.
     fn outbox_due(&self, now: UnixTime) -> Result<Vec<OutboxItem>> {
         ops::outbox_due(self.connection(sealed::Token), now)
+    }
+
+    /// Outbox items in `state`, oldest first.
+    fn outbox_in_state(&self, state: OutboxState) -> Result<Vec<OutboxItem>> {
+        ops::outbox_in_state(self.connection(sealed::Token), state)
+    }
+
+    // ---- drafts -------------------------------------------------------------------
+
+    /// One local draft.
+    fn draft(&self, id: DraftId) -> Result<Option<StoredDraft>> {
+        drafts::draft(self.connection(sealed::Token), id)
+    }
+
+    /// All local drafts, most recently edited first.
+    fn drafts(&self) -> Result<Vec<StoredDraft>> {
+        drafts::drafts(self.connection(sealed::Token))
     }
 
     // ---- tokens, proposals, audit, agents -----------------------------------------

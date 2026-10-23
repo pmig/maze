@@ -30,6 +30,8 @@ pub struct ChangeSet {
     pub settings: bool,
     /// The outbox changed.
     pub outbox: bool,
+    /// Local drafts changed.
+    pub drafts: bool,
     /// Proposals changed.
     pub proposals: bool,
 }
@@ -55,6 +57,7 @@ impl ChangeSet {
         self.accounts.extend(other.accounts);
         self.settings |= other.settings;
         self.outbox |= other.outbox;
+        self.drafts |= other.drafts;
         self.proposals |= other.proposals;
         // A thread removed in a later job isn't "changed" any more, and vice versa.
         for thread in &self.threads_removed {

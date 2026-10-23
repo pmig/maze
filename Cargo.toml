@@ -15,6 +15,7 @@ publish = false
 # Internal crates (layering: see AGENTS.md)
 auth = { path = "crates/auth" }
 auto_update_ui = { path = "crates/auto_update_ui" }
+composer = { path = "crates/composer" }
 import = { path = "crates/import" }
 ingest = { path = "crates/ingest" }
 local_api = { path = "crates/local_api" }
@@ -27,6 +28,7 @@ release_channel = { path = "crates/release_channel" }
 search = { path = "crates/search" }
 security = { path = "crates/security" }
 settings = { path = "crates/settings" }
+smtp = { path = "crates/smtp" }
 store = { path = "crates/store" }
 sync = { path = "crates/sync" }
 ui = { path = "crates/ui" }
@@ -61,6 +63,9 @@ idna = "1.1"
 jsonc-parser = { version = "0.34", features = ["cst", "serde"] }
 keyring-core = "1"
 libc = "0.2"
+# SMTP submission (PLAN §4.5): async transport over Tokio with rustls (ring, like the
+# IMAP client) and the platform certificate verifier; messages are built elsewhere.
+lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "tokio1-rustls", "ring", "rustls-platform-verifier"] }
 mail-auth = { version = "0.13.3", default-features = false, features = ["aws-lc-rs", "arc"] }
 notify = "8"
 notify-debouncer-mini = "0.7"
@@ -78,6 +83,10 @@ semver = { version = "1", features = ["serde"] }
 html5ever = "0.40.1"
 linkify = "0.11.0"
 mail-parser = { version = "0.11.9", features = ["full_encoding"] }
+mail-builder = { version = "1.0", default-features = false }
+# HTML quotes of replies become Markdown (PLAN §4.10).
+htmd = "0.5.6"
+pulldown-cmark = { version = "0.13.5", default-features = false, features = ["html"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-platform-verifier = "0.7"
 serde = { version = "1", features = ["derive"] }

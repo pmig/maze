@@ -8,7 +8,8 @@
 //! anything saved: the account row (with its [`AccountConfig`] in `config_json`), a
 //! default identity, and the secret in the keychain under the account's UUID (the
 //! password, or the OAuth refresh token). If saving the secret fails, the account row
-//! is removed again. Then the account's sync actor starts.
+//! is removed again. Then the account's sync actor starts. The identity gets an SMTP
+//! server: the one given, or the derived one ([`suggest_smtp_server`]).
 //!
 //! The account kind follows the server: a server with Gmail's `X-GM-EXT-1` is a Gmail
 //! account (labels, archive by removing `\Inbox`), Microsoft hosts are Microsoft 365,
@@ -47,6 +48,7 @@ use store::{Account, AccountKind, IdentityInput, NewAccount, Queries as _};
 
 use crate::credentials::AccountCredentials;
 use crate::handle::CoreHandle;
+use crate::outgoing::{SmtpServerSettings, smtp_server_input, suggest_smtp_server};
 use crate::sync_bridge::SyncStatus;
 use crate::{Error, Result};
 
@@ -354,6 +356,9 @@ pub struct AddImapAccount {
     pub username: Option<String>,
     /// The password (goes to the keychain).
     pub password: Sensitive<String>,
+    /// The SMTP server for sending; `None` derives it ([`suggest_smtp_server`]). The
+    /// login is the account's.
+    pub smtp: Option<SmtpServerSettings>,
 }
 
 impl std::fmt::Debug for AddImapAccount {
@@ -647,9 +652,11 @@ impl CoreHandle {
         config: AccountConfig,
         display_name: Option<String>,
         email: String,
+        smtp: Option<SmtpServerSettings>,
     ) -> Result<Account> {
         let ordinal = i64::try_from(self.accounts()?.len()).unwrap_or(i64::MAX);
         let config_json = config.to_json();
+        let smtp = smtp_server_input(&name, &config, smtp);
         let id = self
             .store()
             .write(move |w| {
@@ -659,6 +666,7 @@ impl CoreHandle {
                     config_json,
                     ordinal,
                 })?;
+                let smtp = smtp.map(|input| w.create_smtp_server(&input)).transpose()?;
                 w.create_identity(
                     id,
                     &IdentityInput {
@@ -667,7 +675,7 @@ impl CoreHandle {
                         email,
                         reply_to: None,
                         signature: None,
-                        smtp: None,
+                        smtp,
                         sent_folder: None,
                         drafts_folder: None,
                         archive_folder: None,
@@ -754,7 +762,7 @@ impl CoreHandle {
             .filter(|n| !n.is_empty());
         let name = display_name.clone().unwrap_or_else(|| email.clone());
         let account = self
-            .create_account_rows(kind, name, config, display_name, email)
+            .create_account_rows(kind, name, config, display_name, email, input.smtp)
             .await?;
         let secrets = AccountSecrets::new(engine.secrets(), account.uuid);
         if let Err(err) = secrets.set_password(input.password).await {
@@ -788,6 +796,50 @@ impl CoreHandle {
                 },
             )
             .await
+        })
+        .await
+    }
+
+    /// Tests the SMTP server of a password account without saving or sending anything:
+    /// connects and logs in with the account's user name and password. Returns the
+    /// server it tested (`input.smtp`, or the derived one).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Account`] for bad input, an unreachable server or a rejected login;
+    /// [`Error::NoSyncEngine`] without a sync engine.
+    pub async fn test_smtp_account(&self, input: AddImapAccount) -> Result<SmtpServerSettings> {
+        let core = self.clone();
+        self.run(async move {
+            let engine = core.engine_or_err()?;
+            let (email, imap, user) = password_login(&input)?;
+            let server = input
+                .smtp
+                .clone()
+                .or_else(|| suggest_smtp_server(&email, Some(&imap.host)).map(|s| s.server))
+                .ok_or_else(|| {
+                    account_error(
+                        AccountErrorKind::InvalidInput,
+                        "enter the SMTP server's host name (smtp.example.com)",
+                    )
+                })?;
+            let where_ = format!("{}:{}", server.host, server.port);
+            let credentials = smtp::Credentials::Password {
+                user,
+                password: input.password,
+            };
+            let check = engine.mailer().check(&server.config(), &credentials).await;
+            match check {
+                Ok(()) => Ok(server),
+                Err(err) if err.is_auth() => Err(account_error(
+                    AccountErrorKind::AuthFailed,
+                    format!("the SMTP server {where_} rejected the login: {err}"),
+                )),
+                Err(err) => Err(account_error(
+                    AccountErrorKind::Unreachable,
+                    format!("can't use the SMTP server {where_}: {err}"),
+                )),
+            }
         })
         .await
     }
@@ -860,7 +912,7 @@ impl CoreHandle {
             .filter(|n| !n.is_empty());
         let name = display_name.clone().unwrap_or_else(|| email.clone());
         let account = self
-            .create_account_rows(kind, name, config, display_name, email)
+            .create_account_rows(kind, name, config, display_name, email, None)
             .await?;
         let manager = Arc::new(OAuthTokenManager::new(
             client,
@@ -902,7 +954,28 @@ impl CoreHandle {
         if let Some(engine) = &engine {
             engine.stop(id).await;
         }
-        self.store().write(move |w| w.delete_account(id)).await?;
+        self.store()
+            .write(move |w| {
+                let servers: Vec<_> = w
+                    .identities(Some(id))?
+                    .iter()
+                    .filter_map(|i| i.input.smtp)
+                    .collect();
+                w.delete_account(id)?;
+                // SMTP servers only this account's identities used go with it.
+                let in_use: Vec<_> = w
+                    .identities(None)?
+                    .iter()
+                    .filter_map(|i| i.input.smtp)
+                    .collect();
+                for server in servers {
+                    if !in_use.contains(&server) && w.smtp_server(server)?.is_some() {
+                        w.delete_smtp_server(server)?;
+                    }
+                }
+                Ok(())
+            })
+            .await?;
         tracing::info!(account = %id, "account removed");
         if let Some(engine) = engine {
             let secrets = AccountSecrets::new(engine.secrets(), account.uuid);
@@ -926,6 +999,7 @@ impl CoreHandle {
         if let Some(engine) = self.engine() {
             engine.network_changed();
         }
+        self.send_outbox_now();
     }
 
     /// The computer woke from sleep: like [`CoreHandle::network_changed`]. The engine

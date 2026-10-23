@@ -4,7 +4,9 @@ use mazemail_types::{AccountId, BlobId, IdentityId};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use crate::blob::StagedBlob;
-use crate::model::{OpId, OpState, OutboxId, OutboxItem, OutboxState, PendingOp, UnixTime};
+use crate::model::{
+    OpId, OpState, OutboxEnvelope, OutboxId, OutboxItem, OutboxState, PendingOp, UnixTime,
+};
 use crate::repo::accounts::ensure_changed;
 use crate::sendlog::SendLog;
 use crate::{Error, Result, WriteTx};
@@ -74,10 +76,17 @@ pub(crate) fn accounts_with_pending_ops(conn: &Connection) -> Result<Vec<Account
         .collect::<rusqlite::Result<_>>()?)
 }
 
-const OUTBOX_COLUMNS: &str =
-    "id, identity_id, blob_id, rfc_message_id, send_at, state, attempts, last_error, created";
+const OUTBOX_COLUMNS: &str = "id, identity_id, blob_id, rfc_message_id, send_at, state, attempts, \
+     last_error, created, envelope_json";
 
 fn outbox_row(row: &Row<'_>) -> rusqlite::Result<OutboxItem> {
+    let envelope = row
+        .get::<_, Option<String>>(9)?
+        .map(|text| serde_json::from_str::<OutboxEnvelope>(&text))
+        .transpose()
+        .map_err(|err| {
+            rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, err.into())
+        })?;
     Ok(OutboxItem {
         id: OutboxId(row.get(0)?),
         identity: row.get::<_, Option<i64>>(1)?.map(IdentityId),
@@ -88,6 +97,7 @@ fn outbox_row(row: &Row<'_>) -> rusqlite::Result<OutboxItem> {
         attempts: row.get(6)?,
         last_error: row.get(7)?,
         created: row.get(8)?,
+        envelope,
     })
 }
 
@@ -117,6 +127,16 @@ pub(crate) fn outbox_due(conn: &Connection, now: UnixTime) -> Result<Vec<OutboxI
     ))?;
     Ok(stmt
         .query_map([now], outbox_row)?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// Outbox items in `state`, oldest first.
+pub(crate) fn outbox_in_state(conn: &Connection, state: OutboxState) -> Result<Vec<OutboxItem>> {
+    let mut stmt = conn.prepare_cached(&format!(
+        "SELECT {OUTBOX_COLUMNS} FROM outbox WHERE state = ?1 ORDER BY send_at, id"
+    ))?;
+    Ok(stmt
+        .query_map([state], outbox_row)?
         .collect::<rusqlite::Result<_>>()?)
 }
 
@@ -218,29 +238,89 @@ impl WriteTx<'_> {
     // ---- outbox ----------------------------------------------------------------------
 
     /// Queues a built message (its raw blob) for sending at `send_at` (after the undo
-    /// delay).
+    /// delay). `envelope` is the SMTP envelope (Bcc recipients included).
     pub fn outbox_enqueue(
         &mut self,
         identity: Option<IdentityId>,
         blob: &StagedBlob,
         rfc_message_id: &str,
         send_at: UnixTime,
+        envelope: Option<&OutboxEnvelope>,
     ) -> Result<OutboxId> {
         self.register_blob(blob)?;
+        let envelope = envelope.map(serde_json::to_string).transpose()?;
         self.conn
             .prepare_cached(
-                "INSERT INTO outbox (identity_id, blob_id, rfc_message_id, send_at, created)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO outbox (identity_id, blob_id, rfc_message_id, send_at, created,
+                   envelope_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             )?
             .execute(params![
                 identity.map(|i| i.0),
                 &blob.id().0,
                 rfc_message_id,
                 send_at,
-                self.now
+                self.now,
+                envelope
             ])?;
         self.changes.outbox = true;
         Ok(OutboxId(self.conn.last_insert_rowid()))
+    }
+
+    /// Takes a queued item for sending: `queued` becomes `sending` (counting an
+    /// attempt). Returns `false` if the item isn't queued (someone else took it, or it
+    /// was sent, removed or frozen meanwhile), so two senders never send one item.
+    pub fn outbox_claim(&mut self, id: OutboxId) -> Result<bool> {
+        let changed = self
+            .conn
+            .prepare_cached(
+                "UPDATE outbox SET state = 'sending', attempts = attempts + 1
+                 WHERE id = ?1 AND state = 'queued'",
+            )?
+            .execute([id.0])?;
+        if changed > 0 {
+            self.changes.outbox = true;
+        }
+        Ok(changed > 0)
+    }
+
+    /// A send attempt failed temporarily: back to `queued`, due again at `send_at`,
+    /// with the error for the activity log.
+    pub fn outbox_retry_later(
+        &mut self,
+        id: OutboxId,
+        send_at: UnixTime,
+        error: &str,
+    ) -> Result<()> {
+        let changed = self
+            .conn
+            .prepare_cached(
+                "UPDATE outbox SET state = 'queued', send_at = ?2, last_error = ?3
+                 WHERE id = ?1 AND state != 'sent'",
+            )?
+            .execute(params![id.0, send_at, error])?;
+        ensure_changed(changed, "unsent outbox item", id.0)?;
+        self.changes.outbox = true;
+        Ok(())
+    }
+
+    /// Removes sent items created before `before` whose blob no pending op still needs
+    /// (the Sent copy's `APPEND` reads it). Their blobs lose a reference and are
+    /// collected. Returns how many were removed.
+    pub fn outbox_prune_sent(&mut self, before: UnixTime) -> Result<usize> {
+        let removed = self
+            .conn
+            .prepare_cached(
+                "DELETE FROM outbox WHERE state = 'sent' AND created < ?1
+                   AND (blob_id IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM pending_op
+                     WHERE instr(payload_json, lower(hex(outbox.blob_id))) > 0))",
+            )?
+            .execute([before])?;
+        if removed > 0 {
+            self.changes.outbox = true;
+        }
+        Ok(removed)
     }
 
     /// Sets an item's state (and error text); `Sending` counts an attempt.
