@@ -35,10 +35,11 @@
 //! to [`MAX_KEPT_ROWS`] selected rows are found again by identity when the list
 //! changes; "select all" stays select all.
 //!
-//! # Per folder
+//! # View
 //!
 //! Cards or table, threads on or off, the date order, the table's columns and their
-//! widths are remembered per folder in [`UiStateStore`] (`ui_state.json`).
+//! widths are the same in every folder and remembered in [`UiStateStore`]
+//! (`ui_state.json`).
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -568,7 +569,6 @@ pub struct ThreadList {
     title: SharedString,
     search: Option<String>,
     ui_state: UiStateStore,
-    folder: String,
     prefs: ListPrefs,
     model: Rc<RefCell<ListModel>>,
     look: Rc<RefCell<TableLook>>,
@@ -595,16 +595,8 @@ impl std::fmt::Debug for ThreadList {
     }
 }
 
-/// The key a scope's state is remembered under in `ui_state.json`.
-pub fn folder_state_key(scope: &ThreadScope) -> String {
-    match scope {
-        ThreadScope::Folder(key) => key.tree_id().to_string(),
-        ThreadScope::AllFolders => "search".to_owned(),
-    }
-}
-
 impl ThreadList {
-    /// A list showing `scope`, remembering per-folder state in `ui_state`.
+    /// A list showing `scope`, remembering its view in `ui_state`.
     pub fn new(
         source: Arc<dyn MailSource>,
         offset: UtcOffset,
@@ -616,8 +608,7 @@ impl ThreadList {
     ) -> Self {
         let dates = DateFormatter::new(offset);
         let model = Rc::new(RefCell::new(ListModel::new(source.clone(), dates)));
-        let folder = folder_state_key(&scope);
-        let prefs = ui_state.prefs(&folder);
+        let prefs = ui_state.prefs();
         let look = Rc::new(RefCell::new(TableLook::from_prefs(&prefs)));
         let list = cx.weak_entity();
         let table = cx.new(|cx| {
@@ -650,7 +641,6 @@ impl ThreadList {
             title: title.clone(),
             search: None,
             ui_state,
-            folder,
             prefs,
             model,
             look,
@@ -673,8 +663,7 @@ impl ThreadList {
         this
     }
 
-    /// Opens a folder (or search results) with its remembered view and selects its
-    /// first row.
+    /// Opens a folder (or search results) and selects its first row.
     pub fn open(
         &mut self,
         scope: ThreadScope,
@@ -683,8 +672,7 @@ impl ThreadList {
         cx: &mut Context<'_, Self>,
     ) {
         let mode_before = self.prefs.mode;
-        self.folder = folder_state_key(&scope);
-        self.prefs = self.ui_state.prefs(&self.folder);
+        self.prefs = self.ui_state.prefs();
         *self.look.borrow_mut() = TableLook::from_prefs(&self.prefs);
         self.scope = scope;
         self.title = title;
@@ -822,7 +810,7 @@ impl ThreadList {
     }
 
     fn save_prefs(&self) {
-        self.ui_state.set_prefs(&self.folder, &self.prefs);
+        self.ui_state.set_prefs(&self.prefs);
     }
 
     fn load_keys(
@@ -3188,7 +3176,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn threads_off_lists_messages_and_is_remembered_per_folder(cx: &mut gpui::TestAppContext) {
+    fn threads_off_lists_messages_in_every_folder(cx: &mut gpui::TestAppContext) {
         let source = source();
         let ui_state = memory();
         let (list, cx) = open_list(cx, &source, inbox(), ui_state.clone());
@@ -3210,21 +3198,25 @@ mod tests {
             list.expand_all(cx);
             assert_eq!(list.len(), messages as usize);
 
-            // Another folder uses the defaults; coming back restores threads off.
+            // Another folder shows the same view, and so does coming back.
             list.open(
                 ThreadScope::Folder(FolderKey::Unified(FolderRole::Inbox)),
                 "Inbox".into(),
                 None,
                 cx,
             );
-            assert!(list.threaded());
+            assert!(!list.threaded());
             list.open(inbox(), "Inbox".into(), None, cx);
             assert!(!list.threaded());
             list.toggle_threads(cx);
             assert!(list.threaded());
             assert!(matches!(list.selected_item(), Some(ItemId::Thread(_))));
         });
-        assert!(ui_state.state().folders.is_empty(), "back to the defaults");
+        assert_eq!(
+            ui_state.state().list,
+            crate::ui_state::ListState::default(),
+            "back to the defaults"
+        );
     }
 
     #[gpui::test]
@@ -3246,7 +3238,7 @@ mod tests {
             );
         });
         let reloaded = UiStateStore::load(&path, ListDefaults::default());
-        let prefs = reloaded.prefs(&folder_state_key(&inbox()));
+        let prefs = reloaded.prefs();
         assert_eq!(prefs.mode, ListMode::Table);
         assert_eq!(prefs.sort, ListSort::OldestFirst);
         assert!(prefs.columns.contains(&ColumnId::Size));

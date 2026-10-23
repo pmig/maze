@@ -1,5 +1,5 @@
-//! Per-folder message list state, remembered across restarts (CONCEPT §8.2: "view
-//! mode, threading, columns and widths are remembered per folder").
+//! The message list's view, remembered across restarts: one for all of Maze, so every
+//! folder, unified folder and search shows mail the same way (CONCEPT §8.2).
 //!
 //! # `ui_state.json`
 //!
@@ -10,13 +10,10 @@
 //!
 //! ```json
 //! {
-//!   "version": 1,
-//!   "folders": {
-//!     "folder:12": { "view": "table", "threaded": false, "sort": "oldest_first",
-//!                    "columns": ["star", "subject", "correspondents", "size", "date"],
-//!                    "widths": { "correspondents": 220.0 } },
-//!     "unified:inbox": { "view": "cards", "threaded": true }
-//!   },
+//!   "version": 2,
+//!   "list": { "view": "table", "threaded": false, "sort": "oldest_first",
+//!             "columns": ["star", "subject", "correspondents", "size", "date"],
+//!             "widths": { "correspondents": 220.0 } },
 //!   "move_targets": { "a2": [17, 4] }
 //! }
 //! ```
@@ -24,11 +21,12 @@
 //! `move_targets` are the folders Quick Move (`shift-m`) moved mail to last, per
 //! account, newest first ([`RECENT_MOVE_TARGETS`] at most).
 //!
-//! A folder without an entry uses the defaults from `settings.json`
-//! (`thread_list.view`, `thread_list.threaded`), [`ListDefaults`]. Every field of an
-//! entry is optional, so an entry only records what was changed in that folder.
-//! Unknown fields and an unreadable file are ignored (the file is rewritten on the
-//! next change); writes go to a temporary file that is renamed into place.
+//! What isn't in `list` follows the defaults from `settings.json`
+//! (`thread_list.view`, `thread_list.threaded`, `thread_list.sort`), [`ListDefaults`]:
+//! every field is optional, so `list` only records what was changed. Version 1 kept
+//! a `folders` map with an entry per folder; it is ignored. Unknown fields and an
+//! unreadable file are ignored (the file is rewritten on the next change); writes go
+//! to a temporary file that is renamed into place.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -167,7 +165,7 @@ impl ColumnId {
     }
 }
 
-/// The defaults for folders without remembered state, from `settings.json`.
+/// The defaults for what the list view hasn't changed, from `settings.json`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ListDefaults {
     /// `thread_list.view`.
@@ -188,10 +186,10 @@ impl Default for ListDefaults {
     }
 }
 
-/// What is remembered for one folder. `None` follows the defaults.
+/// What is remembered of the list view. `None` follows the defaults.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct FolderListState {
+pub struct ListState {
     /// Cards or table.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub view: Option<ListMode>,
@@ -209,7 +207,7 @@ pub struct FolderListState {
     pub widths: BTreeMap<ColumnId, f32>,
 }
 
-/// The effective list settings of a folder: its remembered state over the defaults.
+/// The effective list settings: the remembered state over the defaults.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ListPrefs {
     /// Cards or table.
@@ -226,7 +224,7 @@ pub struct ListPrefs {
 
 impl ListPrefs {
     /// `state` over `defaults`.
-    pub fn resolve(state: Option<&FolderListState>, defaults: &ListDefaults) -> Self {
+    pub fn resolve(state: Option<&ListState>, defaults: &ListDefaults) -> Self {
         let state = state.cloned().unwrap_or_default();
         let mut columns: Vec<ColumnId> = state
             .columns
@@ -269,8 +267,8 @@ impl ListPrefs {
     }
 
     /// What to remember: only what differs from the defaults.
-    pub fn to_state(&self, defaults: &ListDefaults) -> FolderListState {
-        FolderListState {
+    pub fn to_state(&self, defaults: &ListDefaults) -> ListState {
+        ListState {
             view: (self.mode != defaults.mode).then_some(self.mode),
             threaded: (self.threaded != defaults.threaded).then_some(self.threaded),
             sort: (self.sort != defaults.sort).then_some(self.sort),
@@ -284,11 +282,10 @@ impl ListPrefs {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiState {
-    /// Format version, 1.
+    /// Format version, 2.
     pub version: u32,
-    /// Per folder, keyed by [`FolderKey::tree_id`](crate::source::FolderKey::tree_id)
-    /// (`folder:12`, `unified:inbox`) or `search` for global search results.
-    pub folders: BTreeMap<String, FolderListState>,
+    /// The list view, the same in every folder.
+    pub list: ListState,
     /// Quick Move targets per account (keyed by its public id, `a2`), newest first.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub move_targets: BTreeMap<String, Vec<FolderId>>,
@@ -297,8 +294,8 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         Self {
-            version: 1,
-            folders: BTreeMap::new(),
+            version: 2,
+            list: ListState::default(),
             move_targets: BTreeMap::new(),
         }
     }
@@ -354,26 +351,21 @@ impl UiStateStore {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The defaults for folders without state.
+    /// The defaults for what the list view hasn't changed.
     pub fn defaults(&self) -> ListDefaults {
         self.lock().defaults
     }
 
-    /// The effective settings of a folder.
-    pub fn prefs(&self, folder: &str) -> ListPrefs {
+    /// The effective list settings.
+    pub fn prefs(&self) -> ListPrefs {
         let inner = self.lock();
-        ListPrefs::resolve(inner.state.folders.get(folder), &inner.defaults)
+        ListPrefs::resolve(Some(&inner.state.list), &inner.defaults)
     }
 
-    /// Remembers a folder's settings and writes the file (if there is one).
-    pub fn set_prefs(&self, folder: &str, prefs: &ListPrefs) {
+    /// Remembers the list settings and writes the file (if there is one).
+    pub fn set_prefs(&self, prefs: &ListPrefs) {
         self.change(|inner| {
-            let state = prefs.to_state(&inner.defaults);
-            if state == FolderListState::default() {
-                inner.state.folders.remove(folder);
-            } else {
-                inner.state.folders.insert(folder.to_owned(), state);
-            }
+            inner.state.list = prefs.to_state(&inner.defaults);
         });
     }
 
@@ -436,13 +428,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn folders_without_state_use_the_defaults() {
+    fn without_state_the_defaults_apply() {
         let store = UiStateStore::in_memory(ListDefaults {
             mode: ListMode::Table,
             threaded: false,
             sort: ListSort::NewestFirst,
         });
-        let prefs = store.prefs("folder:1");
+        let prefs = store.prefs();
         assert_eq!(prefs.mode, ListMode::Table);
         assert!(!prefs.threaded);
         assert_eq!(prefs.columns, ColumnId::DEFAULT);
@@ -450,12 +442,12 @@ mod tests {
     }
 
     #[test]
-    fn remembers_per_folder_and_survives_a_restart() {
+    fn remembers_the_view_and_survives_a_restart() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join(UI_STATE_FILE);
         let defaults = ListDefaults::default();
         let store = UiStateStore::load(&path, defaults);
-        let mut prefs = store.prefs("folder:12");
+        let mut prefs = store.prefs();
         prefs.mode = ListMode::Table;
         prefs.threaded = false;
         prefs.sort = ListSort::OldestFirst;
@@ -463,7 +455,7 @@ mod tests {
         prefs.toggle_column(ColumnId::Star);
         prefs.toggle_column(ColumnId::Subject);
         prefs.widths.insert(ColumnId::Correspondents, 220.);
-        store.set_prefs("folder:12", &prefs);
+        store.set_prefs(&prefs);
         assert_eq!(
             prefs.columns,
             vec![
@@ -476,17 +468,27 @@ mod tests {
         );
 
         let reopened = UiStateStore::load(&path, defaults);
-        assert_eq!(reopened.prefs("folder:12"), prefs);
-        // Other folders are untouched.
-        assert_eq!(reopened.prefs("unified:inbox").mode, ListMode::Cards);
+        assert_eq!(reopened.prefs(), prefs);
         let json = std::fs::read_to_string(&path).unwrap();
-        assert!(json.contains("\"folder:12\""), "{json}");
+        assert!(json.contains("\"list\""), "{json}");
         assert!(json.contains("\"oldest_first\""), "{json}");
-        assert!(!json.contains("unified:inbox"), "{json}");
 
-        // Back to the defaults: the entry goes away.
-        store.set_prefs("folder:12", &ListPrefs::resolve(None, &defaults));
-        assert!(store.state().folders.is_empty());
+        // Back to the defaults: nothing is recorded.
+        store.set_prefs(&ListPrefs::resolve(None, &defaults));
+        assert_eq!(store.state().list, ListState::default());
+    }
+
+    #[test]
+    fn per_folder_state_from_version_1_is_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(UI_STATE_FILE);
+        std::fs::write(
+            &path,
+            r#"{ "version": 1, "folders": { "folder:12": { "view": "table" } } }"#,
+        )
+        .unwrap();
+        let store = UiStateStore::load(&path, ListDefaults::default());
+        assert_eq!(store.prefs().mode, ListMode::Cards);
     }
 
     #[test]
@@ -524,12 +526,12 @@ mod tests {
         // Unknown fields and columns are fine; the subject is always there.
         std::fs::write(
             &path,
-            br#"{"version":1,"later":true,"folders":{"search":{"columns":["date"],"x":1}}}"#,
+            br#"{"version":2,"later":true,"list":{"columns":["date"],"x":1}}"#,
         )
         .unwrap();
         let store = UiStateStore::load(&path, ListDefaults::default());
         assert_eq!(
-            store.prefs("search").columns,
+            store.prefs().columns,
             vec![ColumnId::Subject, ColumnId::Date]
         );
     }
