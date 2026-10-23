@@ -480,9 +480,11 @@ fn quick_move_moves_threads_and_messages_undoably() {
     assert!(keys(INBOX).is_empty());
     assert_eq!(keys(FolderKey::Folder(projects)).len(), 2);
     assert!(t.core.can_undo());
-    t.runtime.block_on(t.core.undo()).unwrap().unwrap();
+    // `cmd-z` in the window goes through the source.
+    assert!(t.source.undo().unwrap());
     assert_eq!(keys(INBOX).len(), 2, "undo brings both back");
     assert!(keys(FolderKey::Folder(projects)).is_empty());
+    assert!(!t.source.undo().unwrap(), "nothing left to undo");
 
     // A single message (threads off, or a message of an expanded thread).
     t.source

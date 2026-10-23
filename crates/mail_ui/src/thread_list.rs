@@ -1378,6 +1378,18 @@ impl ThreadList {
         }
     }
 
+    /// Undoes the last archive, move, read or star change and shows the list again.
+    pub fn undo(&mut self, cx: &mut Context<'_, Self>) {
+        match self.source.undo() {
+            Ok(true) => {
+                self.refresh(cx);
+                cx.emit(ThreadListEvent::Changed);
+            }
+            Ok(false) => {}
+            Err(error) => tracing::warn!(%error, "undo failed"),
+        }
+    }
+
     /// What `a`, `m`, `s` and Quick Move (`shift-m`) act on: every selected row, else
     /// the whole thread after `cmd-shift-a`, else the cursor row. A selected message of
     /// a selected thread is covered by its thread and left out.

@@ -883,6 +883,9 @@ impl Render for MailWindow {
                 this.thread_list
                     .update(cx, |list, cx| list.archive_selected(cx));
             }))
+            .on_action(cx.listener(|this, _: &Undo, _, cx| {
+                this.thread_list.update(cx, |list, cx| list.undo(cx));
+            }))
             .on_action(cx.listener(|this, _: &MoveToFolder, window, cx| {
                 this.open_quick_move(window, cx);
             }))
@@ -1184,6 +1187,32 @@ mod tests {
                 None
             );
         });
+    }
+
+    #[gpui::test]
+    fn cmd_z_undoes_an_archive(cx: &mut TestAppContext) {
+        let (view, cx) = open(cx);
+        cx.run_until_parked();
+        let list = view.read_with(cx, |w, cx| w.thread_list().focus_handle(cx));
+        cx.update(|window, cx| window.focus(&list, cx));
+        let rows = |cx: &mut gpui::VisualTestContext| {
+            view.read_with(cx, |w, cx| w.thread_list().read(cx).len())
+        };
+        let before = rows(cx);
+        let first = view.read_with(cx, |w, cx| w.thread_list().read(cx).selected_thread());
+        cx.simulate_keystrokes("a");
+        cx.run_until_parked();
+        assert_eq!(rows(cx), before - 1);
+        cx.simulate_keystrokes("cmd-z");
+        cx.run_until_parked();
+        assert_eq!(rows(cx), before);
+        // Nothing left to undo: a second `cmd-z` changes nothing.
+        cx.simulate_keystrokes("cmd-z");
+        cx.run_until_parked();
+        assert_eq!(rows(cx), before);
+        cx.simulate_keystrokes("home");
+        let top = view.read_with(cx, |w, cx| w.thread_list().read(cx).selected_thread());
+        assert_eq!(top, first, "the archived thread is back at the top");
     }
 
     #[gpui::test]

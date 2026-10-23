@@ -867,6 +867,13 @@ impl MailSource for CoreMailSource {
         )
     }
 
+    fn undo(&self) -> Result<bool, SourceError> {
+        let core = self.ready()?;
+        let runner = core.clone();
+        let receipt = wait(&core, async move { runner.undo().await })?.map_err(unavailable)?;
+        Ok(receipt.is_some())
+    }
+
     fn thread_account(&self, thread: ThreadId) -> Option<AccountId> {
         let core = self.ready().ok()?;
         let row = core.rows(&[thread], None).ok()?.into_iter().next()?;
