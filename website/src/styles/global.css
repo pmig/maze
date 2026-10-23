@@ -10,12 +10,13 @@
   --radius: 6px;
   --radius-lg: 10px;
 
-  /* Brand, from the app icon */
-  --indigo-300: #a9a7ff;
-  --indigo-400: #8f8cff;
-  --indigo-500: #6e6bf8;
-  --indigo-600: #4f49e0;
-  --indigo-700: #3a2cb5;
+  /* Brand: graphite, from the app icon. Monochrome; amber is the only colour. */
+  --graphite-100: #f4f4f5;
+  --graphite-300: #d4d4d8;
+  --graphite-400: #a1a1aa;
+  --graphite-500: #52525b;
+  --graphite-700: #27272a;
+  --graphite-900: #18181b;
   --amber: #ffb86b;
 
   color-scheme: light dark;
@@ -23,65 +24,65 @@
 
 /* Light (default) */
 :root {
-  --bg: #f7f7f9;
-  --bg-frame: #fdfdfe;
+  --bg: #f7f7f8;
+  --bg-frame: #fdfdfd;
   --surface: #ffffff;
-  --surface-2: #f1f1f5;
-  --text: #16161d;
-  --text-strong: #0b0b10;
-  --muted: #565665;
-  --faint: #6b6b7a;
-  --border: #e2e2ea;
-  --border-strong: #cdcdd8;
-  --accent: var(--indigo-600);
-  --accent-hover: var(--indigo-700);
+  --surface-2: #f1f1f3;
+  --text: #17171a;
+  --text-strong: #0b0b0d;
+  --muted: #57575e;
+  --faint: #6c6c73;
+  --border: #e3e3e7;
+  --border-strong: #cfcfd5;
+  --accent: var(--graphite-900);
+  --accent-hover: #000000;
   --accent-text: #ffffff;
-  --accent-soft: color-mix(in oklab, var(--indigo-500) 10%, transparent);
-  --code-bg: #f4f4f8;
+  --accent-soft: color-mix(in oklab, var(--graphite-500) 10%, transparent);
+  --code-bg: #f4f4f6;
   --shot-shadow: 0 1px 2px rgb(16 16 30 / 0.06), 0 12px 40px -12px rgb(16 16 30 / 0.18);
-  --selection: color-mix(in oklab, var(--indigo-500) 22%, transparent);
+  --selection: color-mix(in oklab, var(--graphite-500) 22%, transparent);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0b0c10;
-    --bg-frame: #0f1015;
-    --surface: #14151b;
-    --surface-2: #191a21;
-    --text: #e4e4ec;
-    --text-strong: #f6f6fa;
-    --muted: #a3a3b3;
-    --faint: #8d8d9d;
-    --border: #23242d;
-    --border-strong: #33343f;
-    --accent: var(--indigo-300);
-    --accent-hover: #c6c5ff;
-    --accent-text: #0b0c10;
-    --accent-soft: color-mix(in oklab, var(--indigo-400) 14%, transparent);
-    --code-bg: #121319;
+    --bg: #0b0b0d;
+    --bg-frame: #0f0f12;
+    --surface: #141417;
+    --surface-2: #19191d;
+    --text: #e5e5e8;
+    --text-strong: #f7f7f8;
+    --muted: #a4a4ac;
+    --faint: #8e8e96;
+    --border: #242428;
+    --border-strong: #34343a;
+    --accent: var(--graphite-100);
+    --accent-hover: #ffffff;
+    --accent-text: #0b0b0d;
+    --accent-soft: color-mix(in oklab, var(--graphite-400) 14%, transparent);
+    --code-bg: #121215;
     --shot-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 20px 60px -20px rgb(0 0 0 / 0.7);
-    --selection: color-mix(in oklab, var(--indigo-400) 32%, transparent);
+    --selection: color-mix(in oklab, var(--graphite-400) 32%, transparent);
   }
 }
 
 :root[data-theme="dark"] {
-  --bg: #0b0c10;
-  --bg-frame: #0f1015;
-  --surface: #14151b;
-  --surface-2: #191a21;
-  --text: #e4e4ec;
-  --text-strong: #f6f6fa;
-  --muted: #a3a3b3;
-  --faint: #8d8d9d;
-  --border: #23242d;
-  --border-strong: #33343f;
-  --accent: var(--indigo-300);
-  --accent-hover: #c6c5ff;
-  --accent-text: #0b0c10;
-  --accent-soft: color-mix(in oklab, var(--indigo-400) 14%, transparent);
-  --code-bg: #121319;
+  --bg: #0b0b0d;
+  --bg-frame: #0f0f12;
+  --surface: #141417;
+  --surface-2: #19191d;
+  --text: #e5e5e8;
+  --text-strong: #f7f7f8;
+  --muted: #a4a4ac;
+  --faint: #8e8e96;
+  --border: #242428;
+  --border-strong: #34343a;
+  --accent: var(--graphite-100);
+  --accent-hover: #ffffff;
+  --accent-text: #0b0b0d;
+  --accent-soft: color-mix(in oklab, var(--graphite-400) 14%, transparent);
+  --code-bg: #121215;
   --shot-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 20px 60px -20px rgb(0 0 0 / 0.7);
-  --selection: color-mix(in oklab, var(--indigo-400) 32%, transparent);
+  --selection: color-mix(in oklab, var(--graphite-400) 32%, transparent);
   color-scheme: dark;
 }
 
