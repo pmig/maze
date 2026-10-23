@@ -3,14 +3,20 @@
 //!
 //! It renders inside the main window's element tree (not as a Root dialog), so the
 //! action it dispatches bubbles from the palette to the window's handlers.
+//!
+//! Key bindings are looked up where the focus was before the palette opened, as in
+//! Zed: from the palette's own focus, bindings with a context such as `ThreadList`
+//! (`a` for Archive) wouldn't match, and the hint would be missing.
 
 use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    Action, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, ParentElement, Render, Styled, Window, div, px,
 };
 use gpui_kit::component::{
     ActiveTheme as _,
     command::{Command, CommandItem, CommandState},
+    h_flex,
+    kbd::Kbd,
 };
 
 use crate::actions::{PALETTE_NAMESPACES, humanize_action_name};
@@ -58,18 +64,35 @@ impl std::fmt::Debug for CommandPalette {
 }
 
 impl CommandPalette {
-    /// A palette over every registered Maze action.
-    pub fn new(window: &mut Window, cx: &mut Context<'_, Self>) -> Self {
+    /// A palette over every registered Maze action. `return_focus` is where the focus
+    /// was before the palette opened; the key binding hints are looked up there.
+    pub fn new(
+        return_focus: Option<&FocusHandle>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Self {
         let items = palette_entries(cx.all_action_names())
             .into_iter()
             .filter_map(|entry| {
                 let action = cx.build_action(entry.action, None).ok()?;
-                Some(
-                    CommandItem::new()
-                        .label(entry.label)
-                        .keywords([entry.action])
+                let item = CommandItem::new()
+                    .label(entry.label.clone())
+                    .keywords([entry.action]);
+                Some(match binding_hint(action.as_ref(), return_focus, window) {
+                    // The command list skips its own lookup (from the palette's focus)
+                    // for rows with custom content, so the hint isn't shown twice.
+                    Some(keystroke) => item
+                        .child(move |_, _| {
+                            h_flex()
+                                .flex_1()
+                                .gap_2()
+                                .items_center()
+                                .child(entry.label.clone())
+                                .child(Kbd::new(keystroke.clone()).ml_auto())
+                        })
                         .action(action),
-                )
+                    None => item.action(action),
+                })
             })
             .collect();
         Self {
@@ -87,6 +110,24 @@ impl CommandPalette {
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
+}
+
+/// The first keystroke of the action's binding where `focus` is, else of a binding
+/// that applies anywhere.
+pub(crate) fn binding_hint(
+    action: &dyn Action,
+    focus: Option<&FocusHandle>,
+    window: &Window,
+) -> Option<gpui::Keystroke> {
+    let binding = focus
+        .and_then(|focus| window.highest_precedence_binding_for_action_in(action, focus))
+        .or_else(|| {
+            window.highest_precedence_binding_for_action_in_context(
+                action,
+                gpui::KeyContext::default(),
+            )
+        })?;
+    Some(binding.keystrokes().first()?.inner().clone())
 }
 
 impl EventEmitter<Dismissed> for CommandPalette {}
