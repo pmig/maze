@@ -56,6 +56,9 @@ enum Node {
         role: Option<FolderRole>,
         /// Shown in the list header, e.g. "Inbox · Gmail (personal)".
         title: SharedString,
+        /// The first of an account's other folders, below its special folders: drawn
+        /// with a thin line above.
+        divider_above: bool,
     },
 }
 
@@ -114,6 +117,53 @@ pub fn role_icon(role: Option<FolderRole>) -> IconName {
         Some(FolderRole::All) => IconName::Mails,
         None => IconName::Folder,
     }
+}
+
+/// Special-use roles in the order an account lists them, above its other folders.
+const SPECIAL_ROLES: [FolderRole; 9] = [
+    FolderRole::Inbox,
+    FolderRole::Drafts,
+    FolderRole::Sent,
+    FolderRole::Archive,
+    FolderRole::All,
+    FolderRole::Flagged,
+    FolderRole::Important,
+    FolderRole::Junk,
+    FolderRole::Trash,
+];
+
+fn special_rank(role: Option<FolderRole>) -> Option<usize> {
+    role.and_then(|role| SPECIAL_ROLES.iter().position(|r| *r == role))
+}
+
+/// An account's folders as the pane lists them: its special folders (Inbox, Drafts,
+/// Sent, Archive, …) first, in [`SPECIAL_ROLES`] order and wherever they sit in the
+/// server's tree (`[Gmail]/Sent Mail`, `INBOX.Trash`), then the other folders in tree
+/// order. A folder whose subfolders were all special, like Gmail's `[Gmail]`, is left
+/// out of the others.
+pub fn arrange_account_folders(folders: &[FolderEntry]) -> (Vec<FolderEntry>, Vec<FolderEntry>) {
+    fn split(entries: &[FolderEntry], special: &mut Vec<FolderEntry>) -> Vec<FolderEntry> {
+        let mut others = Vec::new();
+        for entry in entries {
+            let children = split(&entry.children, special);
+            let emptied = children.is_empty() && !entry.children.is_empty();
+            let entry = FolderEntry {
+                children,
+                ..entry.clone()
+            };
+            if special_rank(entry.role).is_some() {
+                special.push(entry);
+            } else if !emptied {
+                others.push(entry);
+            }
+        }
+        others
+    }
+    let mut special = Vec::new();
+    let others = split(folders, &mut special);
+    // Stable: folders with the same role keep their tree order.
+    special.sort_by_key(|entry| special_rank(entry.role));
+    (special, others)
 }
 
 fn account_icon(kind: AccountKind) -> IconName {
@@ -210,6 +260,7 @@ fn build(
                 key: entry.key.clone(),
                 role: entry.role,
                 title: format!("{} · {context}", entry.name).into(),
+                divider_above: false,
             },
         );
         TreeItem::new(id.clone(), entry.name.clone())
@@ -234,6 +285,7 @@ fn build(
                     key: entry.key.clone(),
                     role: entry.role,
                     title: format!("{} · {}", entry.name, account.name).into(),
+                    divider_above: false,
                 },
             );
             TreeItem::new(id, entry.name.clone())
@@ -300,15 +352,25 @@ fn build(
             .children(tree.accounts.iter().enumerate().map(|(ix, account)| {
                 let id: SharedString = format!("account:{}", account.id).into();
                 nodes.insert(id.clone(), Node::Account(account.kind));
+                let (special, others) = arrange_account_folders(&account.folders);
+                let mut children: Vec<TreeItem> = special
+                    .iter()
+                    .map(|f| folder_item(f, &account.name, &mut nodes, expanded))
+                    .collect();
+                for (n, folder) in others.iter().enumerate() {
+                    let item = folder_item(folder, &account.name, &mut nodes, expanded);
+                    if n == 0
+                        && !special.is_empty()
+                        && let Some(Node::Folder { divider_above, .. }) = nodes.get_mut(&item.id)
+                    {
+                        *divider_above = true;
+                    }
+                    children.push(item);
+                }
                 // The first account starts expanded, like Thunderbird after setup.
                 TreeItem::new(id.clone(), account.name.clone())
                     .expanded(is_expanded(&id, ix == 0))
-                    .children(
-                        account
-                            .folders
-                            .iter()
-                            .map(|f| folder_item(f, &account.name, &mut nodes, expanded)),
-                    )
+                    .children(children)
             })),
     );
     (items, nodes, favorites)
@@ -542,9 +604,17 @@ impl FolderPane {
                     )
                     .child(div().truncate().child(item.label.clone())),
             ),
-            Some(Node::Folder { key, role, .. }) => {
+            Some(Node::Folder {
+                key,
+                role,
+                divider_above,
+                ..
+            }) => {
                 let unread = source.unread_count(key);
-                row.child(
+                row.when(*divider_above, |row| {
+                    row.border_t_1().border_color(theme.border.opacity(0.6))
+                })
+                .child(
                     h_flex()
                         .debug_selector(|| format!("folder-pane-row:{}", item.id))
                         .gap_1p5()
@@ -812,8 +882,94 @@ mod tests {
                 key: FolderKey::Unified(FolderRole::Inbox),
                 role: Some(FolderRole::Inbox),
                 title: "Inbox · Unified".into(),
+                divider_above: false,
             })
         );
+    }
+
+    fn special(id: i64, name: &str, role: FolderRole, children: Vec<FolderEntry>) -> FolderEntry {
+        FolderEntry {
+            role: Some(role),
+            ..entry(id, name, children)
+        }
+    }
+
+    fn names(entries: &[FolderEntry]) -> Vec<&str> {
+        entries.iter().map(|e| e.name.as_ref()).collect()
+    }
+
+    #[test]
+    fn special_folders_come_first_wherever_they_are() {
+        // Gmail: the system folders sit under `[Gmail]`, which then has nothing left.
+        let gmail = vec![
+            special(1, "Inbox", FolderRole::Inbox, vec![]),
+            entry(2, "Work", vec![entry(3, "Acme", vec![])]),
+            entry(
+                4,
+                "[Gmail]",
+                vec![
+                    special(5, "All Mail", FolderRole::All, vec![]),
+                    special(6, "Drafts", FolderRole::Drafts, vec![]),
+                    special(7, "Sent Mail", FolderRole::Sent, vec![]),
+                    special(8, "Spam", FolderRole::Junk, vec![]),
+                    special(9, "Starred", FolderRole::Flagged, vec![]),
+                    special(10, "Trash", FolderRole::Trash, vec![]),
+                ],
+            ),
+            entry(11, "Receipts", vec![]),
+        ];
+        let (special_folders, others) = arrange_account_folders(&gmail);
+        assert_eq!(
+            names(&special_folders),
+            [
+                "Inbox",
+                "Drafts",
+                "Sent Mail",
+                "All Mail",
+                "Starred",
+                "Spam",
+                "Trash"
+            ]
+        );
+        assert_eq!(names(&others), ["Work", "Receipts"]);
+        assert_eq!(names(&others[0].children), ["Acme"]);
+
+        // Dovecot: special folders under INBOX are lifted out; other subfolders stay.
+        let dovecot = vec![special(
+            1,
+            "Inbox",
+            FolderRole::Inbox,
+            vec![
+                entry(2, "Projects", vec![]),
+                special(3, "Trash", FolderRole::Trash, vec![]),
+                special(4, "Archive", FolderRole::Archive, vec![]),
+            ],
+        )];
+        let (special_folders, others) = arrange_account_folders(&dovecot);
+        assert_eq!(names(&special_folders), ["Inbox", "Archive", "Trash"]);
+        assert_eq!(names(&special_folders[0].children), ["Projects"]);
+        assert!(others.is_empty());
+    }
+
+    #[test]
+    fn the_first_other_folder_gets_the_divider() {
+        let mut tree = two_accounts(&[]);
+        tree.accounts[0].folders = vec![
+            entry(20, "Work", vec![]),
+            special(21, "Inbox", FolderRole::Inbox, vec![]),
+            entry(22, "Zeta", vec![]),
+        ];
+        let (_, nodes, _) = build(&tree, &HashMap::new());
+        let divider = |id: i64| match nodes.get(&FolderKey::Folder(FolderId(id)).tree_id()) {
+            Some(Node::Folder { divider_above, .. }) => *divider_above,
+            other => panic!("{other:?}"),
+        };
+        assert!(!divider(21));
+        assert!(
+            divider(20),
+            "Work is the first folder after the special ones"
+        );
+        assert!(!divider(22));
     }
 
     #[test]
@@ -904,6 +1060,7 @@ mod tests {
                     key: FolderKey::Unified(FolderRole::Inbox),
                     role: None,
                     title: "Inbox".into(),
+                    divider_above: false,
                 }),
                 &favorites
             ),

@@ -122,6 +122,11 @@ The folder pane on the left has three sections: **Favorites**, **Unified Folders
 Inbox, Sent, … of all accounts together) and **Accounts** with each account's folders.
 Click a section's or an account's name to collapse or expand it.
 
+Each account lists its special folders first, in a fixed order: Inbox, Drafts, Sent,
+Archive, All Mail, Starred, Important, Junk and Trash, even where the server keeps them
+deeper in its tree (Gmail's `[Gmail]/Sent Mail`, `INBOX.Trash`). A thin line separates
+them from your other folders, which follow in the server's order.
+
 Right-click a folder and choose **Add to Favorites** to list it under Favorites at the
 top; **Remove from Favorites** (on the folder or on its favorite) takes it out again.
 **Mail: Toggle Favorite Folder** in the command palette does the same for the open
