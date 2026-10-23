@@ -27,6 +27,14 @@
 //! table is gpui-kit's `DataTable` with 24 px rows; the reply tree lives in its Subject
 //! column. Both read the same [`ListModel`].
 //!
+//! # Selection
+//!
+//! One row is selected, or several ([`Selection`]: `shift-up`/`down`, shift-click,
+//! cmd-click, `cmd-a`). Row commands (`a`, `m`, `s`, `shift-m`) act on every selected
+//! row as one batch: a thread row stands for its thread, a message row for itself. Up
+//! to [`MAX_KEPT_ROWS`] selected rows are found again by identity when the list
+//! changes; "select all" stays select all.
+//!
 //! # Per folder
 //!
 //! Cards or table, threads on or off, the date order, the table's columns and their
@@ -55,7 +63,7 @@ use gpui_kit::component::{
     table::{Column, DataTable, TableDelegate, TableEvent, TableState},
     v_flex,
 };
-use mazemail_types::{Flags, MessageId, ThreadId};
+use mazemail_types::{Flags, FolderId, MessageId, ThreadId};
 use time::UtcOffset;
 use ui::assets::IconName;
 
@@ -63,8 +71,8 @@ use crate::format::{DateFormatter, format_size, format_thousands};
 use crate::list_model::{Expansions, RowPosition, TreeRow, tree_rows};
 use crate::selection::Selection;
 use crate::source::{
-    Direction, ListSort, MailSource, MessageKeys, MessageRow, ThreadFilter, ThreadKeys,
-    ThreadPredicate, ThreadRow, ThreadScope,
+    Direction, ListSort, MailSource, MessageKeys, MessageRow, SourceError, ThreadFilter,
+    ThreadKeys, ThreadPredicate, ThreadRow, ThreadScope,
 };
 pub use crate::ui_state::ListMode;
 use crate::ui_state::{ColumnId, ListPrefs, UiStateStore};
@@ -92,6 +100,9 @@ const INDENT: f32 = 12.;
 const MAX_INDENT_LEVELS: u16 = 12;
 /// The widest the table makes the list column (the layout caps it too).
 const MAX_TABLE_WIDTH: f32 = 720.;
+/// Selected rows found again by identity after the list changed; a larger selection
+/// (except select all) collapses to its cursor.
+pub const MAX_KEPT_ROWS: usize = 1_000;
 
 /// A row's identity, stable across key reloads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -450,14 +461,16 @@ impl ListModel {
     }
 }
 
-/// How the table looks: the folder's columns and widths, the date order, and the
-/// thread whose rows are all highlighted (`cmd-shift-a`).
+/// How the table looks: the folder's columns and widths, the date order, the thread
+/// whose rows are all highlighted (`cmd-shift-a`) and the selected rows when there
+/// are several.
 #[derive(Debug, Clone)]
 struct TableLook {
     columns: Vec<ColumnId>,
     widths: Vec<f32>,
     sort: ListSort,
     selected_thread: Option<ThreadId>,
+    selected_rows: Vec<Range<usize>>,
     /// The table's width, measured while painting (0 before the first frame).
     available: f32,
 }
@@ -474,6 +487,7 @@ impl TableLook {
             widths: prefs.columns.iter().map(|c| prefs.width(*c)).collect(),
             sort: prefs.sort,
             selected_thread: None,
+            selected_rows: Vec::new(),
             available: 0.,
         }
     }
@@ -527,6 +541,25 @@ struct Selected {
     position: RowPosition,
 }
 
+/// The rows of a multiple selection, to find them again after the list changed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+enum KeptRows {
+    /// One row (or more than [`MAX_KEPT_ROWS`]): only the cursor is kept.
+    #[default]
+    Cursor,
+    /// Every row.
+    All,
+    /// These rows.
+    Rows(Vec<Selected>),
+}
+
+/// The items of a row command, as one call to the source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Batch {
+    Threads(Vec<ThreadId>),
+    Messages(Vec<MessageId>),
+}
+
 /// The message list view.
 pub struct ThreadList {
     source: Arc<dyn MailSource>,
@@ -541,6 +574,7 @@ pub struct ThreadList {
     look: Rc<RefCell<TableLook>>,
     selection: Selection,
     selected: Option<Selected>,
+    kept: KeptRows,
     expand: ExpandMode,
     expanding: Option<Task<()>>,
     hovered: Option<usize>,
@@ -598,6 +632,7 @@ impl ThreadList {
             )
             .col_movable(false)
             .sortable(false)
+            .select_on_modifier_click(false)
         });
         let quick_filter = cx.new(|cx| {
             InputState::new(window, cx)
@@ -621,6 +656,7 @@ impl ThreadList {
             look,
             selection: Selection::default(),
             selected: None,
+            kept: KeptRows::Cursor,
             expand: ExpandMode::Some(HashSet::new()),
             expanding: None,
             hovered: None,
@@ -697,9 +733,19 @@ impl ThreadList {
         self.expanding.is_some()
     }
 
-    /// The selected index.
+    /// The selected index (the cursor, with several rows selected).
     pub fn selected_index(&self) -> Option<usize> {
         self.selection.selected()
+    }
+
+    /// Number of selected rows.
+    pub fn selected_count(&self) -> usize {
+        self.selection.count()
+    }
+
+    /// Whether visible row `ix` is selected.
+    pub fn is_row_selected(&self, ix: usize) -> bool {
+        self.selection.is_selected(ix)
     }
 
     /// The selected row.
@@ -890,7 +936,9 @@ impl ThreadList {
         self.selection.reset(len, keep);
         if select_first || self.selection.selected().is_none() {
             self.selection.first();
+            self.kept = KeptRows::Cursor;
         }
+        self.restore_rows(true);
         self.table.update(cx, |table, cx| table.refresh(cx));
         let now = self.selection.selected().and_then(|ix| self.item_at(ix));
         if select_first || now.map(|s| s.item) != previous.map(|s| s.item) {
@@ -899,8 +947,93 @@ impl ThreadList {
         } else {
             // Same row selected: the window keeps showing it.
             self.selected = now;
+            self.sync_table_row(cx);
             cx.notify();
         }
+    }
+
+    /// Selects the rows of a multiple selection again after the list changed (the
+    /// cursor is placed already). With `search`, moved rows are looked up in the keys.
+    fn restore_rows(&mut self, search: bool) {
+        match std::mem::take(&mut self.kept) {
+            KeptRows::Cursor => {}
+            KeptRows::All => self.selection.select_all(),
+            KeptRows::Rows(rows) => {
+                let found = self.locate_all(&rows, search);
+                let cursor = self.selection.selected();
+                self.selection.reset_rows(self.len(), cursor, found);
+            }
+        }
+        self.remember_rows();
+    }
+
+    /// Remembers the rows of a multiple selection by identity (see [`KeptRows`]).
+    fn remember_rows(&mut self) {
+        self.kept = if !self.selection.is_multiple() {
+            KeptRows::Cursor
+        } else if self.selection.is_all() {
+            KeptRows::All
+        } else if self.selection.count() > MAX_KEPT_ROWS {
+            KeptRows::Cursor
+        } else {
+            let indices: Vec<usize> = self.selection.indices().collect();
+            KeptRows::Rows(
+                indices
+                    .into_iter()
+                    .filter_map(|ix| self.item_at(ix))
+                    .collect(),
+            )
+        };
+    }
+
+    /// The visible indexes of `rows` (those still in the list). Rows still at their
+    /// place are found at once; with `search` the others are looked up in one pass
+    /// over the keys.
+    fn locate_all(&self, rows: &[Selected], search: bool) -> Vec<usize> {
+        let mut found = Vec::with_capacity(rows.len());
+        let mut missing = Vec::new();
+        for row in rows {
+            match self.locate(*row, false) {
+                Some(ix) => found.push(ix),
+                None => missing.push(*row),
+            }
+        }
+        if !search || missing.is_empty() {
+            return found;
+        }
+        // Where the missing rows' threads (or messages) are now.
+        let base_key = |row: &Selected, keys: &ListKeys| match (keys, row.item) {
+            (ListKeys::Messages(_), item) => Some(item),
+            (ListKeys::Threads(_), ItemId::Thread(id)) => Some(ItemId::Thread(id)),
+            (ListKeys::Threads(_), ItemId::Message(_)) => row.thread.map(ItemId::Thread),
+        };
+        let keys = self.model.borrow().keys.clone();
+        let wanted: HashSet<ItemId> = missing.iter().filter_map(|r| base_key(r, &keys)).collect();
+        let bases: HashMap<ItemId, usize> = match &keys {
+            ListKeys::Threads(keys) => keys
+                .iter()
+                .enumerate()
+                .map(|(ix, id)| (ItemId::Thread(*id), ix))
+                .filter(|(item, _)| wanted.contains(item))
+                .collect(),
+            ListKeys::Messages(keys) => keys
+                .iter()
+                .enumerate()
+                .map(|(ix, id)| (ItemId::Message(*id), ix))
+                .filter(|(item, _)| wanted.contains(item))
+                .collect(),
+        };
+        for row in missing {
+            let Some(base) = base_key(&row, &keys).and_then(|key| bases.get(&key)) else {
+                continue;
+            };
+            let moved = Selected {
+                position: RowPosition::Base(*base),
+                ..row
+            };
+            found.extend(self.locate(moved, false));
+        }
+        found
     }
 
     /// The visible index of a row identity. With `search`, a moved thread or message is
@@ -976,9 +1109,9 @@ impl ThreadList {
         self.reload(false, cx);
     }
 
-    /// Selects `ix`, marks it read and tells the window.
+    /// Selects only `ix`, marks it read and tells the window.
     pub fn select(&mut self, ix: usize, cx: &mut Context<'_, Self>) {
-        if self.selection.selected() == Some(ix) {
+        if self.selection.selected() == Some(ix) && !self.selection.is_multiple() {
             return;
         }
         self.selection.select(ix);
@@ -986,10 +1119,42 @@ impl ThreadList {
         self.selection_changed(cx);
     }
 
+    /// `shift-down` / `shift-up`: extends the selection by `delta` rows.
+    pub fn extend(&mut self, delta: isize, cx: &mut Context<'_, Self>) {
+        let before = self.selection.selected();
+        if self.selection.extend_by(delta) != before {
+            self.reveal_selection(ScrollStrategy::Nearest, delta > 0, cx);
+            self.selection_changed(cx);
+        }
+    }
+
+    /// Shift-click: selects the rows from the anchor to `ix`.
+    pub fn extend_to(&mut self, ix: usize, cx: &mut Context<'_, Self>) {
+        self.selection.extend_to(ix);
+        self.selection_changed(cx);
+    }
+
+    /// Cmd-click: adds `ix` to the selection or takes it out.
+    pub fn toggle_row(&mut self, ix: usize, cx: &mut Context<'_, Self>) {
+        self.selection.toggle(ix);
+        self.selection_changed(cx);
+    }
+
+    /// `cmd-a`: selects every row.
+    pub fn select_all(&mut self, cx: &mut Context<'_, Self>) {
+        self.selection.select_all();
+        self.selection_changed(cx);
+    }
+
+    /// The selection changed: remember it, mark a single selected row read (as
+    /// Thunderbird does when it's displayed) and tell the window.
     fn selection_changed(&mut self, cx: &mut Context<'_, Self>) {
         self.selected = self.selection.selected().and_then(|ix| self.item_at(ix));
         self.look.borrow_mut().selected_thread = None;
-        if let Some(selected) = self.selected {
+        self.remember_rows();
+        if let Some(selected) = self.selected
+            && !self.selection.is_multiple()
+        {
             self.mark_read(selected.item, cx);
         }
         self.sync_table_row(cx);
@@ -997,10 +1162,20 @@ impl ThreadList {
         cx.notify();
     }
 
-    /// Shows the selection in the table. The table reports it back as a `SelectRow`
-    /// event later, which must not select again: by then the selection may have moved
-    /// on, and two rows would chase each other.
+    /// Shows the selection in the table: the cursor as the table's selected row, the
+    /// other selected rows highlighted. The table reports its row back as a
+    /// `SelectRow` event later, which must not select again: by then the selection may
+    /// have moved on, and two rows would chase each other.
     fn sync_table_row(&mut self, cx: &mut Context<'_, Self>) {
+        let rows = if self.selection.is_multiple() {
+            self.selection.ranges()
+        } else {
+            Vec::new()
+        };
+        if self.look.borrow().selected_rows != rows {
+            self.look.borrow_mut().selected_rows = rows;
+            self.table.update(cx, |_, cx| cx.notify());
+        }
         let (ListMode::Table, Some(ix)) = (self.prefs.mode, self.selection.selected()) else {
             return;
         };
@@ -1055,20 +1230,20 @@ impl ThreadList {
                 .is_some_and(RowView::unread)
         };
         if unread {
-            self.change_flags(item, Flags::SEEN, Flags::empty(), cx);
+            self.change_flags(&[item], Flags::SEEN, Flags::empty(), cx);
         }
     }
 
     fn change_flags(
         &mut self,
-        item: ItemId,
+        items: &[ItemId],
         add: Flags,
         remove: Flags,
         cx: &mut Context<'_, Self>,
     ) {
-        let result = match item {
-            ItemId::Thread(id) => self.source.set_flags(&[id], add, remove),
-            ItemId::Message(id) => self.source.set_message_flags(&[id], add, remove),
+        let result = match self.batch(items) {
+            Batch::Threads(ids) => self.source.set_flags(&ids, add, remove),
+            Batch::Messages(ids) => self.source.set_message_flags(&ids, add, remove),
         };
         match result {
             Ok(()) => {
@@ -1081,8 +1256,8 @@ impl ThreadList {
         }
     }
 
-    /// The row commands (`m`, `s`, `a`) apply to: the whole thread after
-    /// `cmd-shift-a`, else the selected row.
+    /// The row a single-row command applies to, with its flags (which decide what
+    /// `m` and `s` do): the whole thread after `cmd-shift-a`, else the cursor.
     fn command_target(&mut self) -> Option<(ItemId, Flags)> {
         let ix = self.selection.selected()?;
         if let Some(thread) = self.look.borrow().selected_thread {
@@ -1169,65 +1344,170 @@ impl ThreadList {
         moved
     }
 
-    /// `m`: toggles read/unread of the selected row (or thread, after `cmd-shift-a`).
+    /// `m`: toggles read/unread of the selected rows (or thread, after `cmd-shift-a`);
+    /// the cursor row decides which way, as in Thunderbird.
     pub fn toggle_read(&mut self, cx: &mut Context<'_, Self>) {
-        if let Some((item, flags)) = self.command_target() {
+        if let Some((_, flags)) = self.command_target() {
+            let items = self.command_items();
             if flags.contains(Flags::SEEN) {
-                self.change_flags(item, Flags::empty(), Flags::SEEN, cx);
+                self.change_flags(&items, Flags::empty(), Flags::SEEN, cx);
             } else {
-                self.change_flags(item, Flags::SEEN, Flags::empty(), cx);
+                self.change_flags(&items, Flags::SEEN, Flags::empty(), cx);
             }
         }
     }
 
-    /// `s`: toggles the star of the selected row (or thread, after `cmd-shift-a`).
+    /// `s`: toggles the star of the selected rows (or thread, after `cmd-shift-a`).
     pub fn toggle_star(&mut self, cx: &mut Context<'_, Self>) {
-        if let Some((item, flags)) = self.command_target() {
+        if let Some((_, flags)) = self.command_target() {
+            let items = self.command_items();
             if flags.contains(Flags::FLAGGED) {
-                self.change_flags(item, Flags::empty(), Flags::FLAGGED, cx);
+                self.change_flags(&items, Flags::empty(), Flags::FLAGGED, cx);
             } else {
-                self.change_flags(item, Flags::FLAGGED, Flags::empty(), cx);
+                self.change_flags(&items, Flags::FLAGGED, Flags::empty(), cx);
             }
         }
     }
 
-    /// `a`: archives the selected row (or thread, after `cmd-shift-a`) and selects the
-    /// next one.
+    /// `a`: archives the selected rows (or thread, after `cmd-shift-a`) and selects
+    /// the next row.
     pub fn archive_selected(&mut self, cx: &mut Context<'_, Self>) {
-        let Some((item, _)) = self.command_target() else {
+        let items = self.command_items();
+        if items.is_empty() {
             return;
+        }
+        let batch = self.batch(&items);
+        let result = self.remove(
+            &items,
+            |source| match &batch {
+                Batch::Threads(ids) => source.archive(ids),
+                Batch::Messages(ids) => source.archive_messages(ids),
+            },
+            cx,
+        );
+        if let Err(error) = result {
+            tracing::warn!(%error, "archiving failed");
+        }
+    }
+
+    /// What `a`, `m`, `s` and Quick Move (`shift-m`) act on: every selected row, else
+    /// the whole thread after `cmd-shift-a`, else the cursor row. A selected message of
+    /// a selected thread is covered by its thread and left out.
+    pub fn command_items(&mut self) -> Vec<ItemId> {
+        if !self.selection.is_multiple() {
+            return self
+                .command_target()
+                .map(|(item, _)| item)
+                .into_iter()
+                .collect();
+        }
+        let indices: Vec<usize> = self.selection.indices().collect();
+        let rows: Vec<Selected> = indices
+            .into_iter()
+            .filter_map(|ix| self.item_at(ix))
+            .collect();
+        let threads: HashSet<ThreadId> = rows
+            .iter()
+            .filter_map(|row| match row.item {
+                ItemId::Thread(id) => Some(id),
+                ItemId::Message(_) => None,
+            })
+            .collect();
+        rows.into_iter()
+            .filter(|row| match row.item {
+                ItemId::Thread(_) => true,
+                ItemId::Message(_) => !row.thread.is_some_and(|t| threads.contains(&t)),
+            })
+            .map(|row| row.item)
+            .collect()
+    }
+
+    /// `items` as one source call: threads, or messages. A mix of both becomes the
+    /// messages plus the threads' messages in this list, so it stays one command (and
+    /// one undo).
+    fn batch(&self, items: &[ItemId]) -> Batch {
+        let mut threads = Vec::new();
+        let mut messages = Vec::new();
+        for item in items {
+            match item {
+                ItemId::Thread(id) => threads.push(*id),
+                ItemId::Message(id) => messages.push(*id),
+            }
+        }
+        if messages.is_empty() {
+            return Batch::Threads(threads);
+        }
+        for thread in threads {
+            match self.source.thread_tree(thread) {
+                Ok(tree) => messages.extend(tree.iter().map(|node| node.message)),
+                Err(error) => tracing::debug!(%error, "no reply tree"),
+            }
+        }
+        Batch::Messages(messages)
+    }
+
+    /// Quick Move: moves `items` (from [`Self::command_items`]) into `to`, out of
+    /// `from` (see [`MailSource::move_threads`]), and selects the next row.
+    pub fn move_items(
+        &mut self,
+        items: &[ItemId],
+        to: FolderId,
+        from: Option<FolderId>,
+        cx: &mut Context<'_, Self>,
+    ) -> Result<(), SourceError> {
+        let batch = self.batch(items);
+        self.remove(
+            items,
+            |source| match &batch {
+                Batch::Threads(ids) => source.move_threads(ids, to, from),
+                Batch::Messages(ids) => source.move_messages(ids, to, from),
+            },
+            cx,
+        )
+    }
+
+    /// Runs `change`, which takes `items` out of the list (archive, move); the row
+    /// after the selection takes their place (the one before it at the end), without
+    /// passing through the first row.
+    fn remove(
+        &mut self,
+        items: &[ItemId],
+        change: impl FnOnce(&dyn MailSource) -> Result<(), SourceError>,
+        cx: &mut Context<'_, Self>,
+    ) -> Result<(), SourceError> {
+        let removed: HashSet<ItemId> = items.iter().copied().collect();
+        let threads: HashSet<ThreadId> = items
+            .iter()
+            .filter_map(|item| match item {
+                ItemId::Thread(id) => Some(*id),
+                ItemId::Message(_) => None,
+            })
+            .collect();
+        let cursor = self.selection.selected().unwrap_or(0);
+        let ranges = self.selection.ranges();
+        let first = ranges.first().map_or(cursor, |r| r.start);
+        let last = ranges.last().map_or(cursor, |r| r.end - 1);
+        // A row that survives: not a removed row, nor a message of a removed thread.
+        let survives = |row: &Selected| {
+            !removed.contains(&row.item) && !row.thread.is_some_and(|t| threads.contains(&t))
         };
-        let ix = self.selection.selected().unwrap_or(0);
-        // A row that survives: not the archived message, nor a message of the archived
-        // thread.
-        let survives = |row: &Selected| match item {
-            ItemId::Thread(thread) => row.thread != Some(thread),
-            ItemId::Message(_) => row.item != item,
-        };
-        let next = (ix + 1..ix + 64)
+        let next = (last + 1..last + 64)
             .map_while(|ix| self.item_at(ix))
             .find(survives)
             .or_else(|| {
-                (ix.saturating_sub(64)..ix)
+                (first.saturating_sub(64)..first)
                     .rev()
                     .filter_map(|ix| self.item_at(ix))
                     .find(survives)
             });
-        let result = match item {
-            ItemId::Thread(id) => self.source.archive(&[id]),
-            ItemId::Message(id) => self.source.archive_messages(&[id]),
-        };
-        match result {
-            Ok(()) => {
-                // The next row takes the archived one's place (the previous one at the
-                // end), without passing through the first row.
-                self.selected = next;
-                self.reload(false, cx);
-                self.selection_changed(cx);
-                cx.emit(ThreadListEvent::Changed);
-            }
-            Err(error) => tracing::warn!(%error, "archiving failed"),
-        }
+        change(self.source.as_ref())?;
+        self.selection.reset(self.len(), Some(cursor));
+        self.kept = KeptRows::Cursor;
+        self.selected = next;
+        self.reload(false, cx);
+        self.selection_changed(cx);
+        cx.emit(ThreadListEvent::Changed);
+        Ok(())
     }
 
     // ---- thread tree ------------------------------------------------------------------
@@ -1313,6 +1593,7 @@ impl ThreadList {
         if self.selection.selected().is_none() && len > 0 {
             self.selection.first();
         }
+        self.restore_rows(false);
         self.table.update(cx, |table, cx| table.refresh(cx));
         let now = self.selection.selected().and_then(|ix| self.item_at(ix));
         if now.map(|s| s.item) == previous.map(|s| s.item) {
@@ -1438,6 +1719,11 @@ impl ThreadList {
     /// `cmd-shift-a`: selects the selected row's whole thread; `m`, `s` and `a` then
     /// apply to all its messages, and its rows are highlighted.
     pub fn select_thread(&mut self, cx: &mut Context<'_, Self>) {
+        if self.selection.is_multiple()
+            && let Some(cursor) = self.selection.selected()
+        {
+            self.select(cursor, cx);
+        }
         let Some(selected) = self.selected else {
             return;
         };
@@ -1542,13 +1828,18 @@ impl ThreadList {
         self.prefs.toggle_column(column);
         self.save_prefs();
         let sort = self.prefs.sort;
-        let (selected_thread, available) = {
+        let (selected_thread, selected_rows, available) = {
             let look = self.look.borrow();
-            (look.selected_thread, look.available)
+            (
+                look.selected_thread,
+                look.selected_rows.clone(),
+                look.available,
+            )
         };
         *self.look.borrow_mut() = TableLook {
             sort,
             selected_thread,
+            selected_rows,
             available,
             ..TableLook::from_prefs(&self.prefs)
         };
@@ -1660,7 +1951,7 @@ impl ThreadList {
             .map(|slot| {
                 let (ix, half) = model.expansions.resolve_slot(slot, CARD_SLOTS);
                 let row = model.get(ix);
-                let highlighted = self.selection.selected() == Some(ix)
+                let highlighted = self.selection.is_selected(ix)
                     || row.is_some_and(|r| Some(r.thread) == selected_thread);
                 match row.map(|r| r.kind) {
                     Some(RowKind::Child { .. }) => self
@@ -1726,9 +2017,16 @@ impl ThreadList {
                     cx.notify();
                 }
             }))
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 this.focus(window, cx);
-                this.select(ix, cx);
+                let modifiers = event.modifiers();
+                if modifiers.shift {
+                    this.extend_to(ix, cx);
+                } else if modifiers.secondary() {
+                    this.toggle_row(ix, cx);
+                } else {
+                    this.select(ix, cx);
+                }
             }))
     }
 
@@ -2402,16 +2700,35 @@ impl TableDelegate for ThreadTable {
         _: &mut Window,
         cx: &mut Context<'_, TableState<Self>>,
     ) -> Stateful<Div> {
-        let selected_thread = self.look.borrow().selected_thread;
-        let highlighted = selected_thread.is_some_and(|thread| {
-            self.model
-                .borrow()
-                .get(row_ix)
-                .is_some_and(|row| row.thread == thread)
-        });
+        let (selected_thread, selected) = {
+            let look = self.look.borrow();
+            let ix = look.selected_rows.partition_point(|r| r.end <= row_ix);
+            let selected = look
+                .selected_rows
+                .get(ix)
+                .is_some_and(|r| r.contains(&row_ix));
+            (look.selected_thread, selected)
+        };
+        let highlighted = selected
+            || selected_thread.is_some_and(|thread| {
+                self.model
+                    .borrow()
+                    .get(row_ix)
+                    .is_some_and(|row| row.thread == thread)
+            });
+        let list = self.list.clone();
         div()
             .id(("row", row_ix))
             .when(highlighted, |this| this.bg(cx.theme().list_active))
+            // The table selects on plain clicks; shift and cmd clicks are ours.
+            .on_click(move |event, _, cx| {
+                let modifiers = event.modifiers();
+                if modifiers.shift {
+                    list.update(cx, |list, cx| list.extend_to(row_ix, cx)).ok();
+                } else if modifiers.secondary() {
+                    list.update(cx, |list, cx| list.toggle_row(row_ix, cx)).ok();
+                }
+            })
     }
 
     fn render_td(
@@ -2933,6 +3250,142 @@ mod tests {
         assert_eq!(prefs.mode, ListMode::Table);
         assert_eq!(prefs.sort, ListSort::OldestFirst);
         assert!(prefs.columns.contains(&ColumnId::Size));
+    }
+
+    #[gpui::test]
+    fn shift_selects_a_range_that_commands_act_on(cx: &mut gpui::TestAppContext) {
+        let source = source();
+        let (list, cx) = open_list(cx, &source, inbox(), memory());
+        list.update(cx, |list, cx| {
+            let len = list.len();
+            list.select(2, cx);
+            list.extend(1, cx);
+            list.extend(1, cx);
+            assert_eq!(list.selected_index(), Some(4), "the cursor moved");
+            assert_eq!(list.selected_count(), 3);
+            assert!((2..5).all(|ix| list.is_row_selected(ix)));
+            let threads: Vec<ThreadId> = (2..5)
+                .map(|ix| match list.model().borrow_mut().item(ix) {
+                    Some(ItemId::Thread(id)) => id,
+                    other => panic!("{other:?}"),
+                })
+                .collect();
+            assert_eq!(
+                list.command_items(),
+                threads
+                    .iter()
+                    .copied()
+                    .map(ItemId::Thread)
+                    .collect::<Vec<_>>()
+            );
+            // The cursor row decides: star all, then unstar all.
+            let starred = source.thread_rows(&threads[2..])[0].is_starred();
+            list.toggle_star(cx);
+            let rows = source.thread_rows(&threads);
+            assert!(rows.iter().all(|r| r.is_starred() != starred), "{rows:?}");
+            list.toggle_read(cx);
+            let unread = source.thread_rows(&threads)[0].is_unread();
+            assert!(
+                source
+                    .thread_rows(&threads)
+                    .iter()
+                    .all(|r| r.is_unread() == unread)
+            );
+            // Extending doesn't mark the rows read; a plain step collapses.
+            let next = list.model().borrow_mut().item(5);
+            list.archive_selected(cx);
+            assert_eq!(list.len(), len - 3);
+            assert_eq!(list.selected_count(), 1);
+            assert_eq!(list.selected_index(), Some(2));
+            assert_eq!(
+                list.selected_item(),
+                next,
+                "the row after the block moved up"
+            );
+            assert!(
+                source.thread_rows(&threads).is_empty(),
+                "all three archived"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn cmd_click_and_select_all_survive_live_updates(cx: &mut gpui::TestAppContext) {
+        let source = source();
+        let (list, cx) = open_list(cx, &source, inbox(), memory());
+        list.update(cx, |list, cx| {
+            list.select(5, cx);
+            list.toggle_row(8, cx);
+            list.extend_to(9, cx);
+            list.toggle_row(12, cx);
+            assert_eq!(list.selected_count(), 4);
+            let items: Vec<_> = [5, 8, 9, 12]
+                .map(|ix| list.model().borrow_mut().item(ix).unwrap())
+                .into();
+            assert_eq!(list.command_items(), items);
+            // Mail arrives… or rather the top thread leaves: every row moves up one.
+            let ListKeys::Threads(keys) = list.model().borrow().keys().clone() else {
+                panic!("threaded");
+            };
+            source.archive(&[keys[0]]).unwrap();
+            list.refresh(cx);
+            assert_eq!(list.command_items(), items, "the same rows, by identity");
+            assert!([4, 7, 8, 11].iter().all(|ix| list.is_row_selected(*ix)));
+            assert_eq!(list.selected_index(), Some(11), "the cursor followed");
+
+            list.select_all(cx);
+            assert_eq!(list.selected_count(), list.len());
+            source.archive(&[keys[1]]).unwrap();
+            list.refresh(cx);
+            assert_eq!(list.selected_count(), list.len(), "still everything");
+            list.next(cx);
+            assert_eq!(list.selected_count(), 1);
+        });
+    }
+
+    #[gpui::test]
+    fn a_mixed_selection_is_one_batch_of_messages(cx: &mut gpui::TestAppContext) {
+        use crate::fake::MoveItem;
+
+        let fake = Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
+        let source: Arc<dyn MailSource> = fake.clone();
+        let (list, cx) = open_list(cx, &source, inbox(), memory());
+        list.update(cx, |list, cx| {
+            let row = thread_with(list, &source, 3);
+            list.toggle_expanded(row, cx);
+            let Some(ItemId::Thread(expanded)) = list.model().borrow_mut().item(row) else {
+                panic!("a thread row");
+            };
+            // The thread row and its first message: the thread covers the message.
+            list.select(row, cx);
+            list.extend(1, cx);
+            assert_eq!(list.command_items(), [ItemId::Thread(expanded)]);
+            // A message of the expanded thread and a whole other thread.
+            let Some(ItemId::Message(child)) = list.model().borrow_mut().item(row + 2) else {
+                panic!("a message row");
+            };
+            let other_row = if row == 0 { list.len() - 1 } else { 0 };
+            let Some(ItemId::Thread(other)) = list.model().borrow_mut().item(other_row) else {
+                panic!("a thread row");
+            };
+            list.select(row + 2, cx);
+            list.toggle_row(other_row, cx);
+            let items = list.command_items();
+            assert_eq!(items.len(), 2);
+            let other_messages: Vec<MessageId> = source
+                .thread_tree(other)
+                .unwrap()
+                .iter()
+                .map(|n| n.message)
+                .collect();
+            let trash = FolderId(8);
+            list.move_items(&items, trash, None, cx).unwrap();
+            assert_eq!(fake.moved_to(MoveItem::Message(child)), Some(trash));
+            for message in other_messages {
+                assert_eq!(fake.moved_to(MoveItem::Message(message)), Some(trash));
+            }
+            assert_eq!(fake.moved_to(MoveItem::Thread(other)), None, "one batch");
+        });
     }
 
     #[gpui::test]

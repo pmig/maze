@@ -738,6 +738,30 @@ pub trait MailSource: Send + Sync + 'static {
     /// Moves single messages to their account's Archives folder.
     fn archive_messages(&self, messages: &[MessageId]) -> Result<(), SourceError>;
 
+    /// The account a thread belongs to (Quick Move offers that account's folders).
+    fn thread_account(&self, thread: ThreadId) -> Option<AccountId>;
+
+    /// The account a message belongs to.
+    fn message_account(&self, message: MessageId) -> Option<AccountId>;
+
+    /// Moves threads into `to`, a folder of their account. `from` is the folder they
+    /// are moved out of (the one shown); `None` moves every copy except Gmail's All
+    /// Mail. Undoable like [`MailSource::archive`].
+    fn move_threads(
+        &self,
+        threads: &[ThreadId],
+        to: FolderId,
+        from: Option<FolderId>,
+    ) -> Result<(), SourceError>;
+
+    /// Moves single messages into `to`, like [`MailSource::move_threads`].
+    fn move_messages(
+        &self,
+        messages: &[MessageId],
+        to: FolderId,
+        from: Option<FolderId>,
+    ) -> Result<(), SourceError>;
+
     /// Connection, sync and outbox state.
     fn status(&self) -> SourceStatus;
 

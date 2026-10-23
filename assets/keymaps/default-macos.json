@@ -42,6 +42,7 @@
       "m": "mail::ToggleRead",
       "s": "mail::ToggleStar",
       "a": "mail::Archive",
+      "shift-m": "mail::MoveToFolder",
       "cmd-shift-a": "mail::SelectThread"
     }
   },
@@ -50,6 +51,9 @@
     "bindings": {
       "down": "mail::NextMessage",
       "up": "mail::PreviousMessage",
+      "shift-down": "mail::ExtendSelectionDown",
+      "shift-up": "mail::ExtendSelectionUp",
+      "cmd-a": "mail::SelectAll",
       "home": "mail::FirstMessage",
       "end": "mail::LastMessage",
       "pagedown": "mail::PageDown",

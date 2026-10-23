@@ -1,5 +1,6 @@
 //! The Maze main window: title bar, spaces bar, folder pane, message list, message
-//! view, agent column and status bar (CONCEPT §8.2), plus the command palette.
+//! view, agent column and status bar (CONCEPT §8.2), plus the command palette and the
+//! Quick Move picker.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -31,6 +32,7 @@ use crate::format::format_thousands;
 use crate::layout::{self, AgentPlacement, LayoutConfig, LayoutPrefs, MessagePlacement};
 use crate::message_view::MessageView;
 use crate::perf::{FrameStats, ScrollBenchmark, resident_memory};
+use crate::quick_move::{MoveTarget, QuickMove, QuickMoveEvent, source_folder};
 use crate::source::{DataChanges, Direction, FolderKey, MailSource, ThreadScope};
 use crate::thread_list::{
     CARD_HEIGHT, ItemId, ListMode, TABLE_LIST_WIDTH, TABLE_ROW_HEIGHT, ThreadList, ThreadListEvent,
@@ -69,6 +71,8 @@ impl Default for MailWindowOptions {
 const DEFAULT_SIZE: (f32, f32) = (1680., 1000.);
 /// The window can't get smaller than this.
 const MIN_SIZE: (f32, f32) = (720., 480.);
+/// Selected rows whose account Quick Move checks before it opens.
+const ACCOUNT_CHECK_ROWS: usize = 1_000;
 
 /// Opens the main window. Returns its handle and root view (for
 /// [`MailWindow::apply_changes`]).
@@ -141,6 +145,9 @@ pub struct MailWindow {
     config: LayoutConfig,
     palette: Option<Entity<CommandPalette>>,
     palette_return_focus: Option<FocusHandle>,
+    quick_move: Option<Entity<QuickMove>>,
+    quick_move_return_focus: Option<FocusHandle>,
+    ui_state: UiStateStore,
     cards_list_width: Option<f32>,
     stats: Rc<RefCell<FrameStats>>,
     pending_benchmark: Option<ScrollBenchmark>,
@@ -207,6 +214,9 @@ impl MailWindow {
             config: LayoutConfig::default(),
             palette: None,
             palette_return_focus: None,
+            quick_move: None,
+            quick_move_return_focus: None,
+            ui_state: options.ui_state.clone(),
             cards_list_width: None,
             stats: Rc::new(RefCell::new(FrameStats::new(options.process_start))),
             pending_benchmark: options.benchmark,
@@ -248,6 +258,11 @@ impl MailWindow {
     /// Whether the command palette is open.
     pub fn is_palette_open(&self) -> bool {
         self.palette.is_some()
+    }
+
+    /// The Quick Move picker, while it is open.
+    pub fn quick_move(&self) -> Option<&Entity<QuickMove>> {
+        self.quick_move.as_ref()
     }
 
     /// Adds a view to the right of the title bar, before the search field (the
@@ -308,6 +323,12 @@ impl MailWindow {
     }
 
     fn show_selected(&mut self, cx: &mut Context<'_, Self>) {
+        let count = self.thread_list.read(cx).selected_count();
+        if count > 1 {
+            self.message_view
+                .update(cx, |view, cx| view.show_selection(count, cx));
+            return;
+        }
         let item = self.thread_list.read(cx).selected_item();
         let document = item.map(|item| match item {
             ItemId::Thread(thread) => self.source.message(thread),
@@ -428,6 +449,98 @@ impl MailWindow {
                 window.focus(&focus, cx);
             }
         }
+        cx.notify();
+    }
+
+    /// `shift-m`: opens Quick Move for the selected rows (or thread) over their
+    /// account's folders. Run from the palette, it takes the palette's place.
+    fn open_quick_move(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.quick_move.is_some() {
+            return;
+        }
+        let items = self.thread_list.update(cx, |list, _| list.command_items());
+        // Mail moves within its account. The first rows tell (checking a huge selection
+        // row by row would stall; the core refuses a move across accounts anyway).
+        let mut accounts = items
+            .iter()
+            .take(ACCOUNT_CHECK_ROWS)
+            .map(|item| match item {
+                ItemId::Thread(thread) => self.source.thread_account(*thread),
+                ItemId::Message(message) => self.source.message_account(*message),
+            });
+        let Some(Some(account)) = accounts.next() else {
+            return;
+        };
+        if !accounts.all(|other| other == Some(account)) {
+            window.push_notification(
+                Notification::info("Quick Move works on mail of one account at a time.")
+                    .title(PRODUCT_NAME),
+                cx,
+            );
+            return;
+        }
+        let tree = self.source.folder_tree();
+        let Some(account) = tree.accounts.into_iter().find(|a| a.id == account) else {
+            tracing::warn!("quick move: the selected mail's account is gone");
+            return;
+        };
+        let from = source_folder(self.thread_list.read(cx).scope(), &account);
+        let target = MoveTarget {
+            items,
+            account: account.id,
+            from,
+        };
+        let recent = self.ui_state.move_targets(account.id);
+        let return_focus = match self.palette.take() {
+            Some(_) => self.palette_return_focus.take(),
+            None => window.focused(cx),
+        };
+        self.quick_move_return_focus = return_focus;
+        let picker = cx.new(|cx| QuickMove::new(target, &account, recent, window, cx));
+        let focus = picker.focus_handle(cx);
+        self._subscriptions
+            .push(cx.subscribe_in(&picker, window, Self::on_quick_move_event));
+        self.quick_move = Some(picker);
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    fn on_quick_move_event(
+        &mut self,
+        picker: &Entity<QuickMove>,
+        event: &QuickMoveEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if let QuickMoveEvent::Confirmed(folder) = *event {
+            let target = picker.read(cx).target().clone();
+            let moved = self.thread_list.update(cx, |list, cx| {
+                list.move_items(&target.items, folder, target.from, cx)
+            });
+            match moved {
+                Ok(()) => self.ui_state.remember_move_target(target.account, folder),
+                Err(error) => {
+                    tracing::warn!(%error, "moving failed");
+                    window.push_notification(
+                        Notification::error(format!("The mail couldn't be moved: {error}"))
+                            .title(PRODUCT_NAME),
+                        cx,
+                    );
+                }
+            }
+        }
+        self.close_quick_move(window, cx);
+    }
+
+    fn close_quick_move(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.quick_move.take().is_none() {
+            return;
+        }
+        let focus = self
+            .quick_move_return_focus
+            .take()
+            .unwrap_or_else(|| self.thread_list.focus_handle(cx));
+        window.focus(&focus, cx);
         cx.notify();
     }
 
@@ -770,6 +883,9 @@ impl Render for MailWindow {
                 this.thread_list
                     .update(cx, |list, cx| list.archive_selected(cx));
             }))
+            .on_action(cx.listener(|this, _: &MoveToFolder, window, cx| {
+                this.open_quick_move(window, cx);
+            }))
             .on_action(cx.listener(|this, _: &ToggleTableView, window, cx| {
                 this.thread_list
                     .update(cx, |list, cx| list.toggle_mode(window, cx));
@@ -796,6 +912,15 @@ impl Render for MailWindow {
             .on_action(cx.listener(|this, _: &SelectThread, _, cx| {
                 this.thread_list
                     .update(cx, |list, cx| list.select_thread(cx));
+            }))
+            .on_action(cx.listener(|this, _: &ExtendSelectionDown, _, cx| {
+                this.thread_list.update(cx, |list, cx| list.extend(1, cx));
+            }))
+            .on_action(cx.listener(|this, _: &ExtendSelectionUp, _, cx| {
+                this.thread_list.update(cx, |list, cx| list.extend(-1, cx));
+            }))
+            .on_action(cx.listener(|this, _: &SelectAll, _, cx| {
+                this.thread_list.update(cx, |list, cx| list.select_all(cx));
             }))
             .on_action(|_: &Reply, window, cx| Self::notify_unavailable("Reply", window, cx))
             .on_action(|_: &ReplyAll, window, cx| Self::notify_unavailable("Reply all", window, cx))
@@ -835,6 +960,7 @@ impl Render for MailWindow {
             )
             .child(MailStatusBar::new(self.source.status(), summary))
             .children(self.palette.clone())
+            .children(self.quick_move.clone())
             .child(
                 canvas(
                     |_, _, _| {},
@@ -1077,6 +1203,170 @@ mod tests {
         cx.simulate_keystrokes("cmd-shift-p");
         cx.simulate_keystrokes("cmd-shift-p");
         assert!(!view.read_with(cx, |w, _| w.is_palette_open()));
+    }
+
+    /// The Trash folder of the account of `thread`, and the account's Inbox.
+    fn trash_and_inbox(
+        source: &FakeMailSource,
+        thread: mazemail_types::ThreadId,
+    ) -> (mazemail_types::FolderId, mazemail_types::FolderId) {
+        let account = source.thread_account(thread).unwrap();
+        let tree = source.folder_tree();
+        let folders = &tree
+            .accounts
+            .iter()
+            .find(|a| a.id == account)
+            .unwrap()
+            .folders;
+        let with_role = |role| match folders.iter().find(|f| f.role == Some(role)).unwrap().key {
+            FolderKey::Folder(id) => id,
+            FolderKey::Unified(_) => unreachable!(),
+        };
+        (with_role(FolderRole::Trash), with_role(FolderRole::Inbox))
+    }
+
+    #[gpui::test]
+    fn shift_m_moves_the_selection_to_a_picked_folder(cx: &mut TestAppContext) {
+        use crate::fake::MoveItem;
+
+        cx.update(|cx| {
+            ui::init(cx);
+            crate::init(cx);
+        });
+        let fake = Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
+        let source: Arc<dyn MailSource> = fake.clone();
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            MailWindow::new(source, &MailWindowOptions::default(), window, cx)
+        });
+        cx.run_until_parked();
+        let selected = |cx: &mut VisualTestContext| {
+            view.read_with(cx, |w, cx| w.thread_list().read(cx).selected_thread())
+        };
+        let thread = selected(cx).unwrap();
+        let (trash, inbox) = trash_and_inbox(&fake, thread);
+        let offered = |cx: &mut VisualTestContext| {
+            view.read_with(cx, |w, cx| {
+                w.quick_move()
+                    .map(|picker| picker.read(cx).matches().map(|c| c.id).collect::<Vec<_>>())
+            })
+        };
+
+        cx.simulate_keystrokes("shift-m");
+        let all = offered(cx).expect("the picker is open");
+        assert!(!all.contains(&inbox), "the Inbox shown is not a target");
+        assert!(all.contains(&trash));
+        // Single-key shortcuts type into the filter.
+        cx.simulate_input("trash");
+        assert_eq!(offered(cx).unwrap(), [trash]);
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert!(offered(cx).is_none(), "the picker closed");
+        assert_eq!(fake.moved_to(MoveItem::Thread(thread)), Some(trash));
+        let next = selected(cx).unwrap();
+        assert_ne!(next, thread, "the next thread took its place");
+
+        // Focus is back on the list, and Trash is now a recent target: first.
+        cx.simulate_keystrokes("shift-m");
+        let (next_trash, _) = trash_and_inbox(&fake, next);
+        if next_trash == trash {
+            assert_eq!(offered(cx).unwrap()[0], trash);
+        }
+        // Escape clears the filter, then closes without moving.
+        cx.simulate_input("x");
+        cx.simulate_keystrokes("escape escape");
+        assert!(offered(cx).is_none());
+        assert_eq!(fake.moved_to(MoveItem::Thread(next)), None);
+        assert_eq!(selected(cx), Some(next));
+
+        // From the palette: the picker takes its place and gets the keys.
+        cx.simulate_keystrokes("cmd-shift-p");
+        cx.simulate_input("move to folder");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert!(!view.read_with(cx, |w, _| w.is_palette_open()));
+        assert!(offered(cx).is_some());
+        cx.simulate_input("trash");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert_eq!(fake.moved_to(MoveItem::Thread(next)), Some(next_trash));
+        assert!(offered(cx).is_none());
+    }
+
+    #[gpui::test]
+    fn shift_arrows_select_rows_that_quick_move_moves_together(cx: &mut TestAppContext) {
+        use crate::fake::MoveItem;
+
+        cx.update(|cx| {
+            ui::init(cx);
+            crate::init(cx);
+        });
+        let fake = Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
+        let source: Arc<dyn MailSource> = fake.clone();
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            MailWindow::new(source, &MailWindowOptions::default(), window, cx)
+        });
+        cx.run_until_parked();
+        // Gmail (personal) / Inbox: one account, so Quick Move offers its folders.
+        let inbox = FolderKey::Folder(mazemail_types::FolderId(1));
+        view.update_in(cx, |w, window, cx| {
+            let pane = w.folder_pane.clone();
+            let selected = FolderPaneEvent::Selected {
+                key: inbox,
+                title: "Inbox".into(),
+            };
+            w.on_folder_pane_event(&pane, &selected, window, cx);
+        });
+        let items = |cx: &mut VisualTestContext| {
+            view.update(cx, |w, cx| {
+                w.thread_list().update(cx, |l, _| l.command_items())
+            })
+        };
+        let first = items(cx);
+        cx.simulate_keystrokes("shift-down shift-down shift-up");
+        let selected = items(cx);
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0], first[0]);
+        assert_eq!(
+            view.read_with(cx, |w, cx| w.message_view().read(cx).selection()),
+            Some(2),
+            "the message view says how many are selected"
+        );
+        // A plain arrow collapses; cmd-a selects everything.
+        cx.simulate_keystrokes("down");
+        assert_eq!(items(cx).len(), 1);
+        cx.simulate_keystrokes("cmd-a");
+        let all = view.read_with(cx, |w, cx| w.thread_list().read(cx).len());
+        assert_eq!(
+            view.read_with(cx, |w, cx| w.thread_list().read(cx).selected_count()),
+            all
+        );
+        cx.simulate_keystrokes("up shift-up");
+        let selected = items(cx);
+        assert_eq!(selected.len(), 2);
+
+        cx.simulate_keystrokes("shift-m");
+        cx.simulate_input("trash");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        let trash = mazemail_types::FolderId(8);
+        for item in selected {
+            let ItemId::Thread(thread) = item else {
+                panic!("thread rows");
+            };
+            assert_eq!(fake.moved_to(MoveItem::Thread(thread)), Some(trash));
+        }
+        assert_eq!(items(cx).len(), 1, "one row selected after the move");
+        assert_eq!(
+            view.read_with(cx, |w, cx| w.message_view().read(cx).selection()),
+            None
+        );
+
+        // The table extends the same way; its own up/down collapse.
+        cx.simulate_keystrokes("cmd-alt-t shift-down shift-down");
+        assert_eq!(items(cx).len(), 3);
+        cx.simulate_keystrokes("down");
+        cx.run_until_parked();
+        assert_eq!(items(cx).len(), 1);
     }
 
     #[gpui::test]

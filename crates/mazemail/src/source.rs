@@ -14,7 +14,7 @@
 //! - **Messages**: [`CoreHandle::message`], with the reader document rendered as escaped
 //!   Markdown ([`reader_text::display_markdown`]) that the view draws natively; remote
 //!   content is never loaded.
-//! - **Changes**: flags and archive go through [`CoreHandle::apply`] with
+//! - **Changes**: flags, archive and move go through [`CoreHandle::apply`] with
 //!   [`Origin::User`] (undoable), applied before the call returns, so the list shows
 //!   the new state at once.
 //! - **Live updates**: [`CoreMailSource::changes`] turns a [`CoreEventBatch`] into the
@@ -862,6 +862,47 @@ impl MailSource for CoreMailSource {
         self.apply_to_messages(
             MailCommand::Archive {
                 ids: messages.to_vec(),
+            },
+            messages,
+        )
+    }
+
+    fn thread_account(&self, thread: ThreadId) -> Option<AccountId> {
+        let core = self.ready().ok()?;
+        let row = core.rows(&[thread], None).ok()?.into_iter().next()?;
+        Some(row.account)
+    }
+
+    fn message_account(&self, message: MessageId) -> Option<AccountId> {
+        let core = self.ready().ok()?;
+        let row = core
+            .message_rows(&[message], None)
+            .ok()?
+            .into_iter()
+            .next()?;
+        Some(row.row.account)
+    }
+
+    fn move_threads(
+        &self,
+        threads: &[ThreadId],
+        to: FolderId,
+        from: Option<FolderId>,
+    ) -> Result<(), SourceError> {
+        self.apply(|ids| MailCommand::Move { ids, to, from }, threads)
+    }
+
+    fn move_messages(
+        &self,
+        messages: &[MessageId],
+        to: FolderId,
+        from: Option<FolderId>,
+    ) -> Result<(), SourceError> {
+        self.apply_to_messages(
+            MailCommand::Move {
+                ids: messages.to_vec(),
+                to,
+                from,
             },
             messages,
         )

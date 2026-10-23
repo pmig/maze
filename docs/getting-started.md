@@ -129,8 +129,18 @@ on the count opens its messages as a reply tree, `←` closes it, `*` opens all 
 and `\` closes them, `cmd-shift-a` selects a whole thread. The threads button (or
 `cmd-alt-g`) turns threads off and lists every message on its own.
 
+`shift-down` / `shift-up` (or shift-click) select several rows, cmd-click adds or
+removes one, `cmd-a` selects them all. Archive, Quick Move, toggle read and star then
+act on every selected row at once, and the message pane says how many are selected.
+
+**Quick Move** (`shift-m`), like Thunderbird's Quick Folder Move: a small picker lists
+the folders of the selected mail's account (`Archives / 2026`). Type part of a folder's
+name to filter, pick one with the arrow keys and press `enter` to move the selection
+there; `escape` cancels. With an empty filter the folders you moved mail to last come
+first. Moves stay within an account.
+
 Cards or table, threads, sort order, columns and widths are remembered per folder in
-`ui_state.json` in the data directory. A folder you haven't changed follows
+`ui_state.json` in the data directory, as are your recent Quick Move folders. A folder you haven't changed follows
 `thread_list.view` and `thread_list.threaded` in `settings.json`.
 
 ## Import mail
@@ -365,6 +375,8 @@ Maze uses Thunderbird's shortcuts and fills the gaps with Zed's. These are bound
 | Toggle read                          | `m`                         |
 | Star                                 | `s`                         |
 | Archive                              | `a`                         |
+| Move to a folder (Quick Move)        | `shift-m`                   |
+| Select several rows / all rows       | `shift-down` / `shift-up`, `cmd-a` |
 | Open / close a thread                | `right` / `left`            |
 | Open / close all threads             | `*` / `\`                   |
 | Select the whole thread              | `cmd-shift-a`               |

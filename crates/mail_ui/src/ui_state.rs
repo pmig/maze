@@ -16,9 +16,13 @@
 //!                    "columns": ["star", "subject", "correspondents", "size", "date"],
 //!                    "widths": { "correspondents": 220.0 } },
 //!     "unified:inbox": { "view": "cards", "threaded": true }
-//!   }
+//!   },
+//!   "move_targets": { "a2": [17, 4] }
 //! }
 //! ```
+//!
+//! `move_targets` are the folders Quick Move (`shift-m`) moved mail to last, per
+//! account, newest first ([`RECENT_MOVE_TARGETS`] at most).
 //!
 //! A folder without an entry uses the defaults from `settings.json`
 //! (`thread_list.view`, `thread_list.threaded`), [`ListDefaults`]. Every field of an
@@ -32,10 +36,15 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
+use mazemail_types::{AccountId, FolderId};
+
 use crate::source::ListSort;
 
 /// The file name in the data directory.
 pub const UI_STATE_FILE: &str = "ui_state.json";
+
+/// Recent Quick Move targets remembered per account.
+pub const RECENT_MOVE_TARGETS: usize = 5;
 
 /// How the list draws its rows.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -280,6 +289,9 @@ pub struct UiState {
     /// Per folder, keyed by [`FolderKey::tree_id`](crate::source::FolderKey::tree_id)
     /// (`folder:12`, `unified:inbox`) or `search` for global search results.
     pub folders: BTreeMap<String, FolderListState>,
+    /// Quick Move targets per account (keyed by its public id, `a2`), newest first.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub move_targets: BTreeMap<String, Vec<FolderId>>,
 }
 
 impl Default for UiState {
@@ -287,6 +299,7 @@ impl Default for UiState {
         Self {
             version: 1,
             folders: BTreeMap::new(),
+            move_targets: BTreeMap::new(),
         }
     }
 }
@@ -354,14 +367,45 @@ impl UiStateStore {
 
     /// Remembers a folder's settings and writes the file (if there is one).
     pub fn set_prefs(&self, folder: &str, prefs: &ListPrefs) {
-        let snapshot = {
-            let mut inner = self.lock();
+        self.change(|inner| {
             let state = prefs.to_state(&inner.defaults);
             if state == FolderListState::default() {
                 inner.state.folders.remove(folder);
             } else {
                 inner.state.folders.insert(folder.to_owned(), state);
             }
+        });
+    }
+
+    /// The folders Quick Move moved `account`'s mail to last, newest first.
+    pub fn move_targets(&self, account: AccountId) -> Vec<FolderId> {
+        self.lock()
+            .state
+            .move_targets
+            .get(&account.to_string())
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Puts `folder` first among `account`'s recent move targets and writes the file.
+    pub fn remember_move_target(&self, account: AccountId, folder: FolderId) {
+        self.change(|inner| {
+            let targets = inner
+                .state
+                .move_targets
+                .entry(account.to_string())
+                .or_default();
+            targets.retain(|f| *f != folder);
+            targets.insert(0, folder);
+            targets.truncate(RECENT_MOVE_TARGETS);
+        });
+    }
+
+    /// Changes the state and writes the file (if there is one).
+    fn change(&self, edit: impl FnOnce(&mut Inner)) {
+        let snapshot = {
+            let mut inner = self.lock();
+            edit(&mut inner);
             inner.path.clone().map(|path| (path, inner.state.clone()))
         };
         if let Some((path, state)) = snapshot
@@ -443,6 +487,31 @@ mod tests {
         // Back to the defaults: the entry goes away.
         store.set_prefs("folder:12", &ListPrefs::resolve(None, &defaults));
         assert!(store.state().folders.is_empty());
+    }
+
+    #[test]
+    fn remembers_recent_move_targets_per_account() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(UI_STATE_FILE);
+        let store = UiStateStore::load(&path, ListDefaults::default());
+        let (work, home) = (AccountId(1), AccountId(2));
+        assert!(store.move_targets(work).is_empty());
+        for folder in [3, 4, 3, 5, 6, 7, 8, 9] {
+            store.remember_move_target(work, FolderId(folder));
+        }
+        store.remember_move_target(home, FolderId(20));
+        let expected: Vec<_> = [9, 8, 7, 6, 5].map(FolderId).into();
+        assert_eq!(
+            store.move_targets(work),
+            expected,
+            "newest first, no repeats"
+        );
+        assert_eq!(store.move_targets(home), [FolderId(20)]);
+
+        let reopened = UiStateStore::load(&path, ListDefaults::default());
+        assert_eq!(reopened.move_targets(work), expected);
+        let json = std::fs::read_to_string(&path).unwrap();
+        assert!(json.contains("\"move_targets\""), "{json}");
     }
 
     #[test]
