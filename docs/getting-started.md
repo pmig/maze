@@ -217,7 +217,16 @@ like Thunderbird. Subscribe to a folder on the server's webmail or in another cl
 get it into Maze. Servers that report no subscriptions at all, and Gmail (whose labels
 are folders), get every folder synced.
 
-### Gmail and Google Workspace: bring your own OAuth client ID
+### Gmail and Google Workspace
+
+The quickest way is an **app password**: turn on 2-Step Verification for the Google
+account, create an app password at <https://myaccount.google.com/apppasswords> and
+enter it in **Add Account** with your Gmail address instead of your normal password.
+Maze detects the server; **Test Connection** checks the login before you add the
+account. Workspace domains whose administrator turned app passwords off need the
+browser sign-in below.
+
+#### Sign in with Google: bring your own OAuth client ID
 
 Thunderbird's OAuth client IDs belong to Mozilla and can't be reused, and Google
 requires a verification for the full-mail scope (`https://mail.google.com/`) that Maze
@@ -242,14 +251,46 @@ common practice for open source mail clients:
    }
    ```
 
+Development builds read `~/.config/mazemail-dev/settings.json` instead.
+
 Signing in opens Google's page in your browser and returns to Maze through a loopback
 address (`http://127.0.0.1:<port>`), the same flow Thunderbird uses, with PKCE. If
 Google rejects the client, check these two values.
 
 ### Microsoft 365 and Outlook.com
 
-Maze signs in to Microsoft with OAuth2 (IMAP and SMTP scopes) through the browser, like
-Thunderbird. Many company tenants don't allow apps an administrator hasn't approved.
+Microsoft doesn't accept passwords over IMAP any more, so Outlook.com, Hotmail and
+Microsoft 365 accounts always use **Sign in with Microsoft**: OAuth2 with the IMAP and
+SMTP scopes in the browser, like Thunderbird. Maze has no Microsoft client ID of its own
+yet, so you register one (free, a few minutes):
+
+1. In the [Microsoft Entra admin center](https://entra.microsoft.com/), open
+   **App registrations** and choose **New registration**. Any Microsoft account works,
+   including a personal Outlook.com one.
+2. Name it (say, "Maze"). Under **Supported account types**, choose *Accounts in any
+   organizational directory and personal Microsoft accounts*.
+3. Under **Authentication**, add the platform **Mobile and desktop applications** with
+   the redirect URI `http://127.0.0.1`. Maze listens on a random port; Microsoft
+   ignores the port for loopback addresses.
+4. Under **API permissions**, add the delegated permissions `IMAP.AccessAsUser.All`,
+   `SMTP.Send` and `offline_access` (in *APIs my organization uses*, search for
+   *Office 365 Exchange Online*, or use *Microsoft Graph* for `offline_access`).
+5. Copy the **Application (client) ID** from the app's overview page into
+   `~/.config/mazemail/settings.json` (Maze reads it as `auth.microsoft.client_id`).
+   No client secret is needed:
+
+   ```jsonc
+   {
+     "auth": {
+       "microsoft": {
+         "client_id": "00000000-0000-0000-0000-000000000000"
+       }
+     }
+   }
+   ```
+
+Then restart Maze and use **Sign in with Microsoft** in **Add Account**. Many company
+tenants don't allow apps an administrator hasn't approved.
 Then sign-in fails with a message to forward to your IT department: an administrator
 has to grant admin consent for Maze in Microsoft Entra ID under *Enterprise
 applications*, or assign you to it. Sign in again once they have.
