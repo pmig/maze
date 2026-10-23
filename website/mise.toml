@@ -1,0 +1,7 @@
+# Node for the website, read from .node-version (the same file CI's setup-node uses),
+# so there is one pin. The Rust tools come from the repository's root mise.toml.
+[settings]
+idiomatic_version_file_enable_tools = ["node"]
+
+[tools]
+pnpm = "12.15.0"

@@ -1,0 +1,32 @@
+# Response headers for Cloudflare Workers static assets (and Pages).
+# Syntax: https://developers.cloudflare.com/workers/static-assets/headers/
+#
+# The site loads nothing from other origins: no analytics, fonts, or CDNs.
+# The CSP enforces that. The one relaxation, style-src-attr 'unsafe-inline', is for
+# the color custom properties Shiki puts on code tokens (style="--shiki-light:…");
+# there are no inline <style> or <script> elements.
+
+/*
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests
+  Strict-Transport-Security: max-age=63072000; includeSubDomains
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: accelerometer=(), autoplay=(), browsing-topics=(), camera=(), display-capture=(), encrypted-media=(), fullscreen=(), geolocation=(), gyroscope=(), hid=(), interest-cohort=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=()
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
+
+# Fingerprinted build output (CSS, fonts, images): the file name changes with the
+# content, so it can be cached forever.
+/_astro/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Stable names that may change between deploys: revalidate, but allow a short cache.
+/theme.js
+  Cache-Control: public, max-age=3600, must-revalidate
+/favicon.svg
+  Cache-Control: public, max-age=86400
+/apple-touch-icon.png
+  Cache-Control: public, max-age=86400
+/og.png
+  Cache-Control: public, max-age=86400

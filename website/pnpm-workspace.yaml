@@ -1,0 +1,6 @@
+# Install scripts: none are needed. esbuild and workerd ship their binaries as
+# optional platform packages; their postinstall scripts only verify them.
+allowBuilds:
+  esbuild: false
+  workerd: false
+  sharp: false

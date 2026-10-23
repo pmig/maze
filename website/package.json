@@ -1,0 +1,36 @@
+{
+  "name": "mazemail-website",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The website for Maze, mazemail.dev",
+  "license": "GPL-3.0-or-later",
+  "packageManager": "pnpm@12.15.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "check:links": "node scripts/check-links.mjs dist",
+    "deploy": "astro build && wrangler deploy",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@astrojs/markdown-satteri": "0.4.5",
+    "@astrojs/sitemap": "3.7.4",
+    "@fontsource-variable/ibm-plex-sans": "5.3.0",
+    "@fontsource-variable/lilex": "5.3.0",
+    "astro": "7.4.2",
+    "satteri": "0.10.5",
+    "sharp": "0.35.5"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.12",
+    "@types/node": "^24.19.2",
+    "typescript": "6.0.3",
+    "wrangler": "4.151.3"
+  }
+}

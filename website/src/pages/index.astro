@@ -1,0 +1,679 @@
+---
+import Base from "../layouts/Base.astro";
+import Icon from "../components/Icon.astro";
+import Screenshot from "../components/Screenshot.astro";
+import Terminal from "../components/Terminal.astro";
+import { NUMBERS, SITE, repoFile } from "../data/site";
+import { getRelease } from "../lib/release";
+import heroShot from "../../../docs/screenshots/app-real-data.png";
+import tableShot from "../../../docs/screenshots/s1-main-window-dark-table.png";
+
+const release = await getRelease();
+
+const SHORTCUTS: [string[], string][] = [
+  [["n"], "next unread"],
+  [["a"], "archive"],
+  [["s"], "star"],
+  [["m"], "toggle read"],
+  [["cmd", "shift", "k"], "Quick Filter"],
+  [["cmd", "k"], "search everything"],
+  [["cmd", "shift", "p"], "command palette"],
+  [["F8"], "message pane"],
+];
+
+const TERMINAL = [
+  '$ eval "$(mazemail login --profile triage --label claude --ttl 2h)"',
+  "waiting for approval in Maze…",
+  "$ mazemail search 'from:anna has:attachment after:2026-09-01' --limit 2",
+  "ID        DATE                       FROM                         SUBJECT",
+  "m_8f3a2c  2026-10-21T09:14:00+02:00  Anna Berger <anna@acme.dev>  Q4 planning",
+  "m_7d10e4  2026-10-02T16:40:12+02:00  Anna Berger <anna@acme.dev>  Offsite agenda",
+  "$ mazemail archive t_19bd --json",
+  '{"affected":["m_8f3a2c"],"outcome":"proposed","proposal":"p_2c41"}',
+  "# a triage token proposes; you decide in Maze",
+];
+---
+
+<Base>
+  <div class="frame">
+    <section class="hero" aria-labelledby="hero-title">
+      <p class="hero-badges">
+        {release.version && <a class="badge badge--dot" href={release.page}>{release.version}</a>}
+        <span class="badge">Open source · Rust · {SITE.license}</span>
+      </p>
+      <h1 id="hero-title">Your mail, on your machine. <span>Fast like Zed, familiar like Thunderbird.</span></h1>
+      <p class="hero-lede">
+        Maze is a local-first email client written in Rust. It renders on the GPU, keeps your
+        whole mailbox encrypted on disk, searches it instantly, and gives your scripts and
+        agents scoped access through the <code>mazemail</code> command line.
+      </p>
+      <div class="hero-cta">
+        <a class="button button--primary" href={release.mac.aarch64}>
+          <Icon name="download" />
+          Download for macOS
+        </a>
+        <a class="button" href="/docs/getting-started/#from-source">
+          <Icon name="terminal" />
+          Build from source
+        </a>
+      </div>
+      <p class="hero-note">
+        Apple Silicon · <a href={release.mac.x86_64}>Intel</a> · {SITE.macosMinimum} or later · updates itself.
+        Reading, search and triage work today; writing mail is next.
+      </p>
+    </section>
+
+    <div class="hero-shot">
+      <Screenshot
+        src={heroShot}
+        priority
+        alt="The Maze main window with demo mail: a folder pane with unified folders and accounts, a message list, an open message with DKIM, SPF and DMARC badges, and the agent column, which says AI is off."
+        caption="Demo mailbox. The agent column on the right is a preview; connecting agents is planned."
+      />
+    </div>
+
+    <section class="section" id="thunderbird" aria-labelledby="tb-title">
+      <p class="eyebrow">Feels like Thunderbird</p>
+      <h2 class="section-title" id="tb-title">Nothing to relearn.</h2>
+      <p class="lede">
+        Folder pane, message list, message. Cards or a table. Quick Filter and global search.
+        Thunderbird's keyboard shortcuts, plus a command palette for everything else.
+      </p>
+
+      <div class="grid-3">
+        <article class="card">
+          <h3>The layout you know</h3>
+          <p>
+            Unified folders, favorites and accounts on the left, threads in the middle, the
+            message on the right, in a sanitized reader view that never runs scripts and blocks
+            remote content until you allow it.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Your shortcuts</h3>
+          <ul class="keys">
+            {
+              SHORTCUTS.map(([keys, label]) => (
+                <li>
+                  <span class="combo">
+                    {keys.map((k) => (
+                      <kbd>{k}</kbd>
+                    ))}
+                  </span>
+                  <span>{label}</span>
+                </li>
+              ))
+            }
+          </ul>
+        </article>
+        <article class="card">
+          <h3>Bring your mail</h3>
+          <p>
+            Import a Thunderbird profile (accounts, identities, Local Folders, tags, saved
+            searches, address books), or mbox and Maildir. Or add IMAP, Gmail and Microsoft 365
+            accounts and sync live with IDLE and QRESYNC.
+          </p>
+          <p><a href="/docs/getting-started/#import-mail">Importing and accounts <span aria-hidden="true">→</span></a></p>
+        </article>
+      </div>
+
+      <div class="wide-shot">
+        <Screenshot
+          src={tableShot}
+          alt="Maze in dark mode with the message list as a table: subject and correspondent columns, bold unread threads, several Gmail, Microsoft 365 and IMAP accounts in the folder pane."
+          caption="Dark theme, table view, several accounts."
+        />
+      </div>
+    </section>
+
+    <section class="section" id="fast" aria-labelledby="fast-title">
+      <p class="eyebrow">Fast like Zed</p>
+      <h2 class="section-title" id="fast-title">Native, GPU-rendered, never waiting on a server.</h2>
+      <p class="lede">
+        Maze is built on GPUI, Zed's UI framework: no browser engine, virtualized lists, and no
+        work on the UI thread. Opening a folder, scrolling a hundred thousand threads or
+        searching all of them reads from the local store.
+      </p>
+      <dl class="stats">
+        {
+          NUMBERS.map((n) => (
+            <div class="stat">
+              <dt>
+                <span class="figure">
+                  <span class="value">{n.value}</span>
+                  <span class="unit">{n.unit}</span>
+                </span>
+                <span class="label">{n.label}</span>
+              </dt>
+              <dd>{n.detail}</dd>
+            </div>
+          ))
+        }
+      </dl>
+      <p class="footnote">
+        Measured on an Apple Silicon Mac with release builds and encryption on. The budgets are
+        hard targets from the design spec; the benchmarks live next to the code in the{" "}
+        <a href={SITE.repo}>repository</a>.
+      </p>
+    </section>
+
+    <section class="section split" id="private" aria-labelledby="private-title">
+      <div>
+        <p class="eyebrow">Private by design</p>
+        <h2 class="section-title" id="private-title">Encrypted at rest. Nothing phones home.</h2>
+        <p class="lede">
+          Maze keeps a full copy of your mail, so it encrypts all of it with a key that never
+          leaves your keychain. A copy of your data directory, a backup or a synced folder is
+          useless without it.
+        </p>
+        <p class="more"><a href="/docs/security/">How Maze protects your mail <span aria-hidden="true">→</span></a></p>
+      </div>
+      <ul class="facts">
+        <li>
+          <h3>Everything with mail content is encrypted</h3>
+          <p>
+            The database (SQLCipher, AES-256), message files and caches (XChaCha20-Poly1305) and
+            the search index, each with its own subkey of one 256-bit master key.
+          </p>
+        </li>
+        <li>
+          <h3>The key stays in the keychain</h3>
+          <p>
+            The macOS keychain, or the Secret Service on Linux. Programs that don't go through
+            Maze see only ciphertext.
+          </p>
+        </li>
+        <li>
+          <h3>No telemetry</h3>
+          <p>
+            No analytics, no accounts, no cloud. The updater fetches a signed manifest with a
+            plain GET and sends nothing about you. Tracking pixels stay blocked.
+          </p>
+        </li>
+      </ul>
+    </section>
+
+    <section class="section split split--terminal" id="agents" aria-labelledby="agents-title">
+      <div>
+        <p class="eyebrow">Built for agents</p>
+        <h2 class="section-title" id="agents-title">Scoped, approved access. No token, no mail.</h2>
+        <p class="lede">
+          The <code>mazemail</code> CLI is the same program as the app. It never opens your store:
+          it asks the running Maze over a private socket, and every request needs a token you
+          approved in Maze.
+        </p>
+        <ul class="checks">
+          <li><strong>Profiles:</strong> read-only, triage or writer, limited to accounts and folders, with a lifetime.</li>
+          <li><strong>Approvals:</strong> Maze shows which program asks before it gets a token, an import or an export.</li>
+          <li><strong>Proposals:</strong> a triage token's archive, move and tag become proposals instead of changes.</li>
+          <li><strong>Headless:</strong> <code>mazemail --headless</code> runs Maze without a window, for scripts and servers.</li>
+          <li><strong>JSON everywhere:</strong> stable ids and output shapes, documented for agents.</li>
+        </ul>
+        <p class="planned-note">
+          <span class="badge badge--planned">planned</span>
+          Reviewing proposals in Maze, and agents in Maze's own column (Claude Code, Codex, Cursor,
+          pi) over ACP, each in a sandbox.
+        </p>
+        <p class="more"><a href="/docs/cli/">The mazemail CLI <span aria-hidden="true">→</span></a></p>
+      </div>
+      <Terminal title="mazemail" lines={TERMINAL} />
+    </section>
+
+    <section class="section split" id="open-source" aria-labelledby="oss-title">
+      <div>
+        <p class="eyebrow">Open source</p>
+        <h2 class="section-title" id="oss-title">GPL, on GitHub, built in the open.</h2>
+        <p class="lede">
+          Maze is free software under the {SITE.license}. The design decisions are written down
+          as ADRs, the plan is public, and every change lands as a reviewed pull request.
+        </p>
+        <div class="hero-cta">
+          <a class="button" href={SITE.repo}><Icon name="github" /> pmig/mazemail</a>
+          <a class="button" href={repoFile("CONTRIBUTING.md")}>Contributing</a>
+        </div>
+      </div>
+      <ul class="facts">
+        <li>
+          <h3>Rust, end to end</h3>
+          <p>One binary for the app, the CLI and headless mode. No Electron, no web view for the UI.</p>
+        </li>
+        <li>
+          <h3>Standard formats, no lock-in</h3>
+          <p>IMAP to your servers; <code>mazemail export</code> writes mbox or Maildir whenever you want out.</p>
+        </li>
+      </ul>
+    </section>
+
+    <section class="section" id="status" aria-labelledby="status-title">
+      <p class="eyebrow">Status</p>
+      <h2 class="section-title" id="status-title">Pre-alpha: a reader today, a full client soon.</h2>
+      <p class="lede">
+        Maze is usable for reading, searching and triaging, but it isn't a daily driver yet.
+        Keep your mail on the server.
+      </p>
+      <div class="status-grid">
+        <div>
+          <h3 class="status-h">Works today</h3>
+          <ul class="done">
+            <li>IMAP, Gmail and Microsoft 365 accounts with live sync</li>
+            <li>Thunderbird, mbox and Maildir import</li>
+            <li>Encrypted store and Gmail-style search</li>
+            <li>Reader view with DKIM, SPF and DMARC results</li>
+            <li>Archive, move, tag, flag, mark read, with undo</li>
+            <li>The CLI and headless mode with scoped tokens</li>
+            <li>Background updates with rollback</li>
+          </ul>
+        </div>
+        <div>
+          <h3 class="status-h">Next</h3>
+          <ul class="next">
+            <li>Composer, SMTP sending and the outbox</li>
+            <li>Identities and From-address switching</li>
+            <li>Filter rules, including imported Thunderbird filters</li>
+            <li>The agent column and proposal review</li>
+            <li>Settings window and recovery key</li>
+          </ul>
+          <p class="more"><a href="/roadmap/">The full roadmap <span aria-hidden="true">→</span></a></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section cta" aria-labelledby="cta-title">
+      <h2 id="cta-title">Try Maze on your Mac.</h2>
+      <p class="muted">Free and open source. No account, no sign-up, nothing to opt out of.</p>
+      <div class="hero-cta">
+        <a class="button button--primary" href="/download/"><Icon name="download" /> Download</a>
+        <a class="button" href="/docs/getting-started/">Read the docs</a>
+      </div>
+    </section>
+  </div>
+</Base>
+
+<style>
+  .hero {
+    padding: clamp(3rem, 8vw, 5.5rem) var(--gutter) clamp(2rem, 4vw, 3rem);
+  }
+
+  .hero-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  h1 {
+    font-size: clamp(2.1rem, 4.6vw, 3.4rem);
+    line-height: 1.08;
+    letter-spacing: -0.03em;
+    font-weight: 600;
+    text-wrap: initial;
+  }
+
+  h1 span {
+    display: block;
+    color: var(--muted);
+    font-weight: 500;
+  }
+
+  .hero-lede {
+    margin-top: 1.4rem;
+    max-width: 60ch;
+    font-size: clamp(1.0625rem, 1.6vw, 1.1875rem);
+    color: var(--muted);
+    line-height: 1.6;
+  }
+
+  .hero-lede code {
+    color: var(--text);
+  }
+
+  .hero-cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin-top: 1.75rem;
+  }
+
+  .hero-note {
+    margin-top: 1rem;
+    font-size: 0.8125rem;
+    color: var(--faint);
+  }
+
+  .hero-note a {
+    color: inherit;
+  }
+
+  .hero-shot {
+    padding: 0 var(--gutter) clamp(2.5rem, 6vw, 4.5rem);
+  }
+
+  .grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    margin-top: 2.25rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--border);
+    overflow: hidden;
+  }
+
+  .card {
+    display: grid;
+    gap: 0.75rem;
+    align-content: start;
+    padding: 1.4rem;
+    background: var(--bg-frame);
+    font-size: 0.9375rem;
+    color: var(--muted);
+  }
+
+  .card h3,
+  .facts h3 {
+    font-size: 1rem;
+    letter-spacing: -0.01em;
+  }
+
+  .keys {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.45rem;
+  }
+
+  .keys li {
+    display: grid;
+    grid-template-columns: 8.5rem 1fr;
+    gap: 0.75rem;
+    align-items: center;
+  }
+
+  .combo {
+    display: inline-flex;
+    gap: 0.2rem;
+  }
+
+  .wide-shot {
+    margin-top: 2.5rem;
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    margin: 2.25rem 0 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+
+  .stat {
+    display: grid;
+    align-content: start;
+    gap: 0.6rem;
+    padding: 1.4rem;
+    border-left: 1px solid var(--border);
+  }
+
+  .stat dt {
+    display: grid;
+    gap: 0.3rem;
+  }
+
+  .figure {
+    display: flex;
+    align-items: baseline;
+    gap: 0.35rem;
+  }
+
+  .label {
+    color: var(--text-strong);
+    font-size: 0.9375rem;
+    font-weight: 500;
+  }
+
+  .stat:first-child {
+    border-left: 0;
+  }
+
+  .stat dd {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--faint);
+    line-height: 1.5;
+  }
+
+  .value {
+    font-family: var(--font-mono);
+    font-size: clamp(2rem, 3.6vw, 2.6rem);
+    font-weight: 500;
+    letter-spacing: -0.03em;
+    color: var(--text-strong);
+    line-height: 1.1;
+  }
+
+  .unit {
+    font-family: var(--font-mono);
+    color: var(--accent);
+    font-size: 0.9375rem;
+  }
+
+  .footnote {
+    margin-top: 1rem;
+    font-size: 0.8125rem;
+    color: var(--faint);
+    max-width: 80ch;
+  }
+
+  .footnote a {
+    color: inherit;
+  }
+
+  .split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: clamp(2rem, 5vw, 4rem);
+    align-items: start;
+  }
+
+  .split--terminal {
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+    align-items: center;
+  }
+
+  .facts {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+  }
+
+  .facts li {
+    display: grid;
+    gap: 0.4rem;
+    padding: 1.25rem 1.4rem;
+    font-size: 0.9375rem;
+    color: var(--muted);
+  }
+
+  .facts li + li {
+    border-top: 1px solid var(--border);
+  }
+
+  .more {
+    margin-top: 1.25rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+  }
+
+  .planned-note {
+    margin-top: 1.25rem;
+    font-size: 0.875rem;
+    color: var(--muted);
+  }
+
+  .planned-note .badge {
+    margin-right: 0.35rem;
+  }
+
+  .checks {
+    list-style: none;
+    margin: 1.5rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 0.6rem;
+    font-size: 0.9375rem;
+    color: var(--muted);
+  }
+
+  .checks li {
+    padding-left: 1.25rem;
+    position: relative;
+  }
+
+  .checks li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.6em;
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 2px;
+    background: var(--accent);
+  }
+
+  .checks strong {
+    color: var(--text-strong);
+    font-weight: 600;
+  }
+
+  .status-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    margin-top: 2.25rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+  }
+
+  .status-grid > div {
+    padding: 1.4rem;
+  }
+
+  .status-grid > div + div {
+    border-left: 1px solid var(--border);
+  }
+
+  .status-h {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 1rem;
+  }
+
+  .done,
+  .next {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.5rem;
+    font-size: 0.9375rem;
+  }
+
+  .done li,
+  .next li {
+    position: relative;
+    padding-left: 1.4rem;
+  }
+
+  .done li::before,
+  .next li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.5em;
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+  }
+
+  .done li::before {
+    background: var(--amber);
+  }
+
+  .next li {
+    color: var(--muted);
+  }
+
+  .next li::before {
+    border: 1.5px dashed var(--faint);
+  }
+
+  .cta {
+    text-align: center;
+    display: grid;
+    justify-items: center;
+    gap: 0.5rem;
+    background: radial-gradient(
+      60% 120% at 50% 100%,
+      color-mix(in oklab, var(--indigo-500) 12%, transparent),
+      transparent 70%
+    );
+  }
+
+  .cta h2 {
+    font-size: clamp(1.5rem, 3vw, 2rem);
+    letter-spacing: -0.02em;
+  }
+
+  .cta .hero-cta {
+    justify-content: center;
+    margin-top: 1rem;
+  }
+
+  @media (max-width: 960px) {
+    .stats {
+      grid-template-columns: 1fr 1fr;
+    }
+    .stat:nth-child(3) {
+      border-left: 0;
+    }
+    .stat:nth-child(n + 3) {
+      border-top: 1px solid var(--border);
+    }
+    .split,
+    .split--terminal {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  @media (max-width: 760px) {
+    .grid-3,
+    .status-grid {
+      grid-template-columns: 1fr;
+    }
+    .status-grid > div + div {
+      border-left: 0;
+      border-top: 1px solid var(--border);
+    }
+  }
+
+  @media (max-width: 480px) {
+    .stats {
+      grid-template-columns: 1fr;
+    }
+    .stat {
+      border-left: 0;
+    }
+    .stat + .stat {
+      border-top: 1px solid var(--border);
+    }
+  }
+</style>
