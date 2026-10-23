@@ -23,6 +23,7 @@
 //! | Search   | [`search`](CoreHandle::search), [`quick_filter_body`](CoreHandle::quick_filter_body) |
 //! | Commands | [`apply`](CoreHandle::apply), [`undo`](CoreHandle::undo) |
 //! | Events   | [`events`](CoreHandle::events), [`settings_watch`](CoreHandle::settings_watch) |
+//! | Settings | [`settings`](CoreHandle::settings), [`set_favorite_folder`](CoreHandle::set_favorite_folder) (writes `settings.json`) |
 //! | Index    | [`index_sink`](CoreHandle::index_sink), [`reindex_all`](CoreHandle::reindex_all), [`check_index`](CoreHandle::check_index) |
 //!
 //! # Seams for crates built later
@@ -87,7 +88,7 @@ pub use config::{CoreConfig, RuntimeConfig};
 pub use crash_guard::{CrashGuardStatus, ROLLBACK_THRESHOLD, SENTINEL_FILE};
 pub use error::{Error, Result};
 pub use events::{CoreEventBatch, DEFAULT_EVENT_WINDOW, FolderCounts};
-pub use folders::{FolderNode, FolderNodeKind, UNIFIED_ROLES, unified_name};
+pub use folders::{FolderNode, FolderNodeKind, UNIFIED_ROLES, folder_path, unified_name};
 pub use global_search::{SearchFacets, SearchOpts, SearchResults, SearchSort, SearchThread};
 pub use handle::CoreHandle;
 pub use indexing::{CoreIndexSink, IndexCheck, IndexDocument, IndexProgress, ReindexReport};

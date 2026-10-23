@@ -107,6 +107,8 @@ actions!(
         ExtendSelectionUp,
         /// Select every row of the list (`cmd-a`).
         SelectAll,
+        /// Add the open folder to the favorites, or remove it.
+        ToggleFavoriteFolder,
     ]
 );
 

@@ -115,6 +115,35 @@ example:
 Accounts, identities and SMTP servers are stored in the encrypted database, never in
 `settings.json`.
 
+### The folder pane
+
+The folder pane on the left has three sections: **Favorites**, **Unified Folders** (the
+Inbox, Sent, … of all accounts together) and **Accounts** with each account's folders.
+Click a section's or an account's name to collapse or expand it.
+
+Right-click a folder and choose **Add to Favorites** to list it under Favorites at the
+top; **Remove from Favorites** (on the folder or on its favorite) takes it out again.
+**Mail: Toggle Favorite Folder** in the command palette does the same for the open
+folder. Favorites are sorted like the accounts and their folders; with more than one
+account they are grouped under the account's name. A favorite opens its folder, with
+the same unread count.
+
+Favorites are saved in `settings.json` as the account's label and the folder's path,
+so they survive restarts and re-syncs, and you can edit them by hand:
+
+```jsonc
+{
+  "folder_pane": {
+    "favorites": [
+      { "account": "work", "folder": "Customers/Acme" }
+    ]
+  }
+}
+```
+
+Maze keeps your comments and formatting when it changes the list. A favorite whose
+folder no longer exists (or whose account was renamed) is hidden, not deleted.
+
 ### The message list
 
 The list shows two-line cards or, a click (or `cmd-alt-t`) away, Thunderbird's table

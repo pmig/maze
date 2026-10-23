@@ -11,8 +11,8 @@
 //! the unthreaded view and the Correspondents column ("sent" rows) have something to
 //! show. Message ids encode their thread and position.
 //!
-//! Changes (read, starred, archived, moved; per thread or per message) are kept in
-//! memory. Archiving and moving hide a thread or message from its folder; the fake
+//! Changes (read, starred, archived, moved; per thread or per message; favorite
+//! folders) are kept in memory. Archiving and moving hide a thread or message from its folder; the fake
 //! doesn't add it to the Archives or target folder, but remembers where a move sent it
 //! ([`FakeMailSource::moved_to`]).
 
@@ -151,7 +151,8 @@ const FOLDERS: &[FolderSpec] = &[
     folder(4, None, "Trash", Some(Trash), 0, DAY),
 ];
 
-/// Favorites, by folder index.
+/// Favorites at the start, by folder index, in the order they were added (To Do,
+/// Acme, Receipts).
 const FAVORITES: &[usize] = &[21, 20, 4];
 
 /// Roles shown under Unified Folders, in Thunderbird's order.
@@ -358,6 +359,8 @@ struct State {
     moves: HashMap<MoveItem, FolderId>,
     /// Unread count changes per folder, relative to the generated counts.
     unread_delta: Vec<i64>,
+    /// Favorite folders, by folder index.
+    favorites: HashSet<usize>,
 }
 
 /// A thread or message the fake moved, see [`FakeMailSource::moved_to`].
@@ -423,6 +426,7 @@ impl FakeMailSource {
             unread_base,
             state: RwLock::new(State {
                 unread_delta: vec![0; FOLDERS.len()],
+                favorites: FAVORITES.iter().copied().collect(),
                 ..State::default()
             }),
             undo: Mutex::new(None),
@@ -1079,10 +1083,13 @@ impl MailSource for FakeMailSource {
                 children: Vec::new(),
             })
             .collect();
-        let favorites = FAVORITES
-            .iter()
+        // Like the core: account order, then tree order (children follow their parent
+        // in `FOLDERS`).
+        let favorite = self.read_state().favorites.clone();
+        let favorites = (0..FOLDERS.len())
+            .filter(|ix| favorite.contains(ix))
             .map(|ix| {
-                let mut entry = self.folder_entry(*ix);
+                let mut entry = self.folder_entry(ix);
                 entry.children.clear();
                 entry
             })
@@ -1105,6 +1112,17 @@ impl MailSource for FakeMailSource {
             unified,
             accounts,
         }
+    }
+
+    fn set_favorite(&self, folder: FolderId, favorite: bool) -> Result<(), SourceError> {
+        let ix = folder_index(folder).ok_or(SourceError::FolderNotFound)?;
+        let mut state = self.write_state();
+        if favorite {
+            state.favorites.insert(ix);
+        } else {
+            state.favorites.remove(&ix);
+        }
+        Ok(())
     }
 
     fn unread_count(&self, folder: &FolderKey) -> u64 {
@@ -1684,6 +1702,9 @@ mod tests {
                 from: Option<FolderId>,
             ) -> Result<(), SourceError> {
                 self.0.move_messages(m, to, from)
+            }
+            fn set_favorite(&self, folder: FolderId, favorite: bool) -> Result<(), SourceError> {
+                self.0.set_favorite(folder, favorite)
             }
             fn status(&self) -> SourceStatus {
                 self.0.status()

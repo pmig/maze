@@ -16,7 +16,8 @@
 //!   content is never loaded.
 //! - **Changes**: flags, archive and move go through [`CoreHandle::apply`] with
 //!   [`Origin::User`] (undoable), applied before the call returns, so the list shows
-//!   the new state at once.
+//!   the new state at once. Favorite folders go through
+//!   [`CoreHandle::set_favorite_folder`] into `settings.json`.
 //! - **Live updates**: [`CoreMailSource::changes`] turns a [`CoreEventBatch`] into the
 //!   window's [`DataChanges`].
 //!
@@ -913,6 +914,15 @@ impl MailSource for CoreMailSource {
             },
             messages,
         )
+    }
+
+    fn set_favorite(&self, folder: FolderId, favorite: bool) -> Result<(), SourceError> {
+        let core = self.ready()?;
+        core.set_favorite_folder(folder, favorite)
+            .map_err(|error| match error {
+                mazemail_core::Error::NotFound { .. } => SourceError::FolderNotFound,
+                other => unavailable(other),
+            })
     }
 
     fn status(&self) -> SourceStatus {

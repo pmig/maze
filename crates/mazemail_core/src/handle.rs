@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
-use mazemail_types::{AccountId, FolderId, MessageId, PublicId, ThreadId};
+use mazemail_types::{AccountId, FolderId, MessageId, PRODUCT_NAME, PublicId, ThreadId};
 use search::{DirectoryOptions, SearchIndex};
 use security::phishing::{DomainWatchlist, PhishingInput, analyze, links_from_reader_doc};
 use security::{ProviderProfile, Resolver, Verifier, VerifyContext};
-use settings::{LoadedSettings, SettingsWatcher, default_settings};
+use settings::{DiagnosticKind, FavoriteFolder, LoadedSettings, SettingsWatcher, default_settings};
 use store::{
     Account, AccountKind, BodyState, ChangeSet, DataLayout, MessageDetail, MessageScope,
     NewProposalItem, Queries, Store, StoreConfig, ThreadRow,
@@ -367,6 +367,8 @@ impl CoreHandle {
     /// counts (see [`crate::folders`]).
     pub fn folders(&self) -> Result<Vec<FolderNode>> {
         self.ensure_open()?;
+        let settings = self.settings();
+        let favorites = &settings.settings.folder_pane.favorites;
         let mut reader = self.inner.store.reader()?;
         reader
             .snapshot(|reader| {
@@ -376,9 +378,70 @@ impl CoreHandle {
                     .iter()
                     .map(|a| Ok((a.id, reader.folder_tree(Some(a.id))?)))
                     .collect::<store::Result<Vec<_>>>()?;
-                Ok(folders::build(&accounts, &all, &trees))
+                Ok(folders::build(&accounts, &all, &trees, favorites))
             })
             .map_err(Error::from)
+    }
+
+    /// Adds `folder` to the favorite folders or removes it. Favorites are the setting
+    /// `folder_pane.favorites` in `settings.json`: the account's label and the folder's
+    /// path ([`folders::folder_path`]), which survive restarts and re-syncs. The file's
+    /// comments and other keys are kept. The settings are reloaded before this returns,
+    /// so [`CoreHandle::folders`] shows the change at once (and a
+    /// [`CoreEventBatch::settings`] follows).
+    ///
+    /// Fails without a settings file, or when the file has a syntax error or an invalid
+    /// `folder_pane.favorites` (it is never overwritten then).
+    pub fn set_favorite_folder(&self, folder: FolderId, favorite: bool) -> Result<()> {
+        self.ensure_open()?;
+        let reader = self.inner.store.reader()?;
+        let row = reader
+            .folder(folder)?
+            .ok_or_else(|| Error::not_found("folder", folder))?;
+        let account = reader
+            .account(row.account)?
+            .ok_or_else(|| Error::not_found("account", row.account))?;
+        let path = folders::folder_path(&reader.folders(Some(row.account))?, folder)
+            .ok_or_else(|| Error::not_found("folder", folder))?;
+        drop(reader);
+        let entry = FavoriteFolder {
+            account: account.name,
+            folder: path,
+        };
+
+        // The lock also keeps two changes from overwriting each other.
+        let watcher = lock(&self.inner.watcher);
+        let Some(watcher) = watcher.as_ref() else {
+            return Err(Error::SettingsWrite(format!(
+                "{PRODUCT_NAME} runs without a settings file"
+            )));
+        };
+        // Read the file itself: the published settings may not have caught up with an
+        // edit made a moment ago.
+        let loaded = settings::load_settings(watcher.path());
+        if let Some(problem) = loaded.diagnostics.iter().find(|d| {
+            d.kind == DiagnosticKind::InvalidValue && d.path.starts_with("folder_pane.favorites")
+        }) {
+            return Err(Error::SettingsWrite(format!(
+                "fix the favorite folders in {} first: {problem}",
+                watcher.path().display()
+            )));
+        }
+        let mut favorites = loaded.settings.folder_pane.favorites;
+        if favorites.contains(&entry) == favorite {
+            return Ok(());
+        }
+        if favorite {
+            favorites.push(entry);
+        } else {
+            favorites.retain(|f| *f != entry);
+        }
+        let value = serde_json::to_value(&favorites)
+            .map_err(|err| Error::SettingsWrite(err.to_string()))?;
+        settings::write_setting(watcher.path(), &["folder_pane", "favorites"], &value)
+            .map_err(|err| Error::SettingsWrite(err.to_string()))?;
+        watcher.reload();
+        Ok(())
     }
 
     /// The keys of a thread list (16 bytes per row). Metadata toggles of the Quick

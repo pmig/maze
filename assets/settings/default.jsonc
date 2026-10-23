@@ -46,7 +46,11 @@
   // The folder pane. Combine any of "all", "unified", "favorite", "unread", "tags"
   // and "recent".
   "folder_pane": {
-    "modes": ["favorite", "unified"]
+    "modes": ["favorite", "unified"],
+    // Folders shown under Favorites, by account label and folder path, e.g.
+    // { "account": "work", "folder": "Customers/Acme" }. "Add to Favorites" and
+    // "Remove from Favorites" (right-click a folder) edit this list.
+    "favorites": []
   },
 
   // Quick Filter: combine several active filters with "or" or "and".

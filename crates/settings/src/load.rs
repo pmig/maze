@@ -187,9 +187,13 @@ pub fn parse_settings(user_text: Option<&str>) -> LoadedSettings {
 }
 
 pub(crate) fn parse_jsonc(text: &str) -> Result<Value, jsonc_parser::errors::ParseError> {
-    // Comments and trailing commas, nothing looser: files stay readable by editors
-    // that validate against the JSON Schema.
-    let options = ParseOptions {
+    jsonc_parser::parse_to_serde_value(text, &jsonc_options())
+}
+
+/// Comments and trailing commas, nothing looser: files stay readable by editors that
+/// validate against the JSON Schema.
+pub(crate) fn jsonc_options() -> ParseOptions {
+    ParseOptions {
         allow_comments: true,
         allow_trailing_commas: true,
         allow_loose_object_property_names: false,
@@ -197,8 +201,7 @@ pub(crate) fn parse_jsonc(text: &str) -> Result<Value, jsonc_parser::errors::Par
         allow_single_quoted_strings: false,
         allow_hexadecimal_numbers: false,
         ..ParseOptions::default()
-    };
-    jsonc_parser::parse_to_serde_value(text, &options)
+    }
 }
 
 type DeserializeError = serde_path_to_error::Error<serde_json::Error>;

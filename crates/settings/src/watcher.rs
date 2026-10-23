@@ -45,6 +45,7 @@ pub enum WatchError {
 /// file, rename over the original) and a file that doesn't exist yet both work.
 pub struct SettingsWatcher {
     path: PathBuf,
+    sender: watch::Sender<Arc<LoadedSettings>>,
     _debouncer: Debouncer<RecommendedWatcher>,
 }
 
@@ -77,8 +78,9 @@ impl SettingsWatcher {
 
         let (sender, receiver) = watch::channel(Arc::new(load_settings(&path)));
         let reload_path = path.clone();
+        let reload_sender = sender.clone();
         let mut debouncer = new_debouncer(debounce, move |result: DebounceEventResult| {
-            handle_events(result, &reload_path, &file_name, &sender);
+            handle_events(result, &reload_path, &file_name, &reload_sender);
         })
         .map_err(|source| WatchError::Watch {
             path: dir.clone(),
@@ -95,6 +97,7 @@ impl SettingsWatcher {
         Ok((
             Self {
                 path,
+                sender,
                 _debouncer: debouncer,
             },
             receiver,
@@ -104,6 +107,14 @@ impl SettingsWatcher {
     /// The watched settings file.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Reloads the file now and publishes the result if it changed, without waiting
+    /// for the file system event. For Maze's own writes ([`crate::write_setting`]),
+    /// so what it just changed shows at once; the event that follows finds nothing
+    /// new.
+    pub fn reload(&self) {
+        publish(&self.path, &self.sender);
     }
 }
 
@@ -127,6 +138,11 @@ fn handle_events(
     {
         return;
     }
+    publish(path, sender);
+}
+
+/// Loads `path` and sends the result if it differs from the current settings.
+fn publish(path: &Path, sender: &watch::Sender<Arc<LoadedSettings>>) {
     let loaded = load_settings(path);
     for diagnostic in &loaded.diagnostics {
         if diagnostic.is_error() {
@@ -188,6 +204,23 @@ mod tests {
             next(&mut receiver).await.settings.layout,
             Layout::FourColumn
         );
+    }
+
+    #[test]
+    fn reload_publishes_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        // A long debounce: only `reload` can deliver the change in time.
+        let (watcher, mut receiver) =
+            SettingsWatcher::start(&path, Duration::from_secs(60)).unwrap();
+        receiver.borrow_and_update();
+        std::fs::write(&path, r#"{ "layout": "wide" }"#).unwrap();
+        watcher.reload();
+        assert!(receiver.has_changed().unwrap());
+        assert_eq!(receiver.borrow_and_update().settings.layout, Layout::Wide);
+        // Nothing new: no notification.
+        watcher.reload();
+        assert!(!receiver.has_changed().unwrap());
     }
 
     #[test]
