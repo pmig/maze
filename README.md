@@ -4,30 +4,162 @@ An open source, local-first email client written in Rust. Built like
 [Zed](https://zed.dev) (GPU-rendered, fast, small, agent-native) and behaving like
 [Thunderbird](https://www.thunderbird.net) (same layout, same shortcuts).
 
-> **Status:** pre-alpha. Nothing here is ready for daily use yet.
+![Maze with a synthetic mailbox: folders, the message list, a message and the agent column](docs/screenshots/app-real-data.png)
+
+- **Local-first.** Your mail lives on your computer in one store. Opening a folder,
+  scrolling through 100,000 messages or searching never waits for the server.
+- **Fast like Zed.** A native GPU-rendered window (GPUI, Zed's UI framework), no browser
+  engine. A cold start shows the message list in well under a second.
+- **Behaves like Thunderbird.** The same panes, folders, Quick Filter, global search and
+  keyboard shortcuts, so moving over from Thunderbird doesn't mean relearning anything.
+- **Encrypted at rest.** The database, message files and search index are encrypted
+  with a key that stays in the macOS keychain (or the Secret Service on Linux). A copy of
+  your data directory is useless without it.
+- **Agent-ready.** The `mazemail` command line client gives scripts and AI agents scoped,
+  approved access to your mail: search, read, export, propose changes for you to
+  review. No token, no mail.
 
 The app is called **Maze**. Every technical identifier (crate, binary, CLI, data
 directories, environment variables) is **`mazemail`**, because the `maze` crate name is
 taken.
 
-## Building
+## Status
 
-The toolchain is managed with [mise](https://mise.jdx.dev):
+**Pre-alpha.** Maze is usable for reading, searching and triaging, but it isn't a
+daily driver yet. Expect rough edges, and keep your mail on the server.
+
+Works today:
+
+- the encrypted store (SQLCipher database, encrypted message files and search index)
+- IMAP sync, including CONDSTORE/QRESYNC delta sync, IDLE and Gmail labels
+- import from mbox files, Maildir directories and Thunderbird profiles
+- search with Gmail-style operators (`from:`, `has:attachment`, `after:` …)
+- reading mail in a sanitized reader view, with DKIM/SPF/DMARC results
+- archive, move, tag, flag and mark read, with undo
+- the `mazemail` CLI and `mazemail --headless` for scripts and agents
+
+Not there yet:
+
+- writing mail: the composer, SMTP sending and the outbox
+- the agents column (the panel is visible, but no agent can be connected yet)
+- filter rules (imported Thunderbird filters are kept, disabled)
+- the auto-updater in the app, a settings window, showing the recovery key
+
+## Install
+
+### macOS
+
+Download `Maze-<version>-macos-aarch64.dmg` (Apple Silicon) or `…-x86_64.dmg` (Intel)
+from [GitHub Releases](https://github.com/pmig/mazemail/releases) once the first
+release is published, open it and drag Maze to Applications. Updates come through
+Maze's built-in updater; until it is wired into the app, download new versions the same
+way. There is deliberately no Homebrew cask (see
+[ADR-010](docs/adr/0010-auto-update.md)).
+
+### Linux
+
+Download `Maze-<version>-linux-<arch>.tar.zst` from the same page and unpack it to
+`~/.local/`:
+
+```sh
+tar --zstd -xf Maze-*-linux-x86_64.tar.zst -C ~/.local
+~/.local/mazemail.app/bin/mazemail
+```
+
+### Build from source
+
+The toolchain is managed with [mise](https://mise.jdx.dev). On macOS you also need the
+Xcode Command Line Tools; on Debian and Ubuntu, `script/linux-deps` installs the system
+packages.
 
 ```sh
 mise install          # Rust 1.99.1, cargo-nextest, cargo-deny, cargo-insta
-mise run ci           # fmt check, clippy, tests, cargo-deny
-cargo run             # starts Maze
-cargo run -- --help   # the mazemail CLI
+cargo run --release   # starts Maze (a dev build, with its own data directory)
+script/bundle-mac     # builds dist/mac-<arch>/Maze.app, the .dmg and the .app.tar.zst
 ```
 
-macOS (Apple Silicon) is the primary platform. Linux comes next.
+Want to look around without your own mail? `MAZEMAIL_DEMO=1 cargo run` shows a
+synthetic mailbox, and `cargo xtask seed-demo --data-dir /tmp/maze-demo` creates a
+real (encrypted) store with demo mail that the CLI can talk to.
 
-## Repository layout
+## Quick start
 
-Crates live in `crates/`. The layering rules and conventions are in
-[`AGENTS.md`](AGENTS.md), architecture decisions in [`docs/adr/`](docs/adr/).
+1. **Start Maze.** On first launch it creates the storage key in your keychain and an
+   empty store.
+2. **Sign in the CLI.** The CLI talks to the running app and needs a token you approve
+   in Maze:
+
+   ```sh
+   eval "$(mazemail login --profile triage --ttl 8h)"
+   ```
+
+   Inside the app bundle the CLI is `/Applications/Maze.app/Contents/MacOS/mazemail`;
+   link it into your `PATH` or use an alias.
+3. **Import mail.** An mbox file, a Maildir or a whole Thunderbird profile (accounts,
+   identities, Local Folders, tags, address books and filters). Maze asks you to approve
+   the import:
+
+   ```sh
+   mazemail import ~/old-mail.mbox
+   mazemail import ~/Library/Thunderbird/Profiles/abcd1234.default-release --format thunderbird
+   ```
+
+4. **Add an IMAP account.** Importing your Thunderbird profile takes its IMAP accounts
+   over. Gmail needs your own Google OAuth client ID for now; see
+   [Getting started](docs/getting-started.md#accounts).
+5. **Search and read.**
+
+   ```sh
+   mazemail search 'from:anna has:attachment after:2026-09-01'
+   mazemail show t_19bd
+   ```
+
+More in [docs/getting-started.md](docs/getting-started.md) and
+[docs/cli.md](docs/cli.md).
+
+## Where your data lives
+
+| What                                          | macOS                                    | Linux                     |
+| --------------------------------------------- | ---------------------------------------- | ------------------------- |
+| Mail store (encrypted), socket, logs          | `~/Library/Application Support/mazemail` | `$XDG_DATA_HOME/mazemail` |
+| `settings.json` (no mail content, no addresses) | `~/.config/mazemail`                   | `~/.config/mazemail`      |
+| Storage key                                   | keychain                                 | Secret Service            |
+
+Development builds use `mazemail-dev` and a separate keychain item, so they never touch
+your real store. `MAZEMAIL_DATA_DIR` and `MAZEMAIL_CONFIG_DIR` override the
+directories.
+
+## Security in short
+
+- Everything with mail content (database, message files, caches, search index) is
+  encrypted with a random 256-bit key that never leaves the keychain.
+- The CLI never opens the store. It asks the running app over a Unix socket (mode
+  0600), and every request that touches mail needs a token you approved, scoped to a
+  profile (read-only, triage or writer), accounts and a lifetime.
+- On purpose in plaintext: what you export, what the CLI prints for an approved token,
+  attachments you open in other apps, notification text, and the Thunderbird profile
+  you imported from.
+- Linux is weaker than macOS: any program running as you can read an unlocked Secret
+  Service collection, and with it the key.
+
+The details are in [docs/security.md](docs/security.md). Report vulnerabilities
+privately, see [SECURITY.md](SECURITY.md).
+
+## Documentation
+
+- [Getting started](docs/getting-started.md): install, first launch, import, accounts,
+  keyboard shortcuts
+- [The `mazemail` CLI](docs/cli.md): tokens, profiles, approvals and `--headless`
+- [CLI reference for agents](docs/AGENTS-cli.md), generated from the command registry
+- [Security](docs/security.md): encryption at rest, keys and recovery, API tokens
+- [Releasing](docs/releasing.md): the maintainer checklist
+
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) (naming, crate
+layering, conventions). Architecture decisions are in [docs/adr/](docs/adr/README.md).
+Run `mise run ci` before you commit.
 
 ## License
 
-GPL-3.0-or-later, see [`LICENSE`](LICENSE).
+GPL-3.0-or-later, see [LICENSE](LICENSE).

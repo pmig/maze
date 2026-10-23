@@ -63,8 +63,14 @@ if [ ! -x "$binary" ]; then
   echo "error: binary $binary not found or not executable" >&2
   exit 1
 fi
-if ! command -v zstd >/dev/null 2>&1; then
-  echo "error: zstd not found in PATH" >&2
+# zstd is preinstalled on GitHub runners. Locally, mise can provide it (conda backend).
+zstd_version=1.5.7
+if zstd --version >/dev/null 2>&1; then
+  zstd=(zstd)
+elif command -v mise >/dev/null 2>&1; then
+  zstd=(mise x "conda:zstd@$zstd_version" -- zstd)
+else
+  echo "error: zstd not found; install it with 'mise use -g conda:zstd@$zstd_version'" >&2
   exit 1
 fi
 
@@ -107,6 +113,6 @@ tar_opts=()
 if tar --version 2>/dev/null | grep -q 'GNU tar'; then
   tar_opts=(--owner=0 --group=0 --numeric-owner --sort=name)
 fi
-tar -C "$stage" ${tar_opts[@]+"${tar_opts[@]}"} -cf - mazemail.app | zstd -19 -T0 -q -o "$tarball"
+tar -C "$stage" ${tar_opts[@]+"${tar_opts[@]}"} -cf - mazemail.app | "${zstd[@]}" -19 -T0 -q -o "$tarball"
 
 echo "$tarball"

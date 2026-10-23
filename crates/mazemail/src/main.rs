@@ -33,12 +33,12 @@ struct Global {
 fn command() -> clap::Command {
     let base = clap::Command::new(mazemail_types::TECHNICAL_NAME)
         .version(release_channel::VERSION)
-        .about(format!(
-            "{}, a local-first email client. Without a command, starts the app.",
-            mazemail_types::PRODUCT_NAME
-        ))
         .args_conflicts_with_subcommands(true);
-    local_api::registry::cli::augment(Global::augment_args(base))
+    // Set after `augment`: the registry's subcommand derive brings its own `about`.
+    local_api::registry::cli::augment(Global::augment_args(base)).about(format!(
+        "{}, a local-first email client. Without a command, starts the app.",
+        mazemail_types::PRODUCT_NAME
+    ))
 }
 
 fn init_tracing(default: &str) {
@@ -98,6 +98,15 @@ mod tests {
     #[test]
     fn the_command_tree_is_valid() {
         command().debug_assert();
+    }
+
+    #[test]
+    fn help_describes_the_app() {
+        let about = command().get_about().map(ToString::to_string);
+        assert_eq!(
+            about.as_deref(),
+            Some("Maze, a local-first email client. Without a command, starts the app.")
+        );
     }
 
     #[test]

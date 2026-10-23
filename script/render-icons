@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Render the Maze app icon from assets/icons/maze.svg:
+#   assets/icons/Maze.icns   macOS bundle icon (16 to 1024 px, script/bundle-mac)
+#   assets/icons/maze.png    512 px Linux icon (script/bundle-linux)
+#
+# Needs resvg (taken from PATH, or run through mise: `mise x resvg@<version>`) and, for
+# the .icns, iconutil from the Xcode Command Line Tools.
+#
+# Usage: script/render-icons
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$repo_root"
+
+resvg_version=0.48.1
+icons=assets/icons
+svg="$icons/maze.svg"
+
+if [ "$#" -ne 0 ]; then
+  sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'
+  exit 2
+fi
+
+# `resvg --version` rather than `command -v`: an unconfigured mise shim is in PATH too.
+if resvg --version >/dev/null 2>&1; then
+  resvg=(resvg)
+elif command -v mise >/dev/null 2>&1; then
+  resvg=(mise x "resvg@$resvg_version" -- resvg)
+else
+  echo "error: resvg not found; install it with 'mise use -g resvg@$resvg_version'" >&2
+  exit 1
+fi
+
+render() { "${resvg[@]}" --width "$1" --height "$1" "$svg" "$2"; }
+
+render 512 "$icons/maze.png"
+echo "$icons/maze.png"
+
+if [ "$(uname -s)" != "Darwin" ]; then
+  echo "skipping Maze.icns: iconutil only exists on macOS" >&2
+  exit 0
+fi
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/maze-icons.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+iconset="$work/Maze.iconset"
+mkdir "$iconset"
+for size in 16 32 128 256 512; do
+  render "$size" "$iconset/icon_${size}x${size}.png"
+  render $((size * 2)) "$iconset/icon_${size}x${size}@2x.png"
+done
+iconutil --convert icns --output "$icons/Maze.icns" "$iconset"
+echo "$icons/Maze.icns"
