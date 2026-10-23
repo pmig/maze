@@ -31,7 +31,7 @@ use crate::format::format_thousands;
 use crate::layout::{self, AgentPlacement, LayoutConfig, LayoutPrefs, MessagePlacement};
 use crate::message_view::MessageView;
 use crate::perf::{FrameStats, ScrollBenchmark, resident_memory};
-use crate::source::{Direction, FolderKey, MailSource, ThreadScope};
+use crate::source::{DataChanges, Direction, FolderKey, MailSource, ThreadScope};
 use crate::thread_list::{
     CARD_HEIGHT, ListMode, TABLE_LIST_WIDTH, TABLE_ROW_HEIGHT, ThreadList, ThreadListEvent,
 };
@@ -66,12 +66,13 @@ const DEFAULT_SIZE: (f32, f32) = (1680., 1000.);
 /// The window can't get smaller than this.
 const MIN_SIZE: (f32, f32) = (720., 480.);
 
-/// Opens the main window.
+/// Opens the main window. Returns its handle and root view (for
+/// [`MailWindow::apply_changes`]).
 pub fn open_main_window(
     source: Arc<dyn MailSource>,
     options: MailWindowOptions,
     cx: &mut App,
-) -> Result<AnyWindowHandle, OpenWindowError> {
+) -> Result<(AnyWindowHandle, Entity<MailWindow>), OpenWindowError> {
     let (width, height) = options.window_size.unwrap_or_else(|| {
         // Leave a margin around the window on screens smaller than the default.
         let screen = cx.primary_display().map(|display| display.bounds().size);
@@ -92,11 +93,10 @@ pub fn open_main_window(
         app_id: Some(mazemail_types::TECHNICAL_NAME.to_owned()),
         ..TitleBar::window_options()
     };
-    let (handle, _) = gpui_kit::open_window(window_options, cx, |window, cx| {
+    gpui_kit::open_window(window_options, cx, |window, cx| {
         cx.new(|cx| MailWindow::new(source, &options, window, cx))
     })
-    .map_err(|error| OpenWindowError(error.to_string()))?;
-    Ok(handle)
+    .map_err(|error| OpenWindowError(error.to_string()))
 }
 
 /// The main window couldn't be opened.
@@ -232,6 +232,32 @@ impl MailWindow {
     /// Whether the command palette is open.
     pub fn is_palette_open(&self) -> bool {
         self.palette.is_some()
+    }
+
+    /// Re-reads what `changes` affects: the folder tree, the counts, the open list's
+    /// keys (keeping the selection) and the displayed message.
+    pub fn apply_changes(&mut self, changes: &DataChanges, cx: &mut Context<'_, Self>) {
+        if changes.is_empty() {
+            return;
+        }
+        if changes.everything || changes.folders {
+            self.folder_pane.update(cx, |pane, cx| pane.reload(cx));
+        } else if changes.counts {
+            self.folder_pane
+                .update(cx, |pane, cx| pane.refresh_counts(cx));
+        }
+        let before = self.thread_list.read(cx).selected_thread();
+        if changes.everything || changes.threads || !changes.threads_updated.is_empty() {
+            self.thread_list.update(cx, |list, cx| list.refresh(cx));
+        }
+        // A changed selection was shown through the list's event already.
+        let selected = self.thread_list.read(cx).selected_thread();
+        let showing = self.message_view.read(cx).document().map(|doc| doc.thread);
+        let stale = selected.is_some_and(|id| changes.threads_updated.contains(&id));
+        if selected == before && (changes.everything || stale || showing != selected) {
+            self.show_selected(cx);
+        }
+        cx.notify();
     }
 
     fn show_selected(&mut self, cx: &mut Context<'_, Self>) {

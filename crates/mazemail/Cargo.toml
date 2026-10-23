@@ -7,20 +7,46 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+# The library half holds what the app, headless mode, the examples and the tests share
+# (the core-backed mail source, key store selection, startup); the binary is the entry
+# point with the GUI, the CLI and `--headless`.
+[lib]
+name = "mazemail"
+path = "src/lib.rs"
+
 [[bin]]
 name = "mazemail"
 path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+async-channel = { workspace = true }
+async-trait = { workspace = true }
 clap = { workspace = true }
 gpui = { workspace = true }
+local_api = { workspace = true }
 mail_ui = { workspace = true }
+mazemail_core = { workspace = true }
 mazemail_types = { workspace = true }
+release_channel = { workspace = true }
+serde_json = { workspace = true }
+settings = { workspace = true }
+thiserror = { workspace = true }
 time = { workspace = true, features = ["local-offset"] }
+tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 ui = { workspace = true }
+vault = { workspace = true }
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+# `render_to_image` for the screenshot example needs the platform's test support.
+gpui_platform = { workspace = true, features = ["test-support"] }
+image = { workspace = true }
+import = { workspace = true }
+ingest = { workspace = true }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

@@ -291,6 +291,16 @@ impl Render for MessageView {
                         .py_3()
                         .text_sm()
                         .into_any_element(),
+                    MessageBody::Markdown(markdown) => {
+                        TextView::markdown(body_id, markdown.expose().clone())
+                            .scrollable(true)
+                            .selectable(true)
+                            .size_full()
+                            .px_4()
+                            .py_3()
+                            .text_sm()
+                            .into_any_element()
+                    }
                     MessageBody::PlainText(text) => div()
                         .id(body_id)
                         .size_full()

@@ -31,9 +31,13 @@
 //! - **sync**: [`sync_bridge`] ([`SyncBridge`] for body fetches, refresh and op
 //!   wake-ups; [`SyncStatusSink`] for status) and [`ops`] (the pending-op
 //!   payload, a private mirror of `sync::ops::OpPayload`).
-//! - **ingest**: [`indexing`] ([`CoreIndexSink`] with [`IndexDocument`]) plus
-//!   [`CoreHandle::store`] for its writes.
-//! - **local_api**: [`api_handler`] ([`CommandAuthorizer`] decides agent commands).
+//! - **ingest**: [`CoreIndexSink`] implements `ingest::IndexSink` (see [`indexing`]);
+//!   ingest writes through [`CoreHandle::store`].
+//! - **local_api**: [`api`] implements `local_api`'s `CommandHandler`, `TokenStore`,
+//!   `AccountPolicy` and `AuditSink` over this handle, plus the [`CommandAuthorizer`]
+//!   of [`api_handler`] that holds agent commands to their token's profile.
+//! - **import**: [`api`]'s `import` command runs the `import` crate (same layer; it
+//!   writes through [`CoreHandle::store`] and indexes through [`CoreIndexSink`]).
 //! - **auth**: nothing in core; its token provider and secret store are handed to the
 //!   sync engine, which core only sees through [`SyncBridge`].
 //!
@@ -50,6 +54,7 @@ mod metadata;
 mod row_cache;
 mod runtime;
 
+pub mod api;
 pub mod api_handler;
 pub mod commands;
 pub mod crash_guard;
@@ -60,6 +65,7 @@ pub mod indexing;
 pub mod lost_key;
 pub mod message;
 pub mod ops;
+pub mod reader_text;
 pub mod sync_bridge;
 pub mod thread_list;
 

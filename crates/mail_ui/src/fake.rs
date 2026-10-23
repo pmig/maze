@@ -1,6 +1,6 @@
 //! A [`MailSource`] with synthetic, deterministic data.
 //!
-//! It stands in for the core until that exists, and is what the S1 measurements run
+//! It backs demos (`MAZEMAIL_DEMO=1`), tests and the S1 measurements, which run
 //! against: five accounts, unified folders, favorites, and one folder with 1,000,000
 //! threads. Every row is computed from its thread id with a hash, so nothing is
 //! stored per message: the 1M folder costs no memory beyond its key list, the same

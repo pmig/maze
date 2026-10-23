@@ -22,7 +22,7 @@ use crate::model::{
     FolderNode, Identity, IdentityRule, ListFilter, ListKey, ListScope, MessageDetail,
     MessageScope, MetadataFilter, OutboxId, OutboxItem, Page, PendingOp, Proposal, ProposalId,
     ProposalState, Rule, SavedSearch, Signature, SignatureId, SmtpServer, SmtpServerId, SortOrder,
-    Tag, ThreadRow, UnixTime,
+    Tag, ThreadRow, TokenId, UnixTime,
 };
 use crate::{Reader, Result, WriteTx};
 
@@ -307,6 +307,16 @@ pub trait Queries: sealed::Sealed {
     /// The token for a presented secret (hashed before the lookup).
     fn api_token_by_secret(&self, secret: &str) -> Result<Option<ApiToken>> {
         agents::api_token_by_secret(self.connection(sealed::Token), secret)
+    }
+
+    /// The token with this stored hash (for callers that hash secrets themselves).
+    fn api_token_by_hash(&self, hash: &[u8; 32]) -> Result<Option<ApiToken>> {
+        agents::api_token_by_hash(self.connection(sealed::Token), hash)
+    }
+
+    /// One token by id.
+    fn api_token(&self, id: TokenId) -> Result<Option<ApiToken>> {
+        agents::api_token(self.connection(sealed::Token), id)
     }
 
     /// One proposal with its items.

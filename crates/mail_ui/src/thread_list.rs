@@ -390,8 +390,20 @@ impl ThreadList {
             self.selection.first();
         }
         self.table.update(cx, |table, cx| table.refresh(cx));
-        self.reveal_selection(ScrollStrategy::Top, cx);
-        self.selection_changed(cx);
+        if select_first || self.selected_thread() != previous {
+            self.reveal_selection(ScrollStrategy::Top, cx);
+            self.selection_changed(cx);
+        } else {
+            // Same thread selected: the window keeps showing it.
+            cx.notify();
+        }
+    }
+
+    /// Re-reads the keys after mail arrived, moved or changed, keeping the selected
+    /// thread (and the scroll position). The window hears
+    /// [`ThreadListEvent::Selected`] only if the selected thread is gone.
+    pub fn refresh(&mut self, cx: &mut Context<'_, Self>) {
+        self.reload(false, cx);
     }
 
     /// Selects `ix`, marks it read and tells the window.
@@ -943,7 +955,13 @@ impl Render for ThreadList {
                                 .justify_center()
                                 .text_sm()
                                 .text_color(theme.muted_foreground)
-                                .child("No messages"),
+                                .px_6()
+                                .text_center()
+                                .child(
+                                    self.source
+                                        .placeholder()
+                                        .unwrap_or_else(|| SharedString::from("No messages")),
+                                ),
                         )
                     })
                     .when(!empty, |this| this.child(body)),

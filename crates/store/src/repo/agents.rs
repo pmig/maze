@@ -55,6 +55,27 @@ pub(crate) fn api_token_by_secret(conn: &Connection, secret: &str) -> Result<Opt
         .optional()?)
 }
 
+/// The token whose stored hash is `hash`, valid or not. For callers that hash secrets
+/// themselves (the local API uses a keyed BLAKE3 derivation, see `local_api::TokenHash`).
+pub(crate) fn api_token_by_hash(conn: &Connection, hash: &[u8; 32]) -> Result<Option<ApiToken>> {
+    Ok(conn
+        .prepare_cached(&format!(
+            "SELECT {TOKEN_COLUMNS} FROM api_token WHERE hash = ?1"
+        ))?
+        .query_row([hash.as_slice()], token_row)
+        .optional()?)
+}
+
+/// One token by id.
+pub(crate) fn api_token(conn: &Connection, id: TokenId) -> Result<Option<ApiToken>> {
+    Ok(conn
+        .prepare_cached(&format!(
+            "SELECT {TOKEN_COLUMNS} FROM api_token WHERE id = ?1"
+        ))?
+        .query_row([id.0], token_row)
+        .optional()?)
+}
+
 fn proposal_items(conn: &Connection, proposal: ProposalId) -> Result<Vec<ProposalItem>> {
     let mut stmt = conn.prepare_cached(
         "SELECT id, command_json, reason, state FROM proposal_item WHERE proposal_id = ?1
