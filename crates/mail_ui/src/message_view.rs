@@ -1,5 +1,5 @@
-//! The message view: header with sender, recipients, date and actions, the
-//! verification row, attachments, and the body (CONCEPT §8.4).
+//! The message view: header with sender (and their mail client), recipients, date and
+//! actions, the verification row, attachments, and the body (CONCEPT §8.4).
 
 use gpui::{
     App, Context, FocusHandle, Focusable, InteractiveElement, IntoElement, MouseButton,
@@ -16,7 +16,7 @@ use ui::assets::IconName;
 
 use crate::actions::{Archive, Forward, Reply, ReplyAll};
 use crate::format::{DateFormatter, format_size, initials};
-use crate::source::{MessageBody, MessageDocument, Verdict, Verification};
+use crate::source::{MessageBody, MessageDocument, SenderClient, Verdict, Verification};
 
 /// The message view.
 pub struct MessageView {
@@ -131,11 +131,15 @@ impl MessageView {
                             .min_w_0()
                             .child(div().text_sm().font_semibold().truncate().child(name))
                             .child(
-                                div()
+                                h_flex()
+                                    .min_w_0()
+                                    .gap_1()
                                     .text_xs()
                                     .text_color(theme.muted_foreground)
-                                    .truncate()
-                                    .child(from.email.clone()),
+                                    .child(div().min_w_0().truncate().child(from.email.clone()))
+                                    .when_some(doc.client.expose().clone(), |this, client| {
+                                        this.child(Self::render_client(client))
+                                    }),
                             ),
                     )
                     .child(
@@ -174,6 +178,19 @@ impl MessageView {
                         ),
                     ),
             )
+    }
+
+    /// "· via Thunderbird 128.3" after the sender's address, with the header it was
+    /// recognized by as a tooltip.
+    fn render_client(client: SenderClient) -> impl IntoElement {
+        div()
+            .id("sender-client")
+            .flex_shrink_0()
+            .truncate()
+            .child(SharedString::from(format!("· via {}", client.name)))
+            .tooltip(move |window, cx| {
+                gpui_kit::component::tooltip::Tooltip::new(client.header.clone()).build(window, cx)
+            })
     }
 
     /// The verification row: DKIM, SPF and DMARC results and the verdict, with the

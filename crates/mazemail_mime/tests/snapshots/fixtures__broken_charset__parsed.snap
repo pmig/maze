@@ -25,6 +25,7 @@ headers:
   list_unsubscribe: []
   list_unsubscribe_post: ~
   authentication_results: []
+  mail_client: ~
 attachments: []
 has_attachments: false
 snippet: "Café au lait, crème brûlée and invalid UTF-8: Ã( ÿþ. Still readable afterwards."

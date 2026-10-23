@@ -25,6 +25,7 @@ headers:
   list_unsubscribe: []
   list_unsubscribe_post: ~
   authentication_results: []
+  mail_client: ~
 attachments:
   - part_path: "1.2"
     filename: logo.png

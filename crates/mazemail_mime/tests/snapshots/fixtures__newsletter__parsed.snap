@@ -29,6 +29,7 @@ headers:
   list_unsubscribe_post: List-Unsubscribe=One-Click
   authentication_results:
     - mx.example.com; dkim=pass header.d=news.example.org; spf=pass smtp.mailfrom=news.example.org; dmarc=pass header.from=news.example.org
+  mail_client: ~
 attachments: []
 has_attachments: false
 snippet: "Spring releases are here This week: three new releases, a community spotlight and an event in Vienna. Read the full story Release A brings faster sync. Release B adds dark mode. Release Date A 2.0 3 M"

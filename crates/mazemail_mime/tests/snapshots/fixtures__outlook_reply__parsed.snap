@@ -27,6 +27,10 @@ headers:
   list_unsubscribe: []
   list_unsubscribe_post: ~
   authentication_results: []
+  mail_client:
+    name: Outlook
+    header: Thread-Index
+    raw: AQHbjZqH3x2Yk1x0m0ej8Vf0Kx5Tqg==
 attachments: []
 has_attachments: false
 snippet: "Works for me, see you Thursday. Bob"

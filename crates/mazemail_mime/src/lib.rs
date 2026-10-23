@@ -11,6 +11,8 @@
 //!   (PLAN §4.8).
 //! - [`reader`] converts HTML or plain text into a [`ReaderDoc`] for native
 //!   rendering.
+//! - [`client`] detects the sender's mail client from `User-Agent`, `X-Mailer` and
+//!   other header traces.
 //! - [`lang`] gives the search index a language hint.
 //!
 //! # Privacy
@@ -27,6 +29,7 @@
 //! runs the full pipeline on a large synthetic newsletter and fails far above that
 //! budget, so regressions to quadratic behavior show up in CI.
 
+pub mod client;
 pub mod html;
 pub mod lang;
 mod parse;
@@ -34,6 +37,7 @@ pub mod reader;
 pub mod subject;
 pub mod thread;
 
+pub use client::{MailClient, detect_client};
 pub use lang::{Lang, detect_language};
 pub use parse::{
     AttachmentMeta, Disposition, MessageHeaders, ParseError, ParsedMessage, SNIPPET_CHARS,

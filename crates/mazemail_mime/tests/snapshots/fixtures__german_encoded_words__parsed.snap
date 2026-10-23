@@ -26,6 +26,7 @@ headers:
   list_unsubscribe: []
   list_unsubscribe_post: ~
   authentication_results: []
+  mail_client: ~
 attachments:
   - part_path: "2"
     filename: Übersicht März.xlsx

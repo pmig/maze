@@ -351,6 +351,17 @@ pub struct MessageDocument {
     pub attachments: Vec<AttachmentInfo>,
     /// Sender verification (DKIM, SPF, DMARC).
     pub verification: Verification,
+    /// The mail client the sender used, if the headers give it away.
+    pub client: Sensitive<Option<SenderClient>>,
+}
+
+/// The sender's mail client, as the message header shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SenderClient {
+    /// Normalized name, e.g. "Thunderbird 128.3 (Linux)".
+    pub name: SharedString,
+    /// The header it was recognized by, e.g. "X-Mailer: iPhone Mail (22B83)".
+    pub header: SharedString,
 }
 
 /// The overall result of sender verification.

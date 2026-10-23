@@ -26,9 +26,9 @@ use time::{Duration, OffsetDateTime};
 
 use crate::source::{
     AccountEntry, AccountKind, AttachmentInfo, Direction, FolderEntry, FolderKey, FolderTree,
-    ListSort, MailSource, MessageBody, MessageDocument, MessageKeys, MessageRow, SourceError,
-    SourceStatus, SyncState, ThreadFilter, ThreadKeys, ThreadPredicate, ThreadRow, ThreadScope,
-    ThreadTree, TreeNode, Verdict, Verification,
+    ListSort, MailSource, MessageBody, MessageDocument, MessageKeys, MessageRow, SenderClient,
+    SourceError, SourceStatus, SyncState, ThreadFilter, ThreadKeys, ThreadPredicate, ThreadRow,
+    ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
 };
 
 /// Number of threads in the large folder (Gmail (personal) / Archives).
@@ -285,6 +285,21 @@ fn mix(mut x: u64) -> u64 {
     x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     x ^ (x >> 31)
 }
+
+/// Mail clients of fake senders: (name, header); `None` for clients that leave no trace.
+const CLIENTS: &[Option<(&str, &str)>] = &[
+    Some((
+        "Thunderbird 128.3 (Linux)",
+        "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Thunderbird/128.3.1",
+    )),
+    Some(("Apple Mail (iPhone)", "X-Mailer: iPhone Mail (22B83)")),
+    Some((
+        "Gmail",
+        "Message-ID: <CAF=+kL3x9ZQ1+Yb7mQyH0a@mail.gmail.com>",
+    )),
+    Some(("Outlook 16.0", "X-Mailer: Microsoft Outlook 16.0")),
+    None,
+];
 
 fn pick<T: Copy>(items: &[T], bits: u64) -> T {
     items[(bits % items.len() as u64) as usize]
@@ -976,6 +991,10 @@ impl FakeMailSource {
                 dmarc: "pass".into(),
                 explanation: "The sender's domain signed this message.".into(),
             },
+            client: Sensitive::new(pick(CLIENTS, h >> 51).map(|(name, header)| SenderClient {
+                name: name.into(),
+                header: header.into(),
+            })),
         })
     }
 
