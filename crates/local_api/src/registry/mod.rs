@@ -605,7 +605,7 @@ static REGISTRY: &[CommandSpec] = &[
         path: &["account", "add"],
         summary: "Add an IMAP, Gmail or Microsoft account",
         help: "Maze connects, logs in and lists the folders before it saves anything, then \
-               keeps the password (or the sign-in) in the system keychain and starts syncing. \
+               keeps the password (or the sign-in) in its encrypted storage and starts syncing. \
                The password is read from the terminal without echo, or from stdin with \
                --password-stdin; it is never a command-line argument. With --oauth google or \
                --oauth microsoft, Maze opens the browser for the sign-in instead (Google needs \
@@ -639,7 +639,7 @@ static REGISTRY: &[CommandSpec] = &[
         path: &["account", "remove"],
         summary: "Remove a mail account",
         help: "Stops syncing the account and deletes its local mail, folders, identities and \
-               keychain items. Nothing changes on the server. Needs a writer token, and you \
+               saved password or sign-in. Nothing changes on the server. Needs a writer token, and you \
                approve it in Maze.",
         permission: Permission::Admin,
         requires_token: true,

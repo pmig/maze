@@ -9,6 +9,7 @@ pub(crate) mod lists;
 pub(crate) mod messages;
 pub(crate) mod misc;
 pub(crate) mod ops;
+pub(crate) mod secrets;
 pub(crate) mod sort;
 pub(crate) mod threads;
 
@@ -403,6 +404,24 @@ pub trait Queries: sealed::Sealed {
     /// All local drafts, most recently edited first.
     fn drafts(&self) -> Result<Vec<StoredDraft>> {
         drafts::drafts(self.connection(sealed::Token))
+    }
+
+    // ---- account secrets ----------------------------------------------------------
+
+    /// The `kind` secret of the account with this [`Account::uuid`] (ADR-017), wiped
+    /// from memory when dropped. Never log it.
+    fn account_secret(
+        &self,
+        account: uuid::Uuid,
+        kind: &str,
+    ) -> Result<Option<zeroize::Zeroizing<String>>> {
+        secrets::account_secret(self.connection(sealed::Token), account, kind)
+    }
+
+    /// Accounts whose secrets may still be in the OS keychain: created before schema
+    /// v5 and not moved into the store yet.
+    fn legacy_secret_accounts(&self) -> Result<Vec<uuid::Uuid>> {
+        secrets::legacy_secret_accounts(self.connection(sealed::Token))
     }
 
     // ---- tokens, proposals, audit, agents -----------------------------------------

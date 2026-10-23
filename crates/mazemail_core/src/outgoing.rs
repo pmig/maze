@@ -15,7 +15,7 @@
 //! - Everything else: the IMAP host with `imap.` replaced by `smtp.` (or
 //!   `smtp.<domain>`), submission with STARTTLS on 587.
 //!
-//! The login is the account's: its IMAP user name and the password from the keychain,
+//! The login is the account's: its IMAP user name and its stored password,
 //! or its OAuth token manager (shared with sync, so a refresh never races).
 //!
 //! # Sent copies
@@ -383,7 +383,7 @@ pub(crate) fn sender(store: &Store, identity: IdentityId) -> Result<Sender, Smtp
     })
 }
 
-/// Routes over the store and the sync engine's credentials (keychain passwords, shared
+/// Routes over the store and the sync engine's credentials (stored passwords, shared
 /// OAuth token managers).
 pub(crate) struct CoreRoutes {
     pub(crate) store: Store,
@@ -427,7 +427,7 @@ impl CoreRoutes {
                         needs_user: true,
                     }),
                     Err(err) => Err(SmtpError::Credentials {
-                        message: format!("the keychain is not available: {err}"),
+                        message: format!("the saved password can't be read: {err}"),
                         needs_user: false,
                     }),
                 }

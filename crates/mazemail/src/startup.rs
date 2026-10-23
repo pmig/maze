@@ -10,7 +10,7 @@ use local_api::{DispatchConfig, ServerConfig};
 use mail_ui::source::{ListSort, SortBy};
 use mail_ui::{ListDefaults, ListMode, UI_STATE_FILE, UiStateStore};
 use mazemail_core::api::TokenAuthorizer;
-use mazemail_core::{CoreConfig, Error, SyncEngineConfig};
+use mazemail_core::{AccountSecretsLocation, CoreConfig, Error, SyncEngineConfig};
 use mazemail_types::PRODUCT_NAME;
 use settings::{Paths, ThreadListSettings, ThreadListView, ThreadSort};
 use time::UtcOffset;
@@ -19,18 +19,18 @@ use vault::KeyStore;
 /// The core configuration for the standard directories: data directory and
 /// `settings.json` from `paths`, the version from `version.txt`, the user's time zone,
 /// the token authorizer, and the sync engine with the account secrets in `secrets`
-/// (the keychain, see [`crate::keys::secret_store`]).
+/// (the encrypted store, see [`crate::keys::secret_store`]).
 pub fn core_config(
     paths: &Paths,
     key_store: Arc<dyn KeyStore>,
-    secrets: Arc<dyn auth::SecretStore>,
+    secrets: AccountSecretsLocation,
     authorizer: &TokenAuthorizer,
     utc_offset: UtcOffset,
 ) -> CoreConfig {
     let mut config = CoreConfig::from_paths(paths, key_store)
         .with_authorizer(Arc::new(authorizer.clone()))
         .with_utc_offset(utc_offset)
-        .with_sync_engine(SyncEngineConfig::new(secrets));
+        .with_sync_engine(SyncEngineConfig::at(secrets));
     config.app_version = release_channel::VERSION.to_owned();
     config
 }

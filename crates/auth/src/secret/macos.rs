@@ -10,13 +10,14 @@ use super::{SERVICE, SecretKey, SecretStore, SecretStoreError};
 
 const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 
-/// The macOS login keychain as a [`SecretStore`], via `security-framework`.
+/// The macOS login keychain as a [`SecretStore`], via `security-framework`: where Maze
+/// kept account secrets before ADR-017. The core only reads and deletes these items
+/// to move them into the encrypted store.
 ///
 /// Each secret is a generic password item (service [`SERVICE`], account
 /// `<account-uuid>/<kind>`), not synchronizable, so it never reaches iCloud Keychain.
-/// The item's default access list trusts only the app that created it; other apps get
-/// a system prompt. Unlike the storage master key (`vault`), account secrets don't
-/// need the data protection keychain (PLAN §4.17).
+/// The item's default access list trusts only the app that created it; other apps (and
+/// a rebuilt, re-signed dev build) get a system prompt per item.
 #[derive(Debug, Clone)]
 pub struct KeychainSecretStore {
     service: String,

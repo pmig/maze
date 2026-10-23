@@ -5365,6 +5365,7 @@ dependencies = [
  "url",
  "vault",
  "wiremock",
+ "zeroize",
 ]
 
 [[package]]

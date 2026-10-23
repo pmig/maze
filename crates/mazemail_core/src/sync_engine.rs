@@ -90,11 +90,37 @@ impl ImapConnector for NetworkImapConnector {
     }
 }
 
+/// Where the sync engine keeps account passwords and refresh tokens.
+#[derive(Clone)]
+pub enum AccountSecretsLocation {
+    /// In the encrypted store ([`StoreSecretStore`](crate::StoreSecretStore), ADR-017),
+    /// as in the app. `legacy` is where earlier versions kept them (the OS keychain,
+    /// [`auth::legacy_system_secret_store`]): the core moves those items into the store
+    /// when it opens (see [`crate::secrets`]).
+    Encrypted {
+        /// The keychain store of earlier versions, if any.
+        legacy: Option<Arc<dyn SecretStore>>,
+    },
+    /// In this store instead (tests' in-memory store, the insecure development file).
+    Custom(Arc<dyn SecretStore>),
+}
+
+impl fmt::Debug for AccountSecretsLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Encrypted { legacy } => {
+                f.debug_struct("Encrypted").field("legacy", legacy).finish()
+            }
+            Self::Custom(store) => f.debug_tuple("Custom").field(store).finish(),
+        }
+    }
+}
+
 /// What core needs to run the sync engine (see the [module docs](self)).
 #[derive(Clone)]
 pub struct SyncEngineConfig {
-    /// Where passwords and refresh tokens live (the OS keychain in production).
-    pub secrets: Arc<dyn SecretStore>,
+    /// Where passwords and refresh tokens live (the encrypted store in production).
+    pub secrets: AccountSecretsLocation,
     /// Opens IMAP sessions.
     pub connector: Arc<dyn ImapConnector>,
     /// Opens the system browser for OAuth sign-ins.
@@ -120,9 +146,21 @@ impl fmt::Debug for SyncEngineConfig {
 }
 
 impl SyncEngineConfig {
-    /// The production setup over `secrets`: the network, the system browser, the
-    /// settings' OAuth clients, default timers.
+    /// The production setup: account secrets in the encrypted store, moved there from
+    /// `legacy` (the keychain of earlier versions) at startup; the network, the system
+    /// browser, the settings' OAuth clients, default timers.
+    pub fn encrypted(legacy: Option<Arc<dyn SecretStore>>) -> Self {
+        Self::at(AccountSecretsLocation::Encrypted { legacy })
+    }
+
+    /// Like [`SyncEngineConfig::encrypted`], with the account secrets in `secrets`
+    /// instead (tests, the insecure development file).
     pub fn new(secrets: Arc<dyn SecretStore>) -> Self {
+        Self::at(AccountSecretsLocation::Custom(secrets))
+    }
+
+    /// The production setup with the account secrets at `secrets`.
+    pub fn at(secrets: AccountSecretsLocation) -> Self {
         Self {
             secrets,
             connector: Arc::new(NetworkImapConnector),
@@ -180,6 +218,8 @@ pub struct SyncEngine {
     store: Store,
     ingest: Arc<CoreIngest>,
     config: SyncEngineConfig,
+    /// Where account secrets live ([`SyncEngineConfig::secrets`], resolved).
+    secrets: Arc<dyn SecretStore>,
     settings: watch::Receiver<Arc<LoadedSettings>>,
     events: mpsc::UnboundedSender<CoreEvent>,
     runtime: tokio::runtime::Handle,
@@ -236,6 +276,7 @@ impl SyncEngine {
         store: Store,
         ingest: CoreIngest,
         config: SyncEngineConfig,
+        secrets: Arc<dyn SecretStore>,
         settings: watch::Receiver<Arc<LoadedSettings>>,
         events: mpsc::UnboundedSender<CoreEvent>,
         runtime: tokio::runtime::Handle,
@@ -244,6 +285,7 @@ impl SyncEngine {
             store,
             ingest: Arc::new(ingest),
             config,
+            secrets,
             settings,
             events,
             runtime,
@@ -259,7 +301,7 @@ impl SyncEngine {
     }
 
     pub(crate) fn secrets(&self) -> Arc<dyn SecretStore> {
-        Arc::clone(&self.config.secrets)
+        Arc::clone(&self.secrets)
     }
 
     pub(crate) fn browser(&self) -> &Arc<dyn BrowserOpener> {

@@ -1,5 +1,6 @@
 //! Accounts and the sync engine against the in-memory IMAP server: adding validates
-//! against the server and stores the password in the keychain, the account actor
+//! against the server and stores the password (in the encrypted store, or a test's
+//! in-memory secret store), the account actor
 //! syncs through the real ingest pipeline, events reach the core's batches, body
 //! fetches and pending ops reach the server, removing cleans up.
 
@@ -16,7 +17,7 @@ use imap::{ImapAuth, ImapError};
 use mazemail_core::{
     AccountAuth, AccountErrorKind, AddImapAccount, AddOAuthAccount, Body, CoreEventBatch,
     CoreHandle, Error, ImapConnector, ImapSecurity, ImapServer, ListQuery, MailCommand, Origin,
-    SyncEngineConfig, SyncState,
+    StoreSecretStore, SyncEngineConfig, SyncState,
 };
 use mazemail_types::{Flags, FolderRole, Sensitive};
 use store::{AccountKind, ListScope, Queries as _};
@@ -232,7 +233,8 @@ async fn adding_validates_saves_the_password_and_syncs() {
     assert_eq!(info.kind, AccountKind::Imap);
     assert_eq!(info.email.as_deref(), Some("alice@example.org"));
     assert_eq!(s.core.synced_accounts(), vec![info.id]);
-    // The password is in the keychain under the account's UUID, not in the store.
+    // The password is in the secret store under the account's UUID, not in the
+    // account's config.
     let stored = s
         .secrets
         .load(&SecretKey::new(info.uuid, SecretKind::Password))
@@ -749,5 +751,165 @@ async fn the_local_api_adds_lists_syncs_and_removes_accounts() {
         .unwrap();
     assert!(core.accounts().unwrap().is_empty());
     assert!(secrets.is_empty());
+    core.shutdown().await.unwrap();
+}
+
+/// Every file under `dir` that contains `needle`.
+fn files_containing(dir: &std::path::Path, needle: &[u8]) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if std::fs::read(&path)
+                .unwrap()
+                .windows(needle.len())
+                .any(|w| w == needle)
+            {
+                found.push(path);
+            }
+        }
+    }
+    found
+}
+
+fn encrypted_engine(
+    server: &FakeServer,
+    legacy: Option<Arc<dyn auth::SecretStore>>,
+) -> SyncEngineConfig {
+    SyncEngineConfig::encrypted(legacy)
+        .with_connector(Arc::new(FakeConnector {
+            server: server.clone(),
+            reachable: true,
+        }))
+        .with_timing(timing())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_encrypted_store_keeps_secrets_across_restarts_until_removal() {
+    let server = FakeServer::new();
+    server.deliver("INBOX", mail(1, OLD));
+    let dir = tempfile::tempdir().unwrap();
+    let keys = Arc::new(MemoryKeyStore::new());
+    let open = || async {
+        CoreHandle::open(
+            common::config(dir.path(), &keys).with_sync_engine(encrypted_engine(&server, None)),
+        )
+        .await
+        .unwrap()
+    };
+
+    let core = open().await;
+    let info = core.add_imap_account(input(PASSWORD)).await.unwrap();
+    wait_for("the first message", || inbox_count(&core) == 1).await;
+    let secrets: Arc<dyn auth::SecretStore> = Arc::new(StoreSecretStore::new(core.store().clone()));
+    let password = SecretKey::new(info.uuid, SecretKind::Password);
+    assert_eq!(secrets.load(&password).unwrap().unwrap().expose(), PASSWORD);
+    AccountSecrets::new(secrets.clone(), info.uuid)
+        .set_smtp_password(Sensitive::new("smtp secret".into()))
+        .await
+        .unwrap();
+    // Never in plaintext on disk: database, WAL, blobs, index.
+    assert_eq!(
+        files_containing(dir.path(), PASSWORD.as_bytes()),
+        Vec::<std::path::PathBuf>::new()
+    );
+    core.shutdown().await.unwrap();
+    assert_eq!(
+        files_containing(dir.path(), PASSWORD.as_bytes()),
+        Vec::<std::path::PathBuf>::new()
+    );
+    assert_eq!(
+        files_containing(dir.path(), b"smtp secret"),
+        Vec::<std::path::PathBuf>::new()
+    );
+
+    // After a restart the actor logs in with the stored password.
+    server.deliver("INBOX", mail(2, OLD));
+    let core = open().await;
+    assert_eq!(core.synced_accounts(), vec![info.id]);
+    wait_for("mail that arrived while closed", || inbox_count(&core) == 2).await;
+
+    // Removing the account removes its secrets.
+    core.remove_account(info.id).await.unwrap();
+    let secrets = StoreSecretStore::new(core.store().clone());
+    for kind in SecretKind::ALL {
+        assert_eq!(
+            secrets.load(&SecretKey::new(info.uuid, kind)).unwrap(),
+            None,
+            "{kind}"
+        );
+    }
+    core.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn keychain_secrets_move_into_the_store_when_the_core_opens() {
+    let server = FakeServer::new();
+    server.deliver("INBOX", mail(1, OLD));
+    let dir = tempfile::tempdir().unwrap();
+    let keys = Arc::new(MemoryKeyStore::new());
+    let open = |legacy: Option<Arc<dyn auth::SecretStore>>| {
+        let config =
+            common::config(dir.path(), &keys).with_sync_engine(encrypted_engine(&server, legacy));
+        async move { CoreHandle::open(config).await.unwrap() }
+    };
+
+    // An account as an earlier version left it: the password in the keychain, the
+    // account on the list of the v5 migration.
+    let core = open(None).await;
+    let info = core.add_imap_account(input(PASSWORD)).await.unwrap();
+    wait_for("the first message", || inbox_count(&core) == 1).await;
+    let store_secrets = AccountSecrets::new(
+        Arc::new(StoreSecretStore::new(core.store().clone())),
+        info.uuid,
+    );
+    store_secrets.delete_all().await.unwrap();
+    let uuid = info.uuid;
+    core.store()
+        .write(move |w| w.list_legacy_secrets(uuid))
+        .await
+        .unwrap();
+    core.shutdown().await.unwrap();
+    let keychain = Arc::new(MemorySecretStore::new());
+    let password = SecretKey::new(info.uuid, SecretKind::Password);
+    keychain
+        .store(&password, &Sensitive::new(PASSWORD.to_owned()))
+        .unwrap();
+
+    // The next start moves it before the actor needs it, and deletes the item.
+    server.deliver("INBOX", mail(2, OLD));
+    let core = open(Some(keychain.clone())).await;
+    assert!(keychain.is_empty(), "the keychain item is deleted");
+    let store_secrets = StoreSecretStore::new(core.store().clone());
+    assert_eq!(
+        store_secrets.load(&password).unwrap().unwrap().expose(),
+        PASSWORD
+    );
+    assert!(
+        core.store()
+            .reader()
+            .unwrap()
+            .legacy_secret_accounts()
+            .unwrap()
+            .is_empty()
+    );
+    wait_for("mail that arrived while closed", || inbox_count(&core) == 2).await;
+    core.shutdown().await.unwrap();
+
+    // Once moved, the keychain is never consulted again for the account.
+    let stale = Arc::new(MemorySecretStore::new());
+    stale
+        .store(&password, &Sensitive::new("stale".to_owned()))
+        .unwrap();
+    let core = open(Some(stale.clone())).await;
+    assert!(stale.contains(&password));
+    let store_secrets = StoreSecretStore::new(core.store().clone());
+    assert_eq!(
+        store_secrets.load(&password).unwrap().unwrap().expose(),
+        PASSWORD
+    );
     core.shutdown().await.unwrap();
 }

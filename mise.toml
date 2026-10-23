@@ -6,7 +6,9 @@ rust = { version = "1.99.1", components = "rustfmt,clippy,rust-src", profile = "
 
 [tasks.start]
 description = "Build and start Maze (dev build: fast incremental rebuilds)"
-run = "cargo run --locked -p mazemail --"
+# script/dev-codesign gives the binary a stable signature if a "Maze Development"
+# identity exists, so keychain "Always Allow" survives rebuilds (else it does nothing).
+run = 'cargo build --locked -p mazemail && script/dev-codesign "${CARGO_TARGET_DIR:-target}/debug/mazemail" && exec "${CARGO_TARGET_DIR:-target}/debug/mazemail"'
 
 [tasks.fmt]
 description = "Format all crates"

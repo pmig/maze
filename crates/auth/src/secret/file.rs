@@ -11,12 +11,12 @@ use zeroize::Zeroizing;
 
 use super::{SecretKey, SecretStore, SecretStoreError};
 
-/// Keeps secrets **unencrypted** in a JSON file (mode 0600), keyed like the keychain
-/// (`<account-uuid>/<kind>`).
+/// Keeps secrets **unencrypted** in a JSON file (mode 0600), keyed like the other
+/// stores (`<account-uuid>/<kind>`).
 ///
 /// This protects nothing: whoever can read the file has the passwords. It exists so
-/// automated tests and demos can run without a keychain (which may prompt or be
-/// locked), behind the binary's `MAZEMAIL_INSECURE_DEV_SECRETS=1` switch, the way the
+/// automated tests and demos can plant and inspect secrets from outside Maze, behind
+/// the binary's `MAZEMAIL_INSECURE_DEV_SECRETS=1` switch, the way the
 /// development key store keeps the master key in a file. It is never the default, it
 /// warns when created, and it logs every access at debug level (keys only, never the
 /// secrets).

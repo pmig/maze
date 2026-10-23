@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Sign a dev build with a stable identity, so macOS keychain "Always Allow" sticks.
+#
+# Rust's linker signs every build ad hoc, with a new signature each time, so the
+# keychain asks again after every rebuild. If a code signing identity named
+# "Maze Development" exists, this signs the binary with it, which keeps the designated
+# requirement the same across builds. Without that identity (and off macOS) it does
+# nothing. `mise start` runs it.
+#
+# One-time setup (optional): Keychain Access > Certificate Assistant > Create a
+# Certificate…, name "Maze Development", identity type "Self-Signed Root", certificate
+# type "Code Signing". The first signing asks to use its key; choose "Always Allow".
+#
+# Usage: script/dev-codesign <binary>
+set -euo pipefail
+
+identity="Maze Development"
+binary="${1:?usage: script/dev-codesign <binary>}"
+
+[[ "$(uname -s)" == Darwin ]] || exit 0
+# Lists certificates with their private keys; reads no passwords and asks nothing.
+security find-identity -p codesigning 2>/dev/null | grep -qF "\"$identity\"" || exit 0
+
+codesign --force --sign "$identity" --identifier dev.mazemail.maze-dev "$binary"

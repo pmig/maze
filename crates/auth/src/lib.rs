@@ -8,9 +8,12 @@
 //!   client IDs from settings, and detection from an address or server host
 //!   ([`ProviderRegistry`], [`ProviderKind`]).
 //! - **Token lifecycle**: access tokens in memory, refreshed 60 s before expiry;
-//!   refresh tokens in the keychain ([`OAuthTokenManager`], [`TokenProvider`]).
+//!   refresh tokens in the account's [`SecretStore`] ([`OAuthTokenManager`],
+//!   [`TokenProvider`]).
 //! - **Secrets**: passwords and refresh tokens under `mazemail/<account-uuid>/<kind>`
-//!   ([`SecretStore`], [`AccountSecrets`]).
+//!   ([`SecretStore`], [`AccountSecrets`]). The app keeps them in its encrypted store
+//!   (ADR-017); the keychain stores of earlier versions remain for moving them out
+//!   ([`legacy_system_secret_store`]).
 //! - **SASL**: XOAUTH2 and OAUTHBEARER initial responses ([`sasl`]).
 //!
 //! Tokens, passwords, codes and addresses are wrapped in
@@ -21,7 +24,7 @@
 //! use std::sync::Arc;
 //! use auth::{
 //!     AccountSecrets, AuthorizeOptions, ClientCredentials, OAuthTokenManager, ProviderKind,
-//!     ProviderRegistry, SystemBrowser, TokenProvider, system_secret_store,
+//!     MemorySecretStore, ProviderRegistry, SystemBrowser, TokenProvider,
 //! };
 //!
 //! let registry = ProviderRegistry::new()
@@ -30,7 +33,7 @@
 //! let account = auth::Uuid::nil();
 //! let manager = OAuthTokenManager::new(
 //!     registry.client(kind)?,
-//!     AccountSecrets::new(system_secret_store(), account),
+//!     AccountSecrets::new(Arc::new(MemorySecretStore::new()), account),
 //! );
 //! manager
 //!     .sign_in(&SystemBrowser, &AuthorizeOptions::new().login_hint("bob@outlook.com"))
@@ -61,7 +64,7 @@ pub use secret::KeychainSecretStore;
 pub use secret::SecretServiceStore;
 pub use secret::{
     AccountSecrets, FileSecretStore, MemorySecretStore, SERVICE, SecretKey, SecretKind,
-    SecretStore, SecretStoreError, system_secret_store,
+    SecretStore, SecretStoreError, legacy_system_secret_store,
 };
 pub use token::{OAuthTokenManager, REFRESH_MARGIN, StaticTokenProvider, TokenProvider, TokenSet};
 pub use uuid::Uuid;
