@@ -927,6 +927,40 @@ impl CoreHandle {
             }
         }
 
+        self.execute(seq, command, origin, origin_text).await
+    }
+
+    /// Runs a command the user accepted from an agent's proposal: like [`apply`] with
+    /// [`Origin::Agent`], but without asking the authorizer again (the user's decision
+    /// is the authorization). Not undoable with `cmd-z`.
+    ///
+    /// [`apply`]: CoreHandle::apply
+    pub(crate) async fn apply_accepted(
+        &self,
+        command: MailCommand,
+        token: Option<store::TokenId>,
+    ) -> Result<CommandReceipt> {
+        self.ensure_open()?;
+        let seq = self.inner.seq.fetch_add(1, Ordering::Relaxed) + 1;
+        let (origin, origin_text) = match token {
+            Some(token) => {
+                let origin = Origin::Agent { token };
+                let text = origin.as_text();
+                (origin, text)
+            }
+            None => (Origin::Cli, "proposal".to_owned()),
+        };
+        self.execute(seq, command, origin, origin_text).await
+    }
+
+    /// The part of [`CoreHandle::apply`] after the permission check.
+    async fn execute(
+        &self,
+        seq: u64,
+        command: MailCommand,
+        origin: Origin,
+        origin_text: String,
+    ) -> Result<CommandReceipt> {
         if let MailCommand::Refresh { scope } = command {
             self.inner.sync.refresh(scope);
             let detail = serde_json::json!({ "scope": scope }).to_string();

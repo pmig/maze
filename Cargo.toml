@@ -13,6 +13,8 @@ publish = false
 
 [workspace.dependencies]
 # Internal crates (layering: see AGENTS.md)
+agent = { path = "crates/agent" }
+agent_ui = { path = "crates/agent_ui" }
 auth = { path = "crates/auth" }
 auto_update_ui = { path = "crates/auto_update_ui" }
 composer = { path = "crates/composer" }
@@ -25,6 +27,7 @@ auto_update = { path = "crates/auto_update" }
 mail_ui = { path = "crates/mail_ui" }
 mazemail_mime = { path = "crates/mazemail_mime" }
 release_channel = { path = "crates/release_channel" }
+sandbox = { path = "crates/sandbox" }
 search = { path = "crates/search" }
 security = { path = "crates/security" }
 settings = { path = "crates/settings" }
@@ -36,6 +39,8 @@ vault = { path = "crates/vault" }
 imap = { path = "crates/imap" }
 
 # External crates, pinned here and inherited with `workspace = true`
+# The ACP client SDK (Apache-2.0, ADR-006); the reference clone is 3.3.0.
+agent-client-protocol = "3.5"
 ammonia = "4.2.4"
 anyhow = "1"
 # GPUI comes from Zed's `gpui-pre-*` snapshots. gpui-kit pins the exact snapshot it was
@@ -54,6 +59,7 @@ blake3 = { version = "1", features = ["zeroize"] }
 chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc", "zeroize"] }
 bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 dbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
 ed25519-dalek = "3"
 getrandom = "0.4"
@@ -74,6 +80,7 @@ quick_cache = "0.7"
 rayon = "1.12"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2", "system-proxy"] }
 rpassword = "7"
+rustix = { version = "1", default-features = false, features = ["std", "process"] }
 rusqlite = { version = "0.40", default-features = false, features = ["array", "backup", "bundled-sqlcipher", "cache", "functions"] }
 rusqlite_migration = "2.6"
 ruzstd = "0.9"

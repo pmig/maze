@@ -524,10 +524,19 @@ pub struct AccountSettings {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct AgentSettings {
-    /// The agent used when none is chosen explicitly.
+    /// The agent used when none is chosen explicitly (a registry id such as
+    /// `claude-acp`, the short names `claude`, `codex`, `gemini`, `cursor`, `pi`, or a
+    /// key of `custom`).
     pub default: Option<String>,
     /// Access per account label. Accounts not listed are `off`.
     pub accounts: BTreeMap<String, AgentAccess>,
+    /// The profile of the session token agents started by Maze get.
+    pub session_profile: SessionProfile,
+    /// Your own ACP agents, keyed by an id of your choice.
+    pub custom: BTreeMap<String, CustomAgentSettings>,
+    /// Extra environment variables per agent id (agents start with an empty
+    /// environment), e.g. `"codex-acp": { "OPENAI_API_KEY": "…" }`.
+    pub env: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl Default for AgentSettings {
@@ -535,8 +544,38 @@ impl Default for AgentSettings {
         Self {
             default: Some("claude".to_owned()),
             accounts: BTreeMap::new(),
+            session_profile: SessionProfile::default(),
+            custom: BTreeMap::new(),
+            env: BTreeMap::new(),
         }
     }
+}
+
+/// The profile of an agent session's token (CONCEPT §10.3).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionProfile {
+    /// Search and read only.
+    ReadOnly,
+    /// Read, write drafts; archive, move, tag and flag become proposals.
+    #[default]
+    Triage,
+    /// Read, write drafts and change mail directly.
+    Writer,
+}
+
+/// An ACP agent that isn't in the registry.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct CustomAgentSettings {
+    /// Shown in the agent picker; the key when empty.
+    pub name: Option<String>,
+    /// The program, an absolute path or a name looked up on `PATH`.
+    pub command: String,
+    /// Its arguments.
+    pub args: Vec<String>,
+    /// Extra environment variables.
+    pub env: BTreeMap<String, String>,
 }
 
 impl AgentSettings {
@@ -595,6 +634,10 @@ pub struct AgentPathRules {
     pub read: Vec<String>,
     /// Extra writable paths.
     pub write: Vec<String>,
+    /// The agent sandboxes itself and can't run inside Maze's sandbox (Seatbelt can't
+    /// be nested). Its process then runs unsandboxed; the terminal commands it asks
+    /// Maze to run stay sandboxed.
+    pub already_sandboxed: bool,
 }
 
 /// The update channel a user can choose (dev builds never update).

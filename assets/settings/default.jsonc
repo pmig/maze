@@ -110,13 +110,26 @@
     }
   },
 
-  // AI agents. AI is off unless enabled per account.
+  // AI agents (docs/agents.md). AI is off unless enabled per account.
   "agent": {
-    // The agent used when none is chosen explicitly.
+    // The agent used when none is chosen explicitly: a registry id ("claude-acp",
+    // "codex-acp", "gemini", "cursor", "pi-acp"), a short name ("claude", "codex",
+    // "pi") or a key of "custom".
     "default": "claude",
     // Access per account label: "off", "local_only" (local models only) or "any".
-    // Accounts not listed are "off".
-    "accounts": {}
+    // Accounts not listed are "off". Agents Maze starts only ever see "any" accounts.
+    "accounts": {},
+    // What the session token of an agent started by Maze may do: "read-only",
+    // "triage" (changes become proposals you review) or "writer".
+    "session_profile": "triage",
+    // Your own ACP agents, e.g.
+    // "my-agent": { "name": "My agent", "command": "/usr/local/bin/my-agent",
+    //               "args": ["--acp"], "env": { "MY_AGENT_MODEL": "small" } }
+    // They run in the agent sandbox like registry agents.
+    "custom": {},
+    // Agents start with an empty environment. Extra variables per agent id, e.g. an
+    // API key: "codex-acp": { "OPENAI_API_KEY": "sk-…" }. Stored in plain text here.
+    "env": {}
   },
 
   // The sandbox every agent process runs in.
@@ -127,7 +140,9 @@
     "allow_read": [],
     // Extra paths outside your home directory agents may never read.
     "deny_read": [],
-    // Additions per agent, e.g. "claude": { "read": [], "write": [] }.
+    // Additions per agent, e.g. "claude-acp": { "read": [], "write": [] }.
+    // "already_sandboxed": true runs that agent's own process outside Maze's sandbox
+    // (for agents that sandbox themselves); its terminal commands stay sandboxed.
     "agent_paths": {},
     // null: any host. Or a list such as ["api.anthropic.com", "*.openai.com"].
     "network_hosts": null

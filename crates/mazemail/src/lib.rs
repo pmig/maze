@@ -9,7 +9,10 @@
 //!   over [`CoreHandle`](mazemail_core::CoreHandle), and the mapping from the core's
 //!   change events to the window's [`DataChanges`](mail_ui::DataChanges).
 //! - [`approve`]: approvers that need no UI (the debug-only auto-approver for tests).
+//! - [`agent_host`]: the `agent` crate's host over the core (conversations, thread
+//!   exports, session tokens, proposals).
 
+pub mod agent_host;
 pub mod approve;
 pub mod keys;
 pub mod source;

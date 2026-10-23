@@ -87,5 +87,25 @@
       "right": "mail::ExpandThread",
       "left": "mail::CollapseThread"
     }
+  },
+  {
+    // The agent column (Zed's agent panel keys). In its prompt, enter sends and
+    // shift-enter starts a new line.
+    "context": "AgentPanel",
+    "bindings": {
+      "cmd-n": "agent::NewThread",
+      "cmd-shift-enter": "agent::AcceptAllProposals",
+      "cmd-shift-backspace": "agent::RejectAllProposals"
+    }
+  },
+  {
+    // The proposal review, once it has focus (click an item).
+    "context": "AgentProposals",
+    "bindings": {
+      "y": "agent::AcceptProposal",
+      "n": "agent::RejectProposal",
+      "down": "agent::NextProposal",
+      "up": "agent::PreviousProposal"
+    }
   }
 ]

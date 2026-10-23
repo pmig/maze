@@ -58,6 +58,7 @@ mod row_cache;
 mod runtime;
 
 pub mod accounts;
+pub mod agents;
 pub mod api;
 pub mod api_handler;
 pub mod commands;
@@ -85,6 +86,7 @@ pub use accounts::{
     AccountAuth, AccountConfig, AccountErrorKind, AccountInfo, AddImapAccount, AddOAuthAccount,
     ConnectionTest, ImapSecurity, ImapServer, ServerSuggestion, suggest_imap_server,
 };
+pub use agents::{ProposalItemSummary, ProposalSummary};
 pub use api_handler::{Authorization, CommandAuthorizer, DenyAgents};
 pub use commands::{CommandOutcome, CommandReceipt, MailCommand, Origin};
 pub use compose::{ComposeErrorKind, IdentityInfo, ReplyKind, SendResult};
@@ -121,8 +123,9 @@ pub use thread_tree::TreeNode;
 
 /// Store types that are part of this API.
 pub use store::{
-    Account, AccountKind, ListKey, ListOrder, ListScope, MessageKey, MessageRow, OpId, ProposalId,
-    RuleId, SortField, SortOrder, Tag, ThreadRow, TokenId,
+    Account, AccountKind, AgentThread, AgentThreadId, ListKey, ListOrder, ListScope, MessageKey,
+    MessageRow, OpId, ProposalId, ProposalItemId, ProposalItemState, ProposalState, RuleId,
+    SortField, SortOrder, Tag, ThreadRow, TokenId,
 };
 
 /// Search types that are part of this API.
