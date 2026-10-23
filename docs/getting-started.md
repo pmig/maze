@@ -151,7 +151,25 @@ with the columns Star · Subject · Correspondents · Date. Correspondents is th
 of mail you received and the recipients, with a small arrow, of mail you sent. More
 columns (Attachment, Unread, Size, Tags, Account, Sender, Recipients) come from the
 columns button in the list header or by right-clicking a column header; drag a header's
-edge to resize it, and click **Date** to switch between newest and oldest first.
+edge to resize it.
+
+Click any column header to sort by it, and again to reverse the order; an arrow shows
+the sorted column. Dates and sizes start newest and largest first, the star, unread and
+attachment columns put those messages first, text columns go A to Z. The sort button
+in the list header (cards and table) and **Sort By…** in the command palette or the
+View menu offer every order, including the received time. Subjects sort without `Re:`,
+`Fwd:`, `AW:` or `WG:` and ignore case; people sort by name, else address; messages
+without a subject or tags come last either way. A thread sorts by what its row shows:
+its newest message's date, sender, recipients and size, its subject, whether any of its
+messages is starred, unread or has attachments. Sorting a very large folder by anything
+but the date takes a moment ("Sorting…"); the selected message stays selected.
+
+Right-click a message (in the list, cards or table, or in the message pane) for a menu
+with Reply, Reply All, Forward, Mark as Read or Unread, Star or Unstar, Archive, Move to
+Folder… and Select Thread, each with its shortcut. Right-clicking a message that isn't
+selected selects it (without marking it read); right-clicking inside a selection of
+several messages keeps it, and the menu acts on all of them. The message pane's menu
+also copies the sender's address.
 
 Threads are on by default: a thread is one row with its message count; `→` or a click
 on the count opens its messages as a reply tree, `←` closes it, `*` opens all threads

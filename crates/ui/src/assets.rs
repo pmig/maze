@@ -14,6 +14,7 @@ gpui_kit::assets::icon_assets!(
     MazeIcons,
     [
         Archive,
+        ArrowDownUp,
         ArrowUpRight,
         BookUser,
         CircleDot,

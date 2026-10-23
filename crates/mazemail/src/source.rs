@@ -10,7 +10,9 @@
 //!   come from [`CoreHandle::rows`] and [`CoreHandle::message_rows`] in the context
 //!   folder of the open list; a thread row's Correspondents, recipients, size and tags
 //!   are those of its newest message. Expanded threads use [`CoreHandle::thread_tree`]
-//!   and "expand all" [`CoreHandle::thread_message_counts`].
+//!   and "expand all" [`CoreHandle::thread_message_counts`]. Every order the list
+//!   offers is the core's ([`ListOrder`]); global search results sort with
+//!   [`CoreHandle::sort_threads`] and [`CoreHandle::sort_messages`].
 //! - **Messages**: [`CoreHandle::message`], with the reader document rendered as escaped
 //!   Markdown ([`reader_text::display_markdown`]) that the view draws natively; remote
 //!   content is never loaded.
@@ -38,15 +40,15 @@ use gpui::SharedString;
 use mail_ui::DataChanges;
 use mail_ui::source::{
     AccountEntry, AccountKind, AttachmentInfo, FolderEntry, FolderKey, FolderTree, ListSort,
-    MailSource, MessageBody, MessageDocument, MessageKeys, MessageRow, SenderClient, SourceError,
-    SourceStatus, SyncState, ThreadFilter, ThreadKeys, ThreadRow, ThreadScope, ThreadTree,
-    TreeNode, Verdict, Verification,
+    MailSource, MessageBody, MessageDocument, MessageKeys, MessageRow, SenderClient, SortBy,
+    SourceError, SourceStatus, SyncState, ThreadFilter, ThreadKeys, ThreadRow, ThreadScope,
+    ThreadTree, TreeNode, Verdict, Verification,
 };
 use mazemail_core::correspondents::display;
 use mazemail_core::{
     AccountInfo, AuthStatus, Body, CoreEventBatch, CoreHandle, FolderNode, FolderNodeKind,
-    ListQuery, ListScope, MailCommand, MessageListRow, MessageView, Origin, QuickFilter,
-    SearchOpts, SearchSort, SortOrder, SyncState as CoreSyncState, reader_text,
+    ListOrder, ListQuery, ListScope, MailCommand, MessageListRow, MessageView, Origin, QuickFilter,
+    SearchOpts, SearchSort, SortField, SyncState as CoreSyncState, reader_text,
 };
 use mazemail_types::{AccountId, Address, Flags, FolderId, MessageId, Sensitive, TagId, ThreadId};
 use time::OffsetDateTime;
@@ -256,7 +258,8 @@ impl CoreMailSource {
         .map_err(unavailable)
     }
 
-    /// The threads a global search finds for the UI's filter.
+    /// The threads a global search finds for the UI's filter, in `sort`'s order: the
+    /// search orders by date itself, the core sorts the hits by any other column.
     fn search_threads(
         core: &CoreHandle,
         filter: &ThreadFilter,
@@ -268,9 +271,10 @@ impl CoreMailSource {
         }
         let opts = SearchOpts {
             limit: SEARCH_LIMIT,
-            sort: match sort {
-                ListSort::NewestFirst => SearchSort::NewestFirst,
-                ListSort::OldestFirst => SearchSort::OldestFirst,
+            sort: if sort == ListSort::OLDEST_FIRST {
+                SearchSort::OldestFirst
+            } else {
+                SearchSort::NewestFirst
             },
             snippets: false,
             ..SearchOpts::default()
@@ -278,7 +282,12 @@ impl CoreMailSource {
         let runner = core.clone();
         let results =
             wait(core, async move { runner.search(&query, opts).await })?.map_err(unavailable)?;
-        Ok(results.threads.iter().map(|t| t.thread).collect())
+        let threads: Vec<ThreadId> = results.threads.iter().map(|t| t.thread).collect();
+        if sort.is_by_date() {
+            return Ok(threads);
+        }
+        core.sort_threads(&threads, list_order(sort))
+            .map_err(unavailable)
     }
 }
 
@@ -290,7 +299,7 @@ fn list_query(key: &FolderKey, filter: &ThreadFilter, sort: ListSort) -> ListQue
     };
     ListQuery {
         scope,
-        sort: sort_order(sort),
+        sort: list_order(sort),
         quick_filter: QuickFilter {
             unread: filter.unread,
             flagged: filter.starred,
@@ -349,11 +358,23 @@ fn subject(subject: Option<String>) -> Sensitive<SharedString> {
     )
 }
 
-fn sort_order(sort: ListSort) -> SortOrder {
-    match sort {
-        ListSort::NewestFirst => SortOrder::NewestFirst,
-        ListSort::OldestFirst => SortOrder::OldestFirst,
-    }
+/// The core's order for the list's.
+fn list_order(sort: ListSort) -> ListOrder {
+    let field = match sort.by {
+        SortBy::Date => SortField::Date,
+        SortBy::Received => SortField::Received,
+        SortBy::Star => SortField::Starred,
+        SortBy::Unread => SortField::Unread,
+        SortBy::Attachment => SortField::Attachments,
+        SortBy::Subject => SortField::Subject,
+        SortBy::Correspondents => SortField::Correspondents,
+        SortBy::Sender => SortField::Sender,
+        SortBy::Recipients => SortField::Recipients,
+        SortBy::Tags => SortField::Tags,
+        SortBy::Account => SortField::Account,
+        SortBy::Size => SortField::Size,
+    };
+    ListOrder::new(field, sort.descending)
 }
 
 fn recipients(addresses: &[Address]) -> String {
@@ -737,27 +758,18 @@ impl MailSource for CoreMailSource {
                 Ok(snapshot.keys().iter().map(|k| k.message).collect())
             }
             ThreadScope::AllFolders => {
-                // Search finds threads; with threads off, list their messages by date.
+                // Search finds threads; with threads off, list their messages, sorted
+                // by the core.
                 *lock(&self.context) = None;
-                let threads = Self::search_threads(&core, filter, sort)?;
+                let threads = Self::search_threads(&core, filter, ListSort::NEWEST_FIRST)?;
                 let mut ids = Vec::new();
                 for thread in threads {
                     ids.extend(core.thread_message_ids(thread).map_err(unavailable)?);
                 }
-                let mut dated: Vec<(i64, MessageId)> = Vec::with_capacity(ids.len());
-                for chunk in ids.chunks(1_000) {
-                    dated.extend(
-                        core.message_rows(chunk, None)
-                            .map_err(unavailable)?
-                            .into_iter()
-                            .map(|m| (m.row.date, m.row.id)),
-                    );
-                }
-                match sort {
-                    ListSort::NewestFirst => dated.sort_by_key(|k| std::cmp::Reverse(*k)),
-                    ListSort::OldestFirst => dated.sort_unstable(),
-                }
-                Ok(dated.into_iter().map(|(_, id)| id).collect())
+                Ok(core
+                    .sort_messages(&ids, list_order(sort))
+                    .map_err(unavailable)?
+                    .into())
             }
         }
     }

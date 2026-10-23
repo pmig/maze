@@ -11,7 +11,7 @@
 //! ```json
 //! {
 //!   "version": 2,
-//!   "list": { "view": "table", "threaded": false, "sort": "oldest_first",
+//!   "list": { "view": "table", "threaded": false, "sort": "subject_asc",
 //!             "columns": ["star", "subject", "correspondents", "size", "date"],
 //!             "widths": { "correspondents": 220.0 } },
 //!   "move_targets": { "a2": [17, 4] }
@@ -23,8 +23,10 @@
 //!
 //! What isn't in `list` follows the defaults from `settings.json`
 //! (`thread_list.view`, `thread_list.threaded`, `thread_list.sort`), [`ListDefaults`]:
-//! every field is optional, so `list` only records what was changed. Version 1 kept
-//! a `folders` map with an entry per folder; it is ignored. Unknown fields and an
+//! every field is optional, so `list` only records what was changed. `sort` is
+//! `"<column>_<asc|desc>"` ([`ListSort`]); the date-only names of earlier versions
+//! (`"newest_first"`, `"oldest_first"`) still read. Version 1 kept a `folders` map with
+//! an entry per folder; it is ignored. Unknown fields and an
 //! unreadable file are ignored (the file is rewritten on the next change); writes go
 //! to a temporary file that is renamed into place.
 
@@ -36,7 +38,7 @@ use serde::{Deserialize, Serialize};
 
 use mazemail_types::{AccountId, FolderId};
 
-use crate::source::ListSort;
+use crate::source::{ListSort, SortBy};
 
 /// The file name in the data directory.
 pub const UI_STATE_FILE: &str = "ui_state.json";
@@ -79,7 +81,7 @@ pub enum ColumnId {
     Account,
     /// Size.
     Size,
-    /// Date (click the header to sort).
+    /// Date.
     Date,
 }
 
@@ -147,6 +149,23 @@ impl ColumnId {
         self != Self::Subject
     }
 
+    /// What clicking the column's header sorts by.
+    pub fn sort_by(self) -> SortBy {
+        match self {
+            Self::Star => SortBy::Star,
+            Self::Unread => SortBy::Unread,
+            Self::Attachment => SortBy::Attachment,
+            Self::Subject => SortBy::Subject,
+            Self::Correspondents => SortBy::Correspondents,
+            Self::Sender => SortBy::Sender,
+            Self::Recipients => SortBy::Recipients,
+            Self::Tags => SortBy::Tags,
+            Self::Account => SortBy::Account,
+            Self::Size => SortBy::Size,
+            Self::Date => SortBy::Date,
+        }
+    }
+
     /// The JSON name.
     pub fn key(self) -> &'static str {
         match self {
@@ -172,7 +191,7 @@ pub struct ListDefaults {
     pub mode: ListMode,
     /// `thread_list.threaded`.
     pub threaded: bool,
-    /// `thread_list.sort` (date orders only).
+    /// `thread_list.sort`.
     pub sort: ListSort,
 }
 
@@ -181,7 +200,7 @@ impl Default for ListDefaults {
         Self {
             mode: ListMode::Cards,
             threaded: true,
-            sort: ListSort::NewestFirst,
+            sort: ListSort::NEWEST_FIRST,
         }
     }
 }
@@ -196,7 +215,7 @@ pub struct ListState {
     /// Threads on or off.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub threaded: Option<bool>,
-    /// Date order.
+    /// The order.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort: Option<ListSort>,
     /// Table columns that are on.
@@ -214,7 +233,7 @@ pub struct ListPrefs {
     pub mode: ListMode,
     /// Threads on or off.
     pub threaded: bool,
-    /// Date order.
+    /// The order: any column, either way.
     pub sort: ListSort,
     /// Table columns that are on, in display order.
     pub columns: Vec<ColumnId>,
@@ -432,7 +451,7 @@ mod tests {
         let store = UiStateStore::in_memory(ListDefaults {
             mode: ListMode::Table,
             threaded: false,
-            sort: ListSort::NewestFirst,
+            sort: ListSort::NEWEST_FIRST,
         });
         let prefs = store.prefs();
         assert_eq!(prefs.mode, ListMode::Table);
@@ -450,7 +469,10 @@ mod tests {
         let mut prefs = store.prefs();
         prefs.mode = ListMode::Table;
         prefs.threaded = false;
-        prefs.sort = ListSort::OldestFirst;
+        prefs.sort = ListSort {
+            by: SortBy::Subject,
+            descending: true,
+        };
         prefs.toggle_column(ColumnId::Size);
         prefs.toggle_column(ColumnId::Star);
         prefs.toggle_column(ColumnId::Subject);
@@ -471,11 +493,29 @@ mod tests {
         assert_eq!(reopened.prefs(), prefs);
         let json = std::fs::read_to_string(&path).unwrap();
         assert!(json.contains("\"list\""), "{json}");
-        assert!(json.contains("\"oldest_first\""), "{json}");
+        assert!(json.contains("\"subject_desc\""), "{json}");
 
         // Back to the defaults: nothing is recorded.
         store.set_prefs(&ListPrefs::resolve(None, &defaults));
         assert_eq!(store.state().list, ListState::default());
+    }
+
+    #[test]
+    fn the_date_only_sort_names_still_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(UI_STATE_FILE);
+        std::fs::write(
+            &path,
+            r#"{ "version": 2, "list": { "view": "table", "sort": "oldest_first" } }"#,
+        )
+        .unwrap();
+        let store = UiStateStore::load(&path, ListDefaults::default());
+        assert_eq!(store.prefs().sort, ListSort::OLDEST_FIRST);
+        assert_eq!(store.prefs().mode, ListMode::Table);
+        // Every column sorts by itself.
+        for column in ColumnId::ALL {
+            assert_eq!(column.sort_by().key(), column.key());
+        }
     }
 
     #[test]

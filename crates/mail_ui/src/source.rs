@@ -118,26 +118,229 @@ pub type ThreadKeys = Arc<[ThreadId]>;
 /// [`ThreadKeys`].
 pub type MessageKeys = Arc<[MessageId]>;
 
-/// The order of a list, by date (the only order the store sorts by).
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum ListSort {
-    /// Newest first.
+/// What a list is sorted by: a column of the table, or the time the server received
+/// the message. Threads sort by what their row shows (their newest message's date,
+/// sender and size, their subject, whether any message is starred, …); the source
+/// sorts, never the view, so a list of any length is in order before rows are fetched.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum SortBy {
+    /// The date (a thread: its newest message's).
     #[default]
-    NewestFirst,
-    /// Oldest first.
-    OldestFirst,
+    Date,
+    /// When the server received the message, else its date.
+    Received,
+    /// Starred or not.
+    Star,
+    /// Unread or not.
+    Unread,
+    /// With attachments or without.
+    Attachment,
+    /// The subject, ignoring `Re:`/`Fwd:`/`AW:`/`WG:` prefixes and case.
+    Subject,
+    /// The Correspondents column: the sender, or the recipients of mail you sent.
+    Correspondents,
+    /// The sender's name, else address.
+    Sender,
+    /// The recipients.
+    Recipients,
+    /// Tag names.
+    Tags,
+    /// The account's name.
+    Account,
+    /// Size.
+    Size,
+}
+
+impl SortBy {
+    /// Every order, as the sort menu lists them.
+    pub const ALL: [Self; 12] = [
+        Self::Date,
+        Self::Received,
+        Self::Star,
+        Self::Unread,
+        Self::Attachment,
+        Self::Subject,
+        Self::Correspondents,
+        Self::Sender,
+        Self::Recipients,
+        Self::Tags,
+        Self::Account,
+        Self::Size,
+    ];
+
+    /// The name in menus.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Date => "Date",
+            Self::Received => "Received",
+            Self::Star => "Star",
+            Self::Unread => "Unread",
+            Self::Attachment => "Attachment",
+            Self::Subject => "Subject",
+            Self::Correspondents => "Correspondents",
+            Self::Sender => "Sender",
+            Self::Recipients => "Recipients",
+            Self::Tags => "Tags",
+            Self::Account => "Account",
+            Self::Size => "Size",
+        }
+    }
+
+    /// The JSON name (`ui_state.json`, `thread_list.sort` in `settings.json`).
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Date => "date",
+            Self::Received => "received",
+            Self::Star => "star",
+            Self::Unread => "unread",
+            Self::Attachment => "attachment",
+            Self::Subject => "subject",
+            Self::Correspondents => "correspondents",
+            Self::Sender => "sender",
+            Self::Recipients => "recipients",
+            Self::Tags => "tags",
+            Self::Account => "account",
+            Self::Size => "size",
+        }
+    }
+
+    /// The direction a first click on the column sorts in, as in Thunderbird: dates
+    /// newest first, sizes largest first, starred, unread and attachments first, text
+    /// A to Z.
+    pub fn descending_first(self) -> bool {
+        matches!(
+            self,
+            Self::Date | Self::Received | Self::Star | Self::Unread | Self::Attachment | Self::Size
+        )
+    }
+
+    /// The two directions, descending first: "Newest First" / "Oldest First", "A to Z"
+    /// / "Z to A" (as descending / ascending), ….
+    pub fn direction_labels(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Date | Self::Received => ("Newest First", "Oldest First"),
+            Self::Star => ("Starred First", "Unstarred First"),
+            Self::Unread => ("Unread First", "Read First"),
+            Self::Attachment => ("With Attachments First", "Without Attachments First"),
+            Self::Size => ("Largest First", "Smallest First"),
+            Self::Subject
+            | Self::Correspondents
+            | Self::Sender
+            | Self::Recipients
+            | Self::Tags
+            | Self::Account => ("Z to A", "A to Z"),
+        }
+    }
+}
+
+/// The order of a list: what it is sorted by and which way. In `ui_state.json` it is
+/// `"<sort by>_<asc|desc>"` (`"subject_asc"`); the names before all columns were
+/// sortable, `"newest_first"` and `"oldest_first"`, still read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct ListSort {
+    /// What the list is sorted by.
+    pub by: SortBy,
+    /// Largest, newest, starred or Z first.
+    pub descending: bool,
+}
+
+impl Default for ListSort {
+    fn default() -> Self {
+        Self::NEWEST_FIRST
+    }
 }
 
 impl ListSort {
-    /// The other order.
-    pub fn toggled(self) -> Self {
-        match self {
-            Self::NewestFirst => Self::OldestFirst,
-            Self::OldestFirst => Self::NewestFirst,
+    /// By date, newest first (the default).
+    pub const NEWEST_FIRST: Self = Self {
+        by: SortBy::Date,
+        descending: true,
+    };
+
+    /// By date, oldest first.
+    pub const OLDEST_FIRST: Self = Self {
+        by: SortBy::Date,
+        descending: false,
+    };
+
+    /// Sorted by `by`, in the direction a first click sorts in.
+    pub fn by(by: SortBy) -> Self {
+        Self {
+            by,
+            descending: by.descending_first(),
         }
+    }
+
+    /// The other direction.
+    pub fn toggled(self) -> Self {
+        Self {
+            descending: !self.descending,
+            ..self
+        }
+    }
+
+    /// What a click on the header of the column sorted by `by` does: the other
+    /// direction if the list is sorted by it already, else sort by it.
+    pub fn clicked(self, by: SortBy) -> Self {
+        if self.by == by {
+            self.toggled()
+        } else {
+            Self::by(by)
+        }
+    }
+
+    /// Whether this is a date order (the cheap one: straight from an index).
+    pub fn is_by_date(self) -> bool {
+        self.by == SortBy::Date
+    }
+
+    /// "Subject, A to Z".
+    pub fn describe(self) -> String {
+        let (descending, ascending) = self.by.direction_labels();
+        let direction = if self.descending {
+            descending
+        } else {
+            ascending
+        };
+        format!("{}, {direction}", self.by.label())
+    }
+
+    /// The JSON name, `"subject_asc"`.
+    pub fn name(self) -> String {
+        let direction = if self.descending { "desc" } else { "asc" };
+        format!("{}_{direction}", self.by.key())
+    }
+
+    /// Reads [`ListSort::name`] (and the old names `newest_first` and `oldest_first`).
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "newest_first" => return Some(Self::NEWEST_FIRST),
+            "oldest_first" => return Some(Self::OLDEST_FIRST),
+            _ => {}
+        }
+        let (by, direction) = name.rsplit_once('_')?;
+        let descending = match direction {
+            "desc" => true,
+            "asc" => false,
+            _ => return None,
+        };
+        let by = SortBy::ALL.into_iter().find(|b| b.key() == by)?;
+        Some(Self { by, descending })
+    }
+}
+
+impl From<ListSort> for String {
+    fn from(sort: ListSort) -> Self {
+        sort.name()
+    }
+}
+
+impl TryFrom<String> for ListSort {
+    type Error = String;
+
+    fn try_from(name: String) -> Result<Self, Self::Error> {
+        Self::parse(&name).ok_or_else(|| format!("unknown sort order {name:?}"))
     }
 }
 
@@ -575,8 +778,8 @@ pub trait MailSource: Send + Sync + 'static {
 
     /// Thread keys of a scope in display order (`sort`), after `filter`.
     ///
-    /// With a text filter this can take a while on large folders; call it off the
-    /// main thread then.
+    /// With a text filter, or sorted by anything but the date, this can take a while on
+    /// large folders; call it off the main thread then.
     fn thread_keys(
         &self,
         scope: &ThreadScope,
@@ -588,7 +791,8 @@ pub trait MailSource: Send + Sync + 'static {
     fn thread_rows(&self, keys: &[ThreadId]) -> Vec<ThreadRow>;
 
     /// Message keys of a scope (threads off: one row per message) in display order,
-    /// after `filter`. Like [`MailSource::thread_keys`], slow with a text filter.
+    /// after `filter`. Like [`MailSource::thread_keys`], slow with a text filter or a
+    /// sort other than the date.
     fn message_keys(
         &self,
         scope: &ThreadScope,
@@ -784,5 +988,48 @@ pub trait MailSource: Send + Sync + 'static {
     /// Whether the empty state offers "Add account" (no account exists yet).
     fn offers_add_account(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sort_names_round_trip_and_read_the_old_names() {
+        for by in SortBy::ALL {
+            for descending in [false, true] {
+                let sort = ListSort { by, descending };
+                assert_eq!(ListSort::parse(&sort.name()), Some(sort));
+            }
+        }
+        assert_eq!(
+            ListSort::parse("subject_asc"),
+            Some(ListSort::by(SortBy::Subject))
+        );
+        assert_eq!(
+            ListSort::parse("oldest_first"),
+            Some(ListSort::OLDEST_FIRST)
+        );
+        assert_eq!(
+            ListSort::parse("newest_first"),
+            Some(ListSort::NEWEST_FIRST)
+        );
+        assert_eq!(ListSort::parse("subject"), None);
+        assert_eq!(ListSort::parse("color_asc"), None);
+        let json = serde_json::to_string(&ListSort::by(SortBy::Size)).unwrap();
+        assert_eq!(json, "\"size_desc\"");
+    }
+
+    #[test]
+    fn a_click_sorts_by_the_column_then_reverses() {
+        let sort = ListSort::NEWEST_FIRST;
+        let by_subject = sort.clicked(SortBy::Subject);
+        assert_eq!(by_subject, ListSort::by(SortBy::Subject));
+        assert!(!by_subject.descending, "text starts A to Z");
+        assert!(by_subject.clicked(SortBy::Subject).descending);
+        assert!(by_subject.clicked(SortBy::Star).descending, "starred first");
+        assert_eq!(sort.clicked(SortBy::Date), ListSort::OLDEST_FIRST);
+        assert_eq!(ListSort::by(SortBy::Size).describe(), "Size, Largest First");
     }
 }

@@ -40,6 +40,11 @@
 //!   `message_list` (accounts). Each location carries its message's date for that.
 //!   [`Queries::message_rows`] gives the visible rows, [`Queries::thread_tree_messages`]
 //!   what the reply tree of a thread is built from.
+//! - **Sorting by any column** ([`ListOrder`]): the keyset queries give a scope in date
+//!   order; [`Queries::sorted_thread_keys`] and [`Queries::sorted_message_keys`] put
+//!   those keys (after any filter) in another order with one `ORDER BY`, a thread by
+//!   what its row shows. Text keys come from SQL functions registered on every
+//!   connection (`mz_subject_key` drops `Re:`/`Fwd:` prefixes, see `repo::sort`).
 //! - **Accounts** have a stable [`Account::uuid`] (random v4, unique, immutable, never
 //!   reused) besides the numeric id; keychain secrets are keyed by it (`auth` crate).
 //!   [`Queries::account_by_uuid`] looks it up.
@@ -87,7 +92,9 @@
 //! 6 ms, rows for 60 visible threads 0.05 ms, folder switch to a 100k folder (all keys
 //! plus visible rows) 3 ms, metadata filter over 10k search candidates 5 ms, marking 10k
 //! messages read 82 ms (commit included). Bulk insert runs at 20k–60k messages/s; the
-//! database is about 600 bytes per message.
+//! database is about 600 bytes per message. Sorting all 1M thread keys of a folder by
+//! another column than the date takes 0.6–1.5 s (starred 0.6 s, subject 0.7 s, sender
+//! 1.0 s, correspondents 1.5 s); the app does it off the main thread.
 //!
 //! # Example
 //!

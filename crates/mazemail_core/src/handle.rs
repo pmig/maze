@@ -11,7 +11,7 @@ use security::phishing::{DomainWatchlist, PhishingInput, analyze, links_from_rea
 use security::{ProviderProfile, Resolver, Verifier, VerifyContext};
 use settings::{DiagnosticKind, FavoriteFolder, LoadedSettings, SettingsWatcher, default_settings};
 use store::{
-    Account, AccountKind, BodyState, ChangeSet, DataLayout, MessageDetail, MessageScope,
+    Account, AccountKind, BodyState, ChangeSet, DataLayout, ListOrder, MessageDetail, MessageScope,
     NewProposalItem, Queries, Store, StoreConfig, ThreadRow,
 };
 use time::{OffsetDateTime, UtcOffset};
@@ -37,13 +37,15 @@ use crate::message::{
     AuthStatus, Body, MessageView, RemoteContent, StoreContacts, load_rendered, persist_auth,
     stored_auth,
 };
-use crate::message_list::{MessageListRow, MessageListSnapshot, all_message_keys};
+use crate::message_list::{
+    MessageListRow, MessageListSnapshot, all_message_keys, order_message_keys,
+};
 use crate::row_cache::{RowCache, RowCacheStats};
 use crate::runtime::RuntimeHolder;
 use crate::sync_bridge::{FetchPriority, SyncBridge, SyncStatusSink};
 use crate::sync_engine::SyncEngine;
 use crate::sync_ingest::CoreIngest;
-use crate::thread_list::{ListQuery, TextCache, ThreadListSnapshot, all_keys};
+use crate::thread_list::{ListQuery, TextCache, ThreadListSnapshot, all_keys, order_keys};
 use crate::thread_tree::{self, TreeNode};
 use crate::{Error, Result};
 
@@ -451,7 +453,7 @@ impl CoreHandle {
         self.ensure_open()?;
         let reader = self.inner.store.reader()?;
         let filter = query.quick_filter.list_filter();
-        let mut keys = all_keys(&reader, query.scope, query.sort, &filter)?;
+        let mut keys = all_keys(&reader, query.scope, query.sort.date_order(), &filter)?;
         let words = query.quick_filter.words();
         if let Some(words) = &words {
             let matching = self
@@ -460,6 +462,7 @@ impl CoreHandle {
                 .matching(&reader, query.scope, &keys, words)?;
             keys.retain(|k| matching.contains(&k.thread));
         }
+        let keys = order_keys(&reader, keys, query)?;
         Ok(ThreadListSnapshot::new(
             query.clone(),
             keys,
@@ -486,7 +489,7 @@ impl CoreHandle {
             .blocking(move || {
                 let reader = inner.store.reader()?;
                 let filter = query.quick_filter.list_filter();
-                let mut keys = all_keys(&reader, query.scope, query.sort, &filter)?;
+                let mut keys = all_keys(&reader, query.scope, query.sort.date_order(), &filter)?;
                 let mut matching = inner.text.matching(&reader, query.scope, &keys, &words)?;
                 matching.extend(core_search::body_matching_threads(
                     &inner.index,
@@ -495,9 +498,38 @@ impl CoreHandle {
                     text.expose(),
                 )?);
                 keys.retain(|k| matching.contains(&k.thread));
+                let keys = order_keys(&reader, keys, &query)?;
                 Ok(ThreadListSnapshot::new(query, keys, false))
             })
             .await
+    }
+
+    /// `threads` (global search results, for example) in `order`, with dates and flags
+    /// of the whole thread, as unified lists show them. Unknown threads are left out.
+    /// Lists from [`CoreHandle::thread_list`] are sorted already.
+    pub fn sort_threads(&self, threads: &[ThreadId], order: ListOrder) -> Result<Vec<ThreadId>> {
+        self.ensure_open()?;
+        let keys = self
+            .inner
+            .store
+            .reader()?
+            .sorted_thread_keys(threads, None, order)?;
+        Ok(keys.into_iter().map(|k| k.thread).collect())
+    }
+
+    /// `messages` in `order`, like [`CoreHandle::sort_threads`].
+    pub fn sort_messages(
+        &self,
+        messages: &[MessageId],
+        order: ListOrder,
+    ) -> Result<Vec<MessageId>> {
+        self.ensure_open()?;
+        let keys = self
+            .inner
+            .store
+            .reader()?
+            .sorted_message_keys(messages, None, order)?;
+        Ok(keys.into_iter().map(|k| k.message).collect())
     }
 
     /// Row data for visible threads, in the given order (unknown threads are left
@@ -545,15 +577,16 @@ impl CoreHandle {
         self.ensure_open()?;
         let reader = self.inner.store.reader()?;
         let filter = query.quick_filter.list_filter();
-        let mut keys = all_message_keys(&reader, query.scope, query.sort, &filter)?;
+        let mut keys = all_message_keys(&reader, query.scope, query.sort.date_order(), &filter)?;
         if let Some(words) = query.quick_filter.words() {
-            let threads = all_keys(&reader, query.scope, query.sort, &filter)?;
+            let threads = all_keys(&reader, query.scope, query.sort.date_order(), &filter)?;
             let matching = self
                 .inner
                 .text
                 .matching(&reader, query.scope, &threads, &words)?;
             retain_messages_of(&reader, &mut keys, matching)?;
         }
+        let keys = order_message_keys(&reader, keys, query)?;
         Ok(MessageListSnapshot::new(query.clone(), keys))
     }
 
@@ -577,8 +610,9 @@ impl CoreHandle {
             .blocking(move || {
                 let reader = inner.store.reader()?;
                 let filter = query.quick_filter.list_filter();
-                let mut keys = all_message_keys(&reader, query.scope, query.sort, &filter)?;
-                let threads = all_keys(&reader, query.scope, query.sort, &filter)?;
+                let mut keys =
+                    all_message_keys(&reader, query.scope, query.sort.date_order(), &filter)?;
+                let threads = all_keys(&reader, query.scope, query.sort.date_order(), &filter)?;
                 let mut matching = inner
                     .text
                     .matching(&reader, query.scope, &threads, &words)?;
@@ -589,6 +623,7 @@ impl CoreHandle {
                     text.expose(),
                 )?);
                 retain_messages_of(&reader, &mut keys, matching)?;
+                let keys = order_message_keys(&reader, keys, &query)?;
                 Ok(MessageListSnapshot::new(query, keys))
             })
             .await

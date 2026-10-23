@@ -119,8 +119,54 @@ actions!(
         ToggleTableView,
         /// Turn threads on or off: a thread tree, or one row per message (`cmd-alt-g`).
         ToggleThreads,
+        /// Sort the message list by date.
+        SortByDate,
+        /// Sort the message list by the time the server received the mail.
+        SortByReceived,
+        /// Sort the message list by star, starred first.
+        SortByStar,
+        /// Sort the message list by read state, unread first.
+        SortByUnread,
+        /// Sort the message list by attachment, mail with attachments first.
+        SortByAttachment,
+        /// Sort the message list by subject.
+        SortBySubject,
+        /// Sort the message list by correspondents.
+        SortByCorrespondents,
+        /// Sort the message list by sender.
+        SortBySender,
+        /// Sort the message list by recipients.
+        SortByRecipients,
+        /// Sort the message list by tags.
+        SortByTags,
+        /// Sort the message list by account.
+        SortByAccount,
+        /// Sort the message list by size, largest first.
+        SortBySize,
+        /// Reverse the order of the message list.
+        ReverseSortOrder,
     ]
 );
+
+/// The sort action of every [`SortBy`](crate::source::SortBy), for menus and the
+/// command palette.
+pub fn sort_action(by: crate::source::SortBy) -> Box<dyn gpui::Action> {
+    use crate::source::SortBy;
+    match by {
+        SortBy::Date => Box::new(SortByDate),
+        SortBy::Received => Box::new(SortByReceived),
+        SortBy::Star => Box::new(SortByStar),
+        SortBy::Unread => Box::new(SortByUnread),
+        SortBy::Attachment => Box::new(SortByAttachment),
+        SortBy::Subject => Box::new(SortBySubject),
+        SortBy::Correspondents => Box::new(SortByCorrespondents),
+        SortBy::Sender => Box::new(SortBySender),
+        SortBy::Recipients => Box::new(SortByRecipients),
+        SortBy::Tags => Box::new(SortByTags),
+        SortBy::Account => Box::new(SortByAccount),
+        SortBy::Size => Box::new(SortBySize),
+    }
+}
 
 /// Action namespaces the command palette lists.
 pub const PALETTE_NAMESPACES: &[&str] = &["maze", "workspace", "search", "mail", "view"];

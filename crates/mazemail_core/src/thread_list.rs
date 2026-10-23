@@ -18,12 +18,22 @@
 //! The in-memory text is a per-scope map from thread to its lowercased subject and
 //! participants, built from rows on the first keystroke and kept current by store
 //! change sets, so later keystrokes are a scan over memory.
+//!
+//! # Sorting
+//!
+//! Date orders come straight from the keyset queries. Any other order
+//! ([`ListQuery::sort`], a [`ListOrder`] over a [`store::SortField`]) sorts the keys
+//! the query produced, after the Quick Filter, in one store query
+//! ([`Queries::sorted_thread_keys`]), so a list of any length is sorted before the view
+//! asks for rows.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use mazemail_types::{FolderId, Sensitive, TagId, ThreadId};
-use store::{ListFilter, ListKey, ListScope, Page, Queries, Reader, SortOrder, ThreadRow};
+use store::{
+    ListFilter, ListKey, ListOrder, ListScope, Page, Queries, Reader, SortOrder, ThreadRow,
+};
 
 use crate::Result;
 
@@ -79,8 +89,8 @@ impl QuickFilter {
 pub struct ListQuery {
     /// A folder, a unified folder, or an account.
     pub scope: ListScope,
-    /// The order.
-    pub sort: SortOrder,
+    /// The order: by date, or by any column of the list.
+    pub sort: ListOrder,
     /// Quick Filter toggles and text.
     pub quick_filter: QuickFilter,
 }
@@ -90,7 +100,7 @@ impl ListQuery {
     pub fn new(scope: ListScope) -> Self {
         Self {
             scope,
-            sort: SortOrder::NewestFirst,
+            sort: ListOrder::NEWEST_FIRST,
             quick_filter: QuickFilter::default(),
         }
     }
@@ -192,6 +202,20 @@ pub(crate) fn all_keys(
         }
     }
     Ok(keys)
+}
+
+/// Puts `keys` (date ordered, filtered) in the query's order, unless that is a date
+/// order already.
+pub(crate) fn order_keys(
+    reader: &Reader,
+    keys: Vec<ListKey>,
+    query: &ListQuery,
+) -> Result<Vec<ListKey>> {
+    if query.sort.is_by_date() {
+        return Ok(keys);
+    }
+    let ids: Vec<ThreadId> = keys.iter().map(|k| k.thread).collect();
+    Ok(reader.sorted_thread_keys(&ids, query.context(), query.sort)?)
 }
 
 /// The lowercased text a Quick Filter word is matched against.

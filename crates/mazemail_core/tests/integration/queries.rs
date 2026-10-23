@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use mazemail_core::{CoreHandle, FolderNodeKind, ListQuery, ListScope, QuickFilter, SortOrder};
+use mazemail_core::{
+    CoreHandle, FolderNodeKind, ListOrder, ListQuery, ListScope, QuickFilter, SortField,
+};
 use mazemail_types::{Flags, FolderRole, Sensitive};
 use store::NewFolder;
 use vault::MemoryKeyStore;
@@ -256,7 +258,7 @@ async fn thread_lists_are_key_snapshots_and_rows_come_from_the_cache() {
     let oldest = t
         .core
         .thread_list(&ListQuery {
-            sort: SortOrder::OldestFirst,
+            sort: ListOrder::OLDEST_FIRST,
             ..query.clone()
         })
         .unwrap();
@@ -343,6 +345,80 @@ async fn unified_lists_merge_accounts_and_text_filters_match_in_memory() {
     assert!(by_text("nobody").is_empty());
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn lists_sort_by_any_column_after_the_quick_filter() {
+    let t = common::open().await;
+    let f = common::fixture(&t.core).await;
+    let mut threads = Vec::new();
+    let mut messages = Vec::new();
+    for (n, from, subject, flags) in [
+        (1, "Zed <zed@x.example>", "Re: Apples", Flags::empty()),
+        (2, "anna@x.example", "Bananas", Flags::SEEN),
+        (3, "Bob <bob@x.example>", "AW: cherries", Flags::empty()),
+    ] {
+        let (message_id, thread) = common::ingest(
+            &t.core,
+            Place::new(f.work, f.inbox, n).flags(flags),
+            message(n, from, subject),
+        )
+        .await;
+        threads.push(thread);
+        messages.push(message_id);
+    }
+    let sorted = |field: SortField, descending: bool, unread: bool| ListQuery {
+        sort: ListOrder::new(field, descending),
+        quick_filter: QuickFilter {
+            unread,
+            ..QuickFilter::default()
+        },
+        ..ListQuery::new(ListScope::Folder(f.inbox))
+    };
+    let thread_order = |query: &ListQuery| t.core.thread_list(query).unwrap().thread_ids(0..10);
+    let (apples, bananas, cherries) = (threads[0], threads[1], threads[2]);
+    // Subjects without "Re:" and "AW:", ignoring case.
+    assert_eq!(
+        thread_order(&sorted(SortField::Subject, false, false)),
+        [apples, bananas, cherries]
+    );
+    assert_eq!(
+        thread_order(&sorted(SortField::Subject, true, false)),
+        [cherries, bananas, apples]
+    );
+    // Display name, else address.
+    assert_eq!(
+        thread_order(&sorted(SortField::Sender, false, false)),
+        [bananas, cherries, apples]
+    );
+    // The Quick Filter first, then the order.
+    assert_eq!(
+        thread_order(&sorted(SortField::Subject, true, true)),
+        [cherries, apples]
+    );
+    let messages_by_subject = t
+        .core
+        .message_list(&sorted(SortField::Subject, false, false))
+        .unwrap();
+    assert_eq!(messages_by_subject.message_ids(0..10), messages);
+    // Search results (any folder) sort the same way.
+    assert_eq!(
+        t.core
+            .sort_threads(
+                &[cherries, apples, bananas],
+                ListOrder::new(SortField::Subject, false)
+            )
+            .unwrap(),
+        threads
+    );
+    let mut reversed = messages.clone();
+    reversed.reverse();
+    assert_eq!(
+        t.core
+            .sort_messages(&messages, ListOrder::new(SortField::Subject, true))
+            .unwrap(),
+        reversed
+    );
+}
+
 /// A reply with `In-Reply-To` and `References`.
 fn reply(n: u32, from: &str, to: &str, parents: &[u32]) -> Vec<u8> {
     let refs: Vec<String> = parents
@@ -414,7 +490,7 @@ async fn message_lists_rows_and_thread_trees() {
     let oldest = t
         .core
         .message_list(&ListQuery {
-            sort: SortOrder::OldestFirst,
+            sort: ListOrder::OLDEST_FIRST,
             ..inbox
         })
         .unwrap();

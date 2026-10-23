@@ -33,9 +33,10 @@ use crate::layout::{self, AgentPlacement, LayoutConfig, LayoutPrefs, MessagePlac
 use crate::message_view::MessageView;
 use crate::perf::{FrameStats, ScrollBenchmark, resident_memory};
 use crate::quick_move::{MoveTarget, QuickMove, QuickMoveEvent, source_folder};
-use crate::source::{DataChanges, Direction, FolderKey, MailSource, ThreadScope};
+use crate::source::{DataChanges, Direction, FolderKey, MailSource, SortBy, ThreadScope};
 use crate::thread_list::{
     CARD_HEIGHT, ItemId, ListMode, TABLE_LIST_WIDTH, TABLE_ROW_HEIGHT, ThreadList, ThreadListEvent,
+    message_menu,
 };
 use crate::ui_state::{ListDefaults, UiStateStore};
 
@@ -192,6 +193,8 @@ impl MailWindow {
                 cx,
             )
         });
+        let menu = message_menu(thread_list.downgrade());
+        message_view.update(cx, |view, _| view.set_context_menu(Rc::new(menu)));
         let search = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Search all messages…  ⌘K")
@@ -493,7 +496,16 @@ impl MailWindow {
         let recent = self.ui_state.move_targets(account.id);
         let return_focus = match self.palette.take() {
             Some(_) => self.palette_return_focus.take(),
-            None => window.focused(cx),
+            // From a context menu the focus is on the menu, which is gone by the time
+            // the picker closes: back to the message, or else to the list.
+            None => {
+                let message = self.message_view.focus_handle(cx);
+                Some(if message.is_focused(window) {
+                    message
+                } else {
+                    self.thread_list.focus_handle(cx)
+                })
+            }
         };
         self.quick_move_return_focus = return_focus;
         let picker = cx.new(|cx| QuickMove::new(target, &account, recent, window, cx));
@@ -562,6 +574,10 @@ impl MailWindow {
             let favorite = pane.is_favorite(&key);
             pane.set_favorite(folder, !favorite, window, cx);
         });
+    }
+
+    fn sort_list(&mut self, by: SortBy, cx: &mut Context<'_, Self>) {
+        self.thread_list.update(cx, |list, cx| list.sort_by(by, cx));
     }
 
     fn notify_unavailable(what: &str, window: &mut Window, cx: &mut App) {
@@ -920,6 +936,46 @@ impl Render for MailWindow {
                 this.thread_list
                     .update(cx, |list, cx| list.toggle_threads(cx));
             }))
+            .on_action(cx.listener(|this, _: &SortByDate, _, cx| {
+                this.sort_list(SortBy::Date, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SortByReceived, _, cx| {
+                this.sort_list(SortBy::Received, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SortByStar, _, cx| {
+                this.sort_list(SortBy::Star, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SortByUnread, _, cx| {
+                this.sort_list(SortBy::Unread, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SortByAttachment, _, cx| {
+                this.sort_list(SortBy::Attachment, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SortBySubject, _, cx| {
+                this.sort_list(SortBy::Subject, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SortByCorrespondents, _, cx| {
+                this.sort_list(SortBy::Correspondents, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SortBySender, _, cx| {
+                this.sort_list(SortBy::Sender, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SortByRecipients, _, cx| {
+                this.sort_list(SortBy::Recipients, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SortByTags, _, cx| {
+                this.sort_list(SortBy::Tags, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SortByAccount, _, cx| {
+                this.sort_list(SortBy::Account, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SortBySize, _, cx| {
+                this.sort_list(SortBy::Size, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ReverseSortOrder, _, cx| {
+                this.thread_list
+                    .update(cx, |list, cx| list.reverse_sort(cx));
+            }))
             .on_action(cx.listener(|this, _: &ExpandThread, _, cx| {
                 this.thread_list
                     .update(cx, |list, cx| list.expand_selected(cx));
@@ -1020,6 +1076,7 @@ mod tests {
 
     use super::*;
     use crate::fake::FakeMailSource;
+    use crate::source::ListSort;
 
     pub(crate) fn open(cx: &mut TestAppContext) -> (Entity<MailWindow>, &mut VisualTestContext) {
         cx.update(|cx| {
@@ -1419,6 +1476,134 @@ mod tests {
         cx.simulate_keystrokes("down");
         cx.run_until_parked();
         assert_eq!(items(cx).len(), 1);
+    }
+
+    /// Right-clicks at the middle of what `selector` marks, and draws the menu.
+    fn right_click(cx: &mut VisualTestContext, selector: String) {
+        let selector: &'static str = Box::leak(selector.into_boxed_str());
+        let bounds = cx
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("{selector} is drawn"));
+        let modifiers = gpui::Modifiers::none();
+        cx.simulate_mouse_down(bounds.center(), gpui::MouseButton::Right, modifiers);
+        cx.simulate_mouse_up(bounds.center(), gpui::MouseButton::Right, modifiers);
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+    }
+
+    /// Menu items: Reply, Reply All, Forward, —, Mark as Read/Unread, Star/Unstar, …
+    const MARK_READ: &str = "down down down down enter";
+    const STAR: &str = "down down down down down enter";
+
+    #[gpui::test]
+    fn right_click_selects_a_row_and_its_menu_acts_on_the_selection(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            ui::init(cx);
+            crate::init(cx);
+        });
+        let fake = Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
+        let source: Arc<dyn MailSource> = fake.clone();
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            MailWindow::new(source, &MailWindowOptions::default(), window, cx)
+        });
+        cx.run_until_parked();
+        let list = view.read_with(cx, |w, _| w.thread_list().clone());
+        let threads = |cx: &mut VisualTestContext| {
+            list.read_with(cx, |list, _| {
+                let crate::thread_list::ListKeys::Threads(keys) =
+                    list.model().borrow().keys().clone()
+                else {
+                    panic!("threaded");
+                };
+                keys
+            })
+        };
+        let keys = threads(cx);
+        let rows = fake.thread_rows(&keys[..12]);
+        let ix = (1..12)
+            .find(|ix| rows[*ix].is_unread() && !rows[*ix].is_starred())
+            .expect("an unread thread near the top");
+        let thread = keys[ix];
+
+        // Cards: a right-click selects the row (and shows it) without marking it read.
+        right_click(cx, format!("card-row-{ix}"));
+        assert_eq!(
+            list.read_with(cx, |l, _| l.selected_index()),
+            Some(ix),
+            "selected"
+        );
+        assert_eq!(
+            view.read_with(cx, |w, cx| w
+                .message_view()
+                .read(cx)
+                .document()
+                .map(|d| d.thread)),
+            Some(thread)
+        );
+        assert!(fake.thread_rows(&[thread])[0].is_unread());
+        cx.simulate_keystrokes(MARK_READ);
+        cx.run_until_parked();
+        assert!(!fake.thread_rows(&[thread])[0].is_unread(), "Mark as Read");
+        right_click(cx, format!("card-row-{ix}"));
+        cx.simulate_keystrokes(STAR);
+        cx.run_until_parked();
+        assert!(fake.thread_rows(&[thread])[0].is_starred(), "Star");
+        // The list has the focus back: single-key shortcuts work.
+        cx.simulate_keystrokes("s");
+        assert!(!fake.thread_rows(&[thread])[0].is_starred());
+
+        // Table: a right-click inside a selection keeps it; the menu acts on all of it.
+        cx.simulate_keystrokes("cmd-alt-t");
+        cx.run_until_parked();
+        list.update(cx, |list, cx| {
+            list.select(2, cx);
+            list.extend(2, cx);
+        });
+        cx.run_until_parked();
+        let selected: Vec<_> = keys[2..5].to_vec();
+        let starred = fake.thread_rows(&selected[2..])[0].is_starred();
+        right_click(cx, "table-row-3".to_owned());
+        assert_eq!(list.read_with(cx, |l, _| l.selected_count()), 3);
+        cx.simulate_keystrokes(STAR);
+        cx.run_until_parked();
+        assert!(
+            fake.thread_rows(&selected)
+                .iter()
+                .all(|row| row.is_starred() != starred),
+            "the cursor row decides, all three follow"
+        );
+        // An unselected table row is selected first.
+        right_click(cx, "table-row-8".to_owned());
+        assert_eq!(list.read_with(cx, |l, _| l.selected_count()), 1);
+        assert_eq!(list.read_with(cx, |l, _| l.selected_index()), Some(8));
+        cx.simulate_keystrokes("escape");
+
+        // The message view offers the same menu for the message it shows.
+        let shown = keys[8];
+        let unread = fake.thread_rows(&[shown])[0].is_unread();
+        right_click(cx, "message-view".to_owned());
+        cx.simulate_keystrokes(MARK_READ);
+        cx.run_until_parked();
+        assert_ne!(fake.thread_rows(&[shown])[0].is_unread(), unread);
+    }
+
+    #[gpui::test]
+    fn the_palette_sorts_the_list(cx: &mut TestAppContext) {
+        let (view, cx) = open(cx);
+        cx.run_until_parked();
+        cx.simulate_keystrokes("cmd-shift-p");
+        cx.simulate_input("sort by subject");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        let sort = |cx: &mut VisualTestContext| {
+            view.read_with(cx, |w, cx| w.thread_list().read(cx).sort())
+        };
+        assert_eq!(sort(cx), ListSort::by(SortBy::Subject));
+        cx.simulate_keystrokes("cmd-shift-p");
+        cx.simulate_input("reverse sort order");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert!(sort(cx).descending);
     }
 
     #[gpui::test]

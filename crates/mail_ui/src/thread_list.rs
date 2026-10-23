@@ -37,9 +37,26 @@
 //!
 //! # View
 //!
-//! Cards or table, threads on or off, the date order, the table's columns and their
-//! widths are the same in every folder and remembered in [`UiStateStore`]
-//! (`ui_state.json`).
+//! Cards or table, threads on or off, the order, the table's columns and their widths
+//! are the same in every folder and remembered in [`UiStateStore`] (`ui_state.json`).
+//!
+//! # Sorting
+//!
+//! Any column sorts the list: a click on its header (again: the other way round, with
+//! an arrow on the sorted column), the sort button in the list header (cards and
+//! table), or the `view::SortBy…` actions in the command palette. The source sorts
+//! ([`MailSource::thread_keys`]): the view only ever holds keys in display order. Date
+//! orders load like an unfiltered folder, at once; other orders in the background
+//! ("Sorting…"), keeping the selected row and scrolling to it when they arrive.
+//!
+//! # Context menu
+//!
+//! A right-click on a row (cards or table) opens the message menu ([`message_menu`]):
+//! reply, mark read or unread, star, archive, move, select the thread. It selects the
+//! row first unless the row is part of the selection already, in which case the menu
+//! acts on every selected row (without marking anything read). Its items dispatch the
+//! window's actions, so they show the list's key bindings and do exactly what the keys
+//! do; the message view opens the same menu.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -49,11 +66,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    AnyElement, App, AppContext as _, ClickEvent, Context, Div, Entity, EventEmitter, FocusHandle,
-    Focusable, Hsla, InteractiveElement, IntoElement, ParentElement, Render, ScrollStrategy,
-    SharedString, Stateful, StatefulInteractiveElement as _, Styled, Subscription, Task,
-    UniformListScrollHandle, WeakEntity, Window, canvas, div, prelude::FluentBuilder as _, px,
-    uniform_list,
+    Action, AnyElement, App, AppContext as _, ClickEvent, Context, Div, Entity, EventEmitter,
+    FocusHandle, Focusable, Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement,
+    Render, ScrollStrategy, SharedString, Stateful, StatefulInteractiveElement as _, Styled,
+    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, canvas, div,
+    prelude::FluentBuilder as _, px, uniform_list,
 };
 use gpui_kit::component::{
     ActiveTheme as _, Icon, Selectable as _, Sizable as _, Size, StyledExt as _,
@@ -62,17 +79,21 @@ use gpui_kit::component::{
     input::{Input, InputEvent, InputState},
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
     table::{Column, DataTable, TableDelegate, TableEvent, TableState},
+    tooltip::Tooltip,
     v_flex,
 };
 use mazemail_types::{Flags, FolderId, MessageId, ThreadId};
 use time::UtcOffset;
 use ui::assets::IconName;
 
+use crate::actions::{
+    Archive, Forward, MoveToFolder, Reply, ReplyAll, SelectThread, ToggleRead, ToggleStar,
+};
 use crate::format::{DateFormatter, format_size, format_thousands};
 use crate::list_model::{Expansions, RowPosition, TreeRow, tree_rows};
 use crate::selection::Selection;
 use crate::source::{
-    Direction, ListSort, MailSource, MessageKeys, MessageRow, SourceError, ThreadFilter,
+    Direction, ListSort, MailSource, MessageKeys, MessageRow, SortBy, SourceError, ThreadFilter,
     ThreadKeys, ThreadPredicate, ThreadRow, ThreadScope,
 };
 pub use crate::ui_state::ListMode;
@@ -462,7 +483,7 @@ impl ListModel {
     }
 }
 
-/// How the table looks: the folder's columns and widths, the date order, the thread
+/// How the table looks: the folder's columns and widths, the order, the thread
 /// whose rows are all highlighted (`cmd-shift-a`) and the selected rows when there
 /// are several.
 #[derive(Debug, Clone)]
@@ -586,6 +607,11 @@ pub struct ThreadList {
     quick_filter: Entity<InputState>,
     flags_filter: ThreadFilter,
     loading: Option<Task<()>>,
+    /// Scroll to the selected row when the keys loading now arrive (a new order).
+    reveal_on_load: bool,
+    /// Tell the window about the selected row when the keys loading now arrive (it
+    /// was picked for them: the row after archived mail).
+    announce_on_load: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -657,6 +683,8 @@ impl ThreadList {
             quick_filter,
             flags_filter: ThreadFilter::default(),
             loading: None,
+            reveal_on_load: false,
+            announce_on_load: false,
             _subscriptions: subscriptions,
         };
         this.open(scope, title, None, cx);
@@ -711,7 +739,8 @@ impl ThreadList {
         self.model.borrow().is_empty()
     }
 
-    /// Whether keys are still loading (text filters run in the background).
+    /// Whether keys are still loading (text filters and orders other than the date run
+    /// in the background).
     pub fn is_loading(&self) -> bool {
         self.loading.is_some()
     }
@@ -761,7 +790,7 @@ impl ThreadList {
         self.prefs.threaded
     }
 
-    /// The date order.
+    /// The order.
     pub fn sort(&self) -> ListSort {
         self.prefs.sort
     }
@@ -839,13 +868,14 @@ impl ThreadList {
         })
     }
 
-    /// Reloads the keys for the current scope and filter. Unfiltered folders load
-    /// synchronously (cheap key lists); text filters load in the background.
+    /// Reloads the keys for the current scope and filter. Unfiltered folders in date
+    /// order load synchronously (cheap key lists); text filters and other orders load
+    /// in the background.
     fn reload(&mut self, select_first: bool, cx: &mut Context<'_, Self>) {
         let filter = self.filter(cx);
         let scope = self.scope.clone();
         let (threaded, sort) = (self.prefs.threaded, self.prefs.sort);
-        if filter.text.is_none() {
+        if filter.text.is_none() && sort.is_by_date() {
             let started = std::time::Instant::now();
             let keys = Self::load_keys(&self.source, &scope, &filter, threaded, sort);
             tracing::debug!(
@@ -855,6 +885,15 @@ impl ThreadList {
             self.loading = None;
             self.set_keys(keys, select_first, cx);
             return;
+        }
+        if select_first {
+            // Another folder: its rows, not the last folder's, once they are loaded.
+            let empty = if threaded {
+                ListKeys::Threads(Arc::from([]))
+            } else {
+                ListKeys::Messages(Arc::from([]))
+            };
+            self.set_keys(empty, true, cx);
         }
         let source = self.source.clone();
         let task = cx.background_spawn(async move {
@@ -932,11 +971,17 @@ impl ThreadList {
         if select_first || now.map(|s| s.item) != previous.map(|s| s.item) {
             self.reveal_selection(ScrollStrategy::Top, false, cx);
             self.selection_changed(cx);
+        } else if std::mem::take(&mut self.announce_on_load) {
+            self.selection_changed(cx);
         } else {
             // Same row selected: the window keeps showing it.
             self.selected = now;
             self.sync_table_row(cx);
             cx.notify();
+        }
+        self.announce_on_load = false;
+        if std::mem::take(&mut self.reveal_on_load) {
+            self.reveal_selection(ScrollStrategy::Center, false, cx);
         }
     }
 
@@ -1134,13 +1179,29 @@ impl ThreadList {
         self.selection_changed(cx);
     }
 
+    /// A right-click on row `ix`: selects it, unless it is part of the selection
+    /// already (the context menu then acts on the whole selection), as in Finder and
+    /// Thunderbird. Unlike a click it doesn't mark the row read, so the menu can.
+    pub fn context_click(&mut self, ix: usize, cx: &mut Context<'_, Self>) {
+        if ix >= self.len() || self.selection.is_selected(ix) {
+            return;
+        }
+        self.selection.select(ix);
+        self.update_selection(false, cx);
+    }
+
     /// The selection changed: remember it, mark a single selected row read (as
     /// Thunderbird does when it's displayed) and tell the window.
     fn selection_changed(&mut self, cx: &mut Context<'_, Self>) {
+        self.update_selection(true, cx);
+    }
+
+    fn update_selection(&mut self, mark_read: bool, cx: &mut Context<'_, Self>) {
         self.selected = self.selection.selected().and_then(|ix| self.item_at(ix));
         self.look.borrow_mut().selected_thread = None;
         self.remember_rows();
         if let Some(selected) = self.selected
+            && mark_read
             && !self.selection.is_multiple()
         {
             self.mark_read(selected.item, cx);
@@ -1505,7 +1566,13 @@ impl ThreadList {
         self.kept = KeptRows::Cursor;
         self.selected = next;
         self.reload(false, cx);
-        self.selection_changed(cx);
+        if self.loading.is_some() {
+            // Sorted by something else than the date: the row after the removed ones
+            // is selected when the new keys are in.
+            self.announce_on_load = true;
+        } else {
+            self.selection_changed(cx);
+        }
         cx.emit(ThreadListEvent::Changed);
         Ok(())
     }
@@ -1810,7 +1877,8 @@ impl ThreadList {
         })
     }
 
-    /// Sets the date order (remembered for the folder).
+    /// Sets the order (the same in every folder), keeping the selected row and
+    /// scrolling to it.
     pub fn set_sort(&mut self, sort: ListSort, cx: &mut Context<'_, Self>) {
         if self.prefs.sort == sort {
             return;
@@ -1818,9 +1886,29 @@ impl ThreadList {
         self.prefs.sort = sort;
         self.look.borrow_mut().sort = sort;
         self.save_prefs();
+        self.reveal_on_load = true;
         self.reload(false, cx);
         self.table.update(cx, |table, cx| table.refresh(cx));
-        self.reveal_selection(ScrollStrategy::Center, false, cx);
+        cx.notify();
+    }
+
+    /// Sorts by `by` (`view::SortBy…`): in its first direction if the list is sorted by
+    /// something else, unchanged if it is sorted by `by` already.
+    pub fn sort_by(&mut self, by: SortBy, cx: &mut Context<'_, Self>) {
+        if self.prefs.sort.by != by {
+            self.set_sort(ListSort::by(by), cx);
+        }
+    }
+
+    /// A click on a column header: sorts by the column, or the other way round if the
+    /// list is sorted by it already.
+    pub fn sort_by_column(&mut self, column: ColumnId, cx: &mut Context<'_, Self>) {
+        self.set_sort(self.prefs.sort.clicked(column.sort_by()), cx);
+    }
+
+    /// `view::ReverseSortOrder`.
+    pub fn reverse_sort(&mut self, cx: &mut Context<'_, Self>) {
+        self.set_sort(self.prefs.sort.toggled(), cx);
     }
 
     /// Turns a table column on or off (remembered for the folder).
@@ -1885,6 +1973,16 @@ impl ThreadList {
                     self.table_echoes.drain(..=pos);
                 } else {
                     self.select(*ix, cx);
+                }
+            }
+            TableEvent::RightClickedRow(Some(ix)) => {
+                let ix = *ix;
+                if !self.selection.is_selected(ix) {
+                    self.context_click(ix, cx);
+                    // Selecting the row cleared the table's right-clicked row, which
+                    // its context menu (built next) is for.
+                    self.table
+                        .update(cx, |table, cx| table.set_right_clicked_row(Some(ix), cx));
                 }
             }
             TableEvent::ColumnWidthsChanged(widths) => {
@@ -1953,14 +2051,14 @@ impl ThreadList {
                 let row = model.get(ix);
                 let highlighted = self.selection.is_selected(ix)
                     || row.is_some_and(|r| Some(r.thread) == selected_thread);
-                match row.map(|r| r.kind) {
-                    Some(RowKind::Child { .. }) => self
-                        .render_child_slot(slot, ix, row, highlighted, cx)
-                        .into_any_element(),
-                    _ => self
-                        .render_card_slot(slot, ix, half, row, highlighted, cx)
-                        .into_any_element(),
-                }
+                let slot = match row.map(|r| r.kind) {
+                    Some(RowKind::Child { .. }) => {
+                        self.render_child_slot(slot, ix, row, highlighted, cx)
+                    }
+                    _ => self.render_card_slot(slot, ix, half, row, highlighted, cx),
+                };
+                slot.context_menu(message_menu(cx.weak_entity()))
+                    .into_any_element()
             })
             .collect()
     }
@@ -2017,6 +2115,14 @@ impl ThreadList {
                     cx.notify();
                 }
             }))
+            .debug_selector(|| format!("card-row-{ix}"))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, _, window, cx| {
+                    this.focus(window, cx);
+                    this.context_click(ix, cx);
+                }),
+            )
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 this.focus(window, cx);
                 let modifiers = event.modifiers();
@@ -2242,7 +2348,98 @@ impl ThreadList {
         )
     }
 
+    // ---- context menu -----------------------------------------------------------------
+
+    /// What the message context menu offers for the selection, in order (`None` is a
+    /// separator). The labels follow the row the commands decide on (the cursor, as for
+    /// `m` and `s`): "Mark as Unread" for a read row, "Unstar" for a starred one. Empty
+    /// without a selection.
+    pub fn message_menu_items(&mut self) -> Vec<Option<(SharedString, Box<dyn Action>)>> {
+        let Some((_, flags)) = self.command_target() else {
+            return Vec::new();
+        };
+        let entry = |label: &'static str, action: Box<dyn Action>| Some((label.into(), action));
+        vec![
+            entry("Reply", Box::new(Reply)),
+            entry("Reply All", Box::new(ReplyAll)),
+            entry("Forward", Box::new(Forward)),
+            None,
+            if flags.contains(Flags::SEEN) {
+                entry("Mark as Unread", Box::new(ToggleRead))
+            } else {
+                entry("Mark as Read", Box::new(ToggleRead))
+            },
+            if flags.contains(Flags::FLAGGED) {
+                entry("Unstar", Box::new(ToggleStar))
+            } else {
+                entry("Star", Box::new(ToggleStar))
+            },
+            entry("Archive", Box::new(Archive)),
+            entry("Move to Folder…", Box::new(MoveToFolder)),
+            None,
+            entry("Select Thread", Box::new(SelectThread)),
+        ]
+    }
+
+    /// Fills the message context menu (see [`Self::message_menu_items`]).
+    pub fn build_message_menu(&mut self, menu: PopupMenu) -> PopupMenu {
+        self.message_menu_items()
+            .into_iter()
+            .fold(menu, |menu, item| match item {
+                Some((label, action)) => menu.menu(label, action),
+                None => menu.separator(),
+            })
+    }
+
     // ---- header -----------------------------------------------------------------------
+
+    fn sort_menu(menu: PopupMenu, sort: ListSort, list: &WeakEntity<Self>) -> PopupMenu {
+        let pick = |list: &WeakEntity<Self>, sort: ListSort| {
+            let list = list.clone();
+            move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                list.update(cx, |list, cx| list.set_sort(sort, cx)).ok();
+            }
+        };
+        let mut menu = menu.label("Sort By");
+        for by in SortBy::ALL {
+            menu = menu.item(
+                PopupMenuItem::new(by.label())
+                    .checked(sort.by == by)
+                    .on_click(pick(
+                        list,
+                        if sort.by == by {
+                            sort
+                        } else {
+                            ListSort::by(by)
+                        },
+                    )),
+            );
+        }
+        let (descending, ascending) = sort.by.direction_labels();
+        menu.separator()
+            .item(
+                PopupMenuItem::new(descending)
+                    .checked(sort.descending)
+                    .on_click(pick(
+                        list,
+                        ListSort {
+                            descending: true,
+                            ..sort
+                        },
+                    )),
+            )
+            .item(
+                PopupMenuItem::new(ascending)
+                    .checked(!sort.descending)
+                    .on_click(pick(
+                        list,
+                        ListSort {
+                            descending: false,
+                            ..sort
+                        },
+                    )),
+            )
+    }
 
     fn column_menu(
         menu: PopupMenu,
@@ -2276,6 +2473,8 @@ impl ThreadList {
         };
         let count = if self.loading.is_some() && self.filter(cx).text.is_some() {
             SharedString::from("Searching…")
+        } else if self.loading.is_some() && !self.prefs.sort.is_by_date() {
+            SharedString::from("Sorting…")
         } else if self.expanding.is_some() {
             SharedString::from("Expanding…")
         } else {
@@ -2284,6 +2483,8 @@ impl ThreadList {
         let filter = self.flags_filter.clone();
         let look = self.look.clone();
         let list = cx.weak_entity();
+        let sort = self.prefs.sort;
+        let sort_list = list.clone();
         v_flex()
             .flex_none()
             .gap_1p5()
@@ -2310,6 +2511,16 @@ impl ThreadList {
                             .mr_1()
                             .text_color(theme.muted_foreground)
                             .child(count),
+                    )
+                    .child(
+                        Button::new("sort-menu")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::ArrowDownUp)
+                            .tooltip(format!("Sorted by {}", sort.describe()))
+                            .dropdown_menu(move |menu, _, _| {
+                                Self::sort_menu(menu, sort, &sort_list)
+                            }),
                     )
                     .child(
                         Button::new("toggle-threads")
@@ -2403,6 +2614,17 @@ impl ThreadList {
                             })),
                     ),
             )
+    }
+}
+
+/// The builder of the message context menu of `list`'s selection, for
+/// `context_menu` on a row or on the message view.
+pub fn message_menu(
+    list: WeakEntity<ThreadList>,
+) -> impl Fn(PopupMenu, &mut Window, &mut Context<'_, PopupMenu>) -> PopupMenu + 'static {
+    move |menu, _, cx| match list.upgrade() {
+        Some(list) => list.update(cx, |list, _| list.build_message_menu(menu)),
+        None => menu,
     }
 }
 
@@ -2641,6 +2863,20 @@ impl TableDelegate for ThreadTable {
         self.model.borrow_mut().ensure(visible_range);
     }
 
+    fn context_menu(
+        &mut self,
+        _: usize,
+        menu: PopupMenu,
+        _: &mut Window,
+        cx: &mut Context<'_, TableState<Self>>,
+    ) -> PopupMenu {
+        // The right-clicked row is selected (or part of the selection) by now.
+        match self.list.upgrade() {
+            Some(list) => list.update(cx, |list, _| list.build_message_menu(menu)),
+            None => menu,
+        }
+    }
+
     fn render_th(
         &mut self,
         col_ix: usize,
@@ -2648,50 +2884,61 @@ impl TableDelegate for ThreadTable {
         cx: &mut Context<'_, TableState<Self>>,
     ) -> impl IntoElement {
         let id = self.column_id(col_ix);
-        let muted = cx.theme().muted_foreground;
+        let theme = cx.theme();
+        let muted = theme.muted_foreground;
         let look = self.look.clone();
         let list = self.list.clone();
-        let content = match id {
-            ColumnId::Star => div().child(Icon::new(IconName::Star).xsmall().text_color(muted)),
-            ColumnId::Unread => {
-                div().child(Icon::new(IconName::CircleDot).xsmall().text_color(muted))
-            }
-            ColumnId::Attachment => {
-                div().child(Icon::new(IconName::Paperclip).xsmall().text_color(muted))
-            }
-            ColumnId::Date => {
-                let sort = self.look.borrow().sort;
-                let list = self.list.clone();
-                div().child(
-                    h_flex()
-                        .id("sort-by-date")
-                        .gap_1()
-                        .text_xs()
-                        .cursor_pointer()
-                        .child(id.label())
-                        .child(
-                            Icon::new(match sort {
-                                ListSort::NewestFirst => IconName::ChevronDown,
-                                ListSort::OldestFirst => IconName::ChevronUp,
-                            })
-                            .size_3()
-                            .text_color(muted),
-                        )
-                        .on_click(move |_, _, cx| {
-                            cx.stop_propagation();
-                            list.update(cx, |list, cx| list.set_sort(sort.toggled(), cx))
-                                .ok();
-                        }),
-                )
-            }
-            _ => div().text_xs().child(id.label()),
+        let sort = self.look.borrow().sort;
+        let sorted = sort.by == id.sort_by();
+        let arrow = |color| {
+            Icon::new(if sort.descending {
+                IconName::ChevronDown
+            } else {
+                IconName::ChevronUp
+            })
+            .size_3()
+            .flex_none()
+            .text_color(color)
         };
-        content
+        let icon = match id {
+            ColumnId::Star => Some(IconName::Star),
+            ColumnId::Unread => Some(IconName::CircleDot),
+            ColumnId::Attachment => Some(IconName::Paperclip),
+            _ => None,
+        };
+        let content = h_flex()
             .id(("th", col_ix))
+            .debug_selector(move || format!("th-{}", id.key()))
             .size_full()
-            .flex()
-            .items_center()
-            .context_menu(move |menu, _, _| ThreadList::column_menu(menu, &look, &list))
+            .min_w_0()
+            .gap_1()
+            .cursor_pointer()
+            .map(|this| match icon {
+                // The narrow icon columns have room for one icon: the arrow, while sorted.
+                Some(_) if sorted => this.justify_center().child(arrow(theme.foreground)),
+                Some(icon) => this
+                    .justify_center()
+                    .child(Icon::new(icon).xsmall().text_color(muted)),
+                None => this
+                    .child(div().min_w_0().truncate().text_xs().child(id.label()))
+                    .when(sorted, |this| this.child(arrow(muted))),
+            })
+            .tooltip(move |window, cx| {
+                let text = if sorted {
+                    format!("Sorted by {}", sort.describe())
+                } else {
+                    format!("Sort by {}", id.label())
+                };
+                Tooltip::new(text).build(window, cx)
+            })
+            .on_click({
+                let list = list.clone();
+                move |_, _, cx| {
+                    cx.stop_propagation();
+                    list.update(cx, |list, cx| list.sort_by_column(id, cx)).ok();
+                }
+            });
+        content.context_menu(move |menu, _, _| ThreadList::column_menu(menu, &look, &list))
     }
 
     fn render_tr(
@@ -2719,6 +2966,7 @@ impl TableDelegate for ThreadTable {
         let list = self.list.clone();
         div()
             .id(("row", row_ix))
+            .debug_selector(|| format!("table-row-{row_ix}"))
             .when(highlighted, |this| this.bg(cx.theme().list_active))
             // The table selects on plain clicks; shift and cmd clicks are ours.
             .on_click(move |event, _, cx| {
@@ -2937,7 +3185,7 @@ mod tests {
             .thread_keys(
                 &ThreadScope::Folder(FakeMailSource::large_folder()),
                 &ThreadFilter::default(),
-                ListSort::NewestFirst,
+                ListSort::NEWEST_FIRST,
             )
             .unwrap();
         let mut model = ListModel::new(source, DateFormatter::new(UtcOffset::UTC));
@@ -3242,7 +3490,7 @@ mod tests {
         list.update_in(cx, |list, window, cx| {
             list.toggle_mode(window, cx);
             list.toggle_column(ColumnId::Size, cx);
-            list.set_sort(ListSort::OldestFirst, cx);
+            list.set_sort(ListSort::OLDEST_FIRST, cx);
             assert_ne!(
                 list.model().borrow_mut().item(0),
                 newest.map(ItemId::Thread),
@@ -3252,8 +3500,215 @@ mod tests {
         let reloaded = UiStateStore::load(&path, ListDefaults::default());
         let prefs = reloaded.prefs();
         assert_eq!(prefs.mode, ListMode::Table);
-        assert_eq!(prefs.sort, ListSort::OldestFirst);
+        assert_eq!(prefs.sort, ListSort::OLDEST_FIRST);
         assert!(prefs.columns.contains(&ColumnId::Size));
+    }
+
+    /// The subject as the fake sorts it (no `Re:`/`AW:`… prefix, lowercase).
+    fn subject_key(subject: &str) -> String {
+        let mut rest = subject.trim();
+        while let Some((prefix, after)) = rest.split_once(':') {
+            if !["re", "fwd", "fw", "aw", "wg"].contains(&prefix.trim().to_lowercase().as_str()) {
+                break;
+            }
+            rest = after.trim_start();
+        }
+        rest.to_lowercase()
+    }
+
+    fn click_header(cx: &mut gpui::VisualTestContext, column: &'static str) {
+        let header = cx
+            .debug_bounds(column)
+            .unwrap_or_else(|| panic!("{column} is drawn"));
+        cx.simulate_click(header.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn clicking_a_header_sorts_by_its_column_and_again_reverses(cx: &mut gpui::TestAppContext) {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(crate::ui_state::UI_STATE_FILE);
+        let source = source();
+        let ui_state = UiStateStore::load(&path, ListDefaults::default());
+        let mut prefs = ui_state.prefs();
+        prefs.mode = ListMode::Table;
+        ui_state.set_prefs(&prefs);
+        let (list, cx) = open_list(cx, &source, inbox(), ui_state);
+        cx.run_until_parked();
+        list.update(cx, |list, cx| list.select(7, cx));
+        let selected = list.read_with(cx, |list, _| list.selected_item());
+        let subjects = |list: &ThreadList| {
+            let ListKeys::Threads(keys) = list.model().borrow().keys().clone() else {
+                panic!("threaded");
+            };
+            source
+                .thread_rows(&keys)
+                .iter()
+                .map(|row| subject_key(row.subject.expose()))
+                .collect::<Vec<_>>()
+        };
+
+        click_header(cx, "th-subject");
+        list.read_with(cx, |list, _| {
+            assert_eq!(list.sort(), ListSort::by(SortBy::Subject));
+            assert!(!list.sort().descending, "A to Z first");
+            let subjects = subjects(list);
+            assert_eq!(subjects.len(), 4_200);
+            assert!(subjects.windows(2).all(|w| w[0] <= w[1]), "by subject");
+            assert_eq!(list.selected_item(), selected, "the selection stays");
+        });
+        assert_eq!(
+            UiStateStore::load(&path, ListDefaults::default())
+                .prefs()
+                .sort,
+            ListSort::by(SortBy::Subject),
+            "remembered for every folder"
+        );
+
+        click_header(cx, "th-subject");
+        list.read_with(cx, |list, _| {
+            assert!(list.sort().descending, "again: Z to A");
+            assert!(subjects(list).windows(2).all(|w| w[0] >= w[1]));
+        });
+
+        click_header(cx, "th-star");
+        list.read_with(cx, |list, _| {
+            assert_eq!(list.sort(), ListSort::by(SortBy::Star));
+            let ListKeys::Threads(keys) = list.model().borrow().keys().clone() else {
+                panic!("threaded");
+            };
+            let starred: Vec<bool> = source
+                .thread_rows(&keys)
+                .iter()
+                .map(ThreadRow::is_starred)
+                .collect();
+            assert!(starred[0], "starred first");
+            assert!(starred.windows(2).all(|w| w[0] >= w[1]));
+        });
+        click_header(cx, "th-date");
+        assert_eq!(
+            list.read_with(cx, |list, _| list.sort()),
+            ListSort::NEWEST_FIRST
+        );
+    }
+
+    #[gpui::test]
+    fn threads_off_lists_sort_their_messages_in_the_background(cx: &mut gpui::TestAppContext) {
+        let source = source();
+        let (list, cx) = open_list(cx, &source, inbox(), memory());
+        list.update(cx, |list, cx| {
+            list.toggle_threads(cx);
+            list.sort_by(SortBy::Size, cx);
+            assert!(list.is_loading(), "other orders load in the background");
+        });
+        cx.run_until_parked();
+        list.read_with(cx, |list, _| {
+            let ListKeys::Messages(keys) = list.model().borrow().keys().clone() else {
+                panic!("threads off");
+            };
+            let sizes: Vec<u64> = source.message_rows(&keys).iter().map(|r| r.size).collect();
+            assert!(sizes.windows(2).all(|w| w[0] >= w[1]), "largest first");
+            assert_eq!(list.sort(), ListSort::by(SortBy::Size));
+        });
+        // `view::SortBy…` keeps the direction; `view::ReverseSortOrder` flips it.
+        list.update(cx, |list, cx| {
+            list.sort_by(SortBy::Size, cx);
+            assert!(list.sort().descending);
+            list.reverse_sort(cx);
+            assert!(!list.sort().descending);
+        });
+    }
+
+    #[gpui::test]
+    fn archiving_and_switching_folders_in_another_order(cx: &mut gpui::TestAppContext) {
+        let source = source();
+        let (list, cx) = open_list(cx, &source, inbox(), memory());
+        list.update(cx, |list, cx| list.sort_by(SortBy::Subject, cx));
+        cx.run_until_parked();
+        let next = list.update(cx, |list, cx| {
+            list.select(3, cx);
+            let next = list.model().borrow_mut().item(4);
+            list.archive_selected(cx);
+            next
+        });
+        cx.run_until_parked();
+        list.read_with(cx, |list, _| {
+            assert_eq!(list.selected_item(), next, "the next row took its place");
+            assert_eq!(list.selected_index(), Some(3));
+        });
+
+        // Another folder: no rows of the last one while it sorts.
+        list.update(cx, |list, cx| {
+            list.open(
+                ThreadScope::Folder(FolderKey::Unified(FolderRole::Inbox)),
+                "Inbox".into(),
+                None,
+                cx,
+            );
+            assert!(list.is_loading() && list.is_empty());
+        });
+        cx.run_until_parked();
+        list.read_with(cx, |list, _| {
+            assert!(list.len() > 4_200);
+            assert_eq!(list.selected_index(), Some(0));
+        });
+    }
+
+    #[gpui::test]
+    fn the_message_menu_follows_the_cursor_row(cx: &mut gpui::TestAppContext) {
+        let source = source();
+        let (list, cx) = open_list(cx, &source, inbox(), memory());
+        list.update(cx, |list, cx| {
+            let labels = |list: &mut ThreadList| {
+                list.message_menu_items()
+                    .into_iter()
+                    .map(|item| item.map(|(label, action)| (label, action.name())))
+                    .collect::<Vec<_>>()
+            };
+            // An unread row, selected with a right-click: it stays unread.
+            let ix = (1..100)
+                .find(|ix| {
+                    list.model()
+                        .borrow_mut()
+                        .row(*ix)
+                        .is_some_and(|row| row.unread() && !row.starred())
+                })
+                .unwrap();
+            list.context_click(ix, cx);
+            assert_eq!(list.selected_index(), Some(ix));
+            let items = labels(list);
+            assert_eq!(
+                items[..4],
+                [
+                    Some(("Reply".into(), "mail::Reply")),
+                    Some(("Reply All".into(), "mail::ReplyAll")),
+                    Some(("Forward".into(), "mail::Forward")),
+                    None,
+                ]
+            );
+            assert_eq!(items[4], Some(("Mark as Read".into(), "mail::ToggleRead")));
+            assert_eq!(
+                items[7],
+                Some(("Move to Folder…".into(), "mail::MoveToFolder"))
+            );
+            list.toggle_read(cx);
+            list.toggle_star(cx);
+            let items = labels(list);
+            assert_eq!(
+                items[4],
+                Some(("Mark as Unread".into(), "mail::ToggleRead"))
+            );
+            assert_eq!(items[5], Some(("Unstar".into(), "mail::ToggleStar")));
+
+            // Inside a multiple selection a right-click keeps it.
+            list.select(2, cx);
+            list.extend(2, cx);
+            list.context_click(3, cx);
+            assert_eq!(list.selected_count(), 3);
+            list.context_click(9, cx);
+            assert_eq!(list.selected_count(), 1);
+            assert_eq!(list.selected_index(), Some(9));
+        });
     }
 
     #[gpui::test]

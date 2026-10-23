@@ -8078,6 +8078,7 @@ dependencies = [
  "anyhow",
  "blake3",
  "libc",
+ "mazemail_mime",
  "mazemail_types",
  "pretty_assertions",
  "proptest",
