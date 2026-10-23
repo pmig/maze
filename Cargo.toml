@@ -153,8 +153,10 @@ markdown = { opt-level = 3 }
 xml5ever = { opt-level = 3 }
 
 [profile.release]
-lto = "thin"
-codegen-units = 16
+# Fat LTO with one codegen unit keeps the stripped binary under the 40 MB budget
+# (CONCEPT §3): ~35 MB instead of ~47 MB, at ~3.5 min extra build time.
+lto = "fat"
+codegen-units = 1
 strip = true
 
 [profile.profiling]
