@@ -2,12 +2,15 @@
 # Syntax: https://developers.cloudflare.com/workers/static-assets/headers/
 #
 # The site loads nothing from other origins: no analytics, fonts, or CDNs.
-# The CSP enforces that. The one relaxation, style-src-attr 'unsafe-inline', is for
-# the color custom properties Shiki puts on code tokens (style="--shiki-light:…");
-# there are no inline <style> or <script> elements.
+# The CSP enforces that. style-src-attr 'unsafe-inline' is for the color custom
+# properties Shiki puts on code tokens (style="--shiki-light:…").
+# The only inline <style> elements are the @font-face rules from Astro's <Font>. This
+# header allows inline styles, and the CSP <meta> Astro adds to every page
+# (security.csp in astro.config.mjs) narrows style-src to their hashes; the browser
+# enforces both policies.
 
 /*
-  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests
   Strict-Transport-Security: max-age=63072000; includeSubDomains
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
