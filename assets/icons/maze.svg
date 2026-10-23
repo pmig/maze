@@ -5,8 +5,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
     <linearGradient id="background" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#6E6BF8"/>
-      <stop offset="1" stop-color="#3A2CB5"/>
+      <stop offset="0" stop-color="#52555F"/>
+      <stop offset="1" stop-color="#141519"/>
     </linearGradient>
     <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
       <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000000" flood-opacity="0.28"/>
