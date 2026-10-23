@@ -208,6 +208,68 @@ async fn sender_verification_runs_lazily_and_is_persisted() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn imap_accounts_trust_their_receiving_servers_spf_result() {
+    let t = common::open().await;
+    // An account added by an earlier version, with the profile it stored then.
+    let legacy = security::ProviderProfile::generic(
+        "imap.reader.example",
+        vec![security::HostMatcher::Exact("imap.reader.example".into())],
+    );
+    let config_json = serde_json::json!({
+        "email": "ben@reader.example",
+        "host": "imap.reader.example",
+        "provider_profile": legacy,
+    })
+    .to_string();
+    let (account, inbox) = t
+        .core
+        .store()
+        .write(move |w| {
+            let account = w.create_account(&store::NewAccount {
+                kind: store::AccountKind::Imap,
+                name: "Reader".to_owned(),
+                config_json,
+                ordinal: 0,
+            })?;
+            let mut inbox = store::NewFolder::new(account, "INBOX", "INBOX");
+            inbox.role = Some(mazemail_types::FolderRole::Inbox);
+            let inbox = w.create_folder(&inbox)?;
+            Ok((account, inbox))
+        })
+        .await
+        .unwrap();
+    // Dovecot's LMTP hop over Postfix, which accepted the message from outside.
+    let raw = "Return-Path: <bounce@example.com>\r\n\
+        Received: from mail.reader.example by mail.reader.example with LMTP id k\r\n\
+        \tfor <ben@reader.example>; Mon, 6 Oct 2025 10:00:06 +0000\r\n\
+        Authentication-Results: mail.reader.example;\r\n\
+        \tspf=pass smtp.mailfrom=bounce@example.com\r\n\
+        Received: from mail.example.com (mail.example.com [192.0.2.10])\r\n\
+        \tby mail.reader.example (Postfix) with ESMTPS id 4T\r\n\
+        \tfor <ben@reader.example>; Mon, 6 Oct 2025 10:00:05 +0000\r\n\
+        Message-ID: <spf@example.com>\r\nDate: Mon, 6 Oct 2025 10:00:00 +0000\r\n\
+        From: Anna <anna@example.com>\r\nTo: ben@reader.example\r\nSubject: Numbers\r\n\
+        MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHi\r\n";
+    let (id, _) = common::ingest(
+        &t.core,
+        Place::new(account, inbox, 1),
+        raw.as_bytes().to_vec(),
+    )
+    .await;
+    let AuthStatus::Ready(report) = t.core.verify_auth(id).await.unwrap() else {
+        panic!("no report");
+    };
+    assert_eq!(report.spf.result, security::MechanismResult::Pass);
+    assert_eq!(report.spf.source, security::Source::Provider);
+    assert_eq!(report.spf.domain.as_deref(), Some("example.com"));
+    assert!(matches!(
+        report.provider,
+        security::ProviderStatus::Trusted { .. }
+    ));
+    t.core.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn phishing_links_are_flagged() {
     let t = common::open().await;
     let f = common::fixture(&t.core).await;

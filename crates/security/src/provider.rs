@@ -27,7 +27,8 @@
 //! 4. **Match the authserv-id.** A candidate counts only if its `authserv-id`
 //!    equals [`ProviderProfile::authserv_id`] (ASCII case-insensitive, as for any
 //!    host name). There is no pattern matching of any kind, so ids like
-//!    `*.google.com` or `mx.google.com.evil.example` never match.
+//!    `*.google.com` or `mx.google.com.evil.example` never match. (Automatic
+//!    profiles accept any name under the provider's domains; see below.)
 //! 5. **Exactly one.** If exactly one candidate matches, and it parses, it is
 //!    trusted. Two or more matches, or a matching header that doesn't parse, make
 //!    the result [`ProviderStatus::Ambiguous`] and nothing is trusted.
@@ -50,6 +51,26 @@
 //! `Received … by *.mail.protection.outlook.com`. Tenants whose headers carry an id
 //! (hybrid setups, third-party gateways) set it with
 //! [`ProviderProfile::with_authserv_id`], and then only that exact id is accepted.
+//!
+//! # Any other provider
+//!
+//! For other IMAP accounts the exact hosts and `authserv-id` aren't known, so
+//! [`ProviderProfile::automatic`] derives them from the provider's registrable
+//! domains (the address's domain, its MX hosts, the IMAP host). Matching by domain is
+//! looser, so the boundary is found differently ([`Boundary::FirstExternal`]): it is
+//! the *first* hop from the top that accepted the message from outside, judged by
+//! the connecting address the server recorded in the `from` clause. The walk never
+//! goes below it, so a sender can't extend the provider's run with forged hops, and
+//! the zone holds only headers the provider wrote. That matters for servers that
+//! write no `Authentication-Results` at all, where the exactly-one rule can't help.
+//!
+//! Real servers put their header in two places: above their own `Received` header
+//! (Postfix with a milter, Fastmail) or directly below it (Stalwart, which writes
+//! `Received` and `Authentication-Results` as one block). Directly below is also where
+//! the sender's own headers start, so that zone is only searched when the boundary
+//! header names software that always writes its header there
+//! ([`ResultsPlacement::AboveOrBelowForKnownSoftware`]); a forged copy next to the
+//! real one makes the result ambiguous.
 
 use std::fmt;
 use std::net::IpAddr;
@@ -80,6 +101,11 @@ pub enum AuthservId {
     Exact(String),
     /// The header must have no id at all (Exchange Online).
     Absent,
+    /// The id must be one of these domains or a host under one, on a label boundary
+    /// (`mx6.messagingengine.com` for `messagingengine.com`). Only for
+    /// [`ProviderProfile::automatic`], where the provider's exact id isn't known; the
+    /// position rules there leave only headers the provider wrote.
+    WithinDomains(Vec<String>),
 }
 
 impl AuthservId {
@@ -89,7 +115,19 @@ impl AuthservId {
                 !id.is_empty() && expected.eq_ignore_ascii_case(id)
             }
             (Self::Absent, None) => true,
+            (Self::WithinDomains(domains), Some(id)) => {
+                let id = normalize_host(id);
+                !id.is_empty() && domains.iter().any(|domain| within_domain(&id, domain))
+            }
             _ => false,
+        }
+    }
+
+    fn is_configured(&self) -> bool {
+        match self {
+            Self::Exact(id) => !id.trim().is_empty(),
+            Self::Absent => true,
+            Self::WithinDomains(domains) => domains.iter().any(|d| !d.trim().is_empty()),
         }
     }
 }
@@ -100,6 +138,7 @@ impl fmt::Debug for AuthservId {
             // Provider host names aren't personal data.
             Self::Exact(id) => f.debug_tuple("Exact").field(id).finish(),
             Self::Absent => f.write_str("Absent"),
+            Self::WithinDomains(domains) => f.debug_tuple("WithinDomains").field(domains).finish(),
         }
     }
 }
@@ -116,23 +155,67 @@ pub enum HostMatcher {
     /// The host is an IP address literal. Gmail's internal hops look like
     /// `by 2002:a05:6504:… with SMTP id …`.
     IpLiteral,
+    /// A name that only exists inside a network: a single label (`sloti44n03`),
+    /// `localhost`, or a name under `internal`, `local`, `lan`, `localdomain` or
+    /// `home.arpa` (`mailmx.nyi.internal`).
+    Private,
 }
+
+/// Top-level names that never leave a private network.
+const PRIVATE_DOMAINS: &[&str] = &["internal", "local", "lan", "localdomain", "home.arpa"];
 
 impl HostMatcher {
     /// Whether `host` (lowercase, no trailing dot) matches.
     pub fn matches(&self, host: &str) -> bool {
         match self {
             Self::Exact(name) => normalize_host(name) == host,
-            Self::DomainSuffix(domain) => {
-                let domain = normalize_host(domain);
-                !domain.is_empty()
-                    && (host == domain
-                        || host
-                            .strip_suffix(domain.as_str())
-                            .is_some_and(|prefix| prefix.ends_with('.')))
-            }
+            Self::DomainSuffix(domain) => within_domain(host, domain),
             Self::IpLiteral => host.parse::<IpAddr>().is_ok(),
+            Self::Private => {
+                !host.is_empty()
+                    && host.parse::<IpAddr>().is_err()
+                    && (!host.contains('.')
+                        || host == "localhost"
+                        || PRIVATE_DOMAINS.iter().any(|d| within_domain(host, d)))
+            }
         }
+    }
+}
+
+/// Whether `host` (lowercase, no trailing dot) is `domain` or a name under it, on a
+/// label boundary: `x.outlook.com` is under `outlook.com`, `evil-outlook.com` isn't.
+fn within_domain(host: &str, domain: &str) -> bool {
+    let domain = normalize_host(domain);
+    !domain.is_empty()
+        && (host == domain
+            || host
+                .strip_suffix(domain.as_str())
+                .is_some_and(|prefix| prefix.ends_with('.')))
+}
+
+/// Addresses that don't route on the internet: loopback, private, link-local,
+/// carrier-grade NAT, unique local and unspecified.
+fn is_internal_address(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                // 100.64.0.0/10, shared address space (RFC 6598).
+                || (v4.octets()[0] == 100 && v4.octets()[1] & 0xc0 == 64)
+        }
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => is_internal_address(IpAddr::V4(v4)),
+            None => {
+                let first = v6.segments()[0];
+                v6.is_loopback()
+                    || v6.is_unspecified()
+                    // fc00::/7 unique local, fe80::/10 link-local.
+                    || first & 0xfe00 == 0xfc00
+                    || first & 0xffc0 == 0xfe80
+            }
+        },
     }
 }
 
@@ -150,6 +233,30 @@ pub enum ResultsPlacement {
     /// Above the boundary, or in the headers directly below it up to the next
     /// `Received` header (Gmail).
     AboveOrDirectlyBelow,
+    /// Above the boundary, and directly below it too when the boundary header names
+    /// server software that always writes its header there (Stalwart).
+    AboveOrBelowForKnownSoftware,
+}
+
+/// Server software, as named in the comment after the `by` host of its `Received`
+/// header, that writes its `Authentication-Results` directly below that header.
+const WRITES_RESULTS_BELOW: &[&str] = &["Stalwart SMTP"];
+
+/// How the boundary hop is found.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Boundary {
+    /// The lowest hop by an inbound host in the run of the provider's own
+    /// `Received` headers (Gmail, Microsoft 365, configured hosts).
+    #[default]
+    LowestInbound,
+    /// The first hop from the top that accepted the message from outside, written by
+    /// an inbound host. A hop is from outside when its `from` clause names an
+    /// address that routes on the internet; a clause without any address counts as
+    /// inside only when it names one of the provider's hosts (Dovecot's LMTP
+    /// hop). Nothing below this hop is looked at, so headers a sender forged to look
+    /// like more provider hops are never reached.
+    FirstExternal,
 }
 
 /// How to recognize the account provider's own `Authentication-Results`.
@@ -167,6 +274,9 @@ pub struct ProviderProfile {
     pub internal_hosts: Vec<HostMatcher>,
     /// Where the provider puts its header.
     pub placement: ResultsPlacement,
+    /// How the boundary hop is found.
+    #[serde(default)]
+    pub boundary: Boundary,
 }
 
 impl ProviderProfile {
@@ -183,6 +293,7 @@ impl ProviderProfile {
                 HostMatcher::DomainSuffix("google.com".to_owned()),
             ],
             placement: ResultsPlacement::AboveOrDirectlyBelow,
+            boundary: Boundary::LowestInbound,
         }
     }
 
@@ -203,6 +314,7 @@ impl ProviderProfile {
                 HostMatcher::IpLiteral,
             ],
             placement: ResultsPlacement::Above,
+            boundary: Boundary::LowestInbound,
         }
     }
 
@@ -215,6 +327,52 @@ impl ProviderProfile {
             inbound_hosts,
             internal_hosts: Vec::new(),
             placement: ResultsPlacement::Above,
+            boundary: Boundary::LowestInbound,
+        }
+    }
+
+    /// A profile for an account whose provider has no built-in profile, from the
+    /// domains that identify it: usually the account address's domain, the IMAP
+    /// host and the address domain's MX hosts. Each is reduced to its registrable
+    /// domain (`mx6.messagingengine.com` gives `messagingengine.com`); IP addresses,
+    /// single labels and bare public suffixes are dropped.
+    ///
+    /// Any host under those domains is an inbound host, IP literals and private
+    /// names are internal hosts, the boundary is the first hop that accepted the
+    /// message from outside ([`Boundary::FirstExternal`]), and the `authserv-id` may
+    /// be any name under those domains ([`AuthservId::WithinDomains`]).
+    pub fn automatic<I, S>(domains: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut orgs: Vec<String> = Vec::new();
+        for domain in domains {
+            let Some(ascii) = crate::domain::to_ascii(domain.as_ref()) else {
+                continue;
+            };
+            if ascii.parse::<IpAddr>().is_ok() {
+                continue;
+            }
+            // `None` for bare public suffixes (`co.uk`) and single labels.
+            if let Some(org) = psl::domain_str(&ascii)
+                && org.contains('.')
+                && !orgs.iter().any(|known| known == org)
+            {
+                orgs.push(org.to_owned());
+            }
+        }
+        Self {
+            kind: ProviderKind::Generic,
+            inbound_hosts: orgs
+                .iter()
+                .cloned()
+                .map(HostMatcher::DomainSuffix)
+                .collect(),
+            authserv_id: AuthservId::WithinDomains(orgs),
+            internal_hosts: vec![HostMatcher::IpLiteral, HostMatcher::Private],
+            placement: ResultsPlacement::AboveOrBelowForKnownSoftware,
+            boundary: Boundary::FirstExternal,
         }
     }
 
@@ -245,9 +403,7 @@ impl ProviderProfile {
     }
 
     pub(crate) fn evaluate_headers(&self, headers: &[RawHeader<'_>]) -> ProviderOutcome {
-        if matches!(&self.authserv_id, AuthservId::Exact(id) if id.trim().is_empty())
-            || self.inbound_hosts.is_empty()
-        {
+        if !self.authserv_id.is_configured() || self.inbound_hosts.is_empty() {
             return ProviderOutcome::status(ProviderStatus::NotConfigured);
         }
         let Some(zone_end) = self.trusted_zone_end(headers) else {
@@ -290,6 +446,30 @@ impl ProviderProfile {
     /// The index one past the last header that may hold the provider's result, or
     /// `None` when there's no boundary.
     fn trusted_zone_end(&self, headers: &[RawHeader<'_>]) -> Option<usize> {
+        let boundary = match self.boundary {
+            Boundary::LowestInbound => self.lowest_inbound(headers)?,
+            Boundary::FirstExternal => self.first_external(headers)?,
+        };
+        let below = match self.placement {
+            ResultsPlacement::Above => false,
+            ResultsPlacement::AboveOrDirectlyBelow => true,
+            ResultsPlacement::AboveOrBelowForKnownSoftware => {
+                headers::received_by_software(&headers[boundary].value)
+                    .is_some_and(|software| WRITES_RESULTS_BELOW.contains(&software.as_str()))
+            }
+        };
+        Some(if below {
+            headers[boundary + 1..]
+                .iter()
+                .position(|h| h.is("Received"))
+                .map_or(headers.len(), |offset| boundary + 1 + offset)
+        } else {
+            boundary
+        })
+    }
+
+    /// [`Boundary::LowestInbound`].
+    fn lowest_inbound(&self, headers: &[RawHeader<'_>]) -> Option<usize> {
         let mut boundary = None;
         for (index, header) in headers.iter().enumerate() {
             if !header.is("Received") {
@@ -298,20 +478,53 @@ impl ProviderProfile {
             let Some(host) = headers::received_by_host(&header.value) else {
                 break;
             };
-            if self.inbound_hosts.iter().any(|m| m.matches(&host)) {
+            if self.is_inbound(&host) {
                 boundary = Some(index);
-            } else if !self.internal_hosts.iter().any(|m| m.matches(&host)) {
+            } else if !self.is_internal(&host) {
                 break;
             }
         }
-        let boundary = boundary?;
-        Some(match self.placement {
-            ResultsPlacement::Above => boundary,
-            ResultsPlacement::AboveOrDirectlyBelow => headers[boundary + 1..]
-                .iter()
-                .position(|h| h.is("Received"))
-                .map_or(headers.len(), |offset| boundary + 1 + offset),
-        })
+        boundary
+    }
+
+    /// [`Boundary::FirstExternal`].
+    fn first_external(&self, headers: &[RawHeader<'_>]) -> Option<usize> {
+        for (index, header) in headers.iter().enumerate() {
+            if !header.is("Received") {
+                continue;
+            }
+            let host = headers::received_by_host(&header.value)?;
+            let inbound = self.is_inbound(&host);
+            if !inbound && !self.is_internal(&host) {
+                return None;
+            }
+            if self.accepted_from_outside(&header.value) {
+                return inbound.then_some(index);
+            }
+        }
+        None
+    }
+
+    /// Whether a `Received` header records a connection from outside the provider.
+    fn accepted_from_outside(&self, value: &str) -> bool {
+        // No from clause: the message was created on the host itself.
+        let Some(from) = headers::received_from(value) else {
+            return false;
+        };
+        if from.addresses.is_empty() {
+            return !from
+                .host
+                .is_some_and(|host| self.is_inbound(&host) || self.is_internal(&host));
+        }
+        from.addresses.iter().any(|&a| !is_internal_address(a))
+    }
+
+    fn is_inbound(&self, host: &str) -> bool {
+        self.inbound_hosts.iter().any(|m| m.matches(host))
+    }
+
+    fn is_internal(&self, host: &str) -> bool {
+        self.internal_hosts.iter().any(|m| m.matches(host))
     }
 }
 
@@ -392,6 +605,70 @@ mod tests {
         assert!(HostMatcher::IpLiteral.matches("2002:a05:6504:1:b0:2:3:4"));
         assert!(HostMatcher::IpLiteral.matches("10.0.0.1"));
         assert!(!HostMatcher::IpLiteral.matches("mx.google.com"));
+    }
+
+    #[test]
+    fn private_names_and_addresses() {
+        for host in [
+            "sloti44n03",
+            "localhost",
+            "compute1.internal",
+            "mailmx.nyi.internal",
+            "nas.local",
+            "box.home.arpa",
+        ] {
+            assert!(HostMatcher::Private.matches(host), "{host}");
+        }
+        for host in [
+            "mx.example.org",
+            "internal.example.com",
+            "10.0.0.1",
+            "::1",
+            "",
+        ] {
+            assert!(!HostMatcher::Private.matches(host), "{host}");
+        }
+
+        for address in [
+            "127.0.0.1",
+            "10.202.2.41",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.0.1",
+            "100.64.0.1",
+            "::1",
+            "fd00::1",
+            "fe80::1",
+            "::ffff:10.0.0.1",
+        ] {
+            assert!(is_internal_address(address.parse().unwrap()), "{address}");
+        }
+        for address in [
+            "192.0.2.10",
+            "203.0.113.5",
+            "100.128.0.1",
+            "2001:db8::1",
+            "::ffff:8.8.8.8",
+        ] {
+            assert!(!is_internal_address(address.parse().unwrap()), "{address}");
+        }
+    }
+
+    #[test]
+    fn authserv_id_within_domains() {
+        let id = AuthservId::WithinDomains(vec!["messagingengine.com".into()]);
+        assert!(id.matches(Some("mx6.messagingengine.com")));
+        assert!(id.matches(Some("MessagingEngine.com.")));
+        for other in [
+            "evil-messagingengine.com",
+            "messagingengine.com.evil.example",
+            "",
+            "com",
+        ] {
+            assert!(!id.matches(Some(other)), "{other}");
+        }
+        assert!(!id.matches(None));
+        assert!(!AuthservId::WithinDomains(Vec::new()).is_configured());
     }
 
     #[test]

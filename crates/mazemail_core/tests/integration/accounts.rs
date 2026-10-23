@@ -247,7 +247,8 @@ async fn adding_validates_saves_the_password_and_syncs() {
         .unwrap()
         .unwrap();
     assert!(!account.config_json.contains(PASSWORD));
-    assert!(account.config_json.contains("provider_profile"));
+    // IMAP accounts get an automatic provider profile when a message is verified.
+    assert!(!account.config_json.contains("provider_profile"));
     let identities = s
         .core
         .store()

@@ -1,0 +1,15 @@
+Received: from [10.0.0.1] (unknown [203.0.113.5])
+	by mail.reader.example (Postfix) with ESMTPS id 4T3abc
+	for <ben@reader.example>; Tue,  2 Jan 2024 10:00:05 +0000 (UTC)
+Authentication-Results: mail.reader.example;
+	spf=pass smtp.mailfrom=bank.example; dmarc=pass header.from=bank.example
+Received: from localhost (localhost [127.0.0.1])
+	by mail.reader.example (Postfix) with ESMTP id 4T3def;
+	Tue,  2 Jan 2024 10:00:04 +0000 (UTC)
+From: Bank <service@bank.example>
+To: ben@reader.example
+Subject: Verify your account
+Date: Tue, 02 Jan 2024 10:00:00 +0000
+Message-ID: <forged-2@attacker.example>
+
+Body.

@@ -15,9 +15,10 @@
 //!   (it needs the connecting IP address), so it is
 //!   [`MechanismResult::NotAvailable`] unless the provider reported it.
 //! - **Provider results** come from the one `Authentication-Results` header that
-//!   the account's receiving server wrote, recognized by position and exact
-//!   `authserv-id` ([`provider`]). Everything else claiming to be a result is
-//!   ignored.
+//!   the account's receiving server wrote, recognized by position and
+//!   `authserv-id` ([`provider`]): exact for Gmail and Microsoft 365, by the
+//!   provider's domains for any other server. Everything else claiming to be a
+//!   result is ignored.
 //! - DNS goes through [`Resolver`]: hickory with a cache in production, a fixed
 //!   [`StaticDns`] table in tests.
 //!
@@ -44,8 +45,8 @@ mod verify;
 pub use dns::{Resolver, ResolverError, StaticDns};
 pub use normalize::{ProviderDkim, ProviderMechanism, ProviderResults};
 pub use provider::{
-    AuthservId, HostMatcher, ProviderKind, ProviderOutcome, ProviderProfile, ProviderStatus,
-    ResultsPlacement,
+    AuthservId, Boundary, HostMatcher, ProviderKind, ProviderOutcome, ProviderProfile,
+    ProviderStatus, ResultsPlacement,
 };
 pub use report::{
     AUTH_REPORT_SCHEMA, AuthReport, Check, DkimSignatureCheck, DmarcPolicy, MechanismResult,
