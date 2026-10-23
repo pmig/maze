@@ -33,13 +33,20 @@ rm -f "$tarball" "$dmg"
 app_dir=$(cd "$(dirname "$app")" && pwd)
 app_name=$(basename "$app")
 
-# The updater extracts this next to the installed app, so Maze.app is the only
-# top-level entry. COPYFILE_DISABLE avoids AppleDouble (._*) files.
-if ! command -v zstd >/dev/null 2>&1; then
-  echo "error: zstd not found in PATH (preinstalled on GitHub runners)" >&2
+# zstd is preinstalled on GitHub runners. Locally, mise can provide it (conda backend).
+zstd_version=1.5.7
+if zstd --version >/dev/null 2>&1; then
+  zstd=(zstd)
+elif command -v mise >/dev/null 2>&1; then
+  zstd=(mise x "conda:zstd@$zstd_version" -- zstd)
+else
+  echo "error: zstd not found; install it with 'mise use -g conda:zstd@$zstd_version'" >&2
   exit 1
 fi
-COPYFILE_DISABLE=1 tar -C "$app_dir" -cf - "$app_name" | zstd -19 -T0 -q -o "$tarball"
+
+# The updater extracts this next to the installed app, so Maze.app is the only
+# top-level entry. COPYFILE_DISABLE avoids AppleDouble (._*) files.
+COPYFILE_DISABLE=1 tar -C "$app_dir" -cf - "$app_name" | "${zstd[@]}" -19 -T0 -q -o "$tarball"
 
 staging=$(mktemp -d "${TMPDIR:-/tmp}/maze-dmg.XXXXXX")
 trap 'rm -rf "$staging"' EXIT
