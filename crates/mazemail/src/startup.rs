@@ -86,7 +86,7 @@ pub fn list_defaults(settings: &ThreadListSettings) -> ListDefaults {
     }
 }
 
-/// The per-folder message list state in the data directory (`ui_state.json`, see
+/// The message list view state in the data directory (`ui_state.json`, see
 /// [`mail_ui::ui_state`]) over the defaults in `settings.json`.
 pub fn ui_state(paths: &Paths) -> UiStateStore {
     let loaded = settings::load_settings(&paths.settings_file());

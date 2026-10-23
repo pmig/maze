@@ -51,7 +51,7 @@ pub struct MailWindowOptions {
     pub benchmark: Option<ScrollBenchmark>,
     /// Initial window size; by default 1680×1000, shrunk to fit the screen.
     pub window_size: Option<(f32, f32)>,
-    /// Per-folder message list state (`ui_state.json`); in memory by default.
+    /// The message list view (`ui_state.json`); in memory by default.
     pub ui_state: UiStateStore,
 }
 
@@ -1104,15 +1104,15 @@ mod tests {
     }
 
     #[gpui::test]
-    fn a_folder_remembered_as_table_gets_room_at_start(cx: &mut TestAppContext) {
+    fn a_remembered_table_view_gets_room_at_start(cx: &mut TestAppContext) {
         cx.update(|cx| {
             ui::init(cx);
             crate::init(cx);
         });
         let ui_state = UiStateStore::in_memory(ListDefaults::default());
-        let mut prefs = ui_state.prefs("unified:inbox");
+        let mut prefs = ui_state.prefs();
         prefs.mode = ListMode::Table;
-        ui_state.set_prefs("unified:inbox", &prefs);
+        ui_state.set_prefs(&prefs);
         let source: Arc<dyn MailSource> =
             Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
         let options = MailWindowOptions {

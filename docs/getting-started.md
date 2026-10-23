@@ -139,9 +139,10 @@ name to filter, pick one with the arrow keys and press `enter` to move the selec
 there; `escape` cancels. With an empty filter the folders you moved mail to last come
 first. Moves stay within an account.
 
-Cards or table, threads, sort order, columns and widths are remembered per folder in
-`ui_state.json` in the data directory, as are your recent Quick Move folders. A folder you haven't changed follows
-`thread_list.view` and `thread_list.threaded` in `settings.json`.
+Cards or table, threads, sort order, columns and widths are the same in every folder.
+Maze remembers them in `ui_state.json` in the data directory, together with your recent
+Quick Move folders; until you change them, `thread_list.view`, `thread_list.threaded`
+and `thread_list.sort` in `settings.json` apply.
 
 ## Import mail
 
