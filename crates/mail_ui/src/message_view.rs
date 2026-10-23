@@ -1,13 +1,22 @@
 //! The message view: header with sender (and their mail client), recipients, date and
 //! actions, the verification row, attachments, and the body (CONCEPT §8.4).
+//!
+//! A right-click opens the message list's context menu for the shown message (the
+//! window sets it, [`MessageView::set_context_menu`]), plus Copy Sender Address.
+
+use std::rc::Rc;
 
 use gpui::{
-    App, Context, FocusHandle, Focusable, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Render, SharedString, StatefulInteractiveElement as _, Styled, Window, div,
-    prelude::FluentBuilder as _, px,
+    App, ClipboardItem, Context, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, Render, SharedString, StatefulInteractiveElement as _, Styled,
+    Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, Sizable as _, StyledExt as _, button::Button, h_flex, text::TextView,
+    ActiveTheme as _, Icon, Sizable as _, StyledExt as _,
+    button::Button,
+    h_flex,
+    menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
+    text::TextView,
     v_flex,
 };
 use mazemail_types::Address;
@@ -18,6 +27,9 @@ use crate::actions::{Archive, Forward, Reply, ReplyAll};
 use crate::format::{DateFormatter, format_size, format_thousands, initials};
 use crate::source::{MessageBody, MessageDocument, SenderClient, Verdict, Verification};
 
+/// Builds a context menu (see [`MessageView::set_context_menu`]).
+pub type MenuBuilder = Rc<dyn Fn(PopupMenu, &mut Window, &mut Context<'_, PopupMenu>) -> PopupMenu>;
+
 /// The message view.
 pub struct MessageView {
     focus: FocusHandle,
@@ -26,6 +38,7 @@ pub struct MessageView {
     error: Option<SharedString>,
     /// Rows selected in the list, when there are several (no message is shown then).
     selection: Option<usize>,
+    context_menu: Option<MenuBuilder>,
 }
 
 impl std::fmt::Debug for MessageView {
@@ -43,7 +56,14 @@ impl MessageView {
             document: None,
             error: None,
             selection: None,
+            context_menu: None,
         }
+    }
+
+    /// The menu a right-click on a shown message opens: the message list's, for its
+    /// selection (which is the shown message). Copy Sender Address is added to it.
+    pub fn set_context_menu(&mut self, builder: MenuBuilder) {
+        self.context_menu = Some(builder);
     }
 
     /// Shows a message, or the empty state.
@@ -353,6 +373,7 @@ impl Render for MessageView {
         let theme = cx.theme();
         let root = v_flex()
             .id("message-view")
+            .debug_selector(|| "message-view".to_owned())
             .size_full()
             .key_context("MessageView")
             .track_focus(&self.focus)
@@ -363,9 +384,11 @@ impl Render for MessageView {
             )
             .bg(theme.background);
         let Some(doc) = self.document.clone() else {
-            return root.child(self.render_empty(cx));
+            return root.child(self.render_empty(cx)).into_any_element();
         };
         let body_id = SharedString::from(format!("message-body-{}", doc.message));
+        let sender = doc.from.expose().email.clone();
+        let builder = self.context_menu.clone();
         root.child(self.render_header(&doc, cx))
             .when(!doc.attachments.is_empty(), |this| {
                 this.child(Self::render_attachments(&doc, cx))
@@ -401,5 +424,23 @@ impl Render for MessageView {
                         .into_any_element(),
                 }),
             )
+            .context_menu(move |menu, window, cx| {
+                let menu = match &builder {
+                    Some(builder) => builder(menu, window, cx),
+                    None => menu,
+                };
+                let menu = if menu.is_empty() {
+                    menu
+                } else {
+                    menu.separator()
+                };
+                let sender = sender.clone();
+                menu.item(
+                    PopupMenuItem::new("Copy Sender Address").on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(sender.clone()));
+                    }),
+                )
+            })
+            .into_any_element()
     }
 }

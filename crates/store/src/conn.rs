@@ -71,6 +71,7 @@ pub(crate) fn open(
     }
     conn.set_prepared_statement_cache_capacity(128);
     rusqlite::vtab::array::load_module(&conn)?;
+    crate::repo::sort::register_functions(&conn)?;
     Ok(conn)
 }
 

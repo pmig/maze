@@ -7,7 +7,9 @@ use std::sync::Arc;
 use import::ImportTarget;
 use import::local::{ensure_folder_path, local_account};
 use ingest::Ingestor;
-use mail_ui::source::{FolderKey, ListSort, MailSource, MessageBody, ThreadFilter, ThreadScope};
+use mail_ui::source::{
+    FolderKey, ListSort, MailSource, MessageBody, SortBy, ThreadFilter, ThreadScope,
+};
 use mazemail::source::{CoreMailSource, NO_ACCOUNTS};
 use mazemail_core::{CoreConfig, CoreHandle};
 use mazemail_types::{Flags, FolderRole};
@@ -136,7 +138,7 @@ fn folders_lists_rows_and_messages() {
         .thread_keys(
             &ThreadScope::Folder(INBOX),
             &ThreadFilter::default(),
-            ListSort::NewestFirst,
+            ListSort::NEWEST_FIRST,
         )
         .unwrap();
     assert_eq!(keys.len(), 2, "the reply joined its thread");
@@ -169,7 +171,7 @@ fn folders_lists_rows_and_messages() {
                 text: Some("invoice".into()),
                 ..ThreadFilter::default()
             },
-            ListSort::NewestFirst,
+            ListSort::NEWEST_FIRST,
         )
         .unwrap();
     assert_eq!(filtered.len(), 1);
@@ -181,7 +183,7 @@ fn folders_lists_rows_and_messages() {
                 text: Some("lisbon".into()),
                 ..ThreadFilter::default()
             },
-            ListSort::NewestFirst,
+            ListSort::NEWEST_FIRST,
         )
         .unwrap();
     assert_eq!(&*found, &[offsite.id]);
@@ -193,7 +195,7 @@ fn folders_lists_rows_and_messages() {
                 unread: true,
                 ..ThreadFilter::default()
             },
-            ListSort::NewestFirst,
+            ListSort::NEWEST_FIRST,
         )
         .unwrap();
     assert_eq!(unread_only.len(), 2);
@@ -248,7 +250,7 @@ fn flags_and_archive_apply_at_once_and_raise_events() {
         .thread_keys(
             &ThreadScope::Folder(INBOX),
             &ThreadFilter::default(),
-            ListSort::NewestFirst,
+            ListSort::NEWEST_FIRST,
         )
         .unwrap();
     let invoice = keys[0];
@@ -287,7 +289,7 @@ fn flags_and_archive_apply_at_once_and_raise_events() {
         .thread_keys(
             &ThreadScope::Folder(INBOX),
             &ThreadFilter::default(),
-            ListSort::NewestFirst,
+            ListSort::NEWEST_FIRST,
         )
         .unwrap();
     assert!(!keys.contains(&invoice));
@@ -303,7 +305,7 @@ fn flags_and_archive_apply_at_once_and_raise_events() {
         .thread_keys(
             &ThreadScope::Folder(archive.children[0].key.clone()),
             &ThreadFilter::default(),
-            ListSort::NewestFirst,
+            ListSort::NEWEST_FIRST,
         )
         .unwrap();
     assert_eq!(&*archived, &[invoice]);
@@ -319,7 +321,7 @@ fn placeholders_cover_opening_failure_and_no_accounts() {
             .thread_keys(
                 &ThreadScope::Folder(INBOX),
                 &ThreadFilter::default(),
-                ListSort::NewestFirst
+                ListSort::NEWEST_FIRST
             )
             .is_err()
     );
@@ -408,7 +410,7 @@ fn threads_off_trees_and_message_commands() {
     let scope = ThreadScope::Folder(INBOX);
     let threads = t
         .source
-        .thread_keys(&scope, &ThreadFilter::default(), ListSort::NewestFirst)
+        .thread_keys(&scope, &ThreadFilter::default(), ListSort::NEWEST_FIRST)
         .unwrap();
     let rows = t.source.thread_rows(&threads);
     let offsite = rows
@@ -434,14 +436,14 @@ fn threads_off_trees_and_message_commands() {
     // Threads off: one row per message, newest first (or oldest first).
     let messages = t
         .source
-        .message_keys(&scope, &ThreadFilter::default(), ListSort::NewestFirst)
+        .message_keys(&scope, &ThreadFilter::default(), ListSort::NEWEST_FIRST)
         .unwrap();
     assert_eq!(messages.len(), 3);
     let message_rows = t.source.message_rows(&messages);
     assert!(message_rows.windows(2).all(|w| w[0].date >= w[1].date));
     let oldest = t
         .source
-        .message_keys(&scope, &ThreadFilter::default(), ListSort::OldestFirst)
+        .message_keys(&scope, &ThreadFilter::default(), ListSort::OLDEST_FIRST)
         .unwrap();
     assert_eq!(oldest.first(), messages.last());
     let filtered = t
@@ -452,7 +454,7 @@ fn threads_off_trees_and_message_commands() {
                 text: Some("offsite".to_owned()),
                 ..ThreadFilter::default()
             },
-            ListSort::NewestFirst,
+            ListSort::NEWEST_FIRST,
         )
         .unwrap();
     assert_eq!(filtered.len(), 2, "the messages of the matching thread");
@@ -468,10 +470,91 @@ fn threads_off_trees_and_message_commands() {
     t.source.archive_messages(&[anna]).unwrap();
     let after = t
         .source
-        .message_keys(&scope, &ThreadFilter::default(), ListSort::NewestFirst)
+        .message_keys(&scope, &ThreadFilter::default(), ListSort::NEWEST_FIRST)
         .unwrap();
     assert_eq!(after.len(), 2);
     assert!(!after.contains(&anna));
+    drop(t.source);
+    t.runtime.block_on(t.core.shutdown()).unwrap();
+}
+
+#[test]
+fn every_order_of_the_list_is_the_cores() {
+    let t = seeded();
+    let scope = ThreadScope::Folder(INBOX);
+    let subjects = |sort: ListSort| -> Vec<String> {
+        let keys = t
+            .source
+            .thread_keys(&scope, &ThreadFilter::default(), sort)
+            .unwrap();
+        t.source
+            .thread_rows(&keys)
+            .iter()
+            .map(|r| r.subject.expose().to_string())
+            .collect()
+    };
+    assert_eq!(
+        subjects(ListSort::NEWEST_FIRST),
+        ["Invoice 117", "Offsite plan"]
+    );
+    assert_eq!(
+        subjects(ListSort::by(SortBy::Subject).toggled()),
+        ["Offsite plan", "Invoice 117"]
+    );
+    // The newest message's sender: Ben (not Anna) for the offsite thread.
+    assert_eq!(
+        subjects(ListSort::by(SortBy::Sender)),
+        ["Offsite plan", "Invoice 117"]
+    );
+    // Unread first: the offsite thread's reply is unread, the invoice too; ties go
+    // newest first.
+    assert_eq!(
+        subjects(ListSort::by(SortBy::Unread)),
+        ["Invoice 117", "Offsite plan"]
+    );
+
+    // Threads off: messages by subject without "Re:", equal subjects newest first.
+    let keys = t
+        .source
+        .message_keys(
+            &scope,
+            &ThreadFilter::default(),
+            ListSort::by(SortBy::Subject),
+        )
+        .unwrap();
+    let rows: Vec<String> = t
+        .source
+        .message_rows(&keys)
+        .iter()
+        .map(|r| r.subject.expose().to_string())
+        .collect();
+    assert_eq!(rows, ["Invoice 117", "Re: Offsite plan", "Offsite plan"]);
+
+    // Global search results sort the same way (threads off: their messages).
+    let lisbon = ThreadFilter {
+        text: Some("lisbon".into()),
+        ..ThreadFilter::default()
+    };
+    let found = t
+        .source
+        .message_keys(&ThreadScope::AllFolders, &lisbon, ListSort::OLDEST_FIRST)
+        .unwrap();
+    let rows: Vec<String> = t
+        .source
+        .message_rows(&found)
+        .iter()
+        .map(|r| r.sender.expose().to_string())
+        .collect();
+    assert_eq!(rows, ["Anna", "Ben"], "oldest first");
+    let found = t
+        .source
+        .thread_keys(
+            &ThreadScope::AllFolders,
+            &lisbon,
+            ListSort::by(SortBy::Subject),
+        )
+        .unwrap();
+    assert_eq!(found.len(), 1);
     drop(t.source);
     t.runtime.block_on(t.core.shutdown()).unwrap();
 }
@@ -503,7 +586,7 @@ fn quick_move_moves_threads_and_messages_undoably() {
             .thread_keys(
                 &ThreadScope::Folder(key),
                 &ThreadFilter::default(),
-                ListSort::NewestFirst,
+                ListSort::NEWEST_FIRST,
             )
             .unwrap()
     };

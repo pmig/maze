@@ -223,7 +223,8 @@ pub enum ThreadListView {
     Table,
 }
 
-/// Message list sort order.
+/// The message list's order until you sort it yourself (Maze then remembers yours): any
+/// column, either way.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ThreadSort {
@@ -240,7 +241,7 @@ pub enum ThreadSort {
     FromAsc,
     /// Sender Z to A.
     FromDesc,
-    /// Subject A to Z.
+    /// Subject A to Z (ignoring `Re:`, `Fwd:`, … and case).
     SubjectAsc,
     /// Subject Z to A.
     SubjectDesc,
@@ -248,6 +249,34 @@ pub enum ThreadSort {
     SizeDesc,
     /// Smallest first.
     SizeAsc,
+    /// Correspondents (sender, or recipients of mail you sent) A to Z.
+    CorrespondentsAsc,
+    /// Correspondents Z to A.
+    CorrespondentsDesc,
+    /// Recipients A to Z.
+    RecipientsAsc,
+    /// Recipients Z to A.
+    RecipientsDesc,
+    /// Starred first.
+    StarDesc,
+    /// Starred last.
+    StarAsc,
+    /// Unread first.
+    UnreadDesc,
+    /// Unread last.
+    UnreadAsc,
+    /// With attachments first.
+    AttachmentDesc,
+    /// With attachments last.
+    AttachmentAsc,
+    /// Tags A to Z.
+    TagsAsc,
+    /// Tags Z to A.
+    TagsDesc,
+    /// Account A to Z.
+    AccountAsc,
+    /// Account Z to A.
+    AccountDesc,
 }
 
 /// The folder pane.

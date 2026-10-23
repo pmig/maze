@@ -36,8 +36,14 @@
   "thread_list": {
     // "cards" (two-line rows) or "table" (columns).
     "view": "cards",
-    // "date_desc", "date_asc", "received_desc", "received_asc", "from_asc",
-    // "from_desc", "subject_asc", "subject_desc", "size_desc" or "size_asc".
+    // The order until you sort the list yourself (a click on a column header, the sort
+    // button or "Sort By" in the command palette; Maze remembers that order). Any
+    // column, "_asc" or "_desc": "date", "received", "from" (the sender),
+    // "correspondents", "recipients", "subject" (ignoring "Re:", "Fwd:", … and case),
+    // "star", "unread", "attachment", "tags", "account" or "size". "_desc" is newest,
+    // largest, Z or starred/unread/with attachments first. Threads sort by what their
+    // row shows: their newest message's date, sender and size, their subject, whether
+    // any message is starred or unread.
     "sort": "date_desc",
     // Group messages into conversations.
     "threaded": true

@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use local_api::{DispatchConfig, ServerConfig};
-use mail_ui::source::ListSort;
+use mail_ui::source::{ListSort, SortBy};
 use mail_ui::{ListDefaults, ListMode, UI_STATE_FILE, UiStateStore};
 use mazemail_core::api::TokenAuthorizer;
 use mazemail_core::{CoreConfig, Error, SyncEngineConfig};
@@ -69,20 +69,42 @@ pub fn describe_open_error(error: &Error) -> String {
     }
 }
 
-/// The message list's defaults for folders without remembered state, from
-/// `thread_list` in `settings.json`. The store sorts by date only, so the other sort
-/// orders fall back to newest first.
+/// The message list's defaults for what the list view hasn't changed, from
+/// `thread_list` in `settings.json`.
 pub fn list_defaults(settings: &ThreadListSettings) -> ListDefaults {
+    let (by, descending) = match settings.sort {
+        ThreadSort::DateDesc => (SortBy::Date, true),
+        ThreadSort::DateAsc => (SortBy::Date, false),
+        ThreadSort::ReceivedDesc => (SortBy::Received, true),
+        ThreadSort::ReceivedAsc => (SortBy::Received, false),
+        ThreadSort::FromAsc => (SortBy::Sender, false),
+        ThreadSort::FromDesc => (SortBy::Sender, true),
+        ThreadSort::SubjectAsc => (SortBy::Subject, false),
+        ThreadSort::SubjectDesc => (SortBy::Subject, true),
+        ThreadSort::SizeDesc => (SortBy::Size, true),
+        ThreadSort::SizeAsc => (SortBy::Size, false),
+        ThreadSort::CorrespondentsAsc => (SortBy::Correspondents, false),
+        ThreadSort::CorrespondentsDesc => (SortBy::Correspondents, true),
+        ThreadSort::RecipientsAsc => (SortBy::Recipients, false),
+        ThreadSort::RecipientsDesc => (SortBy::Recipients, true),
+        ThreadSort::StarDesc => (SortBy::Star, true),
+        ThreadSort::StarAsc => (SortBy::Star, false),
+        ThreadSort::UnreadDesc => (SortBy::Unread, true),
+        ThreadSort::UnreadAsc => (SortBy::Unread, false),
+        ThreadSort::AttachmentDesc => (SortBy::Attachment, true),
+        ThreadSort::AttachmentAsc => (SortBy::Attachment, false),
+        ThreadSort::TagsAsc => (SortBy::Tags, false),
+        ThreadSort::TagsDesc => (SortBy::Tags, true),
+        ThreadSort::AccountAsc => (SortBy::Account, false),
+        ThreadSort::AccountDesc => (SortBy::Account, true),
+    };
     ListDefaults {
         mode: match settings.view {
             ThreadListView::Cards => ListMode::Cards,
             ThreadListView::Table => ListMode::Table,
         },
         threaded: settings.threaded,
-        sort: match settings.sort {
-            ThreadSort::DateAsc | ThreadSort::ReceivedAsc => ListSort::OldestFirst,
-            _ => ListSort::NewestFirst,
-        },
+        sort: ListSort { by, descending },
     }
 }
 
@@ -114,14 +136,36 @@ mod tests {
             ListDefaults {
                 mode: ListMode::Table,
                 threaded: false,
-                sort: ListSort::OldestFirst,
+                sort: ListSort::OLDEST_FIRST,
             }
         );
-        // Sorts the store can't do fall back to the date.
+        // Every column sorts.
         let by_sender = list_defaults(&ThreadListSettings {
             sort: ThreadSort::FromAsc,
             ..ThreadListSettings::default()
         });
-        assert_eq!(by_sender.sort, ListSort::NewestFirst);
+        assert_eq!(by_sender.sort, ListSort::by(SortBy::Sender));
+        let starred = list_defaults(&ThreadListSettings {
+            sort: ThreadSort::StarDesc,
+            ..ThreadListSettings::default()
+        });
+        assert_eq!(starred.sort, ListSort::by(SortBy::Star));
+        // The settings name is the one `ui_state.json` uses (`from` is the sender).
+        for (setting, name) in [
+            (ThreadSort::SubjectDesc, "subject_desc"),
+            (ThreadSort::ReceivedAsc, "received_asc"),
+            (ThreadSort::TagsAsc, "tags_asc"),
+        ] {
+            let sort = list_defaults(&ThreadListSettings {
+                sort: setting,
+                ..ThreadListSettings::default()
+            })
+            .sort;
+            assert_eq!(sort.name(), name);
+            assert_eq!(
+                serde_json::to_value(setting).unwrap(),
+                serde_json::Value::from(name)
+            );
+        }
     }
 }

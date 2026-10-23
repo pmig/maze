@@ -12,6 +12,9 @@
 //! messages of the threads that match (subject and senders in memory, plus body
 //! matches with [`CoreHandle::message_quick_filter_body`](crate::CoreHandle::message_quick_filter_body)):
 //! the same set of conversations the threaded view shows, one row per message.
+//!
+//! Orders other than the date sort the keys in the store afterwards, like thread lists
+//! ([`Queries::sorted_message_keys`]).
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -104,6 +107,20 @@ pub(crate) fn all_message_keys(
         }
     }
     Ok(keys)
+}
+
+/// Puts `keys` (date ordered, filtered) in the query's order, unless that is a date
+/// order already.
+pub(crate) fn order_message_keys(
+    reader: &Reader,
+    keys: Vec<MessageKey>,
+    query: &ListQuery,
+) -> Result<Vec<MessageKey>> {
+    if query.sort.is_by_date() {
+        return Ok(keys);
+    }
+    let ids: Vec<MessageId> = keys.iter().map(|k| k.message).collect();
+    Ok(reader.sorted_message_keys(&ids, query.context(), query.sort)?)
 }
 
 /// A message row with what the Correspondents column needs.

@@ -758,6 +758,97 @@ pub enum SortOrder {
     OldestFirst,
 }
 
+/// What a list can be sorted by: the message list's columns (CONCEPT §8.2), plus the
+/// time the server received a message. See [`Queries::sorted_thread_keys`] for what
+/// each means for a thread.
+///
+/// [`Queries::sorted_thread_keys`]: crate::Queries::sorted_thread_keys
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum SortField {
+    /// The `Date` header (a thread: its newest message in the scope).
+    #[default]
+    Date,
+    /// When the server received the message (IMAP `INTERNALDATE`), else its date.
+    Received,
+    /// Starred (`\Flagged`) or not.
+    Starred,
+    /// Unread or not.
+    Unread,
+    /// With attachments or without.
+    Attachments,
+    /// The subject without `Re:`/`Fwd:`/`AW:`/`WG:`… prefixes and list tags, ignoring
+    /// case.
+    Subject,
+    /// The sender of received mail, the recipients of mail you sent.
+    Correspondents,
+    /// The sender's display name, else address.
+    Sender,
+    /// The `To` recipients (`Cc` if there are none), display names else addresses.
+    Recipients,
+    /// Tag names.
+    Tags,
+    /// The account's name.
+    Account,
+    /// Size in bytes.
+    Size,
+}
+
+/// The order of a list: a field and a direction. Ties are broken by date, newest first,
+/// then by id, so the order is total and stable.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct ListOrder {
+    /// What to sort by.
+    pub field: SortField,
+    /// Largest, newest, `true` or Z first. Empty text (no subject, no tags) comes last
+    /// either way.
+    pub descending: bool,
+}
+
+impl ListOrder {
+    /// Newest first, the default.
+    pub const NEWEST_FIRST: Self = Self {
+        field: SortField::Date,
+        descending: true,
+    };
+
+    /// Oldest first.
+    pub const OLDEST_FIRST: Self = Self {
+        field: SortField::Date,
+        descending: false,
+    };
+
+    /// Sorted by `field`.
+    pub fn new(field: SortField, descending: bool) -> Self {
+        Self { field, descending }
+    }
+
+    /// The date order of the keyset queries ([`Queries::thread_list_keys`]): the order
+    /// itself for date orders, newest first (the tie-break) for every other field.
+    ///
+    /// [`Queries::thread_list_keys`]: crate::Queries::thread_list_keys
+    pub fn date_order(self) -> SortOrder {
+        if self.field == SortField::Date && !self.descending {
+            SortOrder::OldestFirst
+        } else {
+            SortOrder::NewestFirst
+        }
+    }
+
+    /// Whether this is a date order, which the keyset queries answer directly.
+    pub fn is_by_date(self) -> bool {
+        self.field == SortField::Date
+    }
+}
+
+impl From<SortOrder> for ListOrder {
+    fn from(order: SortOrder) -> Self {
+        match order {
+            SortOrder::NewestFirst => Self::NEWEST_FIRST,
+            SortOrder::OldestFirst => Self::OLDEST_FIRST,
+        }
+    }
+}
+
 /// Quick-filter toggles; all set toggles must match.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct ListFilter {

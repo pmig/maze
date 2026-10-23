@@ -40,9 +40,11 @@ pub use ui_state::{ListDefaults, ListMode, UI_STATE_FILE, UiStateStore};
 pub use window::{MailWindow, MailWindowOptions, OpenWindowError, open_main_window};
 
 use crate::actions::{
-    About, CollapseAllThreads, ExpandAllThreads, Hide, HideOthers, Minimize, Quit, ShowAll, Toggle,
-    ToggleAgentColumn, ToggleFolderPane, ToggleMessagePane, ToggleTableView, ToggleThreads, Zoom,
+    About, CollapseAllThreads, ExpandAllThreads, Hide, HideOthers, Minimize, Quit,
+    ReverseSortOrder, ShowAll, Toggle, ToggleAgentColumn, ToggleFolderPane, ToggleMessagePane,
+    ToggleTableView, ToggleThreads, Zoom, sort_action,
 };
+use crate::source::SortBy;
 
 /// Registers application-wide action handlers, binds the default keymap and sets the
 /// menu bar. Call after [`ui::init`].
@@ -95,6 +97,24 @@ pub fn app_menus() -> Vec<Menu> {
             MenuItem::action("Threads", ToggleThreads),
             MenuItem::action("Expand All Threads", ExpandAllThreads),
             MenuItem::action("Collapse All Threads", CollapseAllThreads),
+            MenuItem::separator(),
+            MenuItem::submenu(
+                Menu::new("Sort By").items(
+                    SortBy::ALL
+                        .into_iter()
+                        .map(|by| MenuItem::Action {
+                            name: by.label().into(),
+                            action: sort_action(by),
+                            os_action: None,
+                            checked: false,
+                            disabled: false,
+                        })
+                        .chain([
+                            MenuItem::separator(),
+                            MenuItem::action("Reverse Sort Order", ReverseSortOrder),
+                        ]),
+                ),
+            ),
         ]),
         Menu::new("Window").items([
             MenuItem::action("Minimize", Minimize),

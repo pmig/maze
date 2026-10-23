@@ -13,8 +13,9 @@ use std::time::{Duration, Instant};
 
 use mazemail_types::{Address, Flags, MessageId, ThreadId};
 use store::{
-    AccountKind, ListFilter, ListKey, ListScope, MessageKey, MessagePage, MessageScope,
-    MetadataFilter, NewLocation, NewMessage, Page, Queries, SortOrder, Store, ThreadAssignment,
+    AccountKind, ListFilter, ListKey, ListOrder, ListScope, MessageKey, MessagePage, MessageScope,
+    MetadataFilter, NewLocation, NewMessage, Page, Queries, SortField, SortOrder, Store,
+    ThreadAssignment,
 };
 
 use crate::common;
@@ -317,6 +318,33 @@ fn thread_list_at_one_million_messages() {
             .sum::<usize>()
     });
 
+    // Other orders than the date: one ORDER BY over every key of the list.
+    let mut sorted = Vec::new();
+    for field in [
+        SortField::Subject,
+        SortField::Sender,
+        SortField::Correspondents,
+        SortField::Starred,
+        SortField::Size,
+    ] {
+        let (elapsed, keys) = time(&format!("sort all 1M thread keys by {field:?}"), 3, || {
+            reader
+                .sorted_thread_keys(&all_threads, Some(f.inbox), ListOrder::new(field, false))
+                .unwrap()
+        });
+        assert_eq!(keys.len(), BIG as usize);
+        sorted.push((field, elapsed));
+    }
+    let all_messages: Vec<MessageId> = mkeys.iter().map(|k| k.message).collect();
+    for field in [SortField::Subject, SortField::Correspondents] {
+        time(&format!("sort all 1M message keys by {field:?}"), 3, || {
+            reader
+                .sorted_message_keys(&all_messages, Some(f.inbox), ListOrder::new(field, false))
+                .unwrap()
+                .len()
+        });
+    }
+
     // Search support: 10k candidates through the metadata filter.
     let candidates: Vec<MessageId> = (0..10_000).map(|i| MessageId(i * 97 + 3)).collect();
     let (filter10k, passing) = time(
@@ -386,6 +414,12 @@ fn thread_list_at_one_million_messages() {
         message_full.as_secs_f64() * 1e3,
         message_rows.as_secs_f64() * 1e3,
     );
+    for (field, elapsed) in sorted {
+        eprintln!(
+            "summary (sorted by {field:?}): all 1M thread keys {:.0} ms",
+            elapsed.as_secs_f64() * 1e3
+        );
+    }
     if !cfg!(debug_assertions) {
         assert!(first_page < Duration::from_millis(50), "first page budget");
         assert!(

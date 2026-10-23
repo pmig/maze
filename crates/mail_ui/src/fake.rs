@@ -11,6 +11,9 @@
 //! the unthreaded view and the Correspondents column ("sent" rows) have something to
 //! show. Message ids encode their thread and position.
 //!
+//! Lists sort by any column like the store does: by what a row shows, text ignoring
+//! case and `Re:`/`Fwd:` prefixes, empty text last, ties newest first.
+//!
 //! Changes (read, starred, archived, moved; per thread or per message; favorite
 //! folders) are kept in memory. Archiving and moving hide a thread or message from its folder; the fake
 //! doesn't add it to the Archives or target folder, but remembers where a move sent it
@@ -28,8 +31,8 @@ use time::{Duration, OffsetDateTime};
 use crate::source::{
     AccountEntry, AccountKind, AttachmentInfo, Direction, FolderEntry, FolderKey, FolderTree,
     ListSort, MailSource, MessageBody, MessageDocument, MessageKeys, MessageRow, SenderClient,
-    SourceError, SourceStatus, SyncState, ThreadFilter, ThreadKeys, ThreadPredicate, ThreadRow,
-    ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
+    SortBy, SourceError, SourceStatus, SyncState, ThreadFilter, ThreadKeys, ThreadPredicate,
+    ThreadRow, ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
 };
 
 /// Number of threads in the large folder (Gmail (personal) / Archives).
@@ -1052,6 +1055,89 @@ impl FakeMailSource {
     }
 }
 
+/// What a row sorts by.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum SortValue {
+    Number(u64),
+    /// Lowercased; `None` (empty) sorts last both ways.
+    Text(Option<String>),
+}
+
+struct SortRow {
+    id: i64,
+    date: OffsetDateTime,
+    value: SortValue,
+}
+
+/// The columns of a thread or message row.
+struct Fields<'a> {
+    flags: Flags,
+    attachment: bool,
+    size: u64,
+    date: OffsetDateTime,
+    subject: &'a str,
+    sender: &'a str,
+    recipients: &'a str,
+    correspondents: &'a str,
+    tags: &'a [SharedString],
+    account: &'a str,
+}
+
+impl Fields<'_> {
+    /// The value of the column `by` sorts by, as the store computes it.
+    fn sort_value(&self, by: SortBy) -> SortValue {
+        let text = |text: &str| {
+            let text = text.trim().to_lowercase();
+            SortValue::Text((!text.is_empty()).then_some(text))
+        };
+        match by {
+            SortBy::Date | SortBy::Received => {
+                SortValue::Number(self.date.unix_timestamp().max(0) as u64)
+            }
+            SortBy::Star => SortValue::Number(u64::from(self.flags.contains(Flags::FLAGGED))),
+            SortBy::Unread => SortValue::Number(u64::from(!self.flags.contains(Flags::SEEN))),
+            SortBy::Attachment => SortValue::Number(u64::from(self.attachment)),
+            SortBy::Size => SortValue::Number(self.size),
+            SortBy::Subject => {
+                let mut rest = self.subject.trim();
+                while let Some((prefix, after)) = rest.split_once(':') {
+                    let prefix = prefix.trim().to_lowercase();
+                    if !["re", "fwd", "fw", "aw", "wg"].contains(&prefix.as_str()) {
+                        break;
+                    }
+                    rest = after.trim_start();
+                }
+                text(rest)
+            }
+            SortBy::Correspondents => text(self.correspondents),
+            SortBy::Sender => text(self.sender),
+            SortBy::Recipients => text(self.recipients),
+            SortBy::Tags => text(&self.tags.join(", ")),
+            SortBy::Account => text(self.account),
+        }
+    }
+}
+
+/// The indexes of `rows` in `sort`'s order: by value (empty text last), then newest
+/// first, then by id.
+fn sorted<R>(rows: &[R], sort: ListSort, key: impl Fn(&R) -> SortRow) -> Vec<usize> {
+    let keys: Vec<SortRow> = rows.iter().map(key).collect();
+    let mut order: Vec<usize> = (0..rows.len()).collect();
+    order.sort_by(|a, b| {
+        let (a, b) = (&keys[*a], &keys[*b]);
+        let by_value = match (&a.value, &b.value) {
+            (SortValue::Text(None), SortValue::Text(Some(_))) => std::cmp::Ordering::Greater,
+            (SortValue::Text(Some(_)), SortValue::Text(None)) => std::cmp::Ordering::Less,
+            (x, y) if sort.descending => y.cmp(x),
+            (x, y) => x.cmp(y),
+        };
+        by_value
+            .then_with(|| b.date.cmp(&a.date))
+            .then_with(|| b.id.cmp(&a.id))
+    });
+    order
+}
+
 /// How the list shows a person.
 fn display(address: &Address) -> String {
     address
@@ -1160,8 +1246,33 @@ impl MailSource for FakeMailSource {
                 .map(|folder| self.folder_keys(&state, folder, filter))
                 .collect();
             let mut keys = Self::merge_by_date(lists, |id| self.thread_date(id));
-            if sort == ListSort::OldestFirst {
-                keys.reverse();
+            if sort.is_by_date() {
+                if !sort.descending {
+                    keys.reverse();
+                }
+            } else {
+                let rows: Vec<ThreadRow> =
+                    keys.iter().filter_map(|id| self.row(&state, *id)).collect();
+                keys = sorted(&rows, sort, |row| SortRow {
+                    id: row.id.0,
+                    date: row.date,
+                    value: Fields {
+                        flags: row.flags,
+                        attachment: row.has_attachments,
+                        size: row.size,
+                        date: row.date,
+                        subject: row.subject.expose(),
+                        sender: row.sender.expose(),
+                        recipients: row.recipients.expose(),
+                        correspondents: row.correspondents().expose(),
+                        tags: &row.tags,
+                        account: &row.account,
+                    }
+                    .sort_value(sort.by),
+                })
+                .into_iter()
+                .map(|ix| rows[ix].id)
+                .collect();
             }
             keys.into()
         };
@@ -1208,8 +1319,35 @@ impl MailSource for FakeMailSource {
                     self.message_date(thread, index)
                 })
             });
-            if sort == ListSort::OldestFirst {
-                keys.reverse();
+            if sort.is_by_date() {
+                if !sort.descending {
+                    keys.reverse();
+                }
+            } else {
+                let rows: Vec<MessageRow> = keys
+                    .iter()
+                    .filter_map(|id| self.message_row(&state, *id))
+                    .collect();
+                keys = sorted(&rows, sort, |row| SortRow {
+                    id: row.id.0,
+                    date: row.date,
+                    value: Fields {
+                        flags: row.flags,
+                        attachment: row.has_attachments,
+                        size: row.size,
+                        date: row.date,
+                        subject: row.subject.expose(),
+                        sender: row.sender.expose(),
+                        recipients: row.recipients.expose(),
+                        correspondents: row.correspondents().expose(),
+                        tags: &row.tags,
+                        account: &row.account,
+                    }
+                    .sort_value(sort.by),
+                })
+                .into_iter()
+                .map(|ix| rows[ix].id)
+                .collect();
             }
             keys.into()
         };
@@ -1494,7 +1632,7 @@ mod tests {
             .thread_keys(
                 &ThreadScope::Folder(key),
                 &ThreadFilter::default(),
-                ListSort::NewestFirst,
+                ListSort::NEWEST_FIRST,
             )
             .unwrap()
     }
@@ -1597,7 +1735,7 @@ mod tests {
                     unread: true,
                     ..ThreadFilter::default()
                 },
-                ListSort::NewestFirst,
+                ListSort::NEWEST_FIRST,
             )
             .unwrap();
         assert_eq!(
@@ -1611,7 +1749,7 @@ mod tests {
                     text: Some("INVOICE".into()),
                     ..ThreadFilter::default()
                 },
-                ListSort::NewestFirst,
+                ListSort::NEWEST_FIRST,
             )
             .unwrap();
         assert!(!invoices.is_empty());
@@ -1716,7 +1854,7 @@ mod tests {
             .message_keys(
                 &ThreadScope::Folder(FolderKey::Folder(folder_id(0))),
                 &ThreadFilter::default(),
-                ListSort::NewestFirst,
+                ListSort::NEWEST_FIRST,
             )
             .unwrap();
         for from in [None, Some(0), Some(100), Some(keys.len() - 1)] {
@@ -1792,14 +1930,14 @@ mod tests {
         let scope = ThreadScope::Folder(FolderKey::Folder(folder_id(0)));
         let threads = all(&source, FolderKey::Folder(folder_id(0)));
         let messages = source
-            .message_keys(&scope, &ThreadFilter::default(), ListSort::NewestFirst)
+            .message_keys(&scope, &ThreadFilter::default(), ListSort::NEWEST_FIRST)
             .unwrap();
         let total: u32 = source.message_counts(&threads).iter().sum();
         assert_eq!(messages.len(), total as usize);
         let rows = source.message_rows(&messages[..500]);
         assert!(rows.windows(2).all(|w| w[0].date >= w[1].date));
         let oldest = source
-            .message_keys(&scope, &ThreadFilter::default(), ListSort::OldestFirst)
+            .message_keys(&scope, &ThreadFilter::default(), ListSort::OLDEST_FIRST)
             .unwrap();
         assert_eq!(oldest.first(), messages.last());
         // Sent mail shows its recipients as correspondents.
@@ -1807,7 +1945,7 @@ mod tests {
             .message_keys(
                 &ThreadScope::Folder(FolderKey::Folder(folder_id(2))),
                 &ThreadFilter::default(),
-                ListSort::NewestFirst,
+                ListSort::NEWEST_FIRST,
             )
             .unwrap();
         let newest = &source.message_rows(&sent[..1])[0];

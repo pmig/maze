@@ -8,6 +8,7 @@ pub(crate) mod lists;
 pub(crate) mod messages;
 pub(crate) mod misc;
 pub(crate) mod ops;
+pub(crate) mod sort;
 pub(crate) mod threads;
 
 use std::collections::BTreeSet;
@@ -19,10 +20,10 @@ use rusqlite::Connection;
 
 use crate::model::{
     Account, AgentThread, AgentThreadId, ApiToken, AuditEntry, AuditQuery, Contact, Folder,
-    FolderNode, Identity, IdentityRule, ListFilter, ListKey, ListScope, MessageDetail, MessageKey,
-    MessagePage, MessageRow, MessageScope, MetadataFilter, OutboxId, OutboxItem, Page, PendingOp,
-    Proposal, ProposalId, ProposalState, Rule, SavedSearch, Signature, SignatureId, SmtpServer,
-    SmtpServerId, SortOrder, Tag, ThreadRow, TokenId, TreeMessage, UnixTime,
+    FolderNode, Identity, IdentityRule, ListFilter, ListKey, ListOrder, ListScope, MessageDetail,
+    MessageKey, MessagePage, MessageRow, MessageScope, MetadataFilter, OutboxId, OutboxItem, Page,
+    PendingOp, Proposal, ProposalId, ProposalState, Rule, SavedSearch, Signature, SignatureId,
+    SmtpServer, SmtpServerId, SortOrder, Tag, ThreadRow, TokenId, TreeMessage, UnixTime,
 };
 use crate::{Reader, Result, WriteTx};
 
@@ -281,6 +282,39 @@ pub trait Queries: sealed::Sealed {
         page: MessagePage,
     ) -> Result<Vec<MessageKey>> {
         lists::message_list_keys(self.connection(sealed::Token), scope, sort, filter, page)
+    }
+
+    /// `ids` (the keys of a thread list, for example) in `order`; unknown threads are
+    /// left out. `context` is the folder the list shows, `None` for unified and account
+    /// lists and search results: like [`Queries::thread_rows`], dates and flags are then
+    /// those of the whole thread. Each key carries the thread's date.
+    ///
+    /// A thread sorts by what its row shows: its newest message's date (in `context`);
+    /// whether any of its messages is starred, unread or has attachments; its subject
+    /// (the first message's); its newest message's sender, recipients, correspondents,
+    /// size and received time; the names of the tags on any of its messages; its
+    /// account's name. Subjects ignore reply/forward prefixes and case; empty text sorts
+    /// last; ties go newest first, then by id. One `ORDER BY` over the ids joined by
+    /// primary key: no index can serve these orders.
+    fn sorted_thread_keys(
+        &self,
+        ids: &[ThreadId],
+        context: Option<FolderId>,
+        order: ListOrder,
+    ) -> Result<Vec<ListKey>> {
+        sort::sorted_thread_keys(self.connection(sealed::Token), ids, context, order)
+    }
+
+    /// `ids` (the keys of a message list) in `order`, like
+    /// [`Queries::sorted_thread_keys`]; with `context` the flags are those of the copy
+    /// in that folder.
+    fn sorted_message_keys(
+        &self,
+        ids: &[MessageId],
+        context: Option<FolderId>,
+        order: ListOrder,
+    ) -> Result<Vec<MessageKey>> {
+        sort::sorted_message_keys(self.connection(sealed::Token), ids, context, order)
     }
 
     /// Row data for visible messages, in the order given. With `context`, the flags are

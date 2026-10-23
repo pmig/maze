@@ -20,7 +20,7 @@
 //! | Queries  | [`accounts`](CoreHandle::accounts), [`folders`](CoreHandle::folders), [`thread_list`](CoreHandle::thread_list), [`rows`](CoreHandle::rows): synchronous, cheap, no network |
 //! | Lists    | [`message_list`](CoreHandle::message_list), [`message_rows`](CoreHandle::message_rows) (threads off), [`thread_tree`](CoreHandle::thread_tree), [`thread_message_counts`](CoreHandle::thread_message_counts) (expanded threads) |
 //! | Messages | [`message`](CoreHandle::message), [`verify_auth`](CoreHandle::verify_auth) |
-//! | Search   | [`search`](CoreHandle::search), [`quick_filter_body`](CoreHandle::quick_filter_body) |
+//! | Search   | [`search`](CoreHandle::search), [`quick_filter_body`](CoreHandle::quick_filter_body), [`sort_threads`](CoreHandle::sort_threads) / [`sort_messages`](CoreHandle::sort_messages) (search results by any column) |
 //! | Commands | [`apply`](CoreHandle::apply), [`undo`](CoreHandle::undo) |
 //! | Events   | [`events`](CoreHandle::events), [`settings_watch`](CoreHandle::settings_watch) |
 //! | Settings | [`settings`](CoreHandle::settings), [`set_favorite_folder`](CoreHandle::set_favorite_folder) (writes `settings.json`) |
@@ -110,8 +110,8 @@ pub use thread_tree::TreeNode;
 
 /// Store types that are part of this API.
 pub use store::{
-    Account, AccountKind, ListKey, ListScope, MessageKey, MessageRow, OpId, ProposalId, RuleId,
-    SortOrder, Tag, ThreadRow, TokenId,
+    Account, AccountKind, ListKey, ListOrder, ListScope, MessageKey, MessageRow, OpId, ProposalId,
+    RuleId, SortField, SortOrder, Tag, ThreadRow, TokenId,
 };
 
 /// Search types that are part of this API.
