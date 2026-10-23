@@ -129,8 +129,9 @@ pub(crate) fn show(core: CoreHandle, cx: &mut App) {
         };
         open(Rc::new(RefCell::new(form)), window, cx);
     });
-    if opened.is_err() {
-        tracing::error!("cannot show the Add Account dialog");
+    match opened {
+        Ok(()) => tracing::debug!("Add Account dialog opened"),
+        Err(error) => tracing::error!(%error, "cannot show the Add Account dialog"),
     }
 }
 

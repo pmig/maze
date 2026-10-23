@@ -114,10 +114,13 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
         auto_update_ui::add_menu_item(&mut menus);
         cx.set_menus(menus);
         cx.on_action(|_: &mail_ui::actions::AddAccount, cx| {
-            match cx.global::<AppState>().core.clone() {
+            // The action usually comes from a button or the palette, i.e. while the main
+            // window is busy handling that event, and GPUI can't update a window from
+            // inside its own event handling. Open the dialog once the event is done.
+            cx.defer(|cx| match cx.global::<AppState>().core.clone() {
                 Some(core) => add_account::show(core, cx),
                 None => tracing::info!("Add Account: the mail data isn't open yet"),
-            }
+            });
         });
         cx.set_global(AppState {
             source,

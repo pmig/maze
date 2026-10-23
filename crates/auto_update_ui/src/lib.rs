@@ -52,7 +52,9 @@ pub const MENU_LABEL: &str = "Check for Updates…";
 
 /// Registers the [`CheckForUpdates`] handler. Call once at startup.
 pub fn init(cx: &mut App) {
-    cx.on_action(|_: &CheckForUpdates, cx| check_for_updates(cx));
+    // Deferred: from the palette the action arrives while the window handles the
+    // keystroke, and the result notification can't update that window until then.
+    cx.on_action(|_: &CheckForUpdates, cx| cx.defer(check_for_updates));
 }
 
 /// Adds "Check for Updates…" after "About Maze" in the app menu (the first menu).
