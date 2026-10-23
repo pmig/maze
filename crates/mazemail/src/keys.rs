@@ -9,15 +9,19 @@
 //! file sits next to the data it decrypts, so it protects nothing: it is never the
 //! default, and every start with it logs a warning.
 //!
-//! Account passwords and OAuth refresh tokens go to the system keychain too
-//! ([`auth::system_secret_store`], `mazemail/<account-uuid>/<kind>`). For automated
-//! end-to-end runs, where a keychain may prompt or be locked,
-//! `MAZEMAIL_INSECURE_DEV_SECRETS=1` keeps them **unencrypted** in a file in the data
-//! directory ([`DEV_SECRETS_FILE`], mode 0600) instead, with the same warnings.
+//! The master key is Maze's only keychain item (ADR-017). Account passwords and OAuth
+//! refresh tokens live in the encrypted store, under that key
+//! ([`mazemail_core::secrets`]); keychain items of earlier versions (service
+//! `mazemail`, [`auth::legacy_system_secret_store`]) are moved there once, at the first
+//! start of a version with schema v5. For automated end-to-end runs that plant or
+//! inspect secrets from outside, `MAZEMAIL_INSECURE_DEV_SECRETS=1` keeps them
+//! **unencrypted** in a file in the data directory ([`DEV_SECRETS_FILE`], mode 0600)
+//! instead, with the same warnings.
 
 use std::path::Path;
 use std::sync::Arc;
 
+use mazemail_core::AccountSecretsLocation;
 use release_channel::ReleaseChannel;
 use vault::{FileKeyStore, Flavor, KeyStore};
 
@@ -40,8 +44,8 @@ pub fn insecure_dev_secrets_requested() -> bool {
 }
 
 /// Where account secrets live: the file store if [`INSECURE_DEV_SECRETS_ENV`] is set,
-/// else the system keychain.
-pub fn secret_store(data_dir: &Path) -> Arc<dyn auth::SecretStore> {
+/// else the encrypted store, with the keychain of earlier versions to move them from.
+pub fn secret_store(data_dir: &Path) -> AccountSecretsLocation {
     if insecure_dev_secrets_requested() {
         let path = data_dir.join(DEV_SECRETS_FILE);
         tracing::warn!(
@@ -49,9 +53,11 @@ pub fn secret_store(data_dir: &Path) -> Arc<dyn auth::SecretStore> {
             "INSECURE: account passwords and tokens are kept unencrypted in a plain file \
              ({INSECURE_DEV_SECRETS_ENV}=1); use this only for development and tests"
         );
-        return Arc::new(auth::FileSecretStore::new(path));
+        return AccountSecretsLocation::Custom(Arc::new(auth::FileSecretStore::new(path)));
     }
-    auth::system_secret_store()
+    AccountSecretsLocation::Encrypted {
+        legacy: auth::legacy_system_secret_store(),
+    }
 }
 
 /// No key store is available on this platform.
@@ -137,9 +143,13 @@ mod tests {
             .store(&key, &mazemail_types::Sensitive::new("pw".to_owned()))
             .unwrap();
         assert!(dir.path().join(DEV_SECRETS_FILE).is_file());
-        // Without the switch the system keychain is used (not touched here).
+        // Without the switch the encrypted store is used (the keychain isn't touched
+        // here).
         if !insecure_dev_secrets_requested() {
-            assert!(!format!("{:?}", secret_store(dir.path())).contains(DEV_SECRETS_FILE));
+            assert!(matches!(
+                secret_store(dir.path()),
+                AccountSecretsLocation::Encrypted { .. }
+            ));
         }
     }
 

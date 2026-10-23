@@ -30,6 +30,7 @@ time = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 vault = { workspace = true }
+zeroize = { workspace = true }
 
 [dev-dependencies]
 # The agent crate's session tokens, tested against the real core (it never depends on core).

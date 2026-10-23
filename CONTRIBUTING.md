@@ -22,6 +22,17 @@ Single tasks: `mise run fmt`, `mise run lint` (rustfmt check + clippy with `-D w
 
 Run `mise run ci` before you commit.
 
+### Keychain prompts in dev builds (macOS)
+
+A dev build reads one keychain item at startup, its storage key (ADR-017). Rust signs
+every build ad hoc with a new signature, so macOS asks again after each rebuild and
+"Always Allow" doesn't stick. To make it stick, create a code signing identity once:
+Keychain Access → Certificate Assistant → Create a Certificate…, name
+**Maze Development**, identity type *Self-Signed Root*, certificate type *Code
+Signing*. `mise start` then signs the binary with it (`script/dev-codesign`; without
+the identity it does nothing). Allow the storage key "Always" once more after the
+switch, and allow `codesign` to use the identity's key.
+
 ## Branches and worktrees
 
 The repository is checked out as a bare repo with one git worktree per branch, so
@@ -70,7 +81,7 @@ bundles and the signed update manifests. Prereleases (alpha, beta, rc) go to the
   are a possible later option, with the updater disabled by a build flag.
 
 The scripts live in `script/`: `bundle-mac`, `package-mac`, `sign-and-notarize-mac`,
-`bundle-linux`, `generate-manifests` and `semver-gt`. They are plain bash and should
+`bundle-linux`, `generate-manifests`, `semver-gt` and `dev-codesign`. They are plain bash and should
 stay shellcheck-clean.
 
 ## Security

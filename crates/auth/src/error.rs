@@ -19,7 +19,7 @@ sign in again once they have approved it.";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReauthReason {
     /// No refresh token is stored for the account: it was never signed in, was signed
-    /// out, or the keychain item was removed.
+    /// out, or the stored token was removed.
     NotSignedIn,
     /// The provider rejected the refresh token (`invalid_grant`): it expired, was
     /// revoked, or the account password changed.
@@ -190,7 +190,7 @@ pub enum AuthError {
     #[error("the system random number generator failed: {0}")]
     Random(String),
 
-    /// Reading or writing the keychain failed.
+    /// Reading or writing the secret store failed.
     #[error(transparent)]
     SecretStore(#[from] crate::SecretStoreError),
 }

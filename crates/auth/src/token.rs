@@ -1,6 +1,6 @@
 //! Token lifecycle: [`TokenSet`], the [`TokenProvider`] trait the `imap` and `smtp`
 //! crates call, and [`OAuthTokenManager`], which keeps access tokens in memory and
-//! refresh tokens in the keychain.
+//! refresh tokens in the account's [`SecretStore`](crate::SecretStore).
 
 use std::fmt;
 use std::time::{Duration, Instant};
@@ -21,7 +21,7 @@ pub const REFRESH_MARGIN: Duration = Duration::from_secs(60);
 pub struct TokenSet {
     /// The bearer access token. Kept in memory only.
     pub access_token: Sensitive<String>,
-    /// The refresh token, if the provider sent one. Persisted in the keychain.
+    /// The refresh token, if the provider sent one. Persisted in the secret store.
     pub refresh_token: Option<Sensitive<String>>,
     /// When the access token expires; `None` if the provider didn't say, in which
     /// case it is used until [`TokenProvider::invalidate`] (as in Thunderbird).
@@ -151,7 +151,7 @@ impl OAuthTokenManager {
 
     /// Keeps tokens from a sign-in the caller ran itself
     /// ([`OAuthClient::begin_authorization`]): the refresh token goes to the
-    /// keychain, the access token into memory.
+    /// secret store, the access token into memory.
     pub async fn store_tokens(&self, mut tokens: TokenSet) -> Result<(), AuthError> {
         let mut cached = self.cached.lock().await;
         match tokens.refresh_token.take() {
@@ -198,7 +198,7 @@ impl OAuthTokenManager {
                     && rotated != refresh_token
                 {
                     // The new access token is good either way, and the old refresh
-                    // token usually stays valid for a while, so a keychain failure
+                    // token usually stays valid for a while, so a storage failure
                     // here doesn't fail the call.
                     if let Err(err) = self.secrets.store(SecretKind::OAuthRefresh, rotated).await {
                         tracing::warn!(%err, "could not store the rotated refresh token");

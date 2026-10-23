@@ -17,6 +17,7 @@ const MAIN: &[M<'static>] = &[
     M::up(include_str!("../migrations/main/0002_account_uuid.sql")),
     M::up(include_str!("../migrations/main/0003_message_list.sql")),
     M::up(include_str!("../migrations/main/0004_compose.sql")),
+    M::up(include_str!("../migrations/main/0005_account_secret.sql")),
 ];
 
 const SENDLOG: &[M<'static>] = &[M::up(include_str!(
@@ -351,6 +352,41 @@ mod tests {
         conn.execute_batch("UPDATE message SET has_attachments = 1, date = 100 WHERE id = 2;")
             .unwrap();
         assert_eq!(read(&conn), vec![(1, 1234, 1), (2, 100, 1)]);
+    }
+
+    #[test]
+    fn v5_lists_existing_accounts_for_the_keychain_move() {
+        let tmp = tempfile::tempdir().unwrap();
+        let key = key(6);
+        let mut conn = conn::open(&tmp.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
+        migrate_with_backup(&mut conn, &key, tmp.path(), "1.0.0", &MAIN[..4]).unwrap();
+        for name in ["a", "b"] {
+            conn.execute(
+                "INSERT INTO account (kind, name) VALUES ('imap', ?1)",
+                [name],
+            )
+            .unwrap();
+        }
+        let report = migrate_main(&mut conn, &key, tmp.path(), "1.1.0").unwrap();
+        assert_eq!((report.from, report.to), (4, SCHEMA_VERSION));
+        let listed: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM legacy_secret_account JOIN account ON uuid = account_uuid",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(listed, 2);
+
+        // An account added afterwards never had keychain items.
+        conn.execute("INSERT INTO account (kind, name) VALUES ('imap', 'c')", [])
+            .unwrap();
+        let listed: i64 = conn
+            .query_row("SELECT count(*) FROM legacy_secret_account", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(listed, 2);
     }
 
     #[test]

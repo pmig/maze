@@ -9,7 +9,9 @@ use zeroize::Zeroizing;
 use super::{SERVICE, SecretKey, SecretStore, SecretStoreError};
 
 /// The freedesktop Secret Service (GNOME Keyring, KWallet) as a [`SecretStore`], via
-/// `keyring-core` and `dbus-secret-service-keyring-store`.
+/// `keyring-core` and `dbus-secret-service-keyring-store`: where Maze kept account
+/// secrets on Linux before ADR-017. The core only reads and deletes these items to
+/// move them into the encrypted store.
 ///
 /// Each secret is an item with service [`SERVICE`] and user `<account-uuid>/<kind>` in
 /// the default collection. Any process running as the same user can read an unlocked

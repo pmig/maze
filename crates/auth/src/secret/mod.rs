@@ -1,8 +1,18 @@
-//! Account secrets in the OS keychain: passwords and OAuth refresh tokens (PLAN §4.6,
-//! §4.17).
+//! Account secrets: IMAP passwords, OAuth refresh tokens and SMTP passwords (PLAN §4.6,
+//! §4.17, ADR-017).
 //!
-//! Every secret is addressed by a [`SecretKey`], `mazemail/<account-uuid>/<kind>`. In
-//! the keychain that is service `mazemail` and account `<account-uuid>/<kind>`.
+//! Every secret is addressed by a [`SecretKey`], `mazemail/<account-uuid>/<kind>`, and
+//! kept by a [`SecretStore`]. The app keeps them in its encrypted store
+//! (`mazemail_core::StoreSecretStore`, a table of the SQLCipher database), so the
+//! storage master key is Maze's only keychain item and a launch asks the keychain
+//! once, not once per account and secret.
+//!
+//! Before ADR-017 every secret was its own OS keychain item: on macOS a generic
+//! password with service [`SERVICE`] (`mazemail`) and account `<account-uuid>/<kind>`
+//! (`KeychainSecretStore`), on Linux a Secret Service item with the same attributes
+//! (`SecretServiceStore`). Those stores remain only so the core can move existing
+//! items into the encrypted store and delete them ([`legacy_system_secret_store`]).
+//! [`MemorySecretStore`] serves tests, [`FileSecretStore`] scripted end-to-end runs.
 
 use std::fmt;
 use std::sync::Arc;
@@ -24,29 +34,28 @@ pub use linux::SecretServiceStore;
 pub use macos::KeychainSecretStore;
 pub use memory::MemorySecretStore;
 
-/// The keychain service name for account secrets.
+/// The keychain service name of account secrets stored by Maze before ADR-017.
 pub const SERVICE: &str = "mazemail";
 
 /// Errors from a [`SecretStore`]. Never contain the secret.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum SecretStoreError {
-    /// There is no system keychain on this platform.
-    #[error("no system keychain is available on this platform")]
-    Unsupported,
-    /// The keychain reported an error.
-    #[error("keychain error{}: {message}", .code.map(|c| format!(" {c}")).unwrap_or_default())]
+    /// The backing store (the encrypted database, the keychain, a file) reported an
+    /// error.
+    #[error("secret store error{}: {message}", .code.map(|c| format!(" {c}")).unwrap_or_default())]
     Platform {
         /// The platform status code (macOS `OSStatus`), if any.
         code: Option<i32>,
         /// The platform's message.
         message: String,
     },
-    /// The stored item isn't valid UTF-8, so it wasn't written by Maze.
+    /// The stored item isn't valid UTF-8 (or JSON, for the file store), so it wasn't
+    /// written by Maze.
     #[error("the stored secret is not valid UTF-8")]
     InvalidData,
-    /// The blocking keychain task panicked or was cancelled.
-    #[error("the keychain task failed: {0}")]
+    /// The blocking secret store task panicked or was cancelled.
+    #[error("the secret store task failed: {0}")]
     Task(String),
 }
 
@@ -120,9 +129,9 @@ impl fmt::Display for SecretKey {
 
 /// Persistent storage for account secrets.
 ///
-/// Implementations never log or print secrets. Calls may block on keychain IPC (and a
-/// system prompt), so async code goes through [`AccountSecrets`], which runs them on
-/// the blocking thread pool.
+/// Implementations never log or print secrets. Calls may block (a database write, or
+/// keychain IPC and a system prompt for the legacy stores), so async code goes through
+/// [`AccountSecrets`], which runs them on the blocking thread pool.
 pub trait SecretStore: fmt::Debug + Send + Sync {
     /// Reads a secret; `Ok(None)` if there is none.
     fn load(&self, key: &SecretKey) -> Result<Option<Sensitive<String>>, SecretStoreError>;
@@ -134,44 +143,25 @@ pub trait SecretStore: fmt::Debug + Send + Sync {
     fn delete(&self, key: &SecretKey) -> Result<(), SecretStoreError>;
 }
 
-/// The OS keychain: the login keychain on macOS, the Secret Service on Linux.
-/// Elsewhere every call fails with [`SecretStoreError::Unsupported`].
-pub fn system_secret_store() -> Arc<dyn SecretStore> {
+/// Where Maze kept account secrets before ADR-017: the login keychain on macOS, the
+/// Secret Service on Linux; `None` elsewhere. Only for moving those items into the
+/// encrypted store; nothing stores new secrets there.
+pub fn legacy_system_secret_store() -> Option<Arc<dyn SecretStore>> {
     #[cfg(target_os = "macos")]
     {
-        Arc::new(KeychainSecretStore::new())
+        Some(Arc::new(KeychainSecretStore::new()))
     }
     #[cfg(target_os = "linux")]
     {
-        Arc::new(SecretServiceStore::new())
+        Some(Arc::new(SecretServiceStore::new()))
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
-        Arc::new(UnsupportedSecretStore)
+        None
     }
 }
 
-/// A store for platforms without a supported keychain.
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-#[derive(Debug)]
-struct UnsupportedSecretStore;
-
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-impl SecretStore for UnsupportedSecretStore {
-    fn load(&self, _: &SecretKey) -> Result<Option<Sensitive<String>>, SecretStoreError> {
-        Err(SecretStoreError::Unsupported)
-    }
-
-    fn store(&self, _: &SecretKey, _: &Sensitive<String>) -> Result<(), SecretStoreError> {
-        Err(SecretStoreError::Unsupported)
-    }
-
-    fn delete(&self, _: &SecretKey) -> Result<(), SecretStoreError> {
-        Err(SecretStoreError::Unsupported)
-    }
-}
-
-/// One account's secrets, with async accessors that run the keychain calls on Tokio's
+/// One account's secrets, with async accessors that run the store's calls on Tokio's
 /// blocking pool. Needs a Tokio runtime.
 #[derive(Debug, Clone)]
 pub struct AccountSecrets {

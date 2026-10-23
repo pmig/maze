@@ -275,9 +275,16 @@ labels and threads. Which message bodies are kept offline is set with `"offline"
   accounts with their server settings. Passwords aren't imported; Maze lists the
   accounts that still need one.
 
-Passwords and OAuth refresh tokens are stored in the keychain, never in the database or
-settings. Removing an account deletes its local mail and keychain items; nothing changes
-on the server.
+Passwords and OAuth refresh tokens are stored in Maze's encrypted database, under the
+storage key, never in plaintext or in the settings. The storage key is Maze's only
+keychain item, so starting Maze reads the keychain once, however many accounts you
+have. Removing an account deletes its local mail and its saved password or sign-in;
+nothing changes on the server.
+
+Earlier versions kept every password and token as its own keychain item. The first
+start of a newer Maze moves them into the encrypted database and deletes the items:
+macOS may ask once more for each of them, and then never again. See
+[security.md](security.md#what-is-encrypted).
 
 On servers that keep track of subscriptions, Maze syncs only your **subscribed**
 folders, plus the Inbox and the special folders (Sent, Drafts, Trash, Junk, Archive),
@@ -287,8 +294,8 @@ are folders), get every folder synced.
 
 ### SMTP servers
 
-Every identity sends through an SMTP server with the account's login (the password from
-the keychain, or the Google/Microsoft sign-in). Maze sets it up by itself, for new
+Every identity sends through an SMTP server with the account's login (its saved
+password, or the Google/Microsoft sign-in). Maze sets it up by itself, for new
 accounts and for accounts you added before Maze could send:
 
 | Provider                                   | SMTP server                                    |

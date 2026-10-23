@@ -135,7 +135,8 @@ More in [docs/getting-started.md](docs/getting-started.md) and
 | --------------------------------------------- | ---------------------------------------- | ------------------------- |
 | Mail store (encrypted), socket, logs          | `~/Library/Application Support/mazemail` | `$XDG_DATA_HOME/mazemail` |
 | `settings.json` (no mail content, no addresses) | `~/.config/mazemail`                   | `~/.config/mazemail`      |
-| Storage key                                   | keychain                                 | Secret Service            |
+| Storage key (Maze's only keychain item)       | keychain                                 | Secret Service            |
+| Account passwords and OAuth refresh tokens    | in the encrypted mail store              | in the encrypted mail store |
 
 Development builds use `mazemail-dev` and a separate keychain item, so they never touch
 your real store. `MAZEMAIL_DATA_DIR` and `MAZEMAIL_CONFIG_DIR` override the
@@ -144,7 +145,9 @@ directories.
 ## Security in short
 
 - Everything with mail content (database, message files, caches, search index) is
-  encrypted with a random 256-bit key that never leaves the keychain.
+  encrypted with a random 256-bit key that never leaves the keychain. Account passwords
+  and OAuth refresh tokens are in the encrypted database too, so Maze keeps one
+  keychain item and reads it once per launch.
 - The CLI never opens the store. It asks the running app over a Unix socket (mode
   0600), and every request that touches mail needs a token you approved, scoped to a
   profile (read-only, triage or writer), accounts and a lifetime.

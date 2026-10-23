@@ -15,4 +15,5 @@ mod open;
 mod ops;
 mod perf;
 mod plaintext;
+mod secrets;
 mod sorting;

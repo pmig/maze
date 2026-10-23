@@ -33,7 +33,7 @@
 //! - **Schema** v1 is the base schema (`migrations/main/0001_schema_v1.sql`); v2 adds
 //!   `account.uuid`; v3 adds `message_location.date` and the message list indexes; v4
 //!   adds local drafts ([`WriteTx::create_draft`]) and the outbox's SMTP envelope
-//!   ([`OutboxEnvelope`]).
+//!   ([`OutboxEnvelope`]); v5 adds account secrets ([`WriteTx::set_account_secret`]).
 //!   Migrations only ever add files; opening an older database backs it up first (see
 //!   [`MigrationReport`]).
 //! - **Message lists** (threads off): [`Queries::message_list_keys`] pages through the
@@ -48,8 +48,14 @@
 //!   what its row shows. Text keys come from SQL functions registered on every
 //!   connection (`mz_subject_key` drops `Re:`/`Fwd:` prefixes, see `repo::sort`).
 //! - **Accounts** have a stable [`Account::uuid`] (random v4, unique, immutable, never
-//!   reused) besides the numeric id; keychain secrets are keyed by it (`auth` crate).
+//!   reused) besides the numeric id; account secrets are keyed by it (`auth` crate).
 //!   [`Queries::account_by_uuid`] looks it up.
+//! - **Account secrets** (ADR-017): IMAP and SMTP passwords and OAuth refresh tokens
+//!   are rows of `account_secret` ([`Queries::account_secret`],
+//!   [`WriteTx::set_account_secret`]), encrypted like the rest of the database, so the
+//!   master key is Maze's only keychain item. They go with their account.
+//!   [`Queries::legacy_secret_accounts`] lists accounts whose secrets may still be in
+//!   the OS keychain from before v5; `mazemail_core` moves them over at startup.
 //! - **Bodies**: header-first sync stores a message without a body; when the body
 //!   arrives, [`WriteTx::update_body_summary`] sets the body and replaces what the
 //!   headers could only guess (snippet, size, attachment flag, body structure), keeping

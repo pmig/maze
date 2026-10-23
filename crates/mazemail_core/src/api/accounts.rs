@@ -11,7 +11,7 @@
 //! agents stay invisible, as everywhere in the local API).
 //!
 //! A new account's password arrives in the request (the CLI read it from the terminal
-//! without echo, or from stdin) and goes straight into the keychain.
+//! without echo, or from stdin) and goes straight into the encrypted store.
 
 use local_api::registry::args::{
     AccountAddArgs, AccountRemoveArgs, OAuthProvider, SecurityArg, SyncArgs,

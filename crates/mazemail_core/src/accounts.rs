@@ -6,9 +6,9 @@
 //! [`CoreHandle::add_imap_account`] and [`CoreHandle::add_oauth_account`] first prove
 //! that the account works: they connect, log in and list the folders. Only then is
 //! anything saved: the account row (with its [`AccountConfig`] in `config_json`), a
-//! default identity, and the secret in the keychain under the account's UUID (the
-//! password, or the OAuth refresh token). If saving the secret fails, the account row
-//! is removed again. Then the account's sync actor starts. The identity gets an SMTP
+//! default identity, and the secret under the account's UUID (the password, or the
+//! OAuth refresh token) in the encrypted store ([`crate::secrets`]). If saving the
+//! secret fails, the account row is removed again. Then the account's sync actor starts. The identity gets an SMTP
 //! server: the one given, or the derived one ([`suggest_smtp_server`]).
 //!
 //! The account kind follows the server: a server with Gmail's `X-GM-EXT-1` is a Gmail
@@ -25,7 +25,7 @@
 //!
 //! [`CoreHandle::remove_account`] stops its sync, deletes its folders, messages,
 //! threads, identities and pending ops from the store (blob references are released and
-//! the blobs collected), drops its index documents and deletes its keychain secrets, so
+//! the blobs collected), drops its index documents and deletes its secrets, so
 //! nothing of it remains that the user couldn't decrypt or delete later.
 //!
 //! # Server suggestions
@@ -137,7 +137,7 @@ impl ImapServer {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "method", content = "provider", rename_all = "snake_case")]
 pub enum AccountAuth {
-    /// A password from the keychain.
+    /// A stored password.
     Password,
     /// OAuth2 with this provider (XOAUTH2).
     OAuth(ProviderKind),
@@ -354,7 +354,7 @@ pub struct AddImapAccount {
     pub server: ImapServer,
     /// The login name; the address if `None`.
     pub username: Option<String>,
-    /// The password (goes to the keychain).
+    /// The password (goes to the encrypted store).
     pub password: Sensitive<String>,
     /// The SMTP server for sending; `None` derives it ([`suggest_smtp_server`]). The
     /// login is the account's.
@@ -394,7 +394,7 @@ impl std::fmt::Debug for AddOAuthAccount {
 pub struct AccountInfo {
     /// The account.
     pub id: AccountId,
-    /// Its stable UUID (keychain items are keyed by it).
+    /// Its stable UUID (its secrets are keyed by it).
     pub uuid: Uuid,
     /// The name in the folder pane.
     pub name: String,
@@ -438,8 +438,8 @@ pub enum AccountErrorKind {
     OAuthNotConfigured,
     /// The browser sign-in failed or was cancelled.
     SignInFailed,
-    /// The keychain refused to store or delete the secret.
-    Keychain,
+    /// The account's password or sign-in couldn't be saved or deleted.
+    Secrets,
 }
 
 fn account_error(kind: AccountErrorKind, message: impl Into<String>) -> Error {
@@ -711,13 +711,13 @@ impl CoreHandle {
     }
 
     /// Adds an IMAP account with a password (see the [module docs](self)): validates
-    /// it against the server, saves it, puts the password into the keychain and starts
+    /// it against the server, saves it with the password and starts
     /// syncing.
     ///
     /// # Errors
     ///
     /// [`Error::Account`] for bad input, a duplicate, an unreachable server, a rejected
-    /// login or a keychain failure; [`Error::NoSyncEngine`] without a sync engine.
+    /// login or a failure to save the password; [`Error::NoSyncEngine`] without a sync engine.
     pub async fn add_imap_account(&self, input: AddImapAccount) -> Result<AccountInfo> {
         let core = self.clone();
         self.run(async move { core.add_imap_account_inner(input).await })
@@ -768,8 +768,8 @@ impl CoreHandle {
         if let Err(err) = secrets.set_password(input.password).await {
             self.roll_back(account.id).await;
             return Err(account_error(
-                AccountErrorKind::Keychain,
-                format!("can't store the password in the keychain: {err}"),
+                AccountErrorKind::Secrets,
+                format!("can't save the password: {err}"),
             ));
         }
         engine.start(&account, None);
@@ -846,7 +846,7 @@ impl CoreHandle {
 
     /// Adds a Google or Microsoft account with a browser sign-in (OAuth2 with PKCE):
     /// opens the system browser, validates the account with the access token, saves
-    /// it with the refresh token in the keychain and starts syncing.
+    /// it with the refresh token and starts syncing.
     ///
     /// # Errors
     ///
@@ -921,8 +921,8 @@ impl CoreHandle {
         if let Err(err) = manager.store_tokens(tokens).await {
             self.roll_back(account.id).await;
             return Err(account_error(
-                AccountErrorKind::Keychain,
-                format!("can't store the sign-in in the keychain: {err}"),
+                AccountErrorKind::Secrets,
+                format!("can't save the sign-in: {err}"),
             ));
         }
         engine.start(&account, Some(manager));
@@ -931,12 +931,12 @@ impl CoreHandle {
     }
 
     /// Removes an account (see the [module docs](self)): stops its sync, deletes its
-    /// data from the store and its secrets from the keychain.
+    /// data and its secrets from the store.
     ///
     /// # Errors
     ///
     /// [`Error::NotFound`] for an unknown account; [`Error::Account`] with
-    /// [`AccountErrorKind::Keychain`] if the store data is gone but a secret couldn't
+    /// [`AccountErrorKind::Secrets`] if the store data is gone but a secret couldn't
     /// be deleted (the message says so).
     pub async fn remove_account(&self, id: AccountId) -> Result<()> {
         let core = self.clone();
@@ -977,14 +977,16 @@ impl CoreHandle {
             })
             .await?;
         tracing::info!(account = %id, "account removed");
+        // In the encrypted store the secrets went with the account row; other stores
+        // (tests, the development file) delete them here.
         if let Some(engine) = engine {
             let secrets = AccountSecrets::new(engine.secrets(), account.uuid);
             if let Err(err) = secrets.delete_all().await {
                 return Err(account_error(
-                    AccountErrorKind::Keychain,
+                    AccountErrorKind::Secrets,
                     format!(
-                        "the account was removed, but its keychain items \
-                         (service mazemail, account {}/…) couldn't be deleted: {err}",
+                        "the account was removed, but its saved secrets \
+                         (mazemail/{}/…) couldn't be deleted: {err}",
                         account.uuid
                     ),
                 ));

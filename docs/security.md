@@ -4,6 +4,7 @@ Maze keeps a full copy of your mail on your computer, so it encrypts it. This pa
 explains what is protected and from whom, where the key lives, what stays in plaintext
 on purpose, what to do when the key is lost, and how the CLI and agents get access.
 The design is in [ADR-012](adr/0012-encryption-at-rest.md),
+[ADR-017](adr/0017-account-secrets-in-the-vault.md),
 [ADR-006](adr/0006-agent-interface.md) and [ADR-013](adr/0013-agent-sandbox.md).
 To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 
@@ -31,7 +32,7 @@ Linux), and all of it is encrypted:
 
 | Data                                                 | Encryption                                                                   |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Database `mazemail.db` (messages, folders, accounts, identities, tokens, audit log) | SQLCipher 4: AES-256 with an HMAC-SHA512 per page          |
+| Database `mazemail.db` (messages, folders, accounts, identities, account passwords and OAuth refresh tokens, API token hashes, audit log) | SQLCipher 4: AES-256 with an HMAC-SHA512 per page |
 | Raw messages and attachments (`blobs/`), caches (`cache/`) | XChaCha20-Poly1305 in 64 KiB chunks, bound to the blob's id, after compression |
 | Search index (`index/`)                              | Tantivy segments in 16 KiB XChaCha20-Poly1305 blocks                         |
 | Pre-migration database backups (`backups/`)          | SQLCipher, same key                                                          |
@@ -40,13 +41,28 @@ Each part uses its own subkey, derived with HKDF-SHA256 from one 256-bit **maste
 key**. Encrypted files carry the id of the key that sealed them, so the key can be
 rotated later.
 
-Account passwords and OAuth refresh tokens aren't in the database at all; they're
-separate keychain items.
+Account passwords, SMTP passwords and OAuth refresh tokens are in the encrypted
+database too, under the same master key as the mail they unlock
+([ADR-017](adr/0017-account-secrets-in-the-vault.md)). Whoever can read the master key
+can read all your mail anyway, so separate keychain items would add a system prompt
+per account and secret but little protection. The master key is Maze's **only**
+keychain item: a launch reads the keychain once. Secrets are wiped from memory after
+use and never logged.
+
+Earlier versions of Maze kept each of these secrets as its own keychain item (service
+`mazemail`, account `<account-uuid>/<kind>`, labelled "Maze account password", "Maze
+sign-in token" or "Maze SMTP password"). The first start of a newer Maze moves them
+into the encrypted database and deletes the items, so macOS may ask one last time for
+each of them (to read it, and possibly to delete it). If you deny a read, Maze asks
+again at the next start; if it can't delete an item after copying it, it logs a
+warning and leaves it, and you can delete it in Keychain Access (or Seahorse on
+Linux).
 
 ## Where the key lives
 
 - The master key is 32 random bytes, created on the first launch, read once on a
-  background thread at startup and wiped from memory when Maze quits.
+  background thread at startup and wiped from memory when Maze quits. It's the only
+  thing Maze keeps in the keychain.
 - **macOS**: a keychain item named "Maze storage key" (service
   `dev.mazemail.maze.storage`) in your login keychain. Signed release builds are meant
   to move it into the data protection keychain, restricted to apps signed by the Maze

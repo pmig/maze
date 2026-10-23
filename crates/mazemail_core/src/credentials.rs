@@ -1,11 +1,11 @@
 //! Credentials for the sync engine: `sync::CredentialProvider` over `auth` (PLAN §4.6).
 //!
-//! - **Password accounts** read the IMAP password from the keychain
-//!   (`mazemail/<account-uuid>/password`, [`AccountSecrets`]) on every connect, so a
-//!   password changed in the keychain is picked up at the next reconnect.
+//! - **Password accounts** read the IMAP password from the account's secrets
+//!   (`mazemail/<account-uuid>/password`, [`AccountSecrets`], in the encrypted store)
+//!   on every connect, so a changed password is picked up at the next reconnect.
 //! - **OAuth accounts** (Google, Microsoft) get an access token from an
 //!   [`OAuthTokenManager`]: cached in memory, refreshed 60 s before expiry with the
-//!   refresh token from the keychain. When the server rejects a token, the cached one
+//!   stored refresh token. When the server rejects a token, the cached one
 //!   is dropped so the retry refreshes it.
 //!
 //! "The user has to act" (no password stored, refresh token revoked, no OAuth client
@@ -23,7 +23,7 @@ use sync::{CredentialError, CredentialProvider};
 
 /// How an account logs in.
 pub(crate) enum Method {
-    /// The password from the keychain.
+    /// The stored password.
     Password(AccountSecrets),
     /// An OAuth access token; `Err` holds why no token manager could be built (no
     /// client ID configured, say).
@@ -69,9 +69,10 @@ impl AccountCredentials {
     }
 }
 
-fn keychain_error(err: &SecretStoreError) -> CredentialError {
-    // A locked keychain or a denied prompt: try again later, the user may unlock it.
-    CredentialError::temporary(format!("the keychain is not available: {err}"))
+fn secrets_error(err: &SecretStoreError) -> CredentialError {
+    // The store is busy or closing (or, with a custom store, a locked keychain): try
+    // again later.
+    CredentialError::temporary(format!("the saved password can't be read: {err}"))
 }
 
 fn token_error(err: &AuthError) -> CredentialError {
@@ -95,7 +96,7 @@ impl CredentialProvider for AccountCredentials {
                 Ok(None) => Err(CredentialError::needs_sign_in(
                     "no password is stored for this account",
                 )),
-                Err(err) => Err(keychain_error(&err)),
+                Err(err) => Err(secrets_error(&err)),
             },
             Method::OAuth(Err(reason)) => Err(CredentialError::needs_sign_in(reason.clone())),
             Method::OAuth(Ok(tokens)) => match tokens.access_token().await {
@@ -125,7 +126,7 @@ mod tests {
     const ACCOUNT: Uuid = Uuid::from_u128(0x1234);
 
     #[tokio::test]
-    async fn passwords_come_from_the_keychain_on_every_connect() {
+    async fn passwords_come_from_the_secret_store_on_every_connect() {
         let store = Arc::new(MemorySecretStore::new());
         let secrets = AccountSecrets::new(store, ACCOUNT);
         let credentials = AccountCredentials::new("alice", Method::Password(secrets.clone()));

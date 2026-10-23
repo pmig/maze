@@ -43,8 +43,9 @@ use crate::message_list::{
 use crate::outgoing::{CoreRoutes, OutboxWake};
 use crate::row_cache::{RowCache, RowCacheStats};
 use crate::runtime::RuntimeHolder;
+use crate::secrets::{LegacyMoveReport, StoreSecretStore};
 use crate::sync_bridge::{FetchPriority, SyncBridge, SyncStatusSink};
-use crate::sync_engine::SyncEngine;
+use crate::sync_engine::{AccountSecretsLocation, SyncEngine};
 use crate::sync_ingest::CoreIngest;
 use crate::thread_list::{ListQuery, TextCache, ThreadListSnapshot, all_keys, order_keys};
 use crate::thread_tree::{self, TreeNode};
@@ -1099,6 +1100,42 @@ fn command_weight(command: &MailCommand) -> usize {
     }
 }
 
+/// The sync engine's secret store. For the encrypted store, first moves account
+/// secrets out of the keychain of earlier versions (once, see [`crate::secrets`]), so
+/// the actors that start next find them. A failed move is logged; the core opens
+/// anyway (an account without its secret asks for it again).
+async fn account_secrets(
+    location: &AccountSecretsLocation,
+    store: &Store,
+    runtime: &RuntimeHolder,
+) -> Arc<dyn auth::SecretStore> {
+    let (legacy, secrets) = match location {
+        AccountSecretsLocation::Custom(secrets) => return Arc::clone(secrets),
+        AccountSecretsLocation::Encrypted { legacy } => (
+            legacy.clone(),
+            Arc::new(StoreSecretStore::new(store.clone())) as Arc<dyn auth::SecretStore>,
+        ),
+    };
+    if let Some(legacy) = legacy {
+        let (store, target) = (store.clone(), Arc::clone(&secrets));
+        let moved = runtime
+            .blocking(move || crate::secrets::move_legacy_secrets(&store, &*target, &*legacy))
+            .await;
+        match moved {
+            Ok(report) if report == LegacyMoveReport::default() => {}
+            Ok(report) => tracing::info!(
+                moved = report.moved,
+                accounts_done = report.accounts_done,
+                accounts_pending = report.accounts_pending,
+                left_in_keychain = report.left_in_keychain,
+                "moved account secrets from the keychain into the encrypted store"
+            ),
+            Err(err) => tracing::warn!(%err, "moving account secrets out of the keychain"),
+        }
+    }
+    secrets
+}
+
 /// Opens the store and index with an unlocked vault and starts the tasks.
 pub(crate) async fn finish(
     config: CoreConfig,
@@ -1171,6 +1208,7 @@ pub(crate) async fn finish(
 
     let engine = match config.sync_engine.clone() {
         Some(engine_config) => {
+            let secrets = account_secrets(&engine_config.secrets, &store, &runtime).await;
             let sink = Arc::new(CoreIndexSink {
                 tx: indexer.sender(),
             });
@@ -1179,6 +1217,7 @@ pub(crate) async fn finish(
                 store.clone(),
                 CoreIngest::new(ingestor, reuse),
                 engine_config,
+                secrets,
                 settings.clone(),
                 events_in.clone(),
                 handle.clone(),

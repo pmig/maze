@@ -784,7 +784,7 @@ pub struct AccountAddArgs {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub username: Option<Sensitive<String>>,
-    /// The password; required without `oauth`. Stored in the keychain, never logged.
+    /// The password; required without `oauth`. Stored encrypted, never logged.
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub password: Option<Sensitive<String>>,

@@ -41,8 +41,10 @@
 //!   of [`api_handler`] that holds agent commands to their token's profile.
 //! - **import**: [`api`]'s `import` command runs the `import` crate (same layer; it
 //!   writes through [`CoreHandle::store`] and indexes through [`CoreIndexSink`]).
-//! - **auth**: nothing in core; its token provider and secret store are handed to the
-//!   sync engine, which core only sees through [`SyncBridge`].
+//! - **auth**: the sync engine gets its token providers and account secrets from
+//!   `auth`. The secrets live in the encrypted store ([`secrets`],
+//!   [`StoreSecretStore`], ADR-017); keychain items of earlier versions are moved
+//!   there when the core opens.
 //!
 //! # Privacy
 //!
@@ -76,6 +78,7 @@ pub mod message_list;
 pub mod ops;
 pub mod outgoing;
 pub mod reader_text;
+pub mod secrets;
 pub mod sync_bridge;
 pub mod sync_engine;
 pub mod sync_ingest;
@@ -103,10 +106,13 @@ pub use lost_key::{LostKey, RecoveryFailed};
 pub use message::{AuthStatus, Body, MessageView, RENDERER_VERSION, RemoteContent, RenderedBody};
 pub use outgoing::{SmtpServerSettings, SmtpSuggestion, smtp_default_port, suggest_smtp_server};
 pub use row_cache::{DEFAULT_ROW_CACHE_CAPACITY, RowCacheStats};
+pub use secrets::{LegacyMoveReport, StoreSecretStore, move_legacy_secrets};
 pub use sync_bridge::{
     FetchPriority, NoSync, RefreshScope, SyncBridge, SyncState, SyncStatus, SyncStatusSink,
 };
-pub use sync_engine::{ImapConnector, NetworkImapConnector, SyncEngineConfig};
+pub use sync_engine::{
+    AccountSecretsLocation, ImapConnector, NetworkImapConnector, SyncEngineConfig,
+};
 pub use sync_ingest::CoreIngest;
 
 pub use mazemail_types::DraftId;

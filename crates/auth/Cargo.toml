@@ -1,6 +1,6 @@
 [package]
 name = "auth"
-description = "Maze account authentication: OAuth2 (PKCE, loopback redirect), token lifecycle, SASL and keychain secrets"
+description = "Maze account authentication: OAuth2 (PKCE, loopback redirect), token lifecycle, SASL and account secrets"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

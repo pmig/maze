@@ -139,7 +139,9 @@ On a Mac that never had Maze (or after removing it and its keychain item):
       `CFBundleIdentifier = dev.mazemail.maze`, `MazeVersion = 0.1.0-alpha.1` and the
       `mailto` URL scheme.
 - [ ] First launch creates the keychain item "Maze storage key" and
-      `~/Library/Application Support/mazemail/` with `mail/` inside.
+      `~/Library/Application Support/mazemail/` with `mail/` inside. After adding an
+      account and restarting, Keychain Access shows no other Maze item (service
+      `mazemail`), and a start asks the keychain at most once (ADR-017).
 - [ ] `/Applications/Maze.app/Contents/MacOS/mazemail --version` prints
       `mazemail 0.1.0-alpha.1`; `mazemail status` shows the app running.
 - [ ] `eval "$(mazemail login --profile triage)"` shows the approval dialog; after

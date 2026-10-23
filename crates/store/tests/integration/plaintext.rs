@@ -1,4 +1,5 @@
-//! Nothing under the data dir contains message content in plaintext (PLAN §4.17).
+//! Nothing under the data dir contains message content or account secrets in plaintext
+//! (PLAN §4.17, ADR-017).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,6 +20,8 @@ const SNIPPET: &str = "QuokkaSnippetCanary preview text";
 const MESSAGE_ID: &str = "quokka-canary-id@plaintext-canary.example";
 const SIGNATURE: &str = "QuokkaSignatureCanary";
 const KEYWORD: &str = "quokkakeywordcanary";
+const PASSWORD: &str = "QuokkaPasswordCanary-hunter2";
+const REFRESH_TOKEN: &str = "1//QuokkaRefreshCanary";
 
 fn files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(dir).unwrap() {
@@ -33,10 +36,26 @@ fn files(dir: &Path, out: &mut Vec<PathBuf>) {
 
 fn hits(dir: &Path) -> Vec<String> {
     let needles = [
-        SUBJECT, ADDRESS, NAME, BODY, SNIPPET, MESSAGE_ID, SIGNATURE, KEYWORD,
+        SUBJECT,
+        ADDRESS,
+        NAME,
+        BODY,
+        SNIPPET,
+        MESSAGE_ID,
+        SIGNATURE,
+        KEYWORD,
+        PASSWORD,
+        REFRESH_TOKEN,
     ];
     // Also short, distinctive fragments, in case something stores pieces.
-    let fragments = ["ZebraQuokka", "plaintext-canary", "QuokkaBody", "Zebrina"];
+    let fragments = [
+        "ZebraQuokka",
+        "plaintext-canary",
+        "QuokkaBody",
+        "Zebrina",
+        "QuokkaPassword",
+        "QuokkaRefresh",
+    ];
     let mut found = Vec::new();
     let mut all = Vec::new();
     files(dir, &mut all);
@@ -111,6 +130,12 @@ fn no_plaintext_on_disk() {
             )?;
             w.bump_contact(ADDRESS, Some(NAME), 1)?;
             w.audit("user", "send", Some(&format!(r#"{{"to":"{ADDRESS}"}}"#)))?;
+            let uuid = w
+                .account(f.account)?
+                .ok_or(store::Error::Invalid("no account"))?
+                .uuid;
+            w.set_account_secret(uuid, "password", PASSWORD)?;
+            w.set_account_secret(uuid, "oauth-refresh", REFRESH_TOKEN)?;
             Ok(())
         })
         .unwrap();
@@ -128,6 +153,15 @@ fn no_plaintext_on_disk() {
     assert_eq!(
         reader.message(keys[0]).unwrap().unwrap().subject.as_deref(),
         Some(format!("{SUBJECT} #0").as_str())
+    );
+    let uuid = reader.account(f.account).unwrap().unwrap().uuid;
+    assert_eq!(
+        reader
+            .account_secret(uuid, "password")
+            .unwrap()
+            .unwrap()
+            .as_str(),
+        PASSWORD
     );
     drop(reader);
     assert_eq!(store.blobs().read(&blob).unwrap(), raw.as_bytes());
