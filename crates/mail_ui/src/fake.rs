@@ -6,8 +6,14 @@
 //! stored per message: the 1M folder costs no memory beyond its key list, the same
 //! way the real thread list only holds keys.
 //!
-//! Changes (read, starred, archived) are kept in memory. Archiving hides a thread
-//! from its folder; the fake doesn't add it to an Archives folder.
+//! Threads have one to eight messages with a generated reply structure (some branch),
+//! written alternately by you and the other people of the thread, so the thread tree,
+//! the unthreaded view and the Correspondents column ("sent" rows) have something to
+//! show. Message ids encode their thread and position.
+//!
+//! Changes (read, starred, archived; per thread or per message) are kept in memory.
+//! Archiving hides a thread or message from its folder; the fake doesn't add it to an
+//! Archives folder.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
@@ -20,8 +26,9 @@ use time::{Duration, OffsetDateTime};
 
 use crate::source::{
     AccountEntry, AccountKind, AttachmentInfo, Direction, FolderEntry, FolderKey, FolderTree,
-    MailSource, MessageBody, MessageDocument, SourceError, SourceStatus, SyncState, ThreadFilter,
-    ThreadKeys, ThreadPredicate, ThreadRow, ThreadScope, Verdict, Verification,
+    ListSort, MailSource, MessageBody, MessageDocument, MessageKeys, MessageRow, SourceError,
+    SourceStatus, SyncState, ThreadFilter, ThreadKeys, ThreadPredicate, ThreadRow, ThreadScope,
+    ThreadTree, TreeNode, Verdict, Verification,
 };
 
 /// Number of threads in the large folder (Gmail (personal) / Archives).
@@ -295,6 +302,22 @@ fn decode(id: ThreadId) -> Option<(usize, u32)> {
     (folder < FOLDERS.len() && row < FOLDERS[folder].threads).then_some((folder, row))
 }
 
+/// Bits of a message id that hold the message's index in its thread.
+const MESSAGE_BITS: u32 = 4;
+
+/// The id of message `index` (oldest first) of a thread.
+fn message_id(thread: ThreadId, index: u32) -> MessageId {
+    MessageId((thread.0 << MESSAGE_BITS) | i64::from(index))
+}
+
+/// Decodes a message id into its thread and index.
+fn decode_message(id: MessageId) -> Option<(ThreadId, u32)> {
+    let thread = ThreadId(id.0 >> MESSAGE_BITS);
+    let index = u32::try_from(id.0 & ((1 << MESSAGE_BITS) - 1)).ok()?;
+    decode(thread)?;
+    (index < FakeMailSource::message_count(thread)).then_some((thread, index))
+}
+
 fn folder_id(folder: usize) -> FolderId {
     FolderId(folder as i64 + 1)
 }
@@ -308,9 +331,13 @@ fn folder_index(id: FolderId) -> Option<usize> {
 /// Mutable state: changes made through the UI.
 #[derive(Default)]
 struct State {
-    /// Flags that differ from the generated ones.
+    /// Thread flags that differ from the generated ones (a thread command sets every
+    /// message of the thread).
     flags: HashMap<ThreadId, Flags>,
+    /// Message flags changed one message at a time, per thread and message index.
+    message_flags: HashMap<ThreadId, HashMap<u32, Flags>>,
     archived: HashSet<ThreadId>,
+    archived_messages: HashSet<MessageId>,
     /// Unread count changes per folder, relative to the generated counts.
     unread_delta: Vec<i64>,
 }
@@ -321,7 +348,8 @@ pub struct FakeMailSource {
     unread_base: Vec<u64>,
     state: RwLock<State>,
     /// Unfiltered key lists, built on first use.
-    key_cache: Mutex<HashMap<ThreadScope, ThreadKeys>>,
+    key_cache: Mutex<HashMap<(ThreadScope, ListSort), ThreadKeys>>,
+    message_key_cache: Mutex<HashMap<(ThreadScope, ListSort), MessageKeys>>,
 }
 
 impl std::fmt::Debug for FakeMailSource {
@@ -337,6 +365,13 @@ impl Default for FakeMailSource {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Who wrote a message: you, or one of the two other people of the thread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Author {
+    Me,
+    Them(usize),
 }
 
 impl FakeMailSource {
@@ -362,6 +397,7 @@ impl FakeMailSource {
                 ..State::default()
             }),
             key_cache: Mutex::new(HashMap::new()),
+            message_key_cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -372,6 +408,18 @@ impl FakeMailSource {
 
     fn hash(folder: usize, row: u32) -> u64 {
         mix(((folder as u64) << 32) | u64::from(row))
+    }
+
+    /// Messages in a generated thread: 30 % of threads have 2 to 8.
+    fn message_count(thread: ThreadId) -> u32 {
+        decode(thread).map_or(0, |(folder, row)| {
+            let h = Self::hash(folder, row);
+            if (h >> 44) % 100 < 30 {
+                2 + ((h >> 50) % 7) as u32
+            } else {
+                1
+            }
+        })
     }
 
     fn generated_flags(folder: usize, row: u32) -> Flags {
@@ -399,20 +447,82 @@ impl FakeMailSource {
         flags
     }
 
+    /// The flags of message `index`: set one by one, else from the thread's flags (only
+    /// the newest message is unread or starred).
+    fn message_flags(state: &State, thread: ThreadId, index: u32) -> Flags {
+        if let Some(flags) = state.message_flags.get(&thread).and_then(|m| m.get(&index)) {
+            return *flags;
+        }
+        let Some((folder, row)) = decode(thread) else {
+            return Flags::SEEN;
+        };
+        let base = state
+            .flags
+            .get(&thread)
+            .copied()
+            .unwrap_or_else(|| Self::generated_flags(folder, row));
+        if index + 1 == Self::message_count(thread) {
+            base
+        } else {
+            (base | Flags::SEEN) - Flags::FLAGGED
+        }
+    }
+
+    /// Thread flags: unread if a message is, starred if a message is.
     fn flags(&self, state: &State, id: ThreadId, folder: usize, row: u32) -> Flags {
-        state
+        let base = state
             .flags
             .get(&id)
             .copied()
-            .unwrap_or_else(|| Self::generated_flags(folder, row))
+            .unwrap_or_else(|| Self::generated_flags(folder, row));
+        if !state.message_flags.contains_key(&id) && state.archived_messages.is_empty() {
+            return base;
+        }
+        let mut flags = base - Flags::FLAGGED - Flags::SEEN;
+        let mut all_seen = true;
+        for index in self.live_messages(state, id) {
+            let m = Self::message_flags(state, id, index);
+            all_seen &= m.contains(Flags::SEEN);
+            flags |= m & Flags::FLAGGED;
+        }
+        if all_seen {
+            flags |= Flags::SEEN;
+        }
+        flags
+    }
+
+    /// The indexes of the thread's messages that aren't archived, oldest first.
+    fn live_messages(&self, state: &State, thread: ThreadId) -> impl Iterator<Item = u32> {
+        let archived: Vec<u32> = if state.archived_messages.is_empty() {
+            Vec::new()
+        } else {
+            (0..Self::message_count(thread))
+                .filter(|i| state.archived_messages.contains(&message_id(thread, *i)))
+                .collect()
+        };
+        (0..Self::message_count(thread)).filter(move |i| !archived.contains(i))
     }
 
     fn date(&self, folder: usize, row: u32) -> OffsetDateTime {
         let spec = &FOLDERS[folder];
         let cadence = (spec.span_secs / i64::from(spec.threads.max(1))).max(30);
-        let jitter = (Self::hash(folder, row) >> 3) as i64 % cadence;
+        // Less than half a cadence, so a thread's messages fit before the next thread.
+        let jitter = (Self::hash(folder, row) >> 3) as i64 % (cadence / 2);
         // Strictly decreasing with the row, so key order is date order.
         self.now - Duration::seconds(i64::from(row) * cadence + jitter + 240)
+    }
+
+    /// Date of message `index` of a thread: the newest is the thread's date, older
+    /// ones are spread over less than half a cadence before it.
+    fn message_date(&self, thread: ThreadId, index: u32) -> OffsetDateTime {
+        let Some((folder, row)) = decode(thread) else {
+            return OffsetDateTime::UNIX_EPOCH;
+        };
+        let spec = &FOLDERS[folder];
+        let cadence = (spec.span_secs / i64::from(spec.threads.max(1))).max(30);
+        let count = Self::message_count(thread);
+        let step = (cadence / (2 * i64::from(count.max(1)))).max(1);
+        self.date(folder, row) - Duration::seconds(i64::from(count - 1 - index) * step)
     }
 
     fn fill(template: &str, h: u64, date: OffsetDateTime) -> String {
@@ -436,28 +546,85 @@ impl FakeMailSource {
         out
     }
 
+    /// The thread's subject without a reply prefix.
+    fn base_subject(&self, folder: usize, row: u32) -> String {
+        let h = Self::hash(folder, row);
+        Self::fill(pick(SUBJECTS, h >> 37), h, self.date(folder, row))
+    }
+
+    /// The two other people of a thread.
+    fn people(folder: usize, row: u32) -> [(&'static str, &'static str); 2] {
+        let h = Self::hash(folder, row);
+        let first = pick(SENDERS, h);
+        let mut second = pick(SENDERS, h >> 9);
+        if second == first {
+            second = pick(SENDERS, (h >> 9) + 1);
+        }
+        [first, second]
+    }
+
+    /// Who wrote message `index`: in Sent and Drafts the newest message is yours, else
+    /// the first person's; replies alternate between you and the others.
+    fn author(folder: usize, row: u32, index: u32, count: u32) -> Author {
+        let from_newest = count - 1 - index;
+        let outgoing_folder = matches!(FOLDERS[folder].role, Some(Sent | Drafts));
+        let mine = from_newest.is_multiple_of(2) == outgoing_folder;
+        if mine {
+            Author::Me
+        } else if index == 0 || from_newest == 0 {
+            Author::Them(0)
+        } else {
+            Author::Them((Self::hash(folder, row) >> (index * 3)) as usize % 2)
+        }
+    }
+
+    fn me(folder: usize) -> Address {
+        Address::new(Some("Philip"), ACCOUNTS[FOLDERS[folder].account].address)
+    }
+
+    /// Sender and recipients of message `index`.
+    fn addresses(folder: usize, row: u32, index: u32, count: u32) -> (Address, Vec<Address>) {
+        let people = Self::people(folder, row);
+        let them = |i: usize| Address::new(Some(people[i].0), people[i].1);
+        match Self::author(folder, row, index, count) {
+            Author::Me => {
+                let mut to = vec![them(0)];
+                if count > 2 {
+                    to.push(them(1));
+                }
+                (Self::me(folder), to)
+            }
+            Author::Them(i) => (them(i), vec![Self::me(folder)]),
+        }
+    }
+
+    fn account_name(folder: usize) -> SharedString {
+        ACCOUNTS[FOLDERS[folder].account].name.into()
+    }
+
+    fn tags(h: u64) -> Vec<SharedString> {
+        match (h >> 56) % 40 {
+            0 => vec!["Important".into()],
+            1 => vec!["To Do".into()],
+            2 => vec!["Work".into(), "Later".into()],
+            _ => Vec::new(),
+        }
+    }
+
     fn row(&self, state: &State, id: ThreadId) -> Option<ThreadRow> {
         let (folder, row) = decode(id)?;
         if state.archived.contains(&id) {
             return None;
         }
-        let spec = &FOLDERS[folder];
         let h = Self::hash(folder, row);
-        let date = self.date(folder, row);
-        let message_count = if (h >> 44) % 100 < 30 {
-            2 + ((h >> 50) % 7) as u32
-        } else {
-            1
-        };
-        let mut subject = Self::fill(pick(SUBJECTS, h >> 37), h, date);
-        if message_count > 1 {
+        let count = Self::message_count(id);
+        let live: Vec<u32> = self.live_messages(state, id).collect();
+        let newest = *live.last()?;
+        let mut subject = self.base_subject(folder, row);
+        if count > 1 {
             subject.insert_str(0, "Re: ");
         }
-        let (name, _) = pick(SENDERS, h);
-        let sender = match spec.role {
-            Some(Sent | Drafts) => format!("To: {name}"),
-            _ => name.to_owned(),
-        };
+        let (from, to) = Self::addresses(folder, row, newest, count);
         let has_attachments = (h >> 36) % 100 < 14;
         let size = 2_000
             + (h >> 13) % 60_000
@@ -469,13 +636,102 @@ impl FakeMailSource {
         Some(ThreadRow {
             id,
             subject: Sensitive::new(subject.into()),
-            sender: Sensitive::new(sender.into()),
-            date,
+            sender: Sensitive::new(display(&from).into()),
+            recipients: Sensitive::new(join(&to).into()),
+            outgoing: Self::author(folder, row, newest, count) == Author::Me,
+            date: self.message_date(id, newest),
             flags: self.flags(state, id, folder, row),
             has_attachments,
-            message_count,
+            message_count: live.len() as u32,
             size,
+            account: Self::account_name(folder),
+            tags: Self::tags(h),
         })
+    }
+
+    fn message_row(&self, state: &State, id: MessageId) -> Option<MessageRow> {
+        let (thread, index) = decode_message(id)?;
+        let (folder, row) = decode(thread)?;
+        if state.archived.contains(&thread) || state.archived_messages.contains(&id) {
+            return None;
+        }
+        let count = Self::message_count(thread);
+        let h = mix(Self::hash(folder, row) ^ u64::from(index + 1));
+        let mut subject = self.base_subject(folder, row);
+        if index > 0 {
+            subject.insert_str(0, "Re: ");
+        }
+        let (from, to) = Self::addresses(folder, row, index, count);
+        let thread_attachments = (Self::hash(folder, row) >> 36) % 100 < 14;
+        let has_attachments = thread_attachments && (index + 1 == count || h.is_multiple_of(3));
+        Some(MessageRow {
+            id,
+            thread,
+            subject: Sensitive::new(subject.into()),
+            sender: Sensitive::new(display(&from).into()),
+            recipients: Sensitive::new(join(&to).into()),
+            outgoing: Self::author(folder, row, index, count) == Author::Me,
+            date: self.message_date(thread, index),
+            flags: Self::message_flags(state, thread, index),
+            has_attachments,
+            size: 1_500
+                + (h >> 13) % 40_000
+                + if has_attachments {
+                    (h >> 17) % 2_000_000
+                } else {
+                    0
+                },
+            account: Self::account_name(folder),
+            tags: if index + 1 == count {
+                Self::tags(Self::hash(folder, row))
+            } else {
+                Vec::new()
+            },
+        })
+    }
+
+    /// The generated reply structure: message `i` replies to the one before it or, now
+    /// and then, to an earlier one, so trees branch.
+    fn parent_index(thread: ThreadId, index: u32) -> Option<u32> {
+        if index == 0 {
+            return None;
+        }
+        let h = mix(thread.0 as u64 ^ u64::from(index) << 40);
+        Some(if h.is_multiple_of(3) {
+            (h >> 8) as u32 % index
+        } else {
+            index - 1
+        })
+    }
+
+    fn tree(&self, state: &State, thread: ThreadId) -> Vec<TreeNode> {
+        let live: Vec<u32> = self.live_messages(state, thread).collect();
+        // Parents that were archived are replaced by their nearest live ancestor.
+        let parent_of = |mut index: u32| loop {
+            match Self::parent_index(thread, index) {
+                None => break None,
+                Some(p) if live.contains(&p) => break Some(p),
+                Some(p) => index = p,
+            }
+        };
+        let mut out = Vec::with_capacity(live.len());
+        let mut stack: Vec<(u32, u16)> = live
+            .iter()
+            .rev()
+            .filter(|i| parent_of(**i).is_none())
+            .map(|i| (*i, 0))
+            .collect();
+        while let Some((index, depth)) = stack.pop() {
+            out.push(TreeNode {
+                message: message_id(thread, index),
+                parent: parent_of(index).map(|p| message_id(thread, p)),
+                depth,
+            });
+            for child in live.iter().rev().filter(|c| parent_of(**c) == Some(index)) {
+                stack.push((*child, depth + 1));
+            }
+        }
+        out
     }
 
     fn read_state(&self) -> std::sync::RwLockReadGuard<'_, State> {
@@ -488,6 +744,10 @@ impl FakeMailSource {
 
     fn invalidate_keys(&self) {
         self.key_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+        self.message_key_cache
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clear();
@@ -539,8 +799,51 @@ impl FakeMailSource {
         }
     }
 
+    /// Message keys of one folder, newest first, after the filter.
+    fn folder_message_keys(
+        &self,
+        state: &State,
+        folder: usize,
+        filter: &ThreadFilter,
+    ) -> Vec<MessageId> {
+        let mut out = Vec::with_capacity(FOLDERS[folder].threads as usize * 2);
+        let needs_text = filter.text.as_deref().is_some_and(|t| !t.trim().is_empty());
+        for row in 0..FOLDERS[folder].threads {
+            let thread = thread_id(folder, row);
+            if state.archived.contains(&thread) {
+                continue;
+            }
+            for index in (0..Self::message_count(thread)).rev() {
+                let id = message_id(thread, index);
+                if !state.archived_messages.is_empty() && state.archived_messages.contains(&id) {
+                    continue;
+                }
+                if !filter.is_empty() {
+                    let keep = if needs_text {
+                        self.message_row(state, id)
+                            .is_some_and(|row| filter.matches_message(&row))
+                    } else {
+                        let flags = Self::message_flags(state, thread, index);
+                        let attachments = filter.attachments
+                            && self
+                                .message_row(state, id)
+                                .is_some_and(|row| row.has_attachments);
+                        (!filter.unread || !flags.contains(Flags::SEEN))
+                            && (!filter.starred || flags.contains(Flags::FLAGGED))
+                            && (!filter.attachments || attachments)
+                    };
+                    if !keep {
+                        continue;
+                    }
+                }
+                out.push(id);
+            }
+        }
+        out
+    }
+
     /// Merges per-folder key lists (each newest first) into one, newest first.
-    fn merge_by_date(&self, lists: Vec<Vec<ThreadId>>) -> Vec<ThreadId> {
+    fn merge_by_date<K: Copy>(lists: Vec<Vec<K>>, date_of: impl Fn(K) -> OffsetDateTime) -> Vec<K> {
         let mut lists: Vec<_> = lists.into_iter().filter(|l| !l.is_empty()).collect();
         if lists.len() <= 1 {
             return lists.pop().unwrap_or_default();
@@ -548,8 +851,6 @@ impl FakeMailSource {
         let total = lists.iter().map(Vec::len).sum();
         let mut out = Vec::with_capacity(total);
         let mut cursors = vec![0usize; lists.len()];
-        let date_of =
-            |id: ThreadId| decode(id).map_or(OffsetDateTime::UNIX_EPOCH, |(f, r)| self.date(f, r));
         let mut heads: Vec<Option<OffsetDateTime>> = lists
             .iter()
             .map(|l| l.first().map(|id| date_of(*id)))
@@ -568,6 +869,10 @@ impl FakeMailSource {
         out
     }
 
+    fn thread_date(&self, id: ThreadId) -> OffsetDateTime {
+        decode(id).map_or(OffsetDateTime::UNIX_EPOCH, |(f, r)| self.date(f, r))
+    }
+
     fn folder_entry(&self, folder: usize) -> FolderEntry {
         let spec = &FOLDERS[folder];
         FolderEntry {
@@ -581,22 +886,12 @@ impl FakeMailSource {
         }
     }
 
-    fn body(&self, row: &ThreadRow, folder: usize, r: u32, recipient: &str) -> String {
-        let h = Self::hash(folder, r);
-        let (name, _) = pick(SENDERS, h);
-        let first_name = name.split_whitespace().next().unwrap_or(name);
-        let greeting = recipient.split('@').next().unwrap_or("there");
-        let greeting = greeting
-            .split('.')
-            .next()
-            .map(|g| {
-                let mut chars = g.chars();
-                chars
-                    .next()
-                    .map(|c| c.to_uppercase().chain(chars).collect::<String>())
-                    .unwrap_or_default()
-            })
-            .unwrap_or_default();
+    fn body(&self, subject: &str, h: u64, from: &Address, to: &Address, quote: bool) -> String {
+        let first_name = |a: &Address| {
+            let name = a.name.as_deref().unwrap_or(&a.email);
+            name.split_whitespace().next().unwrap_or(name).to_owned()
+        };
+        let greeting = first_name(to);
         let sentence = |bits: u64| {
             let s = pick(SENTENCES, bits);
             let mut chars = s.chars();
@@ -615,7 +910,7 @@ impl FakeMailSource {
             html.push_str("</ul>");
         }
         html.push_str(&format!("<p>{}</p>", sentence(h >> 21)));
-        if row.subject.expose().starts_with("Invoice") {
+        if subject.contains("Invoice") {
             html.push_str(
                 "<table><tr><th>Item</th><th>Amount</th></tr>\
                  <tr><td>Cloud servers</td><td>€ 182.40</td></tr>\
@@ -623,16 +918,89 @@ impl FakeMailSource {
                  <tr><td><b>Total</b></td><td><b>€ 194.40</b></td></tr></table>",
             );
         }
-        html.push_str(&format!("<p>Best,<br>{first_name}</p>"));
-        if row.message_count > 1 {
+        html.push_str(&format!("<p>Best,<br>{}</p>", first_name(from)));
+        if quote {
             html.push_str(&format!(
-                "<blockquote><p>On {}, {greeting} wrote:</p><p>{}</p></blockquote>",
-                (row.date - Duration::days(1)).date(),
+                "<blockquote><p>{greeting} wrote:</p><p>{}</p></blockquote>",
                 sentence(h >> 27)
             ));
         }
         html
     }
+
+    fn document(&self, state: &State, id: MessageId) -> Result<MessageDocument, SourceError> {
+        let row = self
+            .message_row(state, id)
+            .ok_or(SourceError::MessageNotFound(id))?;
+        let (thread, index) = decode_message(id).ok_or(SourceError::MessageNotFound(id))?;
+        let (folder, r) = decode(thread).ok_or(SourceError::MessageNotFound(id))?;
+        let count = Self::message_count(thread);
+        let h = mix(Self::hash(folder, r) ^ u64::from(index + 1));
+        let (from, to) = Self::addresses(folder, r, index, count);
+        let cc = if (h >> 45).is_multiple_of(4) {
+            let (cc_name, cc_email) = pick(SENDERS, h >> 3);
+            vec![Address::new(Some(cc_name), cc_email)]
+        } else {
+            Vec::new()
+        };
+        let attachments = if row.has_attachments {
+            let names = [
+                "plan-v3.pdf",
+                "invoice.pdf",
+                "photos.zip",
+                "notes.docx",
+                "slides.key",
+            ];
+            vec![AttachmentInfo {
+                name: Sensitive::new(pick(&names, h >> 33).into()),
+                size: row.size.saturating_sub(1_500),
+            }]
+        } else {
+            Vec::new()
+        };
+        let body = self.body(row.subject.expose(), h, &from, &to[0], index > 0);
+        Ok(MessageDocument {
+            thread,
+            message: id,
+            subject: row.subject.clone(),
+            from: Sensitive::new(from),
+            to: Sensitive::new(to),
+            cc: Sensitive::new(cc),
+            date: row.date,
+            body: MessageBody::Html(Sensitive::new(SharedString::from(body))),
+            attachments,
+            verification: Verification::Checked {
+                verdict: Verdict::Verified,
+                dkim: "pass".into(),
+                spf: "pass".into(),
+                dmarc: "pass".into(),
+                explanation: "The sender's domain signed this message.".into(),
+            },
+        })
+    }
+
+    /// Records an unread change of a thread in its folder's count.
+    fn count_unread_change(&self, state: &mut State, thread: ThreadId, was_unread: bool) {
+        let Some((folder, row)) = decode(thread) else {
+            return;
+        };
+        let is_unread = !self.flags(state, thread, folder, row).contains(Flags::SEEN);
+        if was_unread != is_unread && !state.archived.contains(&thread) {
+            state.unread_delta[folder] += if is_unread { 1 } else { -1 };
+        }
+    }
+}
+
+/// How the list shows a person.
+fn display(address: &Address) -> String {
+    address
+        .name
+        .clone()
+        .unwrap_or_else(|| address.email.clone())
+}
+
+fn join(addresses: &[Address]) -> String {
+    addresses.iter().map(display).collect::<Vec<_>>().join(", ")
 }
 
 impl MailSource for FakeMailSource {
@@ -696,14 +1064,16 @@ impl MailSource for FakeMailSource {
         &self,
         scope: &ThreadScope,
         filter: &ThreadFilter,
+        sort: ListSort,
     ) -> Result<ThreadKeys, SourceError> {
         let cacheable = filter.is_empty();
+        let cache_key = (scope.clone(), sort);
         if cacheable
             && let Some(keys) = self
                 .key_cache
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .get(scope)
+                .get(&cache_key)
         {
             return Ok(keys.clone());
         }
@@ -714,13 +1084,17 @@ impl MailSource for FakeMailSource {
                 .into_iter()
                 .map(|folder| self.folder_keys(&state, folder, filter))
                 .collect();
-            self.merge_by_date(lists).into()
+            let mut keys = Self::merge_by_date(lists, |id| self.thread_date(id));
+            if sort == ListSort::OldestFirst {
+                keys.reverse();
+            }
+            keys.into()
         };
         if cacheable {
             self.key_cache
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .insert(scope.clone(), keys.clone());
+                .insert(cache_key, keys.clone());
         }
         Ok(keys)
     }
@@ -728,6 +1102,80 @@ impl MailSource for FakeMailSource {
     fn thread_rows(&self, keys: &[ThreadId]) -> Vec<ThreadRow> {
         let state = self.read_state();
         keys.iter().filter_map(|id| self.row(&state, *id)).collect()
+    }
+
+    fn message_keys(
+        &self,
+        scope: &ThreadScope,
+        filter: &ThreadFilter,
+        sort: ListSort,
+    ) -> Result<MessageKeys, SourceError> {
+        let cacheable = filter.is_empty();
+        let cache_key = (scope.clone(), sort);
+        if cacheable
+            && let Some(keys) = self
+                .message_key_cache
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(&cache_key)
+        {
+            return Ok(keys.clone());
+        }
+        let folders = Self::scope_folders(scope)?;
+        let keys: MessageKeys = {
+            let state = self.read_state();
+            let lists = folders
+                .into_iter()
+                .map(|folder| self.folder_message_keys(&state, folder, filter))
+                .collect();
+            let mut keys = Self::merge_by_date(lists, |id| {
+                decode_message(id).map_or(OffsetDateTime::UNIX_EPOCH, |(thread, index)| {
+                    self.message_date(thread, index)
+                })
+            });
+            if sort == ListSort::OldestFirst {
+                keys.reverse();
+            }
+            keys.into()
+        };
+        if cacheable {
+            self.message_key_cache
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(cache_key, keys.clone());
+        }
+        Ok(keys)
+    }
+
+    fn message_rows(&self, keys: &[MessageId]) -> Vec<MessageRow> {
+        let state = self.read_state();
+        keys.iter()
+            .filter_map(|id| self.message_row(&state, *id))
+            .collect()
+    }
+
+    fn thread_tree(&self, thread: ThreadId) -> Result<ThreadTree, SourceError> {
+        let state = self.read_state();
+        if decode(thread).is_none() || state.archived.contains(&thread) {
+            return Err(SourceError::ThreadNotFound(thread));
+        }
+        Ok(self.tree(&state, thread).into())
+    }
+
+    fn message_counts(&self, threads: &[ThreadId]) -> Vec<u32> {
+        let state = self.read_state();
+        threads
+            .iter()
+            .map(|id| {
+                if decode(*id).is_none() || state.archived.contains(id) {
+                    0
+                } else if state.archived_messages.is_empty() {
+                    Self::message_count(*id)
+                } else {
+                    self.live_messages(&state, *id).count() as u32
+                }
+            })
+            .collect()
     }
 
     fn find(
@@ -756,61 +1204,43 @@ impl MailSource for FakeMailSource {
         }
     }
 
+    fn find_message(
+        &self,
+        keys: &[MessageId],
+        from: Option<usize>,
+        direction: Direction,
+        predicate: ThreadPredicate,
+    ) -> Option<usize> {
+        let state = self.read_state();
+        let matches = |ix: &usize| match (predicate, decode_message(keys[*ix])) {
+            (ThreadPredicate::Unread, Some((thread, index))) => {
+                !state.archived_messages.contains(&keys[*ix])
+                    && !Self::message_flags(&state, thread, index).contains(Flags::SEEN)
+            }
+            (_, None) => false,
+        };
+        match direction {
+            Direction::Forward => (from.map_or(0, |ix| ix + 1)..keys.len()).find(matches),
+            Direction::Backward => (0..from.unwrap_or(keys.len()).min(keys.len()))
+                .rev()
+                .find(matches),
+        }
+    }
+
     fn message(&self, thread: ThreadId) -> Result<MessageDocument, SourceError> {
         let state = self.read_state();
-        let row = self
-            .row(&state, thread)
+        let newest = self
+            .live_messages(&state, thread)
+            .last()
+            .filter(|_| !state.archived.contains(&thread))
             .ok_or(SourceError::ThreadNotFound(thread))?;
-        let (folder, r) = decode(thread).ok_or(SourceError::ThreadNotFound(thread))?;
-        let account = &ACCOUNTS[FOLDERS[folder].account];
-        let h = Self::hash(folder, r);
-        let (name, email) = pick(SENDERS, h);
-        let me = Address::new(Some("Philip"), account.address);
-        let them = Address::new(Some(name), email);
-        let (from, to) = match FOLDERS[folder].role {
-            Some(Sent | Drafts) => (me, vec![them]),
-            _ => (them, vec![me]),
-        };
-        let cc = if (h >> 45) % 4 == 0 {
-            let (cc_name, cc_email) = pick(SENDERS, h >> 3);
-            vec![Address::new(Some(cc_name), cc_email)]
-        } else {
-            Vec::new()
-        };
-        let attachments = if row.has_attachments {
-            let names = [
-                "plan-v3.pdf",
-                "invoice.pdf",
-                "photos.zip",
-                "notes.docx",
-                "slides.key",
-            ];
-            vec![AttachmentInfo {
-                name: Sensitive::new(pick(&names, h >> 33).into()),
-                size: row.size.saturating_sub(2_000),
-            }]
-        } else {
-            Vec::new()
-        };
-        let body = self.body(&row, folder, r, account.address);
-        Ok(MessageDocument {
-            thread,
-            message: MessageId(thread.0),
-            subject: row.subject.clone(),
-            from: Sensitive::new(from),
-            to: Sensitive::new(to),
-            cc: Sensitive::new(cc),
-            date: row.date,
-            body: MessageBody::Html(Sensitive::new(SharedString::from(body))),
-            attachments,
-            verification: Verification::Checked {
-                verdict: Verdict::Verified,
-                dkim: "pass".into(),
-                spf: "pass".into(),
-                dmarc: "pass".into(),
-                explanation: "The sender's domain signed this message.".into(),
-            },
-        })
+        self.document(&state, message_id(thread, newest))
+            .map_err(|_| SourceError::ThreadNotFound(thread))
+    }
+
+    fn message_document(&self, message: MessageId) -> Result<MessageDocument, SourceError> {
+        let state = self.read_state();
+        self.document(&state, message)
     }
 
     fn set_flags(
@@ -823,13 +1253,34 @@ impl MailSource for FakeMailSource {
         for id in threads {
             let (folder, row) = decode(*id).ok_or(SourceError::ThreadNotFound(*id))?;
             let before = self.flags(&state, *id, folder, row);
-            let after = (before | add) - remove;
             let was_unread = !before.contains(Flags::SEEN);
-            let is_unread = !after.contains(Flags::SEEN);
-            if was_unread != is_unread && !state.archived.contains(id) {
-                state.unread_delta[folder] += if is_unread { 1 } else { -1 };
-            }
-            state.flags.insert(*id, after);
+            state.message_flags.remove(id);
+            state.flags.insert(*id, (before | add) - remove);
+            self.count_unread_change(&mut state, *id, was_unread);
+        }
+        Ok(())
+    }
+
+    fn set_message_flags(
+        &self,
+        messages: &[MessageId],
+        add: Flags,
+        remove: Flags,
+    ) -> Result<(), SourceError> {
+        let mut state = self.write_state();
+        for id in messages {
+            let (thread, index) = decode_message(*id).ok_or(SourceError::MessageNotFound(*id))?;
+            let (folder, row) = decode(thread).ok_or(SourceError::MessageNotFound(*id))?;
+            let was_unread = !self
+                .flags(&state, thread, folder, row)
+                .contains(Flags::SEEN);
+            let after = (Self::message_flags(&state, thread, index) | add) - remove;
+            state
+                .message_flags
+                .entry(thread)
+                .or_default()
+                .insert(index, after);
+            self.count_unread_change(&mut state, thread, was_unread);
         }
         Ok(())
     }
@@ -839,10 +1290,33 @@ impl MailSource for FakeMailSource {
             let mut state = self.write_state();
             for id in threads {
                 let (folder, row) = decode(*id).ok_or(SourceError::ThreadNotFound(*id))?;
-                if state.archived.insert(*id)
-                    && !self.flags(&state, *id, folder, row).contains(Flags::SEEN)
-                {
+                let unread = !self.flags(&state, *id, folder, row).contains(Flags::SEEN);
+                if state.archived.insert(*id) && unread {
                     state.unread_delta[folder] -= 1;
+                }
+            }
+        }
+        self.invalidate_keys();
+        Ok(())
+    }
+
+    fn archive_messages(&self, messages: &[MessageId]) -> Result<(), SourceError> {
+        {
+            let mut state = self.write_state();
+            for id in messages {
+                let (thread, _) = decode_message(*id).ok_or(SourceError::MessageNotFound(*id))?;
+                let (folder, row) = decode(thread).ok_or(SourceError::MessageNotFound(*id))?;
+                let was_unread = !self
+                    .flags(&state, thread, folder, row)
+                    .contains(Flags::SEEN);
+                state.archived_messages.insert(*id);
+                if self.live_messages(&state, thread).next().is_none() {
+                    // The last message went: the thread goes with it.
+                    if state.archived.insert(thread) && was_unread {
+                        state.unread_delta[folder] -= 1;
+                    }
+                } else {
+                    self.count_unread_change(&mut state, thread, was_unread);
                 }
             }
         }
@@ -876,7 +1350,11 @@ mod tests {
 
     fn all(source: &FakeMailSource, key: FolderKey) -> ThreadKeys {
         source
-            .thread_keys(&ThreadScope::Folder(key), &ThreadFilter::default())
+            .thread_keys(
+                &ThreadScope::Folder(key),
+                &ThreadFilter::default(),
+                ListSort::NewestFirst,
+            )
             .unwrap()
     }
 
@@ -978,6 +1456,7 @@ mod tests {
                     unread: true,
                     ..ThreadFilter::default()
                 },
+                ListSort::NewestFirst,
             )
             .unwrap();
         assert_eq!(
@@ -991,6 +1470,7 @@ mod tests {
                     text: Some("INVOICE".into()),
                     ..ThreadFilter::default()
                 },
+                ListSort::NewestFirst,
             )
             .unwrap();
         assert!(!invoices.is_empty());
@@ -1013,20 +1493,49 @@ mod tests {
                 &self,
                 scope: &ThreadScope,
                 filter: &ThreadFilter,
+                sort: ListSort,
             ) -> Result<ThreadKeys, SourceError> {
-                self.0.thread_keys(scope, filter)
+                self.0.thread_keys(scope, filter, sort)
             }
             fn thread_rows(&self, keys: &[ThreadId]) -> Vec<ThreadRow> {
                 self.0.thread_rows(keys)
             }
+            fn message_keys(
+                &self,
+                scope: &ThreadScope,
+                filter: &ThreadFilter,
+                sort: ListSort,
+            ) -> Result<MessageKeys, SourceError> {
+                self.0.message_keys(scope, filter, sort)
+            }
+            fn message_rows(&self, keys: &[MessageId]) -> Vec<MessageRow> {
+                self.0.message_rows(keys)
+            }
+            fn thread_tree(&self, thread: ThreadId) -> Result<ThreadTree, SourceError> {
+                self.0.thread_tree(thread)
+            }
             fn message(&self, thread: ThreadId) -> Result<MessageDocument, SourceError> {
                 self.0.message(thread)
+            }
+            fn message_document(&self, id: MessageId) -> Result<MessageDocument, SourceError> {
+                self.0.message_document(id)
             }
             fn set_flags(&self, t: &[ThreadId], a: Flags, r: Flags) -> Result<(), SourceError> {
                 self.0.set_flags(t, a, r)
             }
+            fn set_message_flags(
+                &self,
+                m: &[MessageId],
+                a: Flags,
+                r: Flags,
+            ) -> Result<(), SourceError> {
+                self.0.set_message_flags(m, a, r)
+            }
             fn archive(&self, threads: &[ThreadId]) -> Result<(), SourceError> {
                 self.0.archive(threads)
+            }
+            fn archive_messages(&self, m: &[MessageId]) -> Result<(), SourceError> {
+                self.0.archive_messages(m)
             }
             fn status(&self) -> SourceStatus {
                 self.0.status()
@@ -1034,6 +1543,13 @@ mod tests {
         }
         let slow = Slow(source());
         let keys = all(&slow.0, FolderKey::Folder(folder_id(0)));
+        let messages = slow
+            .message_keys(
+                &ThreadScope::Folder(FolderKey::Folder(folder_id(0))),
+                &ThreadFilter::default(),
+                ListSort::NewestFirst,
+            )
+            .unwrap();
         for from in [None, Some(0), Some(100), Some(keys.len() - 1)] {
             for direction in [Direction::Forward, Direction::Backward] {
                 assert_eq!(
@@ -1041,8 +1557,19 @@ mod tests {
                     slow.0.find(&keys, from, direction, ThreadPredicate::Unread),
                     "{from:?} {direction:?}"
                 );
+                assert_eq!(
+                    slow.find_message(&messages, from, direction, ThreadPredicate::Unread),
+                    slow.0
+                        .find_message(&messages, from, direction, ThreadPredicate::Unread),
+                    "{from:?} {direction:?}"
+                );
             }
         }
+        // The default counts match the fast ones.
+        assert_eq!(
+            slow.message_counts(&keys[..300]),
+            slow.0.message_counts(&keys[..300])
+        );
     }
 
     #[test]
@@ -1056,5 +1583,93 @@ mod tests {
         assert!(html.expose().starts_with("<p>Hi "));
         assert_eq!(doc.to.expose().len(), 1);
         assert!(source.message(ThreadId(0)).is_err());
+    }
+
+    #[test]
+    fn threads_have_reply_trees_and_messages() {
+        let source = source();
+        let keys = all(&source, FolderKey::Folder(folder_id(0)));
+        let rows = source.thread_rows(&keys[..200]);
+        let multi = rows.iter().find(|r| r.message_count >= 4).unwrap();
+        let tree = source.thread_tree(multi.id).unwrap();
+        assert_eq!(tree.len(), multi.message_count as usize);
+        assert_eq!(tree[0].depth, 0);
+        assert!(tree.iter().skip(1).all(|n| n.parent.is_some()));
+        // Depth first: a node's parent comes before it, one level up.
+        for (ix, node) in tree.iter().enumerate() {
+            if let Some(parent) = node.parent {
+                let p = tree.iter().position(|n| n.message == parent).unwrap();
+                assert!(p < ix);
+                assert_eq!(tree[p].depth + 1, node.depth);
+            }
+        }
+        let ids: Vec<MessageId> = tree.iter().map(|n| n.message).collect();
+        let messages = source.message_rows(&ids);
+        assert_eq!(messages.len(), ids.len());
+        assert!(messages.iter().all(|m| m.thread == multi.id));
+        assert!(
+            messages.iter().any(|m| m.outgoing),
+            "you replied in the thread"
+        );
+        let doc = source.message_document(ids[1]).unwrap();
+        assert_eq!(doc.message, ids[1]);
+        assert_eq!(doc.thread, multi.id);
+        assert_eq!(source.message_counts(&[multi.id])[0], multi.message_count);
+    }
+
+    #[test]
+    fn unthreaded_keys_list_every_message_by_date() {
+        let source = source();
+        let scope = ThreadScope::Folder(FolderKey::Folder(folder_id(0)));
+        let threads = all(&source, FolderKey::Folder(folder_id(0)));
+        let messages = source
+            .message_keys(&scope, &ThreadFilter::default(), ListSort::NewestFirst)
+            .unwrap();
+        let total: u32 = source.message_counts(&threads).iter().sum();
+        assert_eq!(messages.len(), total as usize);
+        let rows = source.message_rows(&messages[..500]);
+        assert!(rows.windows(2).all(|w| w[0].date >= w[1].date));
+        let oldest = source
+            .message_keys(&scope, &ThreadFilter::default(), ListSort::OldestFirst)
+            .unwrap();
+        assert_eq!(oldest.first(), messages.last());
+        // Sent mail shows its recipients as correspondents.
+        let sent = source
+            .message_keys(
+                &ThreadScope::Folder(FolderKey::Folder(folder_id(2))),
+                &ThreadFilter::default(),
+                ListSort::NewestFirst,
+            )
+            .unwrap();
+        let newest = &source.message_rows(&sent[..1])[0];
+        assert!(newest.outgoing);
+        assert_eq!(newest.correspondents(), &newest.recipients);
+    }
+
+    #[test]
+    fn message_flags_roll_up_to_the_thread() {
+        let source = source();
+        let inbox = FolderKey::Folder(folder_id(0));
+        let keys = all(&source, inbox.clone());
+        let thread = source
+            .thread_rows(&keys[..200])
+            .into_iter()
+            .find(|r| r.message_count >= 3 && !r.is_unread())
+            .unwrap();
+        let tree = source.thread_tree(thread.id).unwrap();
+        let unread_before = source.unread_count(&inbox);
+        source
+            .set_message_flags(&[tree[0].message], Flags::FLAGGED, Flags::SEEN)
+            .unwrap();
+        let row = &source.thread_rows(&[thread.id])[0];
+        assert!(row.is_unread() && row.is_starred());
+        assert_eq!(source.unread_count(&inbox), unread_before + 1);
+        // Archiving one message keeps the thread with one message less.
+        source.archive_messages(&[tree[0].message]).unwrap();
+        let row = &source.thread_rows(&[thread.id])[0];
+        assert_eq!(row.message_count, thread.message_count - 1);
+        assert!(!row.is_unread());
+        assert_eq!(source.unread_count(&inbox), unread_before);
+        assert_eq!(source.thread_tree(thread.id).unwrap().len(), tree.len() - 1);
     }
 }

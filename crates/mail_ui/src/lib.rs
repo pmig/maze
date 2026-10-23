@@ -20,11 +20,13 @@ pub mod fake;
 pub mod folder_pane;
 pub mod format;
 pub mod layout;
+pub mod list_model;
 pub mod message_view;
 pub mod perf;
 pub mod selection;
 pub mod source;
 pub mod thread_list;
+pub mod ui_state;
 pub mod window;
 
 use gpui::{App, Menu, MenuItem, OsAction, SystemMenuType};
@@ -33,11 +35,12 @@ use mazemail_types::PRODUCT_NAME;
 
 pub use fake::FakeMailSource;
 pub use source::{DataChanges, MailSource};
+pub use ui_state::{ListDefaults, ListMode, UI_STATE_FILE, UiStateStore};
 pub use window::{MailWindow, MailWindowOptions, OpenWindowError, open_main_window};
 
 use crate::actions::{
-    About, Hide, HideOthers, Minimize, Quit, ShowAll, Toggle, ToggleAgentColumn, ToggleFolderPane,
-    ToggleMessagePane, ToggleTableView, Zoom,
+    About, CollapseAllThreads, ExpandAllThreads, Hide, HideOthers, Minimize, Quit, ShowAll, Toggle,
+    ToggleAgentColumn, ToggleFolderPane, ToggleMessagePane, ToggleTableView, ToggleThreads, Zoom,
 };
 
 /// Registers application-wide action handlers, binds the default keymap and sets the
@@ -88,6 +91,9 @@ pub fn app_menus() -> Vec<Menu> {
             MenuItem::action("Agent Column", ToggleAgentColumn),
             MenuItem::separator(),
             MenuItem::action("Table View", ToggleTableView),
+            MenuItem::action("Threads", ToggleThreads),
+            MenuItem::action("Expand All Threads", ExpandAllThreads),
+            MenuItem::action("Collapse All Threads", CollapseAllThreads),
         ]),
         Menu::new("Window").items([
             MenuItem::action("Minimize", Minimize),

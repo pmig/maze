@@ -33,11 +33,12 @@ use crate::message_view::MessageView;
 use crate::perf::{FrameStats, ScrollBenchmark, resident_memory};
 use crate::source::{DataChanges, Direction, FolderKey, MailSource, ThreadScope};
 use crate::thread_list::{
-    CARD_HEIGHT, ListMode, TABLE_LIST_WIDTH, TABLE_ROW_HEIGHT, ThreadList, ThreadListEvent,
+    CARD_HEIGHT, ItemId, ListMode, TABLE_LIST_WIDTH, TABLE_ROW_HEIGHT, ThreadList, ThreadListEvent,
 };
+use crate::ui_state::{ListDefaults, UiStateStore};
 
 /// How the main window starts.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct MailWindowOptions {
     /// The user's UTC offset, for dates. Read it before threads start (`time` can't
     /// read it safely later on Unix).
@@ -48,6 +49,8 @@ pub struct MailWindowOptions {
     pub benchmark: Option<ScrollBenchmark>,
     /// Initial window size; by default 1680×1000, shrunk to fit the screen.
     pub window_size: Option<(f32, f32)>,
+    /// Per-folder message list state (`ui_state.json`); in memory by default.
+    pub ui_state: UiStateStore,
 }
 
 impl Default for MailWindowOptions {
@@ -57,6 +60,7 @@ impl Default for MailWindowOptions {
             process_start: Instant::now(),
             benchmark: None,
             window_size: None,
+            ui_state: UiStateStore::in_memory(ListDefaults::default()),
         }
     }
 }
@@ -93,7 +97,7 @@ pub fn open_main_window(
         app_id: Some(mazemail_types::TECHNICAL_NAME.to_owned()),
         ..TitleBar::window_options()
     };
-    gpui_kit::open_window(window_options, cx, |window, cx| {
+    gpui_kit::open_window(window_options, cx, move |window, cx| {
         cx.new(|cx| MailWindow::new(source, &options, window, cx))
     })
     .map_err(|error| OpenWindowError(error.to_string()))
@@ -176,6 +180,7 @@ impl MailWindow {
                 options.local_offset,
                 ThreadScope::Folder(initial),
                 title,
+                options.ui_state.clone(),
                 window,
                 cx,
             )
@@ -210,6 +215,10 @@ impl MailWindow {
             after_paint: Rc::default(),
             _subscriptions: subscriptions,
         };
+        if this.thread_list.read(cx).mode() == ListMode::Table {
+            // The first folder remembered the table view.
+            this.fit_list_to_table(cx);
+        }
         this.show_selected(cx);
         let focus = this.thread_list.focus_handle(cx);
         window.focus(&focus, cx);
@@ -273,27 +282,37 @@ impl MailWindow {
             self.folder_pane
                 .update(cx, |pane, cx| pane.refresh_counts(cx));
         }
-        let before = self.thread_list.read(cx).selected_thread();
+        let before = self.thread_list.read(cx).selected_item();
         if changes.everything || changes.threads || !changes.threads_updated.is_empty() {
             self.thread_list.update(cx, |list, cx| list.refresh(cx));
         }
         // A changed selection was shown through the list's event already.
-        let selected = self.thread_list.read(cx).selected_thread();
+        let list = self.thread_list.read(cx);
+        let selected = list.selected_item();
+        let selected_thread = list.selected_thread();
         let showing_doc = self.message_view.read(cx).document();
-        let showing = showing_doc.map(|doc| doc.thread);
+        let showing_selected = match (selected, showing_doc) {
+            (Some(ItemId::Thread(thread)), Some(doc)) => doc.thread == thread,
+            (Some(ItemId::Message(message)), Some(doc)) => doc.message == message,
+            (None, None) => true,
+            _ => false,
+        };
         let message_stale =
             showing_doc.is_some_and(|doc| changes.messages_updated.contains(&doc.message));
-        let stale =
-            message_stale || selected.is_some_and(|id| changes.threads_updated.contains(&id));
-        if selected == before && (changes.everything || stale || showing != selected) {
+        let stale = message_stale
+            || selected_thread.is_some_and(|id| changes.threads_updated.contains(&id));
+        if selected == before && (changes.everything || stale || !showing_selected) {
             self.show_selected(cx);
         }
         cx.notify();
     }
 
     fn show_selected(&mut self, cx: &mut Context<'_, Self>) {
-        let thread = self.thread_list.read(cx).selected_thread();
-        let document = thread.map(|id| self.source.message(id));
+        let item = self.thread_list.read(cx).selected_item();
+        let document = item.map(|item| match item {
+            ItemId::Thread(thread) => self.source.message(thread),
+            ItemId::Message(message) => self.source.message_document(message),
+        });
         self.message_view.update(cx, |view, cx| match document {
             None => view.show(None, cx),
             Some(Ok(document)) => view.show(Some(document), cx),
@@ -329,18 +348,27 @@ impl MailWindow {
                 self.folder_pane
                     .update(cx, |pane, cx| pane.refresh_counts(cx));
             }
-            ThreadListEvent::ModeChanged(ListMode::Table) => {
-                // The table needs room for its columns; remember the card width.
-                self.cards_list_width = Some(self.prefs.list);
-                self.prefs.list = self.prefs.list.max(TABLE_LIST_WIDTH);
-            }
+            ThreadListEvent::ModeChanged(ListMode::Table) => self.fit_list_to_table(cx),
             ThreadListEvent::ModeChanged(ListMode::Cards) => {
                 if let Some(width) = self.cards_list_width.take() {
                     self.prefs.list = width;
                 }
             }
+            ThreadListEvent::ColumnsChanged => {
+                if self.thread_list.read(cx).mode() == ListMode::Table {
+                    let needed = self.thread_list.read(cx).table_width();
+                    self.prefs.list = self.prefs.list.max(needed);
+                }
+            }
         }
         cx.notify();
+    }
+
+    /// The table needs room for its columns; remembers the card width.
+    fn fit_list_to_table(&mut self, cx: &App) {
+        self.cards_list_width = Some(self.prefs.list);
+        let needed = self.thread_list.read(cx).table_width();
+        self.prefs.list = self.prefs.list.max(needed.max(TABLE_LIST_WIDTH));
     }
 
     fn on_search_event(
@@ -600,8 +628,14 @@ impl Render for MailWindow {
         let width = f32::from(window.viewport_size().width);
         let resolved = layout::resolve(width, &self.prefs, &self.config);
         let theme = cx.theme().colors;
-        let list_len = self.thread_list.read(cx).len();
-        let summary: SharedString = format!("{} threads", format_thousands(list_len as u64)).into();
+        let list = self.thread_list.read(cx);
+        let list_len = list.key_count();
+        let noun = if list.threaded() {
+            "threads"
+        } else {
+            "messages"
+        };
+        let summary: SharedString = format!("{} {noun}", format_thousands(list_len as u64)).into();
         let context = self
             .message_view
             .read(cx)
@@ -739,6 +773,29 @@ impl Render for MailWindow {
                 this.thread_list
                     .update(cx, |list, cx| list.toggle_mode(window, cx));
             }))
+            .on_action(cx.listener(|this, _: &ToggleThreads, _, cx| {
+                this.thread_list
+                    .update(cx, |list, cx| list.toggle_threads(cx));
+            }))
+            .on_action(cx.listener(|this, _: &ExpandThread, _, cx| {
+                this.thread_list
+                    .update(cx, |list, cx| list.expand_selected(cx));
+            }))
+            .on_action(cx.listener(|this, _: &CollapseThread, _, cx| {
+                this.thread_list
+                    .update(cx, |list, cx| list.collapse_selected(cx));
+            }))
+            .on_action(cx.listener(|this, _: &ExpandAllThreads, _, cx| {
+                this.thread_list.update(cx, |list, cx| list.expand_all(cx));
+            }))
+            .on_action(cx.listener(|this, _: &CollapseAllThreads, _, cx| {
+                this.thread_list
+                    .update(cx, |list, cx| list.collapse_all(cx));
+            }))
+            .on_action(cx.listener(|this, _: &SelectThread, _, cx| {
+                this.thread_list
+                    .update(cx, |list, cx| list.select_thread(cx));
+            }))
             .on_action(|_: &Reply, window, cx| Self::notify_unavailable("Reply", window, cx))
             .on_action(|_: &ReplyAll, window, cx| Self::notify_unavailable("Reply all", window, cx))
             .on_action(|_: &Forward, window, cx| Self::notify_unavailable("Forward", window, cx))
@@ -811,7 +868,7 @@ mod tests {
     use super::*;
     use crate::fake::FakeMailSource;
 
-    fn open(cx: &mut TestAppContext) -> (Entity<MailWindow>, &mut VisualTestContext) {
+    pub(crate) fn open(cx: &mut TestAppContext) -> (Entity<MailWindow>, &mut VisualTestContext) {
         cx.update(|cx| {
             ui::init(cx);
             crate::init(cx);
@@ -853,6 +910,94 @@ mod tests {
         assert!(!view.read_with(cx, |w, _| w.prefs().message_visible));
         cx.simulate_keystrokes("cmd-?");
         assert!(view.read_with(cx, |w, _| w.prefs().agent_expanded.is_some()));
+    }
+
+    #[gpui::test]
+    fn thunderbird_keys_drive_the_thread_tree(cx: &mut TestAppContext) {
+        let (view, cx) = open(cx);
+        cx.run_until_parked();
+        let list = view.read_with(cx, |w, _| w.thread_list().clone());
+        // A thread with replies (the fake's data is the same for the same "now").
+        let fake = FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC));
+        let row = list.update(cx, |list, cx| {
+            let crate::thread_list::ListKeys::Threads(keys) = list.model().borrow().keys().clone()
+            else {
+                panic!("threaded");
+            };
+            let row = fake
+                .thread_rows(&keys[..200])
+                .iter()
+                .position(|r| r.message_count >= 3)
+                .unwrap();
+            list.select(row, cx);
+            row
+        });
+        let state = |cx: &mut VisualTestContext| {
+            list.read_with(cx, |l, _| (l.selected_index(), l.len(), l.is_expanded(row)))
+        };
+        let (_, len, _) = state(cx);
+        cx.simulate_keystrokes("right");
+        let (selected, expanded_len, expanded) = state(cx);
+        assert!(expanded && expanded_len > len && selected == Some(row));
+        cx.simulate_keystrokes("right");
+        assert_eq!(state(cx).0, Some(row + 1), "into the thread");
+        // The message view shows the selected message, not the thread's newest.
+        let (shown, item) = view.read_with(cx, |w, cx| {
+            (
+                w.message_view().read(cx).document().map(|d| d.message),
+                w.thread_list().read(cx).selected_item(),
+            )
+        });
+        assert_eq!(item, shown.map(ItemId::Message));
+        cx.simulate_keystrokes("left");
+        assert_eq!(state(cx).0, Some(row));
+        cx.simulate_keystrokes("left");
+        assert_eq!(state(cx), (Some(row), len, false));
+
+        cx.simulate_keystrokes("*");
+        assert!(list.read_with(cx, |l, _| l.len()) > len, "expand all");
+        cx.simulate_keystrokes("\\");
+        assert_eq!(list.read_with(cx, |l, _| l.len()), len, "collapse all");
+
+        cx.simulate_keystrokes("right right cmd-shift-a");
+        assert_eq!(state(cx).0, Some(row));
+        assert!(list.read_with(cx, |l, _| l.selected_whole_thread().is_some()));
+
+        // The table view: its own left/right don't take over.
+        cx.simulate_keystrokes("cmd-alt-t");
+        assert_eq!(list.read_with(cx, |l, _| l.mode()), ListMode::Table);
+        cx.simulate_keystrokes("left");
+        assert!(!list.read_with(cx, |l, _| l.is_expanded(row)));
+        cx.simulate_keystrokes("right");
+        assert!(list.read_with(cx, |l, _| l.is_expanded(row)));
+
+        // Threads off.
+        cx.simulate_keystrokes("cmd-alt-g");
+        assert!(!list.read_with(cx, |l, _| l.threaded()));
+    }
+
+    #[gpui::test]
+    fn a_folder_remembered_as_table_gets_room_at_start(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            ui::init(cx);
+            crate::init(cx);
+        });
+        let ui_state = UiStateStore::in_memory(ListDefaults::default());
+        let mut prefs = ui_state.prefs("unified:inbox");
+        prefs.mode = ListMode::Table;
+        ui_state.set_prefs("unified:inbox", &prefs);
+        let source: Arc<dyn MailSource> =
+            Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
+        let options = MailWindowOptions {
+            ui_state,
+            ..MailWindowOptions::default()
+        };
+        let (view, cx) =
+            cx.add_window_view(|window, cx| MailWindow::new(source, &options, window, cx));
+        view.read_with(cx, |w, cx| {
+            assert_eq!(w.thread_list().read(cx).mode(), ListMode::Table);
+            assert!(w.prefs().list >= TABLE_LIST_WIDTH);
+        });
     }
 
     /// App-level handlers for actions run from the palette (or a button) are called

@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 use mazemail_types::{Address, Flags, MessageId, ThreadId};
 use store::{
-    AccountKind, ListFilter, ListKey, ListScope, MessageScope, MetadataFilter, NewLocation,
-    NewMessage, Page, Queries, SortOrder, Store, ThreadAssignment,
+    AccountKind, ListFilter, ListKey, ListScope, MessageKey, MessagePage, MessageScope,
+    MetadataFilter, NewLocation, NewMessage, Page, Queries, SortOrder, Store, ThreadAssignment,
 };
 
 use crate::common;
@@ -223,6 +223,100 @@ fn thread_list_at_one_million_messages() {
         },
     );
 
+    // Message lists (threads off).
+    let (message_page, mkeys) = time(
+        "message keys, 1M folder, first keyset page (200k)",
+        9,
+        || {
+            reader
+                .message_list_keys(inbox, newest, &all, MessagePage::first(200_000))
+                .unwrap()
+        },
+    );
+    assert_eq!(mkeys.len(), 200_000);
+    let (message_full, mkeys) = time("message keys, 1M folder, all 1M keys", 5, || {
+        let mut out: Vec<MessageKey> = Vec::with_capacity(BIG as usize);
+        let mut page = MessagePage::first(200_000);
+        loop {
+            let chunk = reader.message_list_keys(inbox, newest, &all, page).unwrap();
+            let done = chunk.len() < 200_000;
+            if let Some(last) = chunk.last() {
+                page = MessagePage::after(*last, 200_000);
+            }
+            out.extend(chunk);
+            if done {
+                return out;
+            }
+        }
+    });
+    assert_eq!(mkeys.len(), BIG as usize);
+    time(
+        "message keys, 1M folder, unread filter, first page (200k)",
+        5,
+        || {
+            reader
+                .message_list_keys(
+                    inbox,
+                    newest,
+                    &ListFilter {
+                        unread: true,
+                        ..all
+                    },
+                    MessagePage::first(200_000),
+                )
+                .unwrap()
+        },
+    );
+    time(
+        "message keys, 1M folder, attachment filter, first page (200k)",
+        5,
+        || {
+            reader
+                .message_list_keys(
+                    inbox,
+                    newest,
+                    &ListFilter {
+                        has_attachment: true,
+                        ..all
+                    },
+                    MessagePage::first(200_000),
+                )
+                .unwrap()
+        },
+    );
+    time(
+        "message keys, account scope (1.1M messages), first page (200k)",
+        5,
+        || {
+            reader
+                .message_list_keys(
+                    ListScope::Account(f.account),
+                    newest,
+                    &all,
+                    MessagePage::first(200_000),
+                )
+                .unwrap()
+        },
+    );
+    let visible_messages: Vec<MessageId> = mkeys[..60].iter().map(|k| k.message).collect();
+    let (message_rows, _) = time("rows for 60 visible messages", 21, || {
+        reader
+            .message_rows(&visible_messages, Some(f.inbox))
+            .unwrap()
+    });
+    let all_threads: Vec<ThreadId> = keys.iter().map(|k| k.thread).collect();
+    time("message counts of all 1M threads (expand all)", 3, || {
+        all_threads
+            .chunks(50_000)
+            .map(|chunk| {
+                reader
+                    .thread_message_counts(chunk, Some(f.inbox))
+                    .unwrap()
+                    .len()
+            })
+            .sum::<usize>()
+    });
+
     // Search support: 10k candidates through the metadata filter.
     let candidates: Vec<MessageId> = (0..10_000).map(|i| MessageId(i * 97 + 3)).collect();
     let (filter10k, passing) = time(
@@ -286,8 +380,18 @@ fn thread_list_at_one_million_messages() {
         one_write.as_secs_f64() * 1e3,
         bulk_write.as_secs_f64() * 1e3,
     );
+    eprintln!(
+        "summary (threads off): first page {:.1} ms, all keys {:.1} ms, rows {:.2} ms",
+        message_page.as_secs_f64() * 1e3,
+        message_full.as_secs_f64() * 1e3,
+        message_rows.as_secs_f64() * 1e3,
+    );
     if !cfg!(debug_assertions) {
         assert!(first_page < Duration::from_millis(50), "first page budget");
+        assert!(
+            message_page < Duration::from_millis(50),
+            "message list first page budget"
+        );
         assert!(
             switch_small < Duration::from_millis(50),
             "folder switch budget"

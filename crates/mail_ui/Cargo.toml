@@ -11,6 +11,8 @@ publish.workspace = true
 gpui = { workspace = true }
 gpui-kit = { workspace = true }
 mazemail_types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
 tracing = { workspace = true }
@@ -21,6 +23,7 @@ gpui = { workspace = true, features = ["test-support"] }
 # `render_to_image` for screenshots needs the platform's test support.
 gpui_platform = { workspace = true, features = ["test-support"] }
 image = { workspace = true }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

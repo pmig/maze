@@ -7,7 +7,7 @@ use std::sync::Arc;
 use import::ImportTarget;
 use import::local::{ensure_folder_path, local_account};
 use ingest::Ingestor;
-use mail_ui::source::{FolderKey, MailSource, MessageBody, ThreadFilter, ThreadScope};
+use mail_ui::source::{FolderKey, ListSort, MailSource, MessageBody, ThreadFilter, ThreadScope};
 use mazemail::source::{CoreMailSource, NO_ACCOUNTS};
 use mazemail_core::{CoreConfig, CoreHandle};
 use mazemail_types::{Flags, FolderRole};
@@ -131,7 +131,11 @@ fn folders_lists_rows_and_messages() {
 
     let keys = t
         .source
-        .thread_keys(&ThreadScope::Folder(INBOX), &ThreadFilter::default())
+        .thread_keys(
+            &ThreadScope::Folder(INBOX),
+            &ThreadFilter::default(),
+            ListSort::NewestFirst,
+        )
         .unwrap();
     assert_eq!(keys.len(), 2, "the reply joined its thread");
     let rows = t.source.thread_rows(&keys);
@@ -163,6 +167,7 @@ fn folders_lists_rows_and_messages() {
                 text: Some("invoice".into()),
                 ..ThreadFilter::default()
             },
+            ListSort::NewestFirst,
         )
         .unwrap();
     assert_eq!(filtered.len(), 1);
@@ -174,6 +179,7 @@ fn folders_lists_rows_and_messages() {
                 text: Some("lisbon".into()),
                 ..ThreadFilter::default()
             },
+            ListSort::NewestFirst,
         )
         .unwrap();
     assert_eq!(&*found, &[offsite.id]);
@@ -185,6 +191,7 @@ fn folders_lists_rows_and_messages() {
                 unread: true,
                 ..ThreadFilter::default()
             },
+            ListSort::NewestFirst,
         )
         .unwrap();
     assert_eq!(unread_only.len(), 2);
@@ -198,7 +205,11 @@ fn flags_and_archive_apply_at_once_and_raise_events() {
     let mut events = t.core.events();
     let keys = t
         .source
-        .thread_keys(&ThreadScope::Folder(INBOX), &ThreadFilter::default())
+        .thread_keys(
+            &ThreadScope::Folder(INBOX),
+            &ThreadFilter::default(),
+            ListSort::NewestFirst,
+        )
         .unwrap();
     let invoice = keys[0];
 
@@ -233,7 +244,11 @@ fn flags_and_archive_apply_at_once_and_raise_events() {
     t.source.archive(&[invoice]).unwrap();
     let keys = t
         .source
-        .thread_keys(&ThreadScope::Folder(INBOX), &ThreadFilter::default())
+        .thread_keys(
+            &ThreadScope::Folder(INBOX),
+            &ThreadFilter::default(),
+            ListSort::NewestFirst,
+        )
         .unwrap();
     assert!(!keys.contains(&invoice));
     let tree = t.source.folder_tree();
@@ -248,6 +263,7 @@ fn flags_and_archive_apply_at_once_and_raise_events() {
         .thread_keys(
             &ThreadScope::Folder(archive.children[0].key.clone()),
             &ThreadFilter::default(),
+            ListSort::NewestFirst,
         )
         .unwrap();
     assert_eq!(&*archived, &[invoice]);
@@ -260,7 +276,11 @@ fn placeholders_cover_opening_failure_and_no_accounts() {
     assert!(opening.folder_tree().accounts.is_empty());
     assert!(
         opening
-            .thread_keys(&ThreadScope::Folder(INBOX), &ThreadFilter::default())
+            .thread_keys(
+                &ThreadScope::Folder(INBOX),
+                &ThreadFilter::default(),
+                ListSort::NewestFirst
+            )
             .is_err()
     );
     opening.fail("Maze is already running");
@@ -339,4 +359,79 @@ fn the_status_bar_follows_the_accounts_sync_states() {
             total: 5,
         }
     );
+}
+
+#[test]
+fn threads_off_trees_and_message_commands() {
+    let t = seeded();
+    t.source.folder_tree();
+    let scope = ThreadScope::Folder(INBOX);
+    let threads = t
+        .source
+        .thread_keys(&scope, &ThreadFilter::default(), ListSort::NewestFirst)
+        .unwrap();
+    let rows = t.source.thread_rows(&threads);
+    let offsite = rows
+        .iter()
+        .find(|r| r.message_count == 2)
+        .expect("the offsite thread");
+    assert_eq!(offsite.account.as_ref(), "Personal");
+    assert_eq!(offsite.sender.expose().as_ref(), "Ben");
+    assert_eq!(offsite.recipients.expose().as_ref(), "me@example.com");
+    assert!(!offsite.outgoing, "received mail shows its sender");
+    assert_eq!(offsite.correspondents(), &offsite.sender);
+
+    // The reply tree: Anna's message, Ben's reply below it.
+    let tree = t.source.thread_tree(offsite.id).unwrap();
+    assert_eq!(tree.len(), 2);
+    assert_eq!((tree[0].depth, tree[1].depth), (0, 1));
+    assert_eq!(tree[1].parent, Some(tree[0].message));
+    assert_eq!(t.source.message_counts(&[offsite.id]), vec![2]);
+    let reply = t.source.message_document(tree[1].message).unwrap();
+    assert_eq!(reply.subject.expose().as_ref(), "Re: Offsite plan");
+    assert_eq!(reply.thread, offsite.id);
+
+    // Threads off: one row per message, newest first (or oldest first).
+    let messages = t
+        .source
+        .message_keys(&scope, &ThreadFilter::default(), ListSort::NewestFirst)
+        .unwrap();
+    assert_eq!(messages.len(), 3);
+    let message_rows = t.source.message_rows(&messages);
+    assert!(message_rows.windows(2).all(|w| w[0].date >= w[1].date));
+    let oldest = t
+        .source
+        .message_keys(&scope, &ThreadFilter::default(), ListSort::OldestFirst)
+        .unwrap();
+    assert_eq!(oldest.first(), messages.last());
+    let filtered = t
+        .source
+        .message_keys(
+            &scope,
+            &ThreadFilter {
+                text: Some("offsite".to_owned()),
+                ..ThreadFilter::default()
+            },
+            ListSort::NewestFirst,
+        )
+        .unwrap();
+    assert_eq!(filtered.len(), 2, "the messages of the matching thread");
+
+    // Flags and archive act on one message.
+    let anna = tree[0].message;
+    t.source
+        .set_message_flags(&[anna], Flags::FLAGGED, Flags::empty())
+        .unwrap();
+    let anna_row = &t.source.message_rows(&[anna])[0];
+    assert!(anna_row.flags.contains(Flags::FLAGGED));
+    assert!(t.source.thread_rows(&[offsite.id])[0].is_starred());
+    t.source.archive_messages(&[anna]).unwrap();
+    let after = t
+        .source
+        .message_keys(&scope, &ThreadFilter::default(), ListSort::NewestFirst)
+        .unwrap();
+    assert_eq!(after.len(), 2);
+    assert!(!after.contains(&anna));
+    drop(t.source);
+    t.runtime.block_on(t.core.shutdown()).unwrap();
 }

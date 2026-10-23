@@ -19,10 +19,10 @@ use rusqlite::Connection;
 
 use crate::model::{
     Account, AgentThread, AgentThreadId, ApiToken, AuditEntry, AuditQuery, Contact, Folder,
-    FolderNode, Identity, IdentityRule, ListFilter, ListKey, ListScope, MessageDetail,
-    MessageScope, MetadataFilter, OutboxId, OutboxItem, Page, PendingOp, Proposal, ProposalId,
-    ProposalState, Rule, SavedSearch, Signature, SignatureId, SmtpServer, SmtpServerId, SortOrder,
-    Tag, ThreadRow, TokenId, UnixTime,
+    FolderNode, Identity, IdentityRule, ListFilter, ListKey, ListScope, MessageDetail, MessageKey,
+    MessagePage, MessageRow, MessageScope, MetadataFilter, OutboxId, OutboxItem, Page, PendingOp,
+    Proposal, ProposalId, ProposalState, Rule, SavedSearch, Signature, SignatureId, SmtpServer,
+    SmtpServerId, SortOrder, Tag, ThreadRow, TokenId, TreeMessage, UnixTime,
 };
 use crate::{Reader, Result, WriteTx};
 
@@ -236,6 +236,61 @@ pub trait Queries: sealed::Sealed {
     /// counts are those in that folder.
     fn thread_rows(&self, ids: &[ThreadId], context: Option<FolderId>) -> Result<Vec<ThreadRow>> {
         threads::thread_rows(self.connection(sealed::Token), ids, context)
+    }
+
+    /// The messages (with a location) of these threads, ascending.
+    fn messages_of_threads(&self, ids: &[ThreadId]) -> Result<Vec<MessageId>> {
+        threads::messages_of_threads(self.connection(sealed::Token), ids)
+    }
+
+    /// The number of messages of each thread (in `context`, if the thread has messages
+    /// there), in the order given; 0 for unknown threads. "Expand all" uses it.
+    fn thread_message_counts(
+        &self,
+        ids: &[ThreadId],
+        context: Option<FolderId>,
+    ) -> Result<Vec<u32>> {
+        threads::thread_message_counts(self.connection(sealed::Token), ids, context)
+    }
+
+    /// The messages of a thread (with a location; with `context`, only those in that
+    /// folder), oldest first, with the headers its reply tree is built from.
+    fn thread_tree_messages(
+        &self,
+        thread: ThreadId,
+        context: Option<FolderId>,
+    ) -> Result<Vec<TreeMessage>> {
+        messages::thread_tree_messages(self.connection(sealed::Token), thread, context)
+    }
+
+    // ---- message lists (threads off) ------------------------------------------------
+
+    /// One page of message list keys (see [`MessageKey`], [`MessagePage`]): the messages
+    /// of a scope, ordered by `(date, message id)`; pass the last key of a page as
+    /// `MessagePage::after` for the next. Filters apply per copy in folder scopes and to
+    /// the effective flags in account scopes.
+    ///
+    /// Unified scopes merge the per-folder keysets; a message in two folders of the same
+    /// role can show up again on a later page, so snapshot builders should skip message
+    /// ids they already have.
+    fn message_list_keys(
+        &self,
+        scope: ListScope,
+        sort: SortOrder,
+        filter: &ListFilter,
+        page: MessagePage,
+    ) -> Result<Vec<MessageKey>> {
+        lists::message_list_keys(self.connection(sealed::Token), scope, sort, filter, page)
+    }
+
+    /// Row data for visible messages, in the order given. With `context`, the flags are
+    /// those of the copy in that folder.
+    fn message_rows(
+        &self,
+        ids: &[MessageId],
+        context: Option<FolderId>,
+    ) -> Result<Vec<MessageRow>> {
+        messages::message_rows(self.connection(sealed::Token), ids, context)
     }
 
     // ---- search support -----------------------------------------------------------

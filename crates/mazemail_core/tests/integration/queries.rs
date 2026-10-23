@@ -219,3 +219,150 @@ async fn unified_lists_merge_accounts_and_text_filters_match_in_memory() {
     assert_eq!(by_text("y.example").thread_ids(0..10), vec![gmail_thread]);
     assert!(by_text("nobody").is_empty());
 }
+
+/// A reply with `In-Reply-To` and `References`.
+fn reply(n: u32, from: &str, to: &str, parents: &[u32]) -> Vec<u8> {
+    let refs: Vec<String> = parents
+        .iter()
+        .map(|p| format!("<q{p}@example.com>"))
+        .collect();
+    format!(
+        "Message-ID: <q{n}@example.com>\r\nDate: Mon, {} Oct 2025 10:00:00 +0000\r\n\
+         From: {from}\r\nTo: {to}\r\nSubject: Re: Plan\r\nIn-Reply-To: {}\r\n\
+         References: {}\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nok\r\n",
+        n.clamp(1, 28),
+        refs.last().cloned().unwrap_or_default(),
+        refs.join(" "),
+    )
+    .into_bytes()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn message_lists_rows_and_thread_trees() {
+    let t = common::open().await;
+    let f = common::fixture(&t.core).await;
+    // Plan (1) ─┬─ my reply in Sent (2) ── answer (4)
+    //           └─ second reply (3)
+    // plus an unrelated message (5).
+    common::ingest(
+        &t.core,
+        Place::new(f.work, f.inbox, 1),
+        message(1, "Anna <anna@x.example>", "Plan"),
+    )
+    .await;
+    common::ingest(
+        &t.core,
+        Place::new(f.work, f.sent, 1).flags(Flags::SEEN),
+        reply(
+            2,
+            "Me <Me+maze@Work.Example>",
+            "Anna <anna@x.example>, bob@x.example",
+            &[1],
+        ),
+    )
+    .await;
+    common::ingest(
+        &t.core,
+        Place::new(f.work, f.inbox, 2).flags(Flags::SEEN),
+        reply(3, "Bob <bob@x.example>", "me@work.example", &[1]),
+    )
+    .await;
+    common::ingest(
+        &t.core,
+        Place::new(f.work, f.inbox, 3),
+        reply(4, "Anna <anna@x.example>", "me@work.example", &[1, 2]),
+    )
+    .await;
+    common::ingest(
+        &t.core,
+        Place::new(f.work, f.inbox, 4).flags(Flags::SEEN),
+        message(5, "Shop <shop@x.example>", "Receipt"),
+    )
+    .await;
+
+    // Threads off: one row per message, newest first.
+    let inbox = ListQuery::new(ListScope::Folder(f.inbox));
+    let list = t.core.message_list(&inbox).unwrap();
+    assert_eq!(list.len(), 4);
+    let ids = list.message_ids(0..4);
+    let rows = t.core.message_rows(&ids, list.context()).unwrap();
+    let dates: Vec<i64> = rows.iter().map(|r| r.row.date).collect();
+    assert!(dates.windows(2).all(|w| w[0] >= w[1]));
+    let oldest = t
+        .core
+        .message_list(&ListQuery {
+            sort: SortOrder::OldestFirst,
+            ..inbox
+        })
+        .unwrap();
+    let mut reversed = oldest.message_ids(0..4);
+    reversed.reverse();
+    assert_eq!(reversed, ids);
+
+    // Quick filter: toggles in SQL, text keeps the matching conversations' messages.
+    let unread = t
+        .core
+        .message_list(&ListQuery {
+            quick_filter: QuickFilter {
+                unread: true,
+                ..QuickFilter::default()
+            },
+            ..ListQuery::new(ListScope::Folder(f.inbox))
+        })
+        .unwrap();
+    assert_eq!(unread.len(), 2);
+    let plan = t
+        .core
+        .message_list(&ListQuery {
+            quick_filter: QuickFilter {
+                text: Some(Sensitive::new("plan".to_owned())),
+                ..QuickFilter::default()
+            },
+            ..ListQuery::new(ListScope::Folder(f.inbox))
+        })
+        .unwrap();
+    assert_eq!(plan.len(), 3, "the receipt is filtered out");
+
+    // Correspondents: my reply (identity match despite case and +tag) lists recipients.
+    let sent = t
+        .core
+        .message_list(&ListQuery::new(ListScope::Folder(f.sent)))
+        .unwrap();
+    let mine = t
+        .core
+        .message_rows(&sent.message_ids(0..1), sent.context())
+        .unwrap();
+    assert!(mine[0].outgoing);
+    assert_eq!(mine[0].correspondents().text(), "Anna, bob@x.example");
+    let received = rows
+        .iter()
+        .find(|r| r.row.subject.as_deref() == Some("Receipt"));
+    let received = received.unwrap();
+    assert!(!received.outgoing);
+    assert_eq!(received.correspondents().text(), "Shop");
+
+    // The reply tree: in the account all four messages, in the inbox my reply is
+    // missing and its answer hangs below the root instead.
+    let thread = rows
+        .iter()
+        .find(|r| r.row.subject.as_deref() == Some("Plan"))
+        .unwrap()
+        .row
+        .thread;
+    let tree = t.core.thread_tree(thread, None).unwrap();
+    let shape: Vec<u16> = tree.iter().map(|n| n.depth).collect();
+    assert_eq!(shape, vec![0, 1, 2, 1]);
+    let in_inbox = t.core.thread_tree(thread, Some(f.inbox)).unwrap();
+    assert_eq!(in_inbox.len(), 3);
+    assert!(in_inbox[1..].iter().all(|n| n.depth == 1));
+    assert_eq!(
+        t.core
+            .thread_message_counts(&[thread], Some(f.inbox))
+            .unwrap(),
+        vec![3]
+    );
+    assert_eq!(
+        t.core.thread_message_counts(&[thread], None).unwrap(),
+        vec![4]
+    );
+}

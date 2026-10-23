@@ -31,8 +31,15 @@
 //! # Data model notes
 //!
 //! - **Schema** v1 is the base schema (`migrations/main/0001_schema_v1.sql`); v2 adds
-//!   `account.uuid`. Migrations only ever add files; opening an older database backs it
-//!   up first (see [`MigrationReport`]).
+//!   `account.uuid`; v3 adds `message_location.date` and the message list indexes.
+//!   Migrations only ever add files; opening an older database backs it up first (see
+//!   [`MigrationReport`]).
+//! - **Message lists** (threads off): [`Queries::message_list_keys`] pages through the
+//!   messages of a scope by `(date, message id)` like thread lists do, on
+//!   `location_list` (folders, with partial indexes for unread and starred) and
+//!   `message_list` (accounts). Each location carries its message's date for that.
+//!   [`Queries::message_rows`] gives the visible rows, [`Queries::thread_tree_messages`]
+//!   what the reply tree of a thread is built from.
 //! - **Accounts** have a stable [`Account::uuid`] (random v4, unique, immutable, never
 //!   reused) besides the numeric id; keychain secrets are keyed by it (`auth` crate).
 //!   [`Queries::account_by_uuid`] looks it up.
