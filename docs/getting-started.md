@@ -377,6 +377,7 @@ Maze uses Thunderbird's shortcuts and fills the gaps with Zed's. These are bound
 | Star                                 | `s`                         |
 | Archive                              | `a`                         |
 | Move to a folder (Quick Move)        | `shift-m`                   |
+| Undo the last archive, move or flag  | `cmd-z`                     |
 | Select several rows / all rows       | `shift-down` / `shift-up`, `cmd-a` |
 | Open / close a thread                | `right` / `left`            |
 | Open / close all threads             | `*` / `\`                   |

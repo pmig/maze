@@ -345,7 +345,7 @@ fn folder_index(id: FolderId) -> Option<usize> {
 }
 
 /// Mutable state: changes made through the UI.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct State {
     /// Thread flags that differ from the generated ones (a thread command sets every
     /// message of the thread).
@@ -374,6 +374,8 @@ pub struct FakeMailSource {
     now: OffsetDateTime,
     unread_base: Vec<u64>,
     state: RwLock<State>,
+    /// The state before the last change, for [`MailSource::undo`].
+    undo: Mutex<Option<State>>,
     /// Unfiltered key lists, built on first use.
     key_cache: Mutex<HashMap<(ThreadScope, ListSort), ThreadKeys>>,
     message_key_cache: Mutex<HashMap<(ThreadScope, ListSort), MessageKeys>>,
@@ -423,6 +425,7 @@ impl FakeMailSource {
                 unread_delta: vec![0; FOLDERS.len()],
                 ..State::default()
             }),
+            undo: Mutex::new(None),
             key_cache: Mutex::new(HashMap::new()),
             message_key_cache: Mutex::new(HashMap::new()),
         }
@@ -785,6 +788,11 @@ impl FakeMailSource {
 
     fn write_state(&self) -> std::sync::RwLockWriteGuard<'_, State> {
         self.state.write().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Remembers the state before a change for [`MailSource::undo`].
+    fn checkpoint(&self, state: &State) {
+        *self.undo.lock().unwrap_or_else(PoisonError::into_inner) = Some(state.clone());
     }
 
     fn invalidate_keys(&self) {
@@ -1299,6 +1307,7 @@ impl MailSource for FakeMailSource {
         remove: Flags,
     ) -> Result<(), SourceError> {
         let mut state = self.write_state();
+        self.checkpoint(&state);
         for id in threads {
             let (folder, row) = decode(*id).ok_or(SourceError::ThreadNotFound(*id))?;
             let before = self.flags(&state, *id, folder, row);
@@ -1317,6 +1326,7 @@ impl MailSource for FakeMailSource {
         remove: Flags,
     ) -> Result<(), SourceError> {
         let mut state = self.write_state();
+        self.checkpoint(&state);
         for id in messages {
             let (thread, index) = decode_message(*id).ok_or(SourceError::MessageNotFound(*id))?;
             let (folder, row) = decode(thread).ok_or(SourceError::MessageNotFound(*id))?;
@@ -1337,6 +1347,7 @@ impl MailSource for FakeMailSource {
     fn archive(&self, threads: &[ThreadId]) -> Result<(), SourceError> {
         {
             let mut state = self.write_state();
+            self.checkpoint(&state);
             for id in threads {
                 let (folder, row) = decode(*id).ok_or(SourceError::ThreadNotFound(*id))?;
                 let unread = !self.flags(&state, *id, folder, row).contains(Flags::SEEN);
@@ -1352,6 +1363,7 @@ impl MailSource for FakeMailSource {
     fn archive_messages(&self, messages: &[MessageId]) -> Result<(), SourceError> {
         {
             let mut state = self.write_state();
+            self.checkpoint(&state);
             for id in messages {
                 let (thread, _) = decode_message(*id).ok_or(SourceError::MessageNotFound(*id))?;
                 let (folder, row) = decode(thread).ok_or(SourceError::MessageNotFound(*id))?;
@@ -1371,6 +1383,20 @@ impl MailSource for FakeMailSource {
         }
         self.invalidate_keys();
         Ok(())
+    }
+
+    fn undo(&self) -> Result<bool, SourceError> {
+        let Some(before) = self
+            .undo
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        else {
+            return Ok(false);
+        };
+        *self.write_state() = before;
+        self.invalidate_keys();
+        Ok(true)
     }
 
     fn thread_account(&self, thread: ThreadId) -> Option<AccountId> {
@@ -1633,6 +1659,9 @@ mod tests {
             }
             fn archive_messages(&self, m: &[MessageId]) -> Result<(), SourceError> {
                 self.0.archive_messages(m)
+            }
+            fn undo(&self) -> Result<bool, SourceError> {
+                self.0.undo()
             }
             fn thread_account(&self, thread: ThreadId) -> Option<AccountId> {
                 self.0.thread_account(thread)

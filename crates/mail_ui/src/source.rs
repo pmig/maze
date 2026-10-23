@@ -738,6 +738,10 @@ pub trait MailSource: Send + Sync + 'static {
     /// Moves single messages to their account's Archives folder.
     fn archive_messages(&self, messages: &[MessageId]) -> Result<(), SourceError>;
 
+    /// Reverts the last archive, move or flag change. `false` when there was nothing
+    /// to undo.
+    fn undo(&self) -> Result<bool, SourceError>;
+
     /// The account a thread belongs to (Quick Move offers that account's folders).
     fn thread_account(&self, thread: ThreadId) -> Option<AccountId>;
 

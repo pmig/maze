@@ -83,6 +83,8 @@ actions!(
         /// Move the selected threads to a folder picked by typing part of its name
         /// (`shift-m`, Quick Move).
         MoveToFolder,
+        /// Undo the last archive, move, read or star change (`cmd-z`).
+        Undo,
         /// Reply to the sender (`cmd-r`).
         Reply,
         /// Reply to all (`cmd-shift-r`).

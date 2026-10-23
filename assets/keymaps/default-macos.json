@@ -43,6 +43,7 @@
       "s": "mail::ToggleStar",
       "a": "mail::Archive",
       "shift-m": "mail::MoveToFolder",
+      "cmd-z": "mail::Undo",
       "cmd-shift-a": "mail::SelectThread"
     }
   },
