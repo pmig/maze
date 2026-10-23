@@ -256,14 +256,30 @@ pub enum ThreadSort {
 pub struct FolderPaneSettings {
     /// Folder pane modes shown, in order. Several can be combined.
     pub modes: Vec<FolderPaneMode>,
+    /// Folders shown under Favorites. Maze adds and removes entries when you use "Add
+    /// to Favorites" and "Remove from Favorites"; entries for folders that don't exist
+    /// (any more) are kept but not shown.
+    pub favorites: Vec<FavoriteFolder>,
 }
 
 impl Default for FolderPaneSettings {
     fn default() -> Self {
         Self {
             modes: vec![FolderPaneMode::Favorite, FolderPaneMode::Unified],
+            favorites: Vec::new(),
         }
     }
+}
+
+/// A favorite folder: which account, and where in its folder tree. Names rather than
+/// ids, so a favorite survives restarts and re-syncs.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct FavoriteFolder {
+    /// The account's label, as in `accounts`.
+    pub account: String,
+    /// The folder's path in the account's folder tree, names joined with `/`, e.g.
+    /// `Customers/Acme`.
+    pub folder: String,
 }
 
 /// A folder pane mode (Thunderbird's folder modes).

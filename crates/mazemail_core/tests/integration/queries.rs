@@ -1,8 +1,11 @@
 //! Folder tree, thread lists, rows and the row cache.
 
-use mazemail_core::{FolderNodeKind, ListQuery, ListScope, QuickFilter, SortOrder};
+use std::sync::Arc;
+
+use mazemail_core::{CoreHandle, FolderNodeKind, ListQuery, ListScope, QuickFilter, SortOrder};
 use mazemail_types::{Flags, FolderRole, Sensitive};
-use store::FolderPatch;
+use store::NewFolder;
+use vault::MemoryKeyStore;
 
 use crate::common::{self, Place};
 
@@ -21,20 +24,6 @@ fn message(n: u32, from: &str, subject: &str) -> Vec<u8> {
 async fn the_folder_tree_has_unified_folders_favorites_and_accounts() {
     let t = common::open().await;
     let f = common::fixture(&t.core).await;
-    let projects = f.projects;
-    t.core
-        .store()
-        .write(move |w| {
-            w.update_folder(
-                projects,
-                &FolderPatch {
-                    favorite: Some(true),
-                    ..FolderPatch::default()
-                },
-            )
-        })
-        .await
-        .unwrap();
     common::ingest(
         &t.core,
         Place::new(f.work, f.inbox, 1),
@@ -58,11 +47,11 @@ async fn the_folder_tree_has_unified_folders_favorites_and_accounts() {
 
     let tree = t.core.folders().unwrap();
     let kinds: Vec<FolderNodeKind> = tree.iter().map(|n| n.kind).collect();
+    // No favorites yet: no Favorites section.
     assert_eq!(
         kinds,
         vec![
             FolderNodeKind::UnifiedSection,
-            FolderNodeKind::FavoritesSection,
             FolderNodeKind::Account(f.work),
             FolderNodeKind::Account(f.gmail),
         ]
@@ -84,15 +73,7 @@ async fn the_folder_tree_has_unified_folders_favorites_and_accounts() {
     assert_eq!(inbox.scope, Some(ListScope::Unified(FolderRole::Inbox)));
     assert_eq!((inbox.unread, inbox.total), (2, 3));
 
-    let favorites = &tree[1];
-    assert_eq!(favorites.children.len(), 1);
-    assert_eq!(
-        favorites.children[0].kind,
-        FolderNodeKind::Folder(f.projects)
-    );
-    assert!(favorites.children[0].favorite);
-
-    let work = &tree[2];
+    let work = &tree[1];
     assert_eq!(work.name, "Work");
     assert_eq!(work.children.len(), 5);
     let mut work_inbox = None;
@@ -102,8 +83,150 @@ async fn the_folder_tree_has_unified_folders_favorites_and_accounts() {
         }
     });
     assert_eq!(work_inbox, Some((2, 2, Some(ListScope::Folder(f.inbox)))));
-    let gmail = &tree[3];
+    let gmail = &tree[2];
     assert!(gmail.children.iter().any(|n| n.is_label));
+}
+
+/// The favorite folders of `tree`, in order.
+fn favorites(tree: &[mazemail_core::FolderNode]) -> Vec<FolderNodeKind> {
+    tree.iter()
+        .find(|n| n.kind == FolderNodeKind::FavoritesSection)
+        .map(|section| section.children.iter().map(|n| n.kind).collect())
+        .unwrap_or_default()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn favorite_folders_live_in_the_settings_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = dir.path().join("settings.json");
+    std::fs::write(
+        &settings,
+        "{\n  // Mine.\n  \"theme\": { \"mode\": \"dark\" },\n  \"folder_pane\": {\n    \"favorites\": [\n      { \"account\": \"Work\", \"folder\": \"Gone\" }\n    ]\n  }\n}\n",
+    )
+    .unwrap();
+    let keys = Arc::new(MemoryKeyStore::new());
+    let core = CoreHandle::open(
+        common::config(&dir.path().join("data"), &keys).with_settings_file(&settings),
+    )
+    .await
+    .unwrap();
+    let f = common::fixture(&core).await;
+    let acme = core
+        .store()
+        .write(move |w| {
+            let mut acme = NewFolder::new(f.work, "Projects/Acme", "Acme");
+            acme.parent = Some(f.projects);
+            w.create_folder(&acme)
+        })
+        .await
+        .unwrap();
+    // The favorite whose folder doesn't exist is hidden.
+    assert_eq!(favorites(&core.folders().unwrap()), vec![]);
+
+    // Added out of order, shown in account order, then tree order.
+    core.set_favorite_folder(f.g_label, true).unwrap();
+    core.set_favorite_folder(acme, true).unwrap();
+    core.set_favorite_folder(f.inbox, true).unwrap();
+    core.set_favorite_folder(f.inbox, true).unwrap();
+    let tree = core.folders().unwrap();
+    assert_eq!(
+        favorites(&tree),
+        vec![
+            FolderNodeKind::Folder(f.inbox),
+            FolderNodeKind::Folder(acme),
+            FolderNodeKind::Folder(f.g_label),
+        ]
+    );
+    // Marked in the account trees too.
+    let mut marked = Vec::new();
+    for node in &tree {
+        node.walk(&mut |n| {
+            if n.favorite {
+                marked.push(n.kind);
+            }
+        });
+    }
+    assert_eq!(marked.len(), 6, "three favorites, each twice");
+
+    // In the file: label and path, the comment and the stale entry kept.
+    let text = std::fs::read_to_string(&settings).unwrap();
+    assert!(text.contains("// Mine."), "{text}");
+    let loaded = settings::load_settings(&settings);
+    assert_eq!(loaded.diagnostics, vec![]);
+    let saved: Vec<(String, String)> = loaded
+        .settings
+        .folder_pane
+        .favorites
+        .into_iter()
+        .map(|f| (f.account, f.folder))
+        .collect();
+    let entry = |a: &str, f: &str| (a.to_owned(), f.to_owned());
+    assert_eq!(
+        saved,
+        vec![
+            entry("Work", "Gone"),
+            entry("Gmail", "Receipts"),
+            entry("Work", "Projects/Acme"),
+            entry("Work", "INBOX"),
+        ]
+    );
+    assert_eq!(loaded.settings.theme.mode, settings::ThemeMode::Dark);
+
+    // Removing one keeps the others.
+    core.set_favorite_folder(acme, false).unwrap();
+    assert_eq!(
+        favorites(&core.folders().unwrap()),
+        vec![
+            FolderNodeKind::Folder(f.inbox),
+            FolderNodeKind::Folder(f.g_label)
+        ]
+    );
+    assert_eq!(
+        settings::load_settings(&settings)
+            .settings
+            .folder_pane
+            .favorites
+            .len(),
+        3
+    );
+
+    // A hand edit is picked up by the watcher.
+    let mut events = core.events();
+    std::fs::write(
+        &settings,
+        r#"{ "folder_pane": { "favorites": [{ "account": "Work", "folder": "Sent" }] } }"#,
+    )
+    .unwrap();
+    // (The batch for the last change by Maze itself may still arrive first.)
+    for _ in 0..3 {
+        if favorites(&core.folders().unwrap()) == vec![FolderNodeKind::Folder(f.sent)] {
+            break;
+        }
+        common::wait_for(&mut events, |batch| batch.settings).await;
+    }
+    assert_eq!(
+        favorites(&core.folders().unwrap()),
+        vec![FolderNodeKind::Folder(f.sent)]
+    );
+
+    // A broken file is never overwritten.
+    std::fs::write(&settings, r#"{ "folder_pane": "#).unwrap();
+    assert!(core.set_favorite_folder(f.inbox, true).is_err());
+    assert_eq!(
+        std::fs::read_to_string(&settings).unwrap(),
+        r#"{ "folder_pane": "#
+    );
+    core.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn favorites_need_a_settings_file() {
+    let t = common::open().await;
+    let f = common::fixture(&t.core).await;
+    assert!(matches!(
+        t.core.set_favorite_folder(f.inbox, true),
+        Err(mazemail_core::Error::SettingsWrite(_))
+    ));
 }
 
 #[tokio::test(flavor = "multi_thread")]

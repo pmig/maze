@@ -5,13 +5,20 @@
 //! 1. **Unified Folders**: one node per role that exists in any account (Inbox, Drafts,
 //!    Sent, Archive, Junk, Trash, in that order), with counts summed over the folders
 //!    of that role. Its list scope is [`ListScope::Unified`].
-//! 2. **Favorites**: the starred folders, flat, with their own counts.
+//! 2. **Favorites**: the folders in the setting `folder_pane.favorites`, flat, with
+//!    their own counts, in account order and then folder tree order. Favorites name
+//!    their folder by account label and [folder path](folder_path), so they survive
+//!    re-syncs; favorites whose folder doesn't exist are left out (and kept in the
+//!    settings).
 //! 3. **One node per account** with its folder tree.
 //!
 //! Sections without children are left out. The UI decides which sections to show
 //! (setting `folder_pane.modes`).
 
+use std::collections::{HashMap, HashSet};
+
 use mazemail_types::{AccountId, FolderId, FolderRole};
+use settings::FavoriteFolder;
 use store::{Account, Folder, ListScope};
 
 /// Roles shown as unified folders, in display order.
@@ -129,15 +136,70 @@ pub fn unified_name(role: FolderRole) -> &'static str {
     }
 }
 
-fn convert(node: &store::FolderNode) -> FolderNode {
-    FolderNode::folder(&node.folder, node.children.iter().map(convert).collect())
+/// Separates the folder names of a folder path.
+pub const PATH_SEPARATOR: char = '/';
+
+/// The path of `folder` within its account, the names from the top joined with `/`
+/// (`Customers/Acme`): how favorites name a folder. `folders` holds the account's
+/// folders. `None` if a parent is missing.
+pub fn folder_path(folders: &[Folder], folder: FolderId) -> Option<String> {
+    let by_id: HashMap<FolderId, &Folder> = folders.iter().map(|f| (f.id, f)).collect();
+    let mut names = Vec::new();
+    let mut next = Some(folder);
+    while let Some(id) = next {
+        // A cycle can't come from the store; don't loop forever if it did.
+        if names.len() > by_id.len() {
+            return None;
+        }
+        let folder = by_id.get(&id)?;
+        names.push(folder.display_name.as_str());
+        next = folder.parent;
+    }
+    names.reverse();
+    Some(names.join(&PATH_SEPARATOR.to_string()))
 }
 
-/// Builds the folder pane from the store's accounts and folder trees.
+/// The favorites of one account, by folder path.
+type FavoritePaths<'a> = HashSet<&'a str>;
+
+/// Converts a store node and its subtree, marking favorites and collecting them in
+/// tree order.
+fn convert(
+    node: &store::FolderNode,
+    parent_path: &str,
+    favorite_paths: &FavoritePaths<'_>,
+    favorites: &mut Vec<FolderNode>,
+) -> FolderNode {
+    let path = if parent_path.is_empty() {
+        node.folder.display_name.clone()
+    } else {
+        format!("{parent_path}{PATH_SEPARATOR}{}", node.folder.display_name)
+    };
+    let favorite = favorite_paths.contains(path.as_str());
+    if favorite {
+        favorites.push(FolderNode {
+            favorite: true,
+            ..FolderNode::folder(&node.folder, Vec::new())
+        });
+    }
+    let children = node
+        .children
+        .iter()
+        .map(|child| convert(child, &path, favorite_paths, favorites))
+        .collect();
+    FolderNode {
+        favorite,
+        ..FolderNode::folder(&node.folder, children)
+    }
+}
+
+/// Builds the folder pane from the store's accounts and folder trees and the favorites
+/// setting.
 pub(crate) fn build(
     accounts: &[Account],
     folders: &[Folder],
     trees: &[(AccountId, Vec<store::FolderNode>)],
+    favorites: &[FavoriteFolder],
 ) -> Vec<FolderNode> {
     let mut out = Vec::new();
 
@@ -166,30 +228,36 @@ pub(crate) fn build(
         ));
     }
 
-    let favorites: Vec<FolderNode> = folders
-        .iter()
-        .filter(|f| f.favorite)
-        .map(|f| FolderNode::folder(f, Vec::new()))
-        .collect();
-    if !favorites.is_empty() {
-        out.push(FolderNode::header(
-            FolderNodeKind::FavoritesSection,
-            "Favorites",
-            favorites,
-        ));
-    }
-
+    let mut favorite_nodes = Vec::new();
+    let mut account_nodes = Vec::new();
     for account in accounts {
+        let favorite_paths: FavoritePaths<'_> = favorites
+            .iter()
+            .filter(|f| f.account == account.name)
+            .map(|f| f.folder.as_str())
+            .collect();
         let children = trees
             .iter()
             .find(|(id, _)| *id == account.id)
-            .map(|(_, tree)| tree.iter().map(convert).collect())
+            .map(|(_, tree)| {
+                tree.iter()
+                    .map(|node| convert(node, "", &favorite_paths, &mut favorite_nodes))
+                    .collect()
+            })
             .unwrap_or_default();
-        out.push(FolderNode::header(
+        account_nodes.push(FolderNode::header(
             FolderNodeKind::Account(account.id),
             &account.name,
             children,
         ));
     }
+    if !favorite_nodes.is_empty() {
+        out.push(FolderNode::header(
+            FolderNodeKind::FavoritesSection,
+            "Favorites",
+            favorite_nodes,
+        ));
+    }
+    out.extend(account_nodes);
     out
 }

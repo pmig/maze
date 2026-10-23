@@ -63,7 +63,9 @@ fn mbox() -> String {
 
 fn open_core(runtime: &tokio::runtime::Runtime, dir: &std::path::Path) -> CoreHandle {
     let keys = Arc::new(MemoryKeyStore::new());
-    let mut config = CoreConfig::new(dir, keys).with_runtime(runtime.handle().clone());
+    let mut config = CoreConfig::new(dir, keys)
+        .with_runtime(runtime.handle().clone())
+        .with_settings_file(dir.join("settings.json"));
     config.blob_gc_interval = None;
     runtime.block_on(CoreHandle::open(config)).unwrap()
 }
@@ -195,6 +197,44 @@ fn folders_lists_rows_and_messages() {
         )
         .unwrap();
     assert_eq!(unread_only.len(), 2);
+}
+
+#[test]
+fn favorites_are_saved_in_the_settings_and_shown_at_once() {
+    let t = seeded();
+    let tree = t.source.folder_tree();
+    assert!(tree.favorites.is_empty());
+    let archive = tree.accounts[0]
+        .folders
+        .iter()
+        .find(|f| f.role == Some(FolderRole::Archive))
+        .unwrap()
+        .key
+        .clone();
+    let FolderKey::Folder(id) = archive else {
+        panic!("a folder");
+    };
+    t.source.set_favorite(id, true).unwrap();
+    let favorites: Vec<_> = t
+        .source
+        .folder_tree()
+        .favorites
+        .into_iter()
+        .map(|f| f.key)
+        .collect();
+    assert_eq!(favorites, [archive]);
+    let saved = t.core.settings().settings.folder_pane.favorites.clone();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(
+        (saved[0].account.as_str(), saved[0].folder.as_str()),
+        ("Personal", "Archive")
+    );
+    t.source.set_favorite(id, false).unwrap();
+    assert!(t.source.folder_tree().favorites.is_empty());
+    assert_eq!(
+        t.source.set_favorite(mazemail_types::FolderId(9_999), true),
+        Err(mail_ui::source::SourceError::FolderNotFound)
+    );
 }
 
 #[test]

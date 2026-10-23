@@ -40,7 +40,8 @@ impl FolderKey {
 /// What the folder pane shows: Favorites, Unified Folders and Accounts (CONCEPT §8.2).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct FolderTree {
-    /// Folders the user marked as favorites.
+    /// Folders the user marked as favorites (without subfolders). The folder pane
+    /// orders and groups them by their place in `accounts`.
     pub favorites: Vec<FolderEntry>,
     /// Unified Inbox, Drafts, Sent, …
     pub unified: Vec<FolderEntry>,
@@ -765,6 +766,10 @@ pub trait MailSource: Send + Sync + 'static {
         to: FolderId,
         from: Option<FolderId>,
     ) -> Result<(), SourceError>;
+
+    /// Adds a folder to the favorites or removes it. The next
+    /// [`MailSource::folder_tree`] shows the change.
+    fn set_favorite(&self, folder: FolderId, favorite: bool) -> Result<(), SourceError>;
 
     /// Connection, sync and outbox state.
     fn status(&self) -> SourceStatus;

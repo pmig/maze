@@ -544,6 +544,26 @@ impl MailWindow {
         cx.notify();
     }
 
+    /// `mail::ToggleFavoriteFolder`: adds the open folder to the favorites or removes
+    /// it, as the folder pane's context menu does.
+    fn toggle_favorite_folder(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let ThreadScope::Folder(key @ FolderKey::Folder(folder)) =
+            self.thread_list.read(cx).scope().clone()
+        else {
+            // A unified folder or a search.
+            window.push_notification(
+                Notification::info("Only folders of an account can be favorites.")
+                    .title(PRODUCT_NAME),
+                cx,
+            );
+            return;
+        };
+        self.folder_pane.update(cx, |pane, cx| {
+            let favorite = pane.is_favorite(&key);
+            pane.set_favorite(folder, !favorite, window, cx);
+        });
+    }
+
     fn notify_unavailable(what: &str, window: &mut Window, cx: &mut App) {
         window.push_notification(
             Notification::info(format!("{what} arrives with the composer.")).title(PRODUCT_NAME),
@@ -888,6 +908,9 @@ impl Render for MailWindow {
             }))
             .on_action(cx.listener(|this, _: &MoveToFolder, window, cx| {
                 this.open_quick_move(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ToggleFavoriteFolder, window, cx| {
+                this.toggle_favorite_folder(window, cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleTableView, window, cx| {
                 this.thread_list
@@ -1417,6 +1440,91 @@ mod tests {
             assert_eq!(w.thread_list().read(cx).scope(), &ThreadScope::Folder(key));
         });
     }
+    /// A favorite added from the palette shows under Favorites; clicking it opens the
+    /// folder like its row in the account does.
+    #[gpui::test]
+    fn favorites_are_toggled_from_the_palette_and_open_their_folder(cx: &mut TestAppContext) {
+        let (view, cx) = open(cx);
+        cx.run_until_parked();
+        let pane = view.read_with(cx, |w, _| w.folder_pane.clone());
+        let favorites = |cx: &mut VisualTestContext| {
+            pane.read_with(cx, |pane, cx| {
+                pane.favorite_rows(cx)
+                    .into_iter()
+                    .map(|(_, label)| label.to_string())
+                    .collect::<Vec<_>>()
+            })
+        };
+        assert_eq!(
+            favorites(cx),
+            [
+                "Gmail (personal)",
+                "Receipts",
+                "Microsoft 365",
+                "Acme",
+                "To Do"
+            ]
+        );
+
+        // Gmail (club) / Inbox (folder 9): open it, then toggle it from the palette.
+        let club_inbox = FolderKey::Folder(mazemail_types::FolderId(9));
+        view.update_in(cx, |w, window, cx| {
+            let pane = w.folder_pane.clone();
+            let selected = FolderPaneEvent::Selected {
+                key: club_inbox.clone(),
+                title: "Inbox · Gmail (club)".into(),
+            };
+            w.on_folder_pane_event(&pane, &selected, window, cx);
+        });
+        let run_toggle = |cx: &mut VisualTestContext| {
+            cx.simulate_keystrokes("cmd-shift-p");
+            cx.simulate_input("toggle favorite folder");
+            cx.simulate_keystrokes("enter");
+            cx.run_until_parked();
+        };
+        run_toggle(cx);
+        assert_eq!(
+            favorites(cx),
+            [
+                "Gmail (personal)",
+                "Receipts",
+                "Gmail (club)",
+                "Inbox",
+                "Microsoft 365",
+                "Acme",
+                "To Do"
+            ]
+        );
+
+        // Back to the unified Inbox, then click the new favorite.
+        view.update_in(cx, |w, window, cx| {
+            let pane = w.folder_pane.clone();
+            let selected = FolderPaneEvent::Selected {
+                key: FolderKey::Unified(FolderRole::Inbox),
+                title: "Inbox · Unified".into(),
+            };
+            w.on_folder_pane_event(&pane, &selected, window, cx);
+            w.folder_pane.update(cx, |p, cx| {
+                p.select(&FolderKey::Unified(FolderRole::Inbox), cx)
+            });
+        });
+        // `debug_bounds` wants a `&'static str`.
+        let row: &'static str = format!("folder-pane-row:favorite:{}", club_inbox.tree_id()).leak();
+        cx.run_until_parked();
+        let bounds = cx.debug_bounds(row).expect("the favorite has a row");
+        cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        view.read_with(cx, |w, cx| {
+            let list = w.thread_list().read(cx);
+            assert_eq!(list.scope(), &ThreadScope::Folder(club_inbox.clone()));
+        });
+
+        // Toggling again removes it. (On a unified folder the action only explains, in
+        // a notification, which needs the real window root.)
+        run_toggle(cx);
+        assert!(!favorites(cx).contains(&"Gmail (club)".to_owned()));
+    }
+
     #[gpui::test]
     fn runs_callbacks_after_the_next_paint(cx: &mut TestAppContext) {
         let (view, cx) = open(cx);

@@ -58,7 +58,7 @@ getrandom = "0.4"
 hex = "0.4"
 hkdf = "0.13"
 idna = "1.1"
-jsonc-parser = { version = "0.34", features = ["serde"] }
+jsonc-parser = { version = "0.34", features = ["cst", "serde"] }
 keyring-core = "1"
 libc = "0.2"
 mail-auth = { version = "0.13.3", default-features = false, features = ["aws-lc-rs", "arc"] }

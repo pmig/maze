@@ -76,6 +76,11 @@ pub enum Error {
     #[error(transparent)]
     Settings(#[from] settings::WatchError),
 
+    /// A change to the settings file (favorite folders) couldn't be saved. The message
+    /// says why, for people.
+    #[error("{0}")]
+    SettingsWrite(String),
+
     /// A filesystem operation failed.
     #[error("{context}: {source}")]
     Io {

@@ -14,6 +14,8 @@
 //! - [`SettingsWatcher`] reloads on change and publishes over a `tokio::sync::watch`
 //!   channel, which works without a Tokio runtime, so the GPUI layer (`ui`) can
 //!   consume it directly.
+//! - [`write_setting`] changes one key of the user file and keeps its comments and
+//!   formatting (Maze writes the favorite folders, `folder_pane.favorites`).
 //!
 //! This crate is layer L1 and has no GPUI dependency: `auth`, `sync`, `auto_update`,
 //! `agent` and `mazemail --headless` all read settings.
@@ -23,12 +25,14 @@
 //! (unquoted keys, single quotes) that schema-aware editors would flag.
 
 mod content;
+mod edit;
 mod load;
 mod paths;
 mod schema;
 mod watcher;
 
 pub use content::*;
+pub use edit::{EditError, write_setting};
 pub use load::{
     DEFAULT_SETTINGS, Diagnostic, DiagnosticKind, LoadedSettings, default_settings, load_settings,
     parse_settings,
