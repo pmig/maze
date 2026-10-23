@@ -4,9 +4,10 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use super::args::{
-    ArchiveArgs, AttachmentSaveArgs, ContactsArgs, DraftEditArgs, DraftNewArgs, ExportArgs,
-    FlagArgs, FoldersArgs, IdentitiesArgs, ImportArgs, MoveArgs, ProposeArgs, ReadArgs,
-    RuleAddArgs, SearchArgs, SendArgs, ShowArgs, TagArgs, TagsArgs,
+    AccountAddArgs, AccountListArgs, AccountRemoveArgs, ArchiveArgs, AttachmentSaveArgs,
+    ContactsArgs, DraftEditArgs, DraftNewArgs, ExportArgs, FlagArgs, FoldersArgs, IdentitiesArgs,
+    ImportArgs, MoveArgs, ProposeArgs, ReadArgs, RuleAddArgs, SearchArgs, SendArgs, ShowArgs,
+    SyncArgs, TagArgs, TagsArgs,
 };
 
 /// Arguments that don't match a command's schema.
@@ -102,6 +103,14 @@ mail_commands! {
     Export(ExportArgs) = "export",
     /// `mazemail import`. Already approved by the user when it arrives.
     Import(ImportArgs) = "import",
+    /// `mazemail account list`. Only accounts in the request's scope.
+    AccountList(AccountListArgs) = "account.list",
+    /// `mazemail account add`. Already approved by the user when it arrives.
+    AccountAdd(AccountAddArgs) = "account.add",
+    /// `mazemail account remove`. Already approved by the user when it arrives.
+    AccountRemove(AccountRemoveArgs) = "account.remove",
+    /// `mazemail sync`.
+    Sync(SyncArgs) = "sync",
 }
 
 impl Command {
@@ -138,6 +147,17 @@ impl Command {
             }
             Self::Import(args) if !args.path.is_absolute() => {
                 Err(ArgsError("path: must be an absolute path".into()))
+            }
+            Self::AccountAdd(args) if args.oauth.is_some() && args.password.is_some() => Err(
+                ArgsError("password: a browser sign-in (oauth) takes no password".into()),
+            ),
+            Self::AccountAdd(args)
+                if args.oauth.is_none()
+                    && args.password.as_ref().is_none_or(|p| p.expose().is_empty()) =>
+            {
+                Err(ArgsError(
+                    "password: required unless signing in with oauth".into(),
+                ))
             }
             _ => Ok(()),
         }

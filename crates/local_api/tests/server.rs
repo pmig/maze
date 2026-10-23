@@ -79,6 +79,11 @@ impl CommandHandler for FakeCore {
                 CommandOutput::new(&json!({ "path": "/x", "messages": 2 }))
             }
             Command::Show(_) => Err(CommandError::not_found("no such message")),
+            Command::AccountAdd(args) => {
+                // The handler gets the real password; dialogs and logs don't.
+                assert_eq!(args.password.unwrap().expose(), "hunter2");
+                CommandOutput::new(&json!({ "id": "a_b" }))
+            }
             _ => CommandOutput::new(&Value::Null),
         }
     }
@@ -775,8 +780,31 @@ async fn ai_policy_limits_token_scopes() {
             .unwrap_err(),
     );
     assert_eq!(error.code, ErrorCode::PermissionDenied);
-    // And no new tokens can be made.
+    // And no new tokens can be made…
     let error = api_error(client.call("login", json!({})).await.unwrap_err());
+    assert_eq!(error.code, ErrorCode::PermissionDenied);
+    // …except a writer token for all accounts, so accounts can be added from the CLI
+    // before any is shared. It sees no mail.
+    let data = client
+        .call("login", json!({ "profile": "writer" }))
+        .await
+        .unwrap();
+    let bootstrap = SessionToken::from_string(data["token"].as_str().unwrap().to_owned());
+    let mut bootstrap = h.client(Some(&bootstrap)).await;
+    let error = api_error(
+        bootstrap
+            .call("search", json!({ "query": "x" }))
+            .await
+            .unwrap_err(),
+    );
+    assert_eq!(error.code, ErrorCode::PermissionDenied);
+    bootstrap.call("account.list", json!({})).await.unwrap();
+    let error = api_error(
+        client
+            .call("login", json!({ "profile": "writer", "accounts": ["a_b"] }))
+            .await
+            .unwrap_err(),
+    );
     assert_eq!(error.code, ErrorCode::PermissionDenied);
     h.stop().await;
 }
@@ -1043,4 +1071,45 @@ async fn shutdown_aborts_requests_waiting_too_long() {
     let error = pending.await.unwrap().unwrap_err();
     assert_eq!(error.exit_code(), ExitCode::NotRunning);
     assert!(!h.socket.exists());
+}
+
+#[tokio::test]
+async fn account_management_needs_a_writer_token_and_approval() {
+    let mut h = Harness::start(ScriptedApprover::approve_all()).await;
+    let approver = h.approver.clone();
+    let args = json!({ "email": "alice@example.org", "password": "hunter2" });
+
+    let (triage, _) = h.token(Profile::Triage, false).await;
+    let denied = api_error(
+        h.client(Some(&triage))
+            .await
+            .call("account.add", args.clone())
+            .await
+            .unwrap_err(),
+    );
+    assert_eq!(denied.code, ErrorCode::PermissionDenied);
+    assert!(approver.requests().is_empty());
+    // Listing and syncing are reads; they work without any account in scope.
+    let mut reader = h.client(Some(&triage)).await;
+    reader.call("account.list", json!({})).await.unwrap();
+    reader.call("sync", json!({})).await.unwrap();
+
+    let (writer, _) = h.token(Profile::Writer, false).await;
+    h.client(Some(&writer))
+        .await
+        .call("account.add", args)
+        .await
+        .unwrap();
+    let requests = approver.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].command, "account.add");
+    let ApprovalKind::Command { args, .. } = &requests[0].kind else {
+        panic!("not a command approval");
+    };
+    assert_eq!(args.expose()["password"], "<redacted>");
+    assert!(!format!("{:?}", requests[0]).contains("hunter2"));
+    let seen = h.seen();
+    assert_eq!(seen.last().unwrap().name, "account.add");
+    assert!(seen.last().unwrap().approved);
+    h.stop().await;
 }

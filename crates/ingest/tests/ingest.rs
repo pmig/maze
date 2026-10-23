@@ -699,3 +699,45 @@ fn perf_scaling() {
     assert!(last < first * 3, "first {first:?}, last {last:?}");
     close(f.store);
 }
+
+#[test]
+fn text_parts_are_recorded_as_such() {
+    let f = fixture(AccountKind::Imap);
+    let raw = mail("tp@example.com", "Large", "", "Only the text part");
+    let header_end = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let headers = runtime
+        .block_on(f.ingestor.ingest_headers(
+            meta(&f, f.inbox, 21),
+            &raw[..header_end],
+            BodySummary::default(),
+        ))
+        .unwrap();
+    runtime
+        .block_on(
+            f.ingestor
+                .attach_body_as(headers.message, &raw, BodyState::TextParts),
+        )
+        .unwrap();
+    let detail = f
+        .store
+        .reader()
+        .unwrap()
+        .message(headers.message)
+        .unwrap()
+        .unwrap();
+    assert_eq!(detail.body_state, BodyState::TextParts);
+    assert!(detail.blob.is_some());
+    assert!(
+        f.sink
+            .get(headers.message)
+            .unwrap()
+            .body
+            .contains("text part")
+    );
+    drop(runtime);
+    close(f.store);
+}

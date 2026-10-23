@@ -342,3 +342,40 @@ pub struct ImportOutput {
     /// Folders created.
     pub folders: u64,
 }
+
+/// One account in `account list`, and what `account add` returns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AccountOutput {
+    /// Account id.
+    pub id: String,
+    /// The name in the folder pane.
+    pub name: String,
+    /// `imap`, `gmail`, `m365` or `local`.
+    pub kind: String,
+    /// The address, if known.
+    pub email: Option<String>,
+    /// The IMAP server (`host:port`), for synced accounts.
+    pub server: Option<String>,
+    /// `password`, `oauth:google` or `oauth:microsoft`, for synced accounts.
+    pub auth: Option<String>,
+    /// `connecting`, `idle`, `syncing`, `offline`, `auth_required`, `error` or `not_synced`.
+    pub state: String,
+    /// The sync state as a sentence.
+    pub status: String,
+}
+
+/// `account remove`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AccountRemoved {
+    /// The removed account's id.
+    pub id: String,
+    /// Always `true`.
+    pub removed: bool,
+}
+
+/// `sync`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SyncOutput {
+    /// The accounts asked to sync now.
+    pub accounts: Vec<String>,
+}

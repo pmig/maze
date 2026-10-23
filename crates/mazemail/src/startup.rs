@@ -8,24 +8,27 @@ use std::sync::Arc;
 
 use local_api::{DispatchConfig, ServerConfig};
 use mazemail_core::api::TokenAuthorizer;
-use mazemail_core::{CoreConfig, Error};
+use mazemail_core::{CoreConfig, Error, SyncEngineConfig};
 use mazemail_types::PRODUCT_NAME;
 use settings::Paths;
 use time::UtcOffset;
 use vault::KeyStore;
 
 /// The core configuration for the standard directories: data directory and
-/// `settings.json` from `paths`, the version from `version.txt`, the user's time zone
-/// and the token authorizer.
+/// `settings.json` from `paths`, the version from `version.txt`, the user's time zone,
+/// the token authorizer, and the sync engine with the account secrets in `secrets`
+/// (the keychain, see [`crate::keys::secret_store`]).
 pub fn core_config(
     paths: &Paths,
     key_store: Arc<dyn KeyStore>,
+    secrets: Arc<dyn auth::SecretStore>,
     authorizer: &TokenAuthorizer,
     utc_offset: UtcOffset,
 ) -> CoreConfig {
     let mut config = CoreConfig::from_paths(paths, key_store)
         .with_authorizer(Arc::new(authorizer.clone()))
-        .with_utc_offset(utc_offset);
+        .with_utc_offset(utc_offset)
+        .with_sync_engine(SyncEngineConfig::new(secrets));
     config.app_version = release_channel::VERSION.to_owned();
     config
 }

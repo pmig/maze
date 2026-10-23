@@ -5,6 +5,7 @@
 // functions, not for the helpers they share.
 #![allow(clippy::unwrap_used, clippy::print_stderr)]
 
+mod accounts;
 mod api;
 mod bench;
 mod commands;

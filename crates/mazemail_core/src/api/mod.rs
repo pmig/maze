@@ -35,6 +35,7 @@
 //! verified by the server is known to the synchronous authorizer by the time the
 //! handler calls `apply`.
 
+mod accounts;
 mod audit;
 mod export;
 mod handler;

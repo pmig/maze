@@ -4682,6 +4682,7 @@ dependencies = [
  "libc",
  "mazemail_types",
  "pretty_assertions",
+ "rpassword",
  "schemars",
  "serde",
  "serde_json",
@@ -4989,10 +4990,12 @@ dependencies = [
  "anyhow",
  "async-channel 2.5.0",
  "async-trait",
+ "auth",
  "clap",
  "gpui-pre",
  "gpui-pre-platform",
  "image",
+ "imap",
  "import",
  "ingest",
  "local_api",
@@ -5000,6 +5003,7 @@ dependencies = [
  "mazemail_core",
  "mazemail_types",
  "release_channel",
+ "security",
  "serde_json",
  "settings",
  "tempfile",
@@ -5018,24 +5022,31 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "auth",
+ "bytes",
+ "imap",
  "import",
  "ingest",
  "local_api",
  "mazemail_mime",
  "mazemail_types",
  "pretty_assertions",
+ "reqwest",
  "search",
  "security",
  "serde",
  "serde_json",
  "settings",
  "store",
+ "sync",
  "tempfile",
  "thiserror 2.0.21",
  "time",
  "tokio",
  "tracing",
+ "url",
  "vault",
+ "wiremock",
 ]
 
 [[package]]
@@ -7105,6 +7116,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1964b10c76125c36f8afe190065a4bf9a87bf324842c05701330bba9f1cacbb"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "rpassword"
+version = "7.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2da316a15f47e3d053de9cb2c439650bd8fa4aaeb9365f2e5f27f492ff73c196"
+dependencies = [
+ "libc",
+ "rtoolbox",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "rtoolbox"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a1efe12a1469752d0e6ff5ebec0b6ef4924cc5c4c71046b0ec730040535819d"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

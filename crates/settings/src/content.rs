@@ -41,6 +41,9 @@ pub struct Settings {
     pub offline_recent_days: u32,
     /// Overrides per account, keyed by account label.
     pub accounts: BTreeMap<String, AccountOverrides>,
+    /// OAuth client registrations for "Sign in with Google" and "Sign in with
+    /// Microsoft".
+    pub auth: AuthSettings,
     /// AI agents.
     pub agent: AgentSettings,
     /// The sandbox every agent process runs in.
@@ -73,6 +76,7 @@ impl Default for Settings {
             offline: OfflinePolicy::default(),
             offline_recent_days: 90,
             accounts: BTreeMap::new(),
+            auth: AuthSettings::default(),
             agent: AgentSettings::default(),
             agent_sandbox: AgentSandboxSettings::default(),
             auto_update: true,
@@ -578,6 +582,38 @@ pub enum AutoUpdateInstall {
     NotifyOnly,
 }
 
+/// OAuth client registrations (PLAN §4.6). Maze ships no Google client ID until the
+/// app is verified (CONCEPT §6): bring your own from the Google Cloud console.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct AuthSettings {
+    /// Google (Gmail, Google Workspace).
+    pub google: GoogleAuthSettings,
+    /// Microsoft (Outlook.com, Microsoft 365).
+    pub microsoft: MicrosoftAuthSettings,
+}
+
+/// A Google OAuth client of type "Desktop app".
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct GoogleAuthSettings {
+    /// The OAuth client ID (`….apps.googleusercontent.com`). `null`: "Sign in with
+    /// Google" is unavailable.
+    pub client_id: Option<String>,
+    /// The client secret Google issues to desktop clients. It ships with every copy
+    /// of an app, so it isn't really secret, but Google requires it.
+    pub client_secret: Option<String>,
+}
+
+/// A Microsoft Entra app registration (public client, no secret).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct MicrosoftAuthSettings {
+    /// The application (client) ID. `null`: "Sign in with Microsoft" is unavailable
+    /// until Maze's own registration is configured.
+    pub client_id: Option<String>,
+}
+
 /// Notifications for new mail.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -689,6 +725,29 @@ mod tests {
         assert_eq!(
             settings.effective_update_channel(ReleaseChannel::Dev),
             ReleaseChannel::Dev
+        );
+    }
+
+    #[test]
+    fn oauth_client_ids_are_unset_by_default_and_parse() {
+        let defaults = Settings::default();
+        assert_eq!(defaults.auth.google.client_id, None);
+        assert_eq!(defaults.auth.microsoft.client_id, None);
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "auth": {
+                "google": { "client_id": "id.apps.googleusercontent.com", "client_secret": "s" },
+                "microsoft": { "client_id": "entra-app" }
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            settings.auth.google.client_id.as_deref(),
+            Some("id.apps.googleusercontent.com")
+        );
+        assert_eq!(settings.auth.google.client_secret.as_deref(), Some("s"));
+        assert_eq!(
+            settings.auth.microsoft.client_id.as_deref(),
+            Some("entra-app")
         );
     }
 

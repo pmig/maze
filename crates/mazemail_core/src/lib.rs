@@ -29,8 +29,8 @@
 //! Each integration sits behind one small module, so wiring it is mechanical:
 //!
 //! - **sync**: [`sync_bridge`] ([`SyncBridge`] for body fetches, refresh and op
-//!   wake-ups; [`SyncStatusSink`] for status) and [`ops`] (the pending-op
-//!   payload, a private mirror of `sync::ops::OpPayload`).
+//!   wake-ups; [`SyncStatusSink`] for status) and [`ops`] (the pending-op payload,
+//!   `sync::ops::OpPayload`, and how commands follow its enqueue contract).
 //! - **ingest**: [`CoreIndexSink`] implements `ingest::IndexSink` (see [`indexing`]);
 //!   ingest writes through [`CoreHandle::store`].
 //! - **local_api**: [`api`] implements `local_api`'s `CommandHandler`, `TokenStore`,
@@ -54,10 +54,12 @@ mod metadata;
 mod row_cache;
 mod runtime;
 
+pub mod accounts;
 pub mod api;
 pub mod api_handler;
 pub mod commands;
 pub mod crash_guard;
+mod credentials;
 pub mod events;
 pub mod folders;
 pub mod global_search;
@@ -67,8 +69,14 @@ pub mod message;
 pub mod ops;
 pub mod reader_text;
 pub mod sync_bridge;
+pub mod sync_engine;
+pub mod sync_ingest;
 pub mod thread_list;
 
+pub use accounts::{
+    AccountAuth, AccountConfig, AccountErrorKind, AccountInfo, AddImapAccount, AddOAuthAccount,
+    ImapSecurity, ImapServer, ServerSuggestion, suggest_imap_server,
+};
 pub use api_handler::{Authorization, CommandAuthorizer, DenyAgents};
 pub use commands::{CommandOutcome, CommandReceipt, MailCommand, Origin};
 pub use config::{CoreConfig, RuntimeConfig};
@@ -86,6 +94,11 @@ pub use row_cache::{DEFAULT_ROW_CACHE_CAPACITY, RowCacheStats};
 pub use sync_bridge::{
     FetchPriority, NoSync, RefreshScope, SyncBridge, SyncState, SyncStatus, SyncStatusSink,
 };
+pub use sync_engine::{ImapConnector, NetworkImapConnector, SyncEngineConfig};
+pub use sync_ingest::CoreIngest;
+
+/// `auth` types that are part of this API.
+pub use auth::{ProviderKind, SecretStore};
 pub use thread_list::{ListQuery, QuickFilter, ThreadListSnapshot};
 
 /// Store types that are part of this API.

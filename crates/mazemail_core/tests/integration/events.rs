@@ -95,6 +95,7 @@ async fn sync_status_and_index_progress_reach_the_batches() {
     let mut events = t.core.events();
     let sink = t.core.sync_status_sink();
     assert!(sink.report(SyncStatus {
+        detail: None,
         account: f.work,
         state: SyncState::Syncing {
             folder: Some(f.inbox),
@@ -103,6 +104,7 @@ async fn sync_status_and_index_progress_reach_the_batches() {
         },
     }));
     assert!(sink.report(SyncStatus {
+        detail: None,
         account: f.work,
         state: SyncState::Idle,
     }));
@@ -111,6 +113,7 @@ async fn sync_status_and_index_progress_reach_the_batches() {
     assert_eq!(
         batch.sync_status,
         vec![SyncStatus {
+            detail: None,
             account: f.work,
             state: SyncState::Idle
         }]

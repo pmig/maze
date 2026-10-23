@@ -11,7 +11,9 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, Sizable as _, StyledExt as _, h_flex,
+    ActiveTheme as _, Icon, Sizable as _, StyledExt as _,
+    button::{Button, ButtonVariants as _},
+    h_flex,
     list::ListItem,
     tree::{TreeEntry, TreeItem, TreeState, tree},
     v_flex,
@@ -20,6 +22,7 @@ use mazemail_types::FolderRole;
 use ui::assets::IconName;
 use ui::components::CountBadge;
 
+use crate::actions::AddAccount;
 use crate::source::{AccountKind, FolderEntry, FolderKey, FolderTree, MailSource};
 
 /// What a tree row stands for.
@@ -329,14 +332,36 @@ impl Render for FolderPane {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let nodes = self.nodes.clone();
         let source = self.source.clone();
+        let theme = cx.theme();
         v_flex()
             .size_full()
             .key_context("FolderPane")
-            .bg(cx.theme().sidebar)
-            .py_1()
-            .child(tree(&self.tree, move |ix, entry, selected, _, cx| {
-                FolderPane::render_item(&nodes, source.as_ref(), ix, entry, selected, cx)
-            }))
+            .bg(theme.sidebar)
+            .pt_1()
+            .child(div().flex_1().min_h_0().child(tree(
+                &self.tree,
+                move |ix, entry, selected, _, cx| {
+                    FolderPane::render_item(&nodes, source.as_ref(), ix, entry, selected, cx)
+                },
+            )))
+            .child(
+                h_flex()
+                    .flex_none()
+                    .px_2()
+                    .py_1()
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .child(
+                        Button::new("folder-pane-add-account")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::Plus)
+                            .label("Add Account…")
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(AddAccount), cx);
+                            }),
+                    ),
+            )
     }
 }
 

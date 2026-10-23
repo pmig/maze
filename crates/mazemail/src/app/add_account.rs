@@ -1,0 +1,481 @@
+//! The "Add Account" dialog (CONCEPT §6): an address and a password for any IMAP
+//! server, or "Sign in with Google / Microsoft" in the browser.
+//!
+//! The server is detected from the address for well-known providers
+//! ([`suggest_imap_server`]: Gmail, Outlook.com, iCloud, Yahoo, Fastmail, GMX, …, else
+//! `imap.<domain>` with TLS on 993) and shown under the fields; "Server settings…"
+//! opens host, port, security and user name to override it. When the address belongs
+//! to Google or Microsoft (by domain, or by the host for Microsoft 365), the matching
+//! sign-in button is highlighted.
+//!
+//! Adding runs in the core ([`CoreHandle::add_imap_account`],
+//! [`CoreHandle::add_oauth_account`]), which connects and lists the folders before it
+//! saves anything; errors (wrong password, unreachable server, no OAuth client ID)
+//! keep the dialog open with the message. The dialog opens from the empty state's
+//! button, the folder pane's "Add Account…" and the command palette
+//! ("Maze: Add Account").
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use gpui::{
+    App, AppContext as _, Entity, ParentElement as _, SharedString, Styled as _, Window, div,
+    prelude::FluentBuilder as _,
+};
+use mail_ui::DataChanges;
+use mazemail_core::{
+    AddImapAccount, AddOAuthAccount, CoreHandle, ImapSecurity, ImapServer, ProviderKind,
+    suggest_imap_server,
+};
+use mazemail_types::{PRODUCT_NAME, Sensitive};
+use ui::kit::component::{
+    ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, WindowExt as _,
+    button::{Button, ButtonVariants as _},
+    h_flex,
+    input::{Input, InputState},
+    v_flex,
+};
+
+/// The dialog's state, shared by its buttons.
+struct Form {
+    core: CoreHandle,
+    email: Entity<InputState>,
+    name: Entity<InputState>,
+    password: Entity<InputState>,
+    host: Entity<InputState>,
+    port: Entity<InputState>,
+    username: Entity<InputState>,
+    /// `None`: as detected.
+    security: Option<ImapSecurity>,
+    advanced: bool,
+    busy: Option<SharedString>,
+    error: Option<SharedString>,
+}
+
+type Shared = Rc<RefCell<Form>>;
+
+/// What the dialog will connect to, from the fields and the detection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Plan {
+    pub(crate) server: Option<ImapServer>,
+    pub(crate) detected: bool,
+    pub(crate) oauth: Option<ProviderKind>,
+}
+
+/// Combines the typed server settings with what the address suggests. Empty fields
+/// fall back to the suggestion; a typed host without a port gets the security's port.
+pub(crate) fn plan(email: &str, host: &str, port: &str, security: Option<ImapSecurity>) -> Plan {
+    let suggestion = suggest_imap_server(email);
+    let host = host.trim();
+    let oauth = ProviderKind::detect(Some(email.trim()), (!host.is_empty()).then_some(host))
+        .or_else(|| suggestion.as_ref().and_then(|s| s.oauth));
+    let detected = host.is_empty() && suggestion.as_ref().is_some_and(|s| s.known);
+    let server = if host.is_empty() {
+        suggestion.map(|s| {
+            let security = security.unwrap_or(s.server.security);
+            ImapServer {
+                port: port
+                    .trim()
+                    .parse()
+                    .unwrap_or_else(|_| security.default_port()),
+                security,
+                host: s.server.host,
+            }
+        })
+    } else {
+        let security = security.unwrap_or_default();
+        Some(ImapServer {
+            host: host.to_owned(),
+            port: port
+                .trim()
+                .parse()
+                .unwrap_or_else(|_| security.default_port()),
+            security,
+        })
+    };
+    Plan {
+        server,
+        detected,
+        oauth,
+    }
+}
+
+/// Opens the dialog in the main window (no-op while the core isn't open).
+pub(crate) fn show(core: CoreHandle, cx: &mut App) {
+    let Some(window) = super::main_window(cx) else {
+        return;
+    };
+    let opened = window.update(cx, |_, window, cx| {
+        let input = |placeholder: &str, window: &mut Window, cx: &mut App| {
+            let placeholder = placeholder.to_owned();
+            cx.new(|cx| InputState::new(window, cx).placeholder(placeholder))
+        };
+        let form = Form {
+            core,
+            email: input("name@example.com", window, cx),
+            name: input("Name in the folder pane (optional)", window, cx),
+            password: cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder("Password or app password")
+                    .masked(true)
+            }),
+            host: input("IMAP server (detected)", window, cx),
+            port: input("Port", window, cx),
+            username: input("User name (default: the address)", window, cx),
+            security: None,
+            advanced: false,
+            busy: None,
+            error: None,
+        };
+        open(Rc::new(RefCell::new(form)), window, cx);
+    });
+    if opened.is_err() {
+        tracing::error!("cannot show the Add Account dialog");
+    }
+}
+
+fn value(input: &Entity<InputState>, cx: &App) -> String {
+    input.read(cx).value().trim().to_owned()
+}
+
+fn security_label(security: ImapSecurity) -> &'static str {
+    match security {
+        ImapSecurity::Tls => "TLS",
+        ImapSecurity::Starttls => "STARTTLS",
+        ImapSecurity::Insecure => "None (insecure)",
+    }
+}
+
+fn open(state: Shared, window: &mut Window, cx: &mut App) {
+    window.open_dialog(cx, move |dialog, _, cx| {
+        let theme = cx.theme();
+        let form = state.borrow();
+        let email = value(&form.email, cx);
+        let plan = plan(
+            &email,
+            &value(&form.host, cx),
+            &value(&form.port, cx),
+            form.security,
+        );
+        let busy = form.busy.clone();
+        let error = form.error.clone();
+        let advanced = form.advanced;
+        let server_line: SharedString = match &plan.server {
+            Some(server) => format!(
+                "Server: {}:{} · {}{}",
+                server.host,
+                server.port,
+                security_label(server.security),
+                if plan.detected { " (detected)" } else { "" }
+            )
+            .into(),
+            None => "Enter your address to detect the server.".into(),
+        };
+        let oauth_hint = plan.oauth.map(|provider| {
+            SharedString::from(format!(
+                "{} accounts usually need “Sign in with {}” (or an app password).",
+                provider.display_name(),
+                provider.display_name()
+            ))
+        });
+        let selected_security = plan.server.as_ref().map(|s| s.security);
+
+        let security_button = |security: ImapSecurity| {
+            let state = state.clone();
+            Button::new(SharedString::from(format!(
+                "security-{}",
+                security.as_str()
+            )))
+            .small()
+            .label(security_label(security))
+            .selected(selected_security == Some(security))
+            .on_click(move |_, window, _| {
+                state.borrow_mut().security = Some(security);
+                window.refresh();
+            })
+        };
+        let toggle_advanced = {
+            let state = state.clone();
+            move |_: &gpui::ClickEvent, window: &mut Window, _: &mut App| {
+                let mut form = state.borrow_mut();
+                form.advanced = !form.advanced;
+                window.refresh();
+            }
+        };
+        let add = {
+            let state = state.clone();
+            move |_: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
+                add_with_password(&state, window, cx);
+            }
+        };
+        let sign_in = |provider: ProviderKind| {
+            let state = state.clone();
+            Button::new(SharedString::from(format!("sign-in-{}", provider.as_str())))
+                .small()
+                .label(format!("Sign in with {}", provider.display_name()))
+                .when(plan.oauth == Some(provider), |b| b.primary())
+                .disabled(busy.is_some())
+                .on_click(move |_, window, cx| add_with_oauth(&state, provider, window, cx))
+        };
+
+        dialog
+            .title("Add Account")
+            .width(gpui::px(520.))
+            .child(
+                v_flex()
+                    .gap_2()
+                    .text_sm()
+                    .child(Input::new(&form.email))
+                    .child(Input::new(&form.name))
+                    .child(Input::new(&form.password))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(server_line),
+                    )
+                    .when_some(oauth_hint, |this, hint| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(hint),
+                        )
+                    })
+                    .child(
+                        h_flex().child(
+                            Button::new("advanced")
+                                .ghost()
+                                .xsmall()
+                                .label(if advanced {
+                                    "Hide server settings"
+                                } else {
+                                    "Server settings…"
+                                })
+                                .on_click(toggle_advanced),
+                        ),
+                    )
+                    .when(advanced, |this| {
+                        this.child(
+                            h_flex()
+                                .gap_2()
+                                .child(div().flex_1().child(Input::new(&form.host)))
+                                .child(div().w_20().child(Input::new(&form.port))),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(security_button(ImapSecurity::Tls))
+                                .child(security_button(ImapSecurity::Starttls))
+                                .child(security_button(ImapSecurity::Insecure)),
+                        )
+                        .child(Input::new(&form.username))
+                    })
+                    .when_some(busy.clone(), |this, busy| {
+                        this.child(div().text_color(theme.muted_foreground).child(busy))
+                    })
+                    .when_some(error, |this, error| {
+                        this.child(div().text_color(theme.danger).child(error))
+                    }),
+            )
+            .footer(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(sign_in(ProviderKind::Google))
+                            .child(sign_in(ProviderKind::Microsoft)),
+                    )
+                    .child(
+                        Button::new("add-account")
+                            .primary()
+                            .small()
+                            .label(if busy.is_some() {
+                                "Checking…"
+                            } else {
+                                "Add Account"
+                            })
+                            .disabled(busy.is_some())
+                            .on_click(add),
+                    ),
+            )
+    });
+}
+
+fn set_status(
+    state: &Shared,
+    busy: Option<SharedString>,
+    error: Option<SharedString>,
+    window: &mut Window,
+) {
+    {
+        let mut form = state.borrow_mut();
+        form.busy = busy;
+        form.error = error;
+    }
+    window.refresh();
+}
+
+/// Runs `add` in the core; closes the dialog and reloads the window on success, shows
+/// the error otherwise.
+fn run(
+    state: &Shared,
+    busy: &str,
+    add: impl Future<Output = mazemail_core::Result<mazemail_core::AccountInfo>> + Send + 'static,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    set_status(state, Some(busy.to_owned().into()), None, window);
+    let attempt = cx.background_spawn(add);
+    let handle = window.window_handle();
+    let state = state.clone();
+    cx.spawn(async move |cx| {
+        let result = attempt.await;
+        cx.update(|cx| match result {
+            Ok(info) => {
+                tracing::info!(account = %info.id, "account added from the dialog");
+                let _ = handle.update(cx, |_, window, cx| window.close_dialog(cx));
+                super::apply_changes(&DataChanges::everything(), cx);
+            }
+            Err(error) => {
+                let _ = handle.update(cx, |_, window, _| {
+                    set_status(&state, None, Some(error.to_string().into()), window);
+                });
+            }
+        });
+    })
+    .detach();
+}
+
+fn add_with_password(state: &Shared, window: &mut Window, cx: &mut App) {
+    let (core, input) = {
+        let form = state.borrow();
+        let email = value(&form.email, cx);
+        let plan = plan(
+            &email,
+            &value(&form.host, cx),
+            &value(&form.port, cx),
+            form.security,
+        );
+        let password = form.password.read(cx).value().to_string();
+        let username = value(&form.username, cx);
+        let name = value(&form.name, cx);
+        let Some(server) = plan.server else {
+            drop(form);
+            set_status(
+                state,
+                None,
+                Some("Enter your email address (name@example.com).".into()),
+                window,
+            );
+            return;
+        };
+        if password.is_empty() {
+            drop(form);
+            set_status(
+                state,
+                None,
+                Some("Enter the password, or sign in with Google or Microsoft.".into()),
+                window,
+            );
+            return;
+        }
+        (
+            form.core.clone(),
+            AddImapAccount {
+                display_name: (!name.is_empty()).then_some(name),
+                email,
+                server,
+                username: (!username.is_empty()).then_some(username),
+                password: Sensitive::new(password),
+            },
+        )
+    };
+    let message = format!("Connecting to {}…", input.server.host);
+    run(
+        state,
+        &message,
+        async move { core.add_imap_account(input).await },
+        window,
+        cx,
+    );
+}
+
+fn add_with_oauth(state: &Shared, provider: ProviderKind, window: &mut Window, cx: &mut App) {
+    let (core, input) = {
+        let form = state.borrow();
+        let email = value(&form.email, cx);
+        let name = value(&form.name, cx);
+        (
+            form.core.clone(),
+            AddOAuthAccount {
+                provider,
+                email,
+                display_name: (!name.is_empty()).then_some(name),
+            },
+        )
+    };
+    let message = format!(
+        "Continue in your browser: sign in with {} and allow {PRODUCT_NAME} access…",
+        provider.display_name()
+    );
+    run(
+        state,
+        &message,
+        async move { core.add_oauth_account(input).await },
+        window,
+        cx,
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_server_is_detected_and_can_be_overridden() {
+        let gmail = plan("anna@gmail.com", "", "", None);
+        assert_eq!(
+            gmail.server,
+            Some(ImapServer::new("imap.gmail.com", ImapSecurity::Tls))
+        );
+        assert!(gmail.detected);
+        assert_eq!(gmail.oauth, Some(ProviderKind::Google));
+
+        // Microsoft 365 is recognized by the host for custom domains.
+        let m365 = plan("bob@contoso.example", "outlook.office365.com", "", None);
+        assert_eq!(m365.oauth, Some(ProviderKind::Microsoft));
+        assert!(!m365.detected);
+
+        let custom = plan(
+            "c@example.org",
+            "mail.example.org",
+            "1143",
+            Some(ImapSecurity::Starttls),
+        );
+        assert_eq!(
+            custom.server,
+            Some(ImapServer {
+                host: "mail.example.org".into(),
+                port: 1143,
+                security: ImapSecurity::Starttls,
+            })
+        );
+        assert_eq!(custom.oauth, None);
+
+        let guessed = plan("d@example.net", "", "", Some(ImapSecurity::Starttls));
+        assert_eq!(
+            guessed.server,
+            Some(ImapServer {
+                host: "imap.example.net".into(),
+                port: 143,
+                security: ImapSecurity::Starttls,
+            })
+        );
+        assert!(!guessed.detected);
+        assert_eq!(plan("nothing", "", "", None).server, None);
+    }
+}

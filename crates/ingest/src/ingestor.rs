@@ -457,12 +457,24 @@ impl Ingestor {
     /// follow), fills the attachment structure if sync stored none, and sends a full
     /// index document.
     pub async fn attach_body(&self, message: MessageId, raw: &[u8]) -> Result<Ingested> {
+        self.attach_body_as(message, raw, BodyState::Full).await
+    }
+
+    /// Like [`Ingestor::attach_body`], with the body state to record: header-first
+    /// sync stores a synthetic message with only the text parts of a large message as
+    /// [`BodyState::TextParts`], and the full message later.
+    pub async fn attach_body_as(
+        &self,
+        message: MessageId,
+        raw: &[u8],
+        state: BodyState,
+    ) -> Result<Ingested> {
         let prepared = self.prepare_body(raw)?;
         let job_input = prepared.clone();
         let detail = self
             .store
             .write_weighted(WEIGHT_PER_MESSAGE, move |w| {
-                attach_job(w, message, &job_input)
+                attach_job(w, message, &job_input, state)
             })
             .await?;
         Ok(self.finish_attach(message, detail, prepared))
@@ -470,12 +482,24 @@ impl Ingestor {
 
     /// Blocking variant of [`Ingestor::attach_body`].
     pub fn attach_body_blocking(&self, message: MessageId, raw: &[u8]) -> Result<Ingested> {
+        self.attach_body_blocking_as(message, raw, BodyState::Full)
+    }
+
+    /// Blocking variant of [`Ingestor::attach_body_as`]: parses, encrypts and makes the
+    /// blob durable on the calling thread (call it from a blocking thread, not an async
+    /// worker), then waits for the store's commit.
+    pub fn attach_body_blocking_as(
+        &self,
+        message: MessageId,
+        raw: &[u8],
+        state: BodyState,
+    ) -> Result<Ingested> {
         let prepared = self.prepare_body(raw)?;
         self.persist_blobs([&prepared.blob]);
         let job_input = prepared.clone();
         let detail = self
             .store
-            .write_blocking(move |w| attach_job(w, message, &job_input))?;
+            .write_blocking(move |w| attach_job(w, message, &job_input, state))?;
         Ok(self.finish_attach(message, detail, prepared))
     }
 
@@ -821,6 +845,7 @@ fn attach_job(
     w: &mut WriteTx<'_>,
     message: MessageId,
     body: &PreparedBody,
+    state: BodyState,
 ) -> store::Result<AttachedDetail> {
     let detail = w.message(message)?.ok_or_else(|| store::Error::NotFound {
         entity: "message",
@@ -840,7 +865,7 @@ fn attach_job(
                 None
             },
             blob: Some(body.blob.clone()),
-            body_state: Some(BodyState::Full),
+            body_state: Some(state),
         },
     )?;
     Ok(AttachedDetail {

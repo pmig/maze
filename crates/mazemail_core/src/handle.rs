@@ -39,6 +39,8 @@ use crate::message::{
 use crate::row_cache::{RowCache, RowCacheStats};
 use crate::runtime::RuntimeHolder;
 use crate::sync_bridge::{FetchPriority, SyncBridge, SyncStatusSink};
+use crate::sync_engine::SyncEngine;
+use crate::sync_ingest::CoreIngest;
 use crate::thread_list::{ListQuery, TextCache, ThreadListSnapshot, all_keys};
 use crate::{Error, Result};
 
@@ -82,6 +84,7 @@ struct Inner {
     undo: Mutex<Option<UndoAction>>,
     seq: AtomicU64,
     sync: Arc<dyn SyncBridge>,
+    engine: Option<Arc<SyncEngine>>,
     authorizer: Arc<dyn CommandAuthorizer>,
     verifier: OnceLock<Option<Verifier>>,
     verifying: Mutex<HashSet<MessageId>>,
@@ -229,6 +232,10 @@ impl CoreHandle {
             return Ok(());
         }
         let inner = &self.inner;
+        // Sync first: actors finish their batch and log out while the store is open.
+        if let Some(engine) = &inner.engine {
+            engine.shutdown().await;
+        }
         let tasks: Vec<_> = lock(&inner.tasks).drain(..).collect();
         for task in tasks {
             task.abort();
@@ -291,6 +298,36 @@ impl CoreHandle {
     /// UI never uses it (AGENTS.md); it goes through the methods of this handle.
     pub fn store(&self) -> &Store {
         &self.inner.store
+    }
+
+    /// The sync engine, if this core runs one.
+    pub(crate) fn engine(&self) -> Option<Arc<SyncEngine>> {
+        self.inner.engine.clone()
+    }
+
+    /// Asks sync to run now for `scope`, without an audit entry (the local API audits
+    /// its requests itself). [`MailCommand::Refresh`] is the audited form.
+    pub fn request_refresh(&self, scope: crate::RefreshScope) {
+        self.inner.sync.refresh(scope);
+    }
+
+    /// Accounts with a running sync actor.
+    pub fn synced_accounts(&self) -> Vec<AccountId> {
+        self.inner
+            .engine
+            .as_ref()
+            .map(|engine| engine.running())
+            .unwrap_or_default()
+    }
+
+    /// Runs `future` on the core runtime, from any executor.
+    pub(crate) async fn run<F, T>(&self, future: F) -> Result<T>
+    where
+        F: std::future::Future<Output = Result<T>> + Send + 'static,
+        T: Send + 'static,
+    {
+        self.ensure_open()?;
+        self.inner.runtime.run(future).await
     }
 
     // ---- queries ------------------------------------------------------------------
@@ -477,16 +514,21 @@ impl CoreHandle {
                         move || load_for_verification(&inner, id)
                     })
                     .await?;
-                let (detail, kind, raw) = match loaded {
+                let (detail, kind, profile, raw) = match loaded {
                     Verification::Stored(report) => return Ok(AuthStatus::Ready(report)),
                     Verification::NoBody => return Ok(AuthStatus::Pending),
-                    Verification::Needed { detail, kind, raw } => (detail, kind, raw),
+                    Verification::Needed {
+                        detail,
+                        kind,
+                        profile,
+                        raw,
+                    } => (detail, kind, profile, raw),
                 };
-                let provider = match kind {
+                let provider = profile.or(match kind {
                     AccountKind::Gmail => Some(ProviderProfile::gmail()),
                     AccountKind::M365 => Some(ProviderProfile::microsoft365()),
                     _ => None,
-                };
+                });
                 let mut context = VerifyContext::new();
                 if let Some(provider) = &provider {
                     context = context.with_provider(provider);
@@ -612,7 +654,7 @@ impl CoreHandle {
             })
             .await
             .map_err(map_store)?;
-        self.after_write(&applied.threads, &applied.accounts);
+        self.after_write(&applied.threads, &applied.queued);
         let undoable = origin == Origin::User && applied.undo.is_some();
         if origin == Origin::User {
             *lock(&self.inner.undo) = applied.undo;
@@ -627,14 +669,13 @@ impl CoreHandle {
         })
     }
 
-    fn after_write(&self, threads: &BTreeSet<ThreadId>, accounts: &BTreeSet<AccountId>) {
+    fn after_write(&self, threads: &BTreeSet<ThreadId>, queued: &[(AccountId, store::OpId)]) {
         // The change set invalidates too, asynchronously; doing it here as well means a
         // caller that reads rows right after `apply` never sees the old state.
         self.inner.rows.invalidate(threads.iter().copied());
         self.inner.text.invalidate(threads.iter().copied());
-        if !accounts.is_empty() {
-            let accounts: Vec<AccountId> = accounts.iter().copied().collect();
-            self.inner.sync.ops_enqueued(&accounts);
+        if !queued.is_empty() {
+            self.inner.sync.ops_queued(queued);
         }
     }
 
@@ -661,7 +702,7 @@ impl CoreHandle {
             .write(move |w| commands::undo_in_tx(w, &action, &origin, ctx))
             .await
             .map_err(map_store)?;
-        self.after_write(&applied.threads, &applied.accounts);
+        self.after_write(&applied.threads, &applied.queued);
         Ok(Some(CommandReceipt {
             seq,
             outcome: CommandOutcome::Applied,
@@ -734,9 +775,15 @@ pub(crate) async fn finish(
     let settings_file = config.settings_file.clone();
     let index_options = config.index;
     let cache_bytes = config.index_cache_bytes;
+    let wants_engine = config.sync_engine.is_some();
     let opened = runtime
         .blocking(move || {
             let store = Store::open(&store_config, &vault)?;
+            let reuse = if wants_engine {
+                open_body_reuse(&store, &vault)
+            } else {
+                None
+            };
             let (index, rebuilt) = open_index(store.layout(), &vault, cache_bytes)?;
             let indexer = index.indexer(&index_options)?;
             let (watcher, settings) = match settings_file {
@@ -752,10 +799,10 @@ pub(crate) async fn finish(
                     (None, rx)
                 }
             };
-            Ok((store, index, rebuilt, indexer, watcher, settings))
+            Ok((store, index, rebuilt, indexer, watcher, settings, reuse))
         })
         .await?;
-    let (store, index, rebuilt, indexer, watcher, settings) = opened;
+    let (store, index, rebuilt, indexer, watcher, settings, reuse) = opened;
 
     let (events_in, events_rx) = mpsc::unbounded_channel();
     let events_out = events::channel();
@@ -785,6 +832,28 @@ pub(crate) async fn finish(
     if let Some(configured) = config.verifier.clone() {
         let _ = verifier.set(Some(configured));
     }
+
+    let engine = match config.sync_engine.clone() {
+        Some(engine_config) => {
+            let sink = Arc::new(CoreIndexSink {
+                tx: indexer.sender(),
+            });
+            let ingestor = ingest::Ingestor::with_sink(store.clone(), sink);
+            Some(Arc::new(SyncEngine::new(
+                store.clone(),
+                CoreIngest::new(ingestor, reuse),
+                engine_config,
+                settings.clone(),
+                events_in.clone(),
+                handle.clone(),
+            )))
+        }
+        None => None,
+    };
+    let sync: Arc<dyn SyncBridge> = match &engine {
+        Some(engine) => Arc::clone(engine) as Arc<dyn SyncBridge>,
+        None => Arc::clone(&config.sync),
+    };
     let core = CoreHandle {
         inner: Arc::new(Inner {
             data_dir: config.data_dir.clone(),
@@ -803,7 +872,8 @@ pub(crate) async fn finish(
             lock: Mutex::new(Some(lock)),
             undo: Mutex::new(None),
             seq: AtomicU64::new(0),
-            sync: Arc::clone(&config.sync),
+            sync,
+            engine,
             authorizer: Arc::clone(&config.authorizer),
             verifier,
             verifying: Mutex::new(HashSet::new()),
@@ -812,6 +882,11 @@ pub(crate) async fn finish(
             closed: AtomicBool::new(false),
         }),
     };
+    if let Some(engine) = &core.inner.engine
+        && let Err(err) = engine.start_all()
+    {
+        tracing::error!(%err, "starting sync");
+    }
     if rebuilt {
         let background = core.clone();
         core.inner.runtime.handle().spawn(async move {
@@ -825,6 +900,24 @@ pub(crate) async fn finish(
         "core opened"
     );
     Ok(core)
+}
+
+/// The Thunderbird body reuse index an import left behind, if any (PLAN §4.14).
+fn open_body_reuse(store: &Store, vault: &Vault) -> Option<Arc<dyn ingest::BodyLookup>> {
+    let path = import::BodyReuse::default_path(store.layout());
+    if !path.exists() {
+        return None;
+    }
+    match import::BodyReuse::open(&path, vault) {
+        Ok(reuse) => {
+            tracing::info!("using the Thunderbird body reuse index for the first sync");
+            Some(Arc::new(reuse))
+        }
+        Err(err) => {
+            tracing::warn!(%err, "the Thunderbird body reuse index can't be opened");
+            None
+        }
+    }
 }
 
 /// Opens `mail/index/`; an index with another schema is deleted and recreated (it is
@@ -1004,6 +1097,8 @@ enum Verification {
     Needed {
         detail: Box<MessageDetail>,
         kind: AccountKind,
+        /// The account's stored provider profile.
+        profile: Option<ProviderProfile>,
         raw: Vec<u8>,
     },
 }
@@ -1024,12 +1119,16 @@ fn load_for_verification(inner: &Inner, id: MessageId) -> Result<Verification> {
         Err(store::Error::BlobMissing(_)) => return Ok(Verification::NoBody),
         Err(err) => return Err(err.into()),
     };
-    let kind = reader
-        .account(detail.account)?
-        .map_or(AccountKind::Imap, |a| a.kind);
+    let account = reader.account(detail.account)?;
+    let kind = account.as_ref().map_or(AccountKind::Imap, |a| a.kind);
+    let profile = account
+        .as_ref()
+        .and_then(|a| crate::accounts::AccountConfig::parse(&a.config_json))
+        .and_then(|c| c.provider_profile);
     Ok(Verification::Needed {
         detail: Box::new(detail),
         kind,
+        profile,
         raw,
     })
 }

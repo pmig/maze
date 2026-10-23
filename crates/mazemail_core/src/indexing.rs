@@ -184,7 +184,12 @@ pub(crate) enum IndexCommand {
     Delete(MessageId),
     DeleteAll,
     Commit(oneshot::Sender<Result<()>>),
-    Progress { done: u64, total: u64 },
+    Progress {
+        done: u64,
+        total: u64,
+    },
+    /// Commit and stop, even if other senders (sinks handed out earlier) still exist.
+    Shutdown,
 }
 
 /// Handle to the indexer thread.
@@ -239,10 +244,15 @@ impl IndexerTask {
 
     /// Closes the channel; the thread commits, waits for merges and exits.
     pub(crate) fn stop(&self) -> Option<JoinHandle<Result<()>>> {
-        self.tx
+        let tx = self
+            .tx
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
+        if let Some(tx) = tx {
+            // Sinks handed out earlier (ingest, sync, imports) may still hold senders.
+            let _ = tx.send(IndexCommand::Shutdown);
+        }
         self.thread
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -285,7 +295,7 @@ fn run(
                 Ok(false)
             }
             Err(RecvTimeoutError::Timeout) => indexer.commit().map(|()| true),
-            Err(RecvTimeoutError::Disconnected) => break,
+            Ok(IndexCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
         };
         match committed {
             Ok(true) => progress(&indexer, rebuild),

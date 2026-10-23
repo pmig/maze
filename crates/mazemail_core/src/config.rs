@@ -14,6 +14,7 @@ use crate::api_handler::{CommandAuthorizer, DenyAgents};
 use crate::events::DEFAULT_EVENT_WINDOW;
 use crate::row_cache::DEFAULT_ROW_CACHE_CAPACITY;
 use crate::sync_bridge::{NoSync, SyncBridge};
+use crate::sync_engine::SyncEngineConfig;
 
 /// Which Tokio runtime the core's tasks run on.
 #[derive(Debug, Clone)]
@@ -60,8 +61,14 @@ pub struct CoreConfig {
     pub event_window: Duration,
     /// Thread rows kept in the LRU (PLAN §4.3: 2,000).
     pub row_cache_capacity: usize,
-    /// The sync engine (see [`crate::sync_bridge`]).
+    /// The sync engine as a bridge, used when [`CoreConfig::sync_engine`] is `None`
+    /// (see [`crate::sync_bridge`]).
     pub sync: Arc<dyn SyncBridge>,
+    /// Run the real sync engine: an account actor per IMAP account, with secrets,
+    /// network and browser from this config (see [`crate::sync_engine`]). `None`
+    /// (the default): no actors; adding accounts fails with
+    /// [`Error::NoSyncEngine`](crate::Error::NoSyncEngine).
+    pub sync_engine: Option<SyncEngineConfig>,
     /// The permission hook for agent commands (see [`crate::api_handler`]).
     pub authorizer: Arc<dyn CommandAuthorizer>,
 }
@@ -80,6 +87,7 @@ impl std::fmt::Debug for CoreConfig {
             .field("event_window", &self.event_window)
             .field("row_cache_capacity", &self.row_cache_capacity)
             .field("sync", &self.sync)
+            .field("sync_engine", &self.sync_engine)
             .field("authorizer", &self.authorizer)
             .finish_non_exhaustive()
     }
@@ -106,6 +114,7 @@ impl CoreConfig {
             event_window: DEFAULT_EVENT_WINDOW,
             row_cache_capacity: DEFAULT_ROW_CACHE_CAPACITY,
             sync: Arc::new(NoSync),
+            sync_engine: None,
             authorizer: Arc::new(DenyAgents),
         }
     }
@@ -129,6 +138,13 @@ impl CoreConfig {
     #[must_use]
     pub fn with_sync(mut self, sync: Arc<dyn SyncBridge>) -> Self {
         self.sync = sync;
+        self
+    }
+
+    /// Runs the real sync engine (see [`CoreConfig::sync_engine`]).
+    #[must_use]
+    pub fn with_sync_engine(mut self, engine: SyncEngineConfig) -> Self {
+        self.sync_engine = Some(engine);
         self
     }
 
