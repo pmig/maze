@@ -125,7 +125,8 @@ impl ColumnId {
     /// The width a column starts with.
     pub fn default_width(self) -> f32 {
         match self {
-            Self::Star | Self::Unread | Self::Attachment => 26.,
+            // Room for the icon and the sort arrow next to it.
+            Self::Star | Self::Unread | Self::Attachment => 44.,
             Self::Subject => 280.,
             Self::Correspondents => 150.,
             Self::Sender | Self::Recipients => 150.,

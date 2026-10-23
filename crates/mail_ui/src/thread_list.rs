@@ -2914,11 +2914,11 @@ impl TableDelegate for ThreadTable {
             .gap_1()
             .cursor_pointer()
             .map(|this| match icon {
-                // The narrow icon columns have room for one icon: the arrow, while sorted.
-                Some(_) if sorted => this.justify_center().child(arrow(theme.foreground)),
+                // Icon columns keep their icon and add the arrow while sorted.
                 Some(icon) => this
                     .justify_center()
-                    .child(Icon::new(icon).xsmall().text_color(muted)),
+                    .child(Icon::new(icon).xsmall().text_color(muted))
+                    .when(sorted, |this| this.child(arrow(theme.foreground))),
                 None => this
                     .child(div().min_w_0().truncate().text_xs().child(id.label()))
                     .when(sorted, |this| this.child(arrow(muted))),
