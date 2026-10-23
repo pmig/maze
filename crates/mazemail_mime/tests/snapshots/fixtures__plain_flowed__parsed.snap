@@ -28,6 +28,7 @@ headers:
   list_unsubscribe: []
   list_unsubscribe_post: ~
   authentication_results: []
+  mail_client: ~
 attachments: []
 has_attachments: false
 snippet: "Hi Bob, Friday works for me. The new place on the corner has a lunch menu, see https://lunch.example.com/menu - shall we meet there at noon? If it is full we can still go to the usual one."

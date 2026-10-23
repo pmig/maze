@@ -8,6 +8,7 @@ use mazemail_types::Address;
 use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, UtcOffset};
 
+use crate::client::{MailClient, detect_client};
 use crate::html::{PreparedHtml, SanitizeOptions, prepare};
 use crate::lang::{Lang, detect_language};
 use crate::reader::{self, ReaderDoc, TextFormat, from_plain_text};
@@ -59,6 +60,9 @@ pub struct MessageHeaders {
     /// Raw `Authentication-Results` values, top (added last) first. The `security`
     /// crate decides which ones to trust.
     pub authentication_results: Vec<String>,
+    /// The sender's mail client, from `User-Agent`, `X-Mailer` and other traces.
+    #[serde(default)]
+    pub mail_client: Option<MailClient>,
 }
 
 impl fmt::Debug for MessageHeaders {
@@ -75,6 +79,7 @@ impl fmt::Debug for MessageHeaders {
             .field("to", &self.to.len())
             .field("cc", &self.cc.len())
             .field("list_id", &self.list_id.is_some())
+            .field("mail_client", &self.mail_client)
             .finish_non_exhaustive()
     }
 }
@@ -443,6 +448,7 @@ fn extract_headers(message: &mail_parser::Message<'_>) -> MessageHeaders {
             .collect(),
         list_unsubscribe_post: first_raw("List-Unsubscribe-Post"),
         authentication_results: raw("Authentication-Results"),
+        mail_client: detect_client(message.headers_raw()),
     }
 }
 
@@ -688,6 +694,28 @@ mod tests {
         let date = h.date.unwrap();
         assert_eq!(date.unix_timestamp(), 1_727_767_800);
         assert_eq!(date.offset().whole_hours(), 2);
+    }
+
+    #[test]
+    fn detects_the_mail_client() {
+        let raw = b"From: Anna <anna@example.com>\r\nSubject: Hi\r\n\
+            User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101\r\n Thunderbird/128.3.1\r\n\
+            \r\nbody";
+        let client = parse(raw).unwrap().headers.mail_client.unwrap();
+        assert_eq!(client.name, "Thunderbird 128.3 (Linux)");
+        assert_eq!(client.header, "User-Agent");
+        assert_eq!(
+            client.raw,
+            "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Thunderbird/128.3.1"
+        );
+
+        let raw = b"Message-ID: <CAF=+kL3x9@mail.gmail.com>\r\nSubject: Hi\r\n\r\nbody";
+        let client = parse_headers_only(raw).unwrap().mail_client.unwrap();
+        assert_eq!(client.name, "Gmail");
+        assert_eq!(client.raw, "<CAF=+kL3x9@mail.gmail.com>");
+
+        let raw = b"From: anna@example.com\r\nSubject: Hi\r\n\r\nbody";
+        assert_eq!(parse(raw).unwrap().headers.mail_client, None);
     }
 
     #[test]

@@ -37,9 +37,9 @@ use gpui::SharedString;
 use mail_ui::DataChanges;
 use mail_ui::source::{
     AccountEntry, AccountKind, AttachmentInfo, FolderEntry, FolderKey, FolderTree, ListSort,
-    MailSource, MessageBody, MessageDocument, MessageKeys, MessageRow, SourceError, SourceStatus,
-    SyncState, ThreadFilter, ThreadKeys, ThreadRow, ThreadScope, ThreadTree, TreeNode, Verdict,
-    Verification,
+    MailSource, MessageBody, MessageDocument, MessageKeys, MessageRow, SenderClient, SourceError,
+    SourceStatus, SyncState, ThreadFilter, ThreadKeys, ThreadRow, ThreadScope, ThreadTree,
+    TreeNode, Verdict, Verification,
 };
 use mazemail_core::correspondents::display;
 use mazemail_core::{
@@ -494,6 +494,13 @@ fn document(view: &MessageView) -> MessageDocument {
         body,
         attachments,
         verification: verification(&view.auth),
+        client: Sensitive::new(view.rendered().and_then(|rendered| {
+            let client = rendered.mail_client.as_ref()?;
+            Some(SenderClient {
+                name: client.name.clone().into(),
+                header: format!("{}: {}", client.header, client.raw).into(),
+            })
+        })),
     }
 }
 

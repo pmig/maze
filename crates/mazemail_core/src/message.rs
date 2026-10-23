@@ -28,7 +28,7 @@
 use std::sync::Arc;
 
 use mazemail_mime::html::{SanitizeOptions, SanitizedHtml};
-use mazemail_mime::{AttachmentMeta, Lang, ReaderDoc};
+use mazemail_mime::{AttachmentMeta, Lang, MailClient, ReaderDoc};
 use mazemail_types::{AccountId, Address, BlobId, Flags, FolderId, MessageId, TagId, ThreadId};
 use security::AuthReport;
 use security::phishing::{KnownContacts, Warning, normalize_display_name};
@@ -39,7 +39,7 @@ use store::{BlobStore, MessageDetail, Queries, Reader, Store};
 use crate::{Error, Result};
 
 /// Version of the rendering pipeline; part of the reader cache key.
-pub const RENDERER_VERSION: u32 = 1;
+pub const RENDERER_VERSION: u32 = 2;
 
 /// Cache kind of rendered bodies.
 pub(crate) const READER_CACHE_KIND: &str = "reader";
@@ -59,6 +59,9 @@ pub struct RenderedBody {
     pub list_unsubscribe: Vec<String>,
     /// The detected language.
     pub language: Option<Lang>,
+    /// The sender's mail client (`User-Agent`, `X-Mailer`, …).
+    #[serde(default)]
+    pub mail_client: Option<MailClient>,
 }
 
 impl std::fmt::Debug for RenderedBody {
@@ -68,6 +71,7 @@ impl std::fmt::Debug for RenderedBody {
             .field("html", &self.sanitized_html.is_some())
             .field("attachments", &self.attachments.len())
             .field("language", &self.language)
+            .field("mail_client", &self.mail_client)
             .finish_non_exhaustive()
     }
 }
@@ -86,6 +90,7 @@ impl RenderedBody {
             language: parsed.language(),
             reply_to: parsed.headers.reply_to,
             list_unsubscribe: parsed.headers.list_unsubscribe,
+            mail_client: parsed.headers.mail_client,
             attachments: parsed.attachments,
         })
     }

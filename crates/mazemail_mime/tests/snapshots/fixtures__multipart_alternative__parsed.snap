@@ -31,6 +31,7 @@ headers:
   list_unsubscribe: []
   list_unsubscribe_post: ~
   authentication_results: []
+  mail_client: ~
 attachments: []
 has_attachments: false
 snippet: "Hi all, here are the notes from today: * Release candidate on Thursday * Final release next Tuesday Carol"
