@@ -12,10 +12,13 @@
 //!
 //! The account kind follows the server: a server with Gmail's `X-GM-EXT-1` is a Gmail
 //! account (labels, archive by removing `\Inbox`), Microsoft hosts are Microsoft 365,
-//! everything else is IMAP. The account's sender-verification
-//! [`ProviderProfile`] is stored in its config: Gmail's and Microsoft 365's built-in
-//! profiles, else a generic one that trusts `Authentication-Results` from the IMAP
-//! host (which only counts when that host also wrote the topmost `Received` header).
+//! everything else is IMAP. Gmail and Microsoft 365 accounts store their built-in
+//! sender-verification [`ProviderProfile`] in the config. IMAP accounts store none:
+//! when a message is verified they get an automatic profile from the address's
+//! domain, its MX hosts and the IMAP host ([`ProviderProfile::automatic`]), which
+//! trusts the `Authentication-Results` of the server that accepted the message from
+//! outside. A profile stored by an earlier version (the IMAP host as the only
+//! trusted host, which real servers almost never match) is replaced the same way.
 //!
 //! # Removing an account
 //!
@@ -220,20 +223,40 @@ impl AccountConfig {
         }
     }
 
+    /// The stored provider profile, unless it is the one Maze stored for IMAP
+    /// accounts before automatic profiles (the IMAP host as the only inbound host and
+    /// `authserv-id`, which real servers almost never match).
+    pub fn custom_provider_profile(&self) -> Option<ProviderProfile> {
+        let host = self.host.trim().trim_end_matches('.').to_ascii_lowercase();
+        let legacy = ProviderProfile::generic(host.clone(), vec![HostMatcher::Exact(host)]);
+        self.provider_profile
+            .clone()
+            .filter(|profile| *profile != legacy)
+    }
+
+    /// The domain of the account's address, for its automatic provider profile.
+    pub fn address_domain(&self) -> Option<String> {
+        let address = self.email.clone().unwrap_or_else(|| self.login());
+        address
+            .rsplit_once('@')
+            .map(|(_, domain)| domain.trim().to_ascii_lowercase())
+            .filter(|domain| !domain.is_empty())
+    }
+
     fn to_json(&self) -> String {
         serde_json::to_string(self).unwrap_or_else(|_| "{}".to_owned())
     }
 }
 
-/// The sender-verification profile for an account (see the [module docs](self)).
-pub fn provider_profile(kind: AccountKind, host: &str) -> ProviderProfile {
+/// The sender-verification profile stored for a new account (see the
+/// [module docs](self)): the built-in profile for Gmail and Microsoft 365. Other
+/// accounts store none and get an automatic one when a message is verified
+/// ([`AccountConfig::custom_provider_profile`]).
+pub fn provider_profile(kind: AccountKind) -> Option<ProviderProfile> {
     match kind {
-        AccountKind::Gmail => ProviderProfile::gmail(),
-        AccountKind::M365 => ProviderProfile::microsoft365(),
-        _ => {
-            let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
-            ProviderProfile::generic(host.clone(), vec![HostMatcher::Exact(host)])
-        }
+        AccountKind::Gmail => Some(ProviderProfile::gmail()),
+        AccountKind::M365 => Some(ProviderProfile::microsoft365()),
+        _ => None,
     }
 }
 
@@ -722,7 +745,7 @@ impl CoreHandle {
             username,
             auth: "password".to_owned(),
             oauth_provider: None,
-            provider_profile: Some(provider_profile(kind, &server.host)),
+            provider_profile: provider_profile(kind),
             extra: serde_json::Map::new(),
         };
         let display_name = input
@@ -828,7 +851,7 @@ impl CoreHandle {
             username: email.clone(),
             auth: "oauth2".to_owned(),
             oauth_provider: Some(provider),
-            provider_profile: Some(provider_profile(kind, &server.host)),
+            provider_profile: provider_profile(kind),
             extra: serde_json::Map::new(),
         };
         let display_name = input
@@ -957,7 +980,7 @@ mod tests {
             username: "alice".into(),
             auth: "password".into(),
             oauth_provider: None,
-            provider_profile: Some(provider_profile(AccountKind::Imap, "imap.example.org")),
+            provider_profile: provider_profile(AccountKind::Gmail),
             extra: serde_json::Map::new(),
         };
         let json = config.to_json();
@@ -992,15 +1015,40 @@ mod tests {
     #[test]
     fn provider_profiles_follow_the_kind() {
         assert_eq!(
-            provider_profile(AccountKind::Gmail, "imap.gmail.com"),
-            ProviderProfile::gmail()
+            provider_profile(AccountKind::Gmail),
+            Some(ProviderProfile::gmail())
         );
         assert_eq!(
-            provider_profile(AccountKind::M365, "outlook.office365.com"),
-            ProviderProfile::microsoft365()
+            provider_profile(AccountKind::M365),
+            Some(ProviderProfile::microsoft365())
         );
-        let generic = provider_profile(AccountKind::Imap, "Mail.Example.org.");
-        assert_eq!(generic.kind, security::provider::ProviderKind::Generic);
+        assert_eq!(provider_profile(AccountKind::Imap), None);
+    }
+
+    #[test]
+    fn the_legacy_imap_profile_is_replaced() {
+        let mut config = AccountConfig::parse(
+            r#"{"email":"Ben@Reader.Example","host":"Mail.Reader.Example.","username":"ben"}"#,
+        )
+        .unwrap();
+        assert_eq!(config.address_domain().as_deref(), Some("reader.example"));
+        assert_eq!(config.custom_provider_profile(), None);
+        // What earlier versions stored for every IMAP account.
+        config.provider_profile = Some(ProviderProfile::generic(
+            "mail.reader.example",
+            vec![HostMatcher::Exact("mail.reader.example".into())],
+        ));
+        assert_eq!(config.custom_provider_profile(), None);
+        // A profile someone configured is kept.
+        let custom = ProviderProfile::generic(
+            "mx.reader.example",
+            vec![HostMatcher::Exact("mx.reader.example".into())],
+        );
+        config.provider_profile = Some(custom.clone());
+        assert_eq!(config.custom_provider_profile(), Some(custom));
+        // Without an address, the login is used.
+        let login = AccountConfig::parse(r#"{"host":"h","username":"a@b.example"}"#).unwrap();
+        assert_eq!(login.address_domain().as_deref(), Some("b.example"));
     }
 
     #[test]

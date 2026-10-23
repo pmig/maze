@@ -668,21 +668,30 @@ impl CoreHandle {
                         move || load_for_verification(&inner, id)
                     })
                     .await?;
-                let (detail, kind, profile, raw) = match loaded {
+                let (detail, kind, config, raw) = match loaded {
                     Verification::Stored(report) => return Ok(AuthStatus::Ready(report)),
                     Verification::NoBody => return Ok(AuthStatus::Pending),
                     Verification::Needed {
                         detail,
                         kind,
-                        profile,
+                        config,
                         raw,
-                    } => (detail, kind, profile, raw),
+                    } => (detail, kind, config, raw),
                 };
-                let provider = profile.or(match kind {
-                    AccountKind::Gmail => Some(ProviderProfile::gmail()),
-                    AccountKind::M365 => Some(ProviderProfile::microsoft365()),
-                    _ => None,
-                });
+                let custom = config
+                    .as_ref()
+                    .and_then(|config| config.custom_provider_profile());
+                let provider = match (custom, kind, &config) {
+                    (Some(profile), _, _) => Some(profile),
+                    (None, AccountKind::Gmail, _) => Some(ProviderProfile::gmail()),
+                    (None, AccountKind::M365, _) => Some(ProviderProfile::microsoft365()),
+                    (None, _, Some(config)) => Some(
+                        verifier
+                            .automatic_profile(config.address_domain().as_deref(), &config.host)
+                            .await,
+                    ),
+                    (None, _, None) => None,
+                };
                 let mut context = VerifyContext::new();
                 if let Some(provider) = &provider {
                     context = context.with_provider(provider);
@@ -1251,8 +1260,8 @@ enum Verification {
     Needed {
         detail: Box<MessageDetail>,
         kind: AccountKind,
-        /// The account's stored provider profile.
-        profile: Option<ProviderProfile>,
+        /// The account's IMAP settings, with its stored provider profile.
+        config: Option<Box<crate::accounts::AccountConfig>>,
         raw: Vec<u8>,
     },
 }
@@ -1275,14 +1284,14 @@ fn load_for_verification(inner: &Inner, id: MessageId) -> Result<Verification> {
     };
     let account = reader.account(detail.account)?;
     let kind = account.as_ref().map_or(AccountKind::Imap, |a| a.kind);
-    let profile = account
+    let config = account
         .as_ref()
         .and_then(|a| crate::accounts::AccountConfig::parse(&a.config_json))
-        .and_then(|c| c.provider_profile);
+        .map(Box::new);
     Ok(Verification::Needed {
         detail: Box::new(detail),
         kind,
-        profile,
+        config,
         raw,
     })
 }

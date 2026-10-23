@@ -176,9 +176,190 @@ fn profiles_round_trip_through_json() {
         ProviderProfile::gmail(),
         ProviderProfile::microsoft365().with_authserv_id("gateway.contoso.example"),
         reader_example(),
+        automatic(&["reader.example", "in1-smtp.messagingengine.com"]),
     ] {
         let json = serde_json::to_string(&profile).unwrap();
         let back: ProviderProfile = serde_json::from_str(&json).unwrap();
         assert_eq!(back, profile);
     }
+}
+
+/// The profile Maze stored for IMAP accounts before automatic profiles: the IMAP host
+/// as `authserv-id` and as the only inbound host.
+fn legacy_imap_profile(imap_host: &str) -> ProviderProfile {
+    ProviderProfile::generic(imap_host, vec![HostMatcher::Exact(imap_host.into())])
+}
+
+#[test]
+fn the_legacy_imap_profile_never_finds_real_world_results() {
+    for (name, imap_host) in [
+        ("generic_fastmail.eml", "imap.fastmail.com"),
+        ("generic_postfix.eml", "imap.reader.example"),
+        // Even with one host for IMAP and SMTP: Stalwart writes below its Received.
+        ("generic_stalwart.eml", "mx.reader.example"),
+    ] {
+        let outcome = evaluate(&legacy_imap_profile(imap_host), name);
+        assert_eq!(outcome.status, ProviderStatus::NotFound, "{name}");
+    }
+}
+
+fn automatic(domains: &[&str]) -> ProviderProfile {
+    ProviderProfile::automatic(domains.iter().copied())
+}
+
+fn assert_spf_pass(outcome: &ProviderOutcome, authserv_id: &str, name: &str) {
+    assert_eq!(
+        outcome.status,
+        ProviderStatus::Trusted {
+            authserv_id: Some(authserv_id.into())
+        },
+        "{name}"
+    );
+    let results = outcome.results();
+    let spf = results.spf.unwrap();
+    assert_eq!(spf.result, MechanismResult::Pass, "{name}");
+    assert_eq!(spf.domain.as_deref(), Some("example.com"), "{name}");
+    // The sender's forged `dmarc=fail` below the boundary is never read.
+    assert_eq!(
+        results.dmarc.unwrap().result,
+        MechanismResult::Pass,
+        "{name}"
+    );
+}
+
+#[test]
+fn automatic_profiles_find_real_world_results() {
+    // Fastmail: address domain, IMAP host and the MX `in1-smtp.messagingengine.com`.
+    let fastmail = automatic(&[
+        "reader.example",
+        "imap.fastmail.com",
+        "in1-smtp.messagingengine.com",
+    ]);
+    let outcome = evaluate(&fastmail, "generic_fastmail.eml");
+    assert_spf_pass(&outcome, "mx6.messagingengine.com", "fastmail");
+
+    // Self-hosted Postfix with a content filter and Dovecot's LMTP hop on top.
+    let own = automatic(&["reader.example", "imap.reader.example"]);
+    assert_spf_pass(
+        &evaluate(&own, "generic_postfix.eml"),
+        "mail.reader.example",
+        "postfix",
+    );
+    // Stalwart writes its header directly below its own Received.
+    assert_spf_pass(
+        &evaluate(&own, "generic_stalwart.eml"),
+        "mx.reader.example",
+        "stalwart",
+    );
+    // The older single-host layout still works.
+    let outcome = evaluate(&own, "generic_trusted.eml");
+    assert_eq!(
+        outcome.status,
+        ProviderStatus::Trusted {
+            authserv_id: Some("mail.reader.example".into())
+        }
+    );
+}
+
+#[test]
+fn automatic_profiles_ignore_hops_forged_below_the_boundary() {
+    let own = automatic(&["reader.example"]);
+    // The server writes no header; the sender forged one together with
+    // provider-looking hops below the real boundary.
+    assert_eq!(
+        evaluate(&own, "generic_forged_hops.eml").status,
+        ProviderStatus::NotFound
+    );
+    // A HELO that is a private address literal doesn't hide the sender's address.
+    assert_eq!(
+        evaluate(&own, "generic_forged_helo.eml").status,
+        ProviderStatus::NotFound
+    );
+    // The lowest-inbound rule would have walked into the forged hops.
+    let lowest = legacy_imap_profile("mail.reader.example");
+    assert!(matches!(
+        evaluate(&lowest, "generic_forged_hops.eml").status,
+        ProviderStatus::Trusted { .. }
+    ));
+}
+
+#[test]
+fn automatic_profiles_keep_the_exactly_one_rule() {
+    let own = automatic(&["reader.example"]);
+    assert_eq!(
+        evaluate(&own, "generic_stalwart_duplicate.eml").status,
+        ProviderStatus::Ambiguous
+    );
+    assert_eq!(
+        evaluate(&own, "generic_broken.eml").status,
+        ProviderStatus::Ambiguous
+    );
+}
+
+#[test]
+fn automatic_profiles_only_trust_their_own_domains() {
+    // Another provider's domains: no hop of theirs is an inbound host here.
+    let other = automatic(&["elsewhere.example", "imap.elsewhere.example"]);
+    for name in [
+        "generic_fastmail.eml",
+        "generic_postfix.eml",
+        "generic_stalwart.eml",
+        "gmail_trusted.eml",
+        "microsoft_trusted.eml",
+    ] {
+        assert_eq!(
+            evaluate(&other, name).status,
+            ProviderStatus::NotFound,
+            "{name}"
+        );
+    }
+    // Public suffixes, IP addresses and single labels never become domains.
+    let profile = automatic(&["co.uk", "192.0.2.1", "localhost", "", "Mail.Example.CO.UK."]);
+    assert_eq!(
+        profile.inbound_hosts,
+        vec![HostMatcher::DomainSuffix("example.co.uk".into())]
+    );
+    assert_eq!(
+        automatic(&["co.uk"])
+            .evaluate(b"Received: by x.co.uk; d\r\n\r\n")
+            .status,
+        ProviderStatus::NotConfigured
+    );
+}
+
+#[test]
+fn profiles_stored_before_the_boundary_field_still_load() {
+    let mut json: serde_json::Value = serde_json::to_value(reader_example()).unwrap();
+    json.as_object_mut().unwrap().remove("boundary");
+    let back: ProviderProfile = serde_json::from_value(json).unwrap();
+    assert_eq!(back, reader_example());
+}
+
+#[tokio::test]
+async fn automatic_profiles_include_the_mx_hosts() {
+    let resolver = security::Resolver::from_static(
+        security::StaticDns::new().mx("reader.example", ["in1-smtp.messagingengine.com"]),
+    )
+    .unwrap();
+    let verifier = security::Verifier::new(resolver);
+    let profile = verifier
+        .automatic_profile(Some("reader.example"), "imap.fastmail.com")
+        .await;
+    assert_eq!(
+        profile,
+        automatic(&["fastmail.com", "reader.example", "messagingengine.com"])
+    );
+    assert_spf_pass(
+        &evaluate(&profile, "generic_fastmail.eml"),
+        "mx6.messagingengine.com",
+        "fastmail",
+    );
+    // Without MX hosts, Fastmail's hops aren't recognized: nothing is trusted.
+    let without_mx = verifier
+        .automatic_profile(Some("other.example"), "imap.fastmail.com")
+        .await;
+    assert_eq!(
+        evaluate(&without_mx, "generic_fastmail.eml").status,
+        ProviderStatus::NotFound
+    );
 }

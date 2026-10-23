@@ -1,0 +1,24 @@
+Return-Path: <bounce@attacker.example>
+Delivered-To: ben@reader.example
+Received: from mail.reader.example
+	by mail.reader.example with LMTP id kLmNoPqR
+	for <ben@reader.example>; Tue, 02 Jan 2024 10:00:06 +0000
+Received: from mail.attacker.example (mail.attacker.example [203.0.113.5])
+	by mail.reader.example (Postfix) with ESMTPS id 4T3abc
+	for <ben@reader.example>; Tue,  2 Jan 2024 10:00:05 +0000 (UTC)
+Received: from localhost (localhost [127.0.0.1])
+	by mail.reader.example (Postfix) with ESMTP id 4T3def;
+	Tue,  2 Jan 2024 10:00:04 +0000 (UTC)
+Authentication-Results: mail.reader.example;
+	dkim=pass header.d=bank.example; spf=pass smtp.mailfrom=bank.example;
+	dmarc=pass header.from=bank.example
+Received: from mail.bank.example (mail.bank.example [198.51.100.7])
+	by mail.reader.example (Postfix) with ESMTPS id 4T3ghi;
+	Tue,  2 Jan 2024 10:00:03 +0000 (UTC)
+From: Bank <service@bank.example>
+To: ben@reader.example
+Subject: Verify your account
+Date: Tue, 02 Jan 2024 10:00:00 +0000
+Message-ID: <forged-1@attacker.example>
+
+Body.

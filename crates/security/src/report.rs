@@ -9,8 +9,12 @@ use time::OffsetDateTime;
 use crate::provider::ProviderStatus;
 
 /// Version of the serialized [`AuthReport`]. Bump it when the JSON shape changes
-/// incompatibly; the store re-verifies reports with an older version.
-pub const AUTH_REPORT_SCHEMA: u32 = 1;
+/// incompatibly or when verification changes enough that stored reports are out of
+/// date; the store re-verifies reports with an older version.
+///
+/// 2: IMAP accounts trust their receiving server's results (automatic provider
+/// profiles), so reports that said SPF was unavailable are checked again.
+pub const AUTH_REPORT_SCHEMA: u32 = 2;
 
 /// The result of one mechanism (SPF, DKIM, DMARC or ARC).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

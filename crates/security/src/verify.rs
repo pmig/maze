@@ -108,6 +108,26 @@ impl Verifier {
         Self { resolver, options }
     }
 
+    /// The provider profile for an account without a built-in one: an
+    /// [automatic](ProviderProfile::automatic) profile from the address's domain, its
+    /// MX hosts and the IMAP host. When DNS doesn't answer, the MX hosts are left out
+    /// (and the profile may find fewer results).
+    pub async fn automatic_profile(
+        &self,
+        address_domain: Option<&str>,
+        imap_host: &str,
+    ) -> ProviderProfile {
+        let mut domains = vec![imap_host.to_owned()];
+        if let Some(domain) = address_domain {
+            domains.push(domain.to_owned());
+            match self.resolver.mx_hosts(domain).await {
+                Ok(hosts) => domains.extend(hosts),
+                Err(err) => tracing::debug!(%err, "no MX hosts for the provider profile"),
+            }
+        }
+        ProviderProfile::automatic(domains)
+    }
+
     /// Verify one message.
     ///
     /// Never fails: input that isn't a message gives an

@@ -1,0 +1,27 @@
+Return-Path: <bounce@example.com>
+Delivered-To: ben@reader.example
+Received: from mail.reader.example
+	by mail.reader.example with LMTP
+	id kLmNoPqR4ZXJ3AAAy5Lmmw
+	(envelope-from <bounce@example.com>)
+	for <ben@reader.example>; Tue, 02 Jan 2024 10:00:06 +0000
+Received: from localhost (localhost [127.0.0.1])
+	by mail.reader.example (Postfix) with ESMTP id 4T3def
+	for <ben@reader.example>; Tue,  2 Jan 2024 10:00:06 +0000 (UTC)
+X-Spam-Status: No, score=-0.1
+Authentication-Results: mail.reader.example;
+	dkim=pass header.d=example.com header.s=s1 header.b=AbCdEfGh;
+	spf=pass (mail.reader.example: domain of bounce@example.com designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounce@example.com;
+	dmarc=pass (policy=reject) header.from=example.com
+Received: from mail.example.com (mail.example.com [192.0.2.10])
+	(using TLSv1.3 with cipher TLS_AES_256_GCM_SHA384 (256/256 bits))
+	by mail.reader.example (Postfix) with ESMTPS id 4T3abc
+	for <ben@reader.example>; Tue,  2 Jan 2024 10:00:05 +0000 (UTC)
+Authentication-Results: mail.reader.example; dmarc=fail header.from=example.com
+From: Anna Example <anna@example.com>
+To: ben@reader.example
+Subject: Quarterly numbers
+Date: Tue, 02 Jan 2024 10:00:00 +0000
+Message-ID: <postfix-1@example.com>
+
+Body.

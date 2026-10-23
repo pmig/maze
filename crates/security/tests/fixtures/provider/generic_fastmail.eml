@@ -1,0 +1,39 @@
+Return-Path: <bounce@example.com>
+Received: from compute1.internal (compute1.nyi.internal [10.202.2.41])
+	 by sloti44n03 (Cyrus 3.11.0-alpha0) with LMTPA;
+	 Tue, 02 Jan 2024 05:00:07 -0500
+X-Cyrus-Session-Id: sloti44n03-1704189607-123456-2-1234567890
+X-Sieve: CMU Sieve 3.0
+X-Spam-score: 0.0
+X-Delivered-to: ben@reader.example
+Received: from mx6 ([10.202.2.205])
+  by compute1.internal (LMTPProxy); Tue, 02 Jan 2024 05:00:07 -0500
+Received: from mx6.messagingengine.com (localhost [127.0.0.1])
+	by mailmx.nyi.internal (Postfix) with ESMTP id 1A2B3C
+	for <ben@reader.example>; Tue,  2 Jan 2024 05:00:06 -0500 (EST)
+Received: from mx6.messagingengine.com (localhost [127.0.0.1])
+    by mx6.messagingengine.com (Authentication Milter) with ESMTP
+    id 4D5E6F; Tue, 2 Jan 2024 05:00:06 -0500
+ARC-Authentication-Results: i=1; mx6.messagingengine.com;
+    dkim=pass header.d=example.com header.s=s1;
+    spf=pass smtp.mailfrom=bounce@example.com;
+    dmarc=pass header.from=example.com
+Authentication-Results: mx6.messagingengine.com;
+    dkim=pass (2048-bit rsa key sha256) header.d=example.com
+      header.i=@example.com header.b=AbCdEfGh header.a=rsa-sha256 header.s=s1;
+    spf=pass smtp.mailfrom=bounce@example.com smtp.helo=mail.example.com;
+    dmarc=pass policy.published-domain-policy=reject header.from=example.com
+Received-SPF: pass (example.com: 192.0.2.10 is authorized to use 'bounce@example.com' in 'mfrom' identity) receiver=mx6.messagingengine.com; identity=mailfrom; envelope-from="bounce@example.com"; helo=mail.example.com; client-ip=192.0.2.10
+Received: from mail.example.com (mail.example.com [192.0.2.10])
+	(using TLSv1.3 with cipher TLS_AES_256_GCM_SHA384 (256/256 bits))
+	(No client certificate requested)
+	by mx6.messagingengine.com (Postfix) with ESMTPS
+	for <ben@reader.example>; Tue,  2 Jan 2024 05:00:05 -0500 (EST)
+Authentication-Results: mx6.messagingengine.com; dmarc=fail header.from=example.com
+From: Anna Example <anna@example.com>
+To: ben@reader.example
+Subject: Quarterly numbers
+Date: Tue, 02 Jan 2024 10:00:00 +0000
+Message-ID: <fastmail-1@example.com>
+
+Body.
