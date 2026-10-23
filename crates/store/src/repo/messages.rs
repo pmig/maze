@@ -1,6 +1,6 @@
 //! Message upsert (with Gmail dedup), locations, flags, keywords and tags, bodies.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use mazemail_types::{
     AccountId, Address, BlobId, Flags, FolderId, IdentityId, MessageId, TagId, ThreadId,
@@ -9,9 +9,11 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use crate::blob::{self, StagedBlob};
 use crate::model::{
-    BodyState, BodySummaryUpdate, Location, MessageDetail, NewLocation, NewMessage, UpsertOutcome,
+    BodyState, BodySummaryUpdate, Location, MessageDetail, MessageRow, NewLocation, NewMessage,
+    TreeMessage, UpsertOutcome,
 };
-use crate::repo::threads::MAX_REFERENCES;
+use crate::repo::lists::EFFECTIVE_FLAGS;
+use crate::repo::threads::{MAX_REFERENCES, int_array};
 use crate::{Error, Result, WriteTx};
 
 /// Lowercases, deduplicates and sorts IMAP keywords (they are case-insensitive).
@@ -139,6 +141,112 @@ pub(crate) fn message(conn: &Connection, id: MessageId) -> Result<Option<Message
     detail.locations = locations(conn, id)?;
     detail.tags = message_tags(conn, id)?;
     Ok(Some(detail))
+}
+
+/// Row data for `ids`, in the order given; unknown ids are skipped. With `context`, the
+/// flags are those of the copy in that folder (if there is one).
+pub(crate) fn message_rows(
+    conn: &Connection,
+    ids: &[MessageId],
+    context: Option<FolderId>,
+) -> Result<Vec<MessageRow>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let array = int_array(ids.iter().map(|m| m.0));
+    let mut rows: HashMap<MessageId, MessageRow> = HashMap::with_capacity(ids.len());
+    {
+        let mut stmt = conn.prepare_cached(&format!(
+            "SELECT m.id, m.thread_id, m.account_id, m.subject, m.from_name, m.from_addr,
+                    m.to_json, m.cc_json, m.date, m.size, m.has_attachments,
+                    (SELECT {EFFECTIVE_FLAGS} FROM message_location ml WHERE ml.message_id = m.id),
+                    (SELECT flags FROM message_location WHERE folder_id = ?2 AND message_id = m.id),
+                    EXISTS (SELECT 1 FROM message_location ml
+                              CROSS JOIN folder f ON f.id = ml.folder_id
+                            WHERE ml.message_id = m.id AND f.role IN ('sent', 'drafts', 'outbox'))
+             FROM rarray(?1) x
+             CROSS JOIN message m ON m.id = x.value"
+        ))?;
+        let mut query = stmt.query(params![array, context.map(|f| f.0)])?;
+        while let Some(row) = query.next()? {
+            let id = MessageId(row.get(0)?);
+            let from_addr: Option<String> = row.get(5)?;
+            let effective: Option<i64> = row.get(11)?;
+            let in_folder: Option<i64> = row.get(12)?;
+            rows.insert(
+                id,
+                MessageRow {
+                    id,
+                    thread: ThreadId(row.get(1)?),
+                    account: AccountId(row.get(2)?),
+                    subject: row.get(3)?,
+                    from: from_addr.map(|email| Address {
+                        name: row.get(4).ok().flatten(),
+                        email,
+                    }),
+                    to: addresses_from_sql(row.get::<_, Option<String>>(6)?.as_deref())?,
+                    cc: addresses_from_sql(row.get::<_, Option<String>>(7)?.as_deref())?,
+                    date: row.get(8)?,
+                    size: row.get::<_, Option<i64>>(9)?.map(|v| v.max(0) as u64),
+                    has_attachments: row.get(10)?,
+                    flags: in_folder
+                        .or(effective)
+                        .map(flags_from_sql)
+                        .unwrap_or_default(),
+                    in_sent: row.get(13)?,
+                    tags: Vec::new(),
+                },
+            );
+        }
+    }
+    {
+        let mut stmt = conn.prepare_cached(
+            "SELECT mt.message_id, mt.tag_id FROM rarray(?1) x
+             CROSS JOIN message_tag mt ON mt.message_id = x.value
+             ORDER BY mt.message_id, mt.tag_id",
+        )?;
+        let mut query = stmt.query([array])?;
+        while let Some(row) = query.next()? {
+            if let Some(entry) = rows.get_mut(&MessageId(row.get(0)?)) {
+                entry.tags.push(TagId(row.get(1)?));
+            }
+        }
+    }
+    Ok(ids.iter().filter_map(|id| rows.remove(id)).collect())
+}
+
+/// The messages of a thread (with a location; with `context`, only those in that
+/// folder), oldest first, with what the reply tree is built from.
+pub(crate) fn thread_tree_messages(
+    conn: &Connection,
+    thread: ThreadId,
+    context: Option<FolderId>,
+) -> Result<Vec<TreeMessage>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT m.id, m.date, m.rfc_message_id, m.in_reply_to, m.references_json
+         FROM message m
+         WHERE m.thread_id = ?1 AND m.detached_at IS NULL
+           AND (?2 IS NULL OR EXISTS (SELECT 1 FROM message_location
+                                       WHERE folder_id = ?2 AND message_id = m.id))
+         ORDER BY m.date, m.id",
+    )?;
+    let mut query = stmt.query(params![thread.0, context.map(|f| f.0)])?;
+    let mut out = Vec::new();
+    while let Some(row) = query.next()? {
+        let references: Option<String> = row.get(4)?;
+        out.push(TreeMessage {
+            id: MessageId(row.get(0)?),
+            date: row.get(1)?,
+            rfc_message_id: row.get(2)?,
+            in_reply_to: row.get(3)?,
+            references: references
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()?
+                .unwrap_or_default(),
+        });
+    }
+    Ok(out)
 }
 
 pub(crate) fn message_tags(conn: &Connection, id: MessageId) -> Result<Vec<TagId>> {
@@ -424,8 +532,9 @@ impl WriteTx<'_> {
         let keywords = normalize_keywords(&location.keywords);
         self.conn
             .prepare_cached(
-                "INSERT INTO message_location (message_id, folder_id, uid, modseq, flags, keywords_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                "INSERT INTO message_location
+                   (message_id, folder_id, uid, modseq, flags, keywords_json, date, attachment)
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, date, has_attachments FROM message WHERE id = ?1
                  ON CONFLICT (folder_id, message_id) DO UPDATE SET
                    uid = COALESCE(excluded.uid, uid),
                    modseq = COALESCE(excluded.modseq, modseq),

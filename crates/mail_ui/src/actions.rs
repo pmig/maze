@@ -86,13 +86,31 @@ actions!(
         ReplyAll,
         /// Forward (`cmd-l`).
         Forward,
-        /// Switch the message list between cards and table.
+        /// Expand the selected thread, or move into it (`right`).
+        ExpandThread,
+        /// Collapse the selected thread, or go from a message to its thread (`left`).
+        CollapseThread,
+        /// Expand every thread (`*`).
+        ExpandAllThreads,
+        /// Collapse every thread (`\`).
+        CollapseAllThreads,
+        /// Select the whole thread of the selected message (`cmd-shift-a`).
+        SelectThread,
+    ]
+);
+
+actions!(
+    view,
+    [
+        /// Switch the message list between cards and table (`cmd-alt-t`).
         ToggleTableView,
+        /// Turn threads on or off: a thread tree, or one row per message (`cmd-alt-g`).
+        ToggleThreads,
     ]
 );
 
 /// Action namespaces the command palette lists.
-pub const PALETTE_NAMESPACES: &[&str] = &["maze", "workspace", "search", "mail"];
+pub const PALETTE_NAMESPACES: &[&str] = &["maze", "workspace", "search", "mail", "view"];
 
 /// "mail::NextUnread" becomes "Mail: Next Unread", the way Zed's palette shows actions.
 pub fn humanize_action_name(name: &str) -> String {
@@ -135,5 +153,9 @@ mod tests {
             "Command Palette: Toggle"
         );
         assert_eq!(humanize_action_name("Quit"), "Quit");
+        assert_eq!(
+            humanize_action_name("view::ToggleTableView"),
+            "View: Toggle Table View"
+        );
     }
 }

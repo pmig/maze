@@ -9,6 +9,7 @@ mod aggregates;
 mod blobs;
 mod common;
 mod lists;
+mod message_lists;
 mod messages;
 mod open;
 mod ops;

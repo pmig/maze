@@ -15,6 +15,7 @@ use crate::{Error, Result};
 const MAIN: &[M<'static>] = &[
     M::up(include_str!("../migrations/main/0001_schema_v1.sql")).foreign_key_check(),
     M::up(include_str!("../migrations/main/0002_account_uuid.sql")),
+    M::up(include_str!("../migrations/main/0003_message_list.sql")),
 ];
 
 const SENDLOG: &[M<'static>] = &[M::up(include_str!(
@@ -317,6 +318,38 @@ mod tests {
         // Other columns still update.
         conn.execute("UPDATE account SET name = 'renamed' WHERE id = 1", [])
             .unwrap();
+    }
+
+    #[test]
+    fn v3_copies_date_and_attachment_flag_to_existing_locations() {
+        let tmp = tempfile::tempdir().unwrap();
+        let key = key(5);
+        let mut conn = conn::open(&tmp.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
+        migrate_with_backup(&mut conn, &key, tmp.path(), "1.0.0", &MAIN[..2]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO account (id, kind, name) VALUES (1, 'imap', 'Work');
+             INSERT INTO folder (id, account_id, display_name) VALUES (1, 1, 'Inbox');
+             INSERT INTO thread (id, account_id) VALUES (1, 1);
+             INSERT INTO message (id, account_id, thread_id, date, has_attachments)
+               VALUES (1, 1, 1, 1234, 1), (2, 1, 1, 99, 0);
+             INSERT INTO message_location (message_id, folder_id) VALUES (1, 1), (2, 1);",
+        )
+        .unwrap();
+        let report = migrate_main(&mut conn, &key, tmp.path(), "1.1.0").unwrap();
+        assert_eq!((report.from, report.to), (2, SCHEMA_VERSION));
+        let read = |conn: &Connection| -> Vec<(i64, i64, i64)> {
+            conn.prepare("SELECT message_id, date, attachment FROM message_location ORDER BY 1")
+                .unwrap()
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+        assert_eq!(read(&conn), vec![(1, 1234, 1), (2, 99, 0)]);
+        // The triggers follow later changes of the message.
+        conn.execute_batch("UPDATE message SET has_attachments = 1, date = 100 WHERE id = 2;")
+            .unwrap();
+        assert_eq!(read(&conn), vec![(1, 1234, 1), (2, 100, 1)]);
     }
 
     #[test]

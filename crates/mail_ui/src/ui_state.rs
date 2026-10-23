@@ -1,0 +1,467 @@
+//! Per-folder message list state, remembered across restarts (CONCEPT §8.2: "view
+//! mode, threading, columns and widths are remembered per folder").
+//!
+//! # `ui_state.json`
+//!
+//! The app keeps it in the data directory (`~/Library/Application Support/mazemail/`
+//! on macOS), next to the database, because folder ids belong to that database. It is
+//! state Maze writes, not settings people edit (those are in `settings.json`), and it
+//! holds no mail content: folder keys, view choices and column widths only.
+//!
+//! ```json
+//! {
+//!   "version": 1,
+//!   "folders": {
+//!     "folder:12": { "view": "table", "threaded": false, "sort": "oldest_first",
+//!                    "columns": ["star", "subject", "correspondents", "size", "date"],
+//!                    "widths": { "correspondents": 220.0 } },
+//!     "unified:inbox": { "view": "cards", "threaded": true }
+//!   }
+//! }
+//! ```
+//!
+//! A folder without an entry uses the defaults from `settings.json`
+//! (`thread_list.view`, `thread_list.threaded`), [`ListDefaults`]. Every field of an
+//! entry is optional, so an entry only records what was changed in that folder.
+//! Unknown fields and an unreadable file are ignored (the file is rewritten on the
+//! next change); writes go to a temporary file that is renamed into place.
+
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, PoisonError};
+
+use serde::{Deserialize, Serialize};
+
+use crate::source::ListSort;
+
+/// The file name in the data directory.
+pub const UI_STATE_FILE: &str = "ui_state.json";
+
+/// How the list draws its rows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ListMode {
+    /// Two-line cards: sender and date, subject and markers.
+    #[default]
+    Cards,
+    /// Thunderbird's table with columns.
+    Table,
+}
+
+/// A column of the table view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColumnId {
+    /// The star (`\Flagged`).
+    Star,
+    /// Unread dot.
+    Unread,
+    /// Paperclip.
+    Attachment,
+    /// Subject, with the thread twisty and the reply tree.
+    Subject,
+    /// Sender of received mail, recipients of mail you sent (Thunderbird).
+    Correspondents,
+    /// Always the sender.
+    Sender,
+    /// Always the recipients.
+    Recipients,
+    /// Tag names.
+    Tags,
+    /// The account.
+    Account,
+    /// Size.
+    Size,
+    /// Date (click the header to sort).
+    Date,
+}
+
+impl ColumnId {
+    /// Every column in display order (columns aren't reordered; the picker only turns
+    /// them on and off).
+    pub const ALL: [Self; 11] = [
+        Self::Star,
+        Self::Unread,
+        Self::Attachment,
+        Self::Subject,
+        Self::Correspondents,
+        Self::Sender,
+        Self::Recipients,
+        Self::Tags,
+        Self::Account,
+        Self::Size,
+        Self::Date,
+    ];
+
+    /// The default set: Star · Subject · Correspondents · Date (CONCEPT §8.2).
+    pub const DEFAULT: [Self; 4] = [Self::Star, Self::Subject, Self::Correspondents, Self::Date];
+
+    /// The name in the header and the column picker.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Star => "Star",
+            Self::Unread => "Unread",
+            Self::Attachment => "Attachment",
+            Self::Subject => "Subject",
+            Self::Correspondents => "Correspondents",
+            Self::Sender => "Sender",
+            Self::Recipients => "Recipients",
+            Self::Tags => "Tags",
+            Self::Account => "Account",
+            Self::Size => "Size",
+            Self::Date => "Date",
+        }
+    }
+
+    /// The width a column starts with.
+    pub fn default_width(self) -> f32 {
+        match self {
+            Self::Star | Self::Unread | Self::Attachment => 26.,
+            Self::Subject => 280.,
+            Self::Correspondents => 150.,
+            Self::Sender | Self::Recipients => 150.,
+            Self::Tags => 90.,
+            Self::Account => 120.,
+            Self::Size => 64.,
+            Self::Date => 80.,
+        }
+    }
+
+    /// Narrow icon columns keep their width; the Subject takes the rest.
+    pub fn resizable(self) -> bool {
+        !matches!(
+            self,
+            Self::Star | Self::Unread | Self::Attachment | Self::Subject
+        )
+    }
+
+    /// The subject can't be hidden.
+    pub fn hideable(self) -> bool {
+        self != Self::Subject
+    }
+
+    /// The JSON name.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Star => "star",
+            Self::Unread => "unread",
+            Self::Attachment => "attachment",
+            Self::Subject => "subject",
+            Self::Correspondents => "correspondents",
+            Self::Sender => "sender",
+            Self::Recipients => "recipients",
+            Self::Tags => "tags",
+            Self::Account => "account",
+            Self::Size => "size",
+            Self::Date => "date",
+        }
+    }
+}
+
+/// The defaults for folders without remembered state, from `settings.json`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ListDefaults {
+    /// `thread_list.view`.
+    pub mode: ListMode,
+    /// `thread_list.threaded`.
+    pub threaded: bool,
+    /// `thread_list.sort` (date orders only).
+    pub sort: ListSort,
+}
+
+impl Default for ListDefaults {
+    fn default() -> Self {
+        Self {
+            mode: ListMode::Cards,
+            threaded: true,
+            sort: ListSort::NewestFirst,
+        }
+    }
+}
+
+/// What is remembered for one folder. `None` follows the defaults.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FolderListState {
+    /// Cards or table.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub view: Option<ListMode>,
+    /// Threads on or off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threaded: Option<bool>,
+    /// Date order.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort: Option<ListSort>,
+    /// Table columns that are on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub columns: Option<Vec<ColumnId>>,
+    /// Column widths the user set, in logical pixels.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub widths: BTreeMap<ColumnId, f32>,
+}
+
+/// The effective list settings of a folder: its remembered state over the defaults.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ListPrefs {
+    /// Cards or table.
+    pub mode: ListMode,
+    /// Threads on or off.
+    pub threaded: bool,
+    /// Date order.
+    pub sort: ListSort,
+    /// Table columns that are on, in display order.
+    pub columns: Vec<ColumnId>,
+    /// Column widths that differ from [`ColumnId::default_width`].
+    pub widths: BTreeMap<ColumnId, f32>,
+}
+
+impl ListPrefs {
+    /// `state` over `defaults`.
+    pub fn resolve(state: Option<&FolderListState>, defaults: &ListDefaults) -> Self {
+        let state = state.cloned().unwrap_or_default();
+        let mut columns: Vec<ColumnId> = state
+            .columns
+            .unwrap_or_else(|| ColumnId::DEFAULT.to_vec())
+            .into_iter()
+            .collect();
+        if !columns.contains(&ColumnId::Subject) {
+            columns.push(ColumnId::Subject);
+        }
+        columns.sort_unstable();
+        columns.dedup();
+        Self {
+            mode: state.view.unwrap_or(defaults.mode),
+            threaded: state.threaded.unwrap_or(defaults.threaded),
+            sort: state.sort.unwrap_or(defaults.sort),
+            columns,
+            widths: state.widths,
+        }
+    }
+
+    /// The width of a column.
+    pub fn width(&self, column: ColumnId) -> f32 {
+        self.widths
+            .get(&column)
+            .copied()
+            .unwrap_or_else(|| column.default_width())
+    }
+
+    /// Turns an optional column on or off (the subject stays).
+    pub fn toggle_column(&mut self, column: ColumnId) {
+        if !column.hideable() {
+            return;
+        }
+        if let Some(ix) = self.columns.iter().position(|c| *c == column) {
+            self.columns.remove(ix);
+        } else {
+            self.columns.push(column);
+            self.columns.sort_unstable();
+        }
+    }
+
+    /// What to remember: only what differs from the defaults.
+    pub fn to_state(&self, defaults: &ListDefaults) -> FolderListState {
+        FolderListState {
+            view: (self.mode != defaults.mode).then_some(self.mode),
+            threaded: (self.threaded != defaults.threaded).then_some(self.threaded),
+            sort: (self.sort != defaults.sort).then_some(self.sort),
+            columns: (self.columns != ColumnId::DEFAULT).then(|| self.columns.clone()),
+            widths: self.widths.clone(),
+        }
+    }
+}
+
+/// The contents of `ui_state.json`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiState {
+    /// Format version, 1.
+    pub version: u32,
+    /// Per folder, keyed by [`FolderKey::tree_id`](crate::source::FolderKey::tree_id)
+    /// (`folder:12`, `unified:inbox`) or `search` for global search results.
+    pub folders: BTreeMap<String, FolderListState>,
+}
+
+impl Default for UiState {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            folders: BTreeMap::new(),
+        }
+    }
+}
+
+/// Loads and saves [`UiState`]; in memory only without a path (tests, demos).
+#[derive(Debug, Clone)]
+pub struct UiStateStore {
+    inner: Arc<Mutex<Inner>>,
+}
+
+#[derive(Debug)]
+struct Inner {
+    path: Option<PathBuf>,
+    state: UiState,
+    defaults: ListDefaults,
+}
+
+impl UiStateStore {
+    /// State kept in memory only.
+    pub fn in_memory(defaults: ListDefaults) -> Self {
+        Self::with(None, UiState::default(), defaults)
+    }
+
+    /// Reads `path` (a missing or unreadable file is an empty state).
+    pub fn load(path: impl Into<PathBuf>, defaults: ListDefaults) -> Self {
+        let path = path.into();
+        let state = match std::fs::read(&path) {
+            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|error| {
+                tracing::warn!(%error, "ignoring an unreadable ui_state.json");
+                UiState::default()
+            }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => UiState::default(),
+            Err(error) => {
+                tracing::warn!(%error, "cannot read ui_state.json");
+                UiState::default()
+            }
+        };
+        Self::with(Some(path), state, defaults)
+    }
+
+    fn with(path: Option<PathBuf>, state: UiState, defaults: ListDefaults) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(Inner {
+                path,
+                state,
+                defaults,
+            })),
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The defaults for folders without state.
+    pub fn defaults(&self) -> ListDefaults {
+        self.lock().defaults
+    }
+
+    /// The effective settings of a folder.
+    pub fn prefs(&self, folder: &str) -> ListPrefs {
+        let inner = self.lock();
+        ListPrefs::resolve(inner.state.folders.get(folder), &inner.defaults)
+    }
+
+    /// Remembers a folder's settings and writes the file (if there is one).
+    pub fn set_prefs(&self, folder: &str, prefs: &ListPrefs) {
+        let snapshot = {
+            let mut inner = self.lock();
+            let state = prefs.to_state(&inner.defaults);
+            if state == FolderListState::default() {
+                inner.state.folders.remove(folder);
+            } else {
+                inner.state.folders.insert(folder.to_owned(), state);
+            }
+            inner.path.clone().map(|path| (path, inner.state.clone()))
+        };
+        if let Some((path, state)) = snapshot
+            && let Err(error) = write_atomically(&path, &state)
+        {
+            tracing::warn!(%error, "cannot write ui_state.json");
+        }
+    }
+
+    /// The current state (for tests and diagnostics).
+    pub fn state(&self) -> UiState {
+        self.lock().state.clone()
+    }
+}
+
+fn write_atomically(path: &std::path::Path, state: &UiState) -> std::io::Result<()> {
+    let json = serde_json::to_vec_pretty(state).map_err(std::io::Error::other)?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(&tmp, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folders_without_state_use_the_defaults() {
+        let store = UiStateStore::in_memory(ListDefaults {
+            mode: ListMode::Table,
+            threaded: false,
+            sort: ListSort::NewestFirst,
+        });
+        let prefs = store.prefs("folder:1");
+        assert_eq!(prefs.mode, ListMode::Table);
+        assert!(!prefs.threaded);
+        assert_eq!(prefs.columns, ColumnId::DEFAULT);
+        assert_eq!(prefs.width(ColumnId::Date), 80.);
+    }
+
+    #[test]
+    fn remembers_per_folder_and_survives_a_restart() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(UI_STATE_FILE);
+        let defaults = ListDefaults::default();
+        let store = UiStateStore::load(&path, defaults);
+        let mut prefs = store.prefs("folder:12");
+        prefs.mode = ListMode::Table;
+        prefs.threaded = false;
+        prefs.sort = ListSort::OldestFirst;
+        prefs.toggle_column(ColumnId::Size);
+        prefs.toggle_column(ColumnId::Star);
+        prefs.toggle_column(ColumnId::Subject);
+        prefs.widths.insert(ColumnId::Correspondents, 220.);
+        store.set_prefs("folder:12", &prefs);
+        assert_eq!(
+            prefs.columns,
+            vec![
+                ColumnId::Subject,
+                ColumnId::Correspondents,
+                ColumnId::Size,
+                ColumnId::Date
+            ],
+            "columns keep their order; the subject can't be hidden"
+        );
+
+        let reopened = UiStateStore::load(&path, defaults);
+        assert_eq!(reopened.prefs("folder:12"), prefs);
+        // Other folders are untouched.
+        assert_eq!(reopened.prefs("unified:inbox").mode, ListMode::Cards);
+        let json = std::fs::read_to_string(&path).unwrap();
+        assert!(json.contains("\"folder:12\""), "{json}");
+        assert!(json.contains("\"oldest_first\""), "{json}");
+        assert!(!json.contains("unified:inbox"), "{json}");
+
+        // Back to the defaults: the entry goes away.
+        store.set_prefs("folder:12", &ListPrefs::resolve(None, &defaults));
+        assert!(store.state().folders.is_empty());
+    }
+
+    #[test]
+    fn a_broken_file_is_an_empty_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(UI_STATE_FILE);
+        std::fs::write(&path, b"{ not json").unwrap();
+        let store = UiStateStore::load(&path, ListDefaults::default());
+        assert_eq!(store.state(), UiState::default());
+        // Unknown fields and columns are fine; the subject is always there.
+        std::fs::write(
+            &path,
+            br#"{"version":1,"later":true,"folders":{"search":{"columns":["date"],"x":1}}}"#,
+        )
+        .unwrap();
+        let store = UiStateStore::load(&path, ListDefaults::default());
+        assert_eq!(
+            store.prefs("search").columns,
+            vec![ColumnId::Subject, ColumnId::Date]
+        );
+    }
+}

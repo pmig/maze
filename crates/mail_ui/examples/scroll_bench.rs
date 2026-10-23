@@ -11,6 +11,11 @@
 //! the Metal headless renderer (including the read-back, so an upper bound for the GPU
 //! part).
 //!
+//! `MAZEMAIL_BENCH_EXPAND=1` expands every thread first (`*`, reply trees fetched as
+//! they scroll into view), `MAZEMAIL_BENCH_FLAT=1` turns threads off (one row per
+//! message, about 1.9 M rows). The time of the folder switch, of "expand all" and of
+//! turning threads off is printed too.
+//!
 //! The in-app benchmark (`MAZEMAIL_BENCH_SCROLL`) measures the same on a real display
 //! including presentation; this one runs anywhere, display or not.
 
@@ -32,6 +37,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let speed: f32 = args.next().and_then(|v| v.parse().ok()).unwrap_or(40.);
     let table = args.next().is_some_and(|v| v == "table");
     let last_frame_png = args.next();
+    let flag = |name: &str| std::env::var(name).is_ok_and(|v| v == "1");
+    let (expand, flat) = (flag("MAZEMAIL_BENCH_EXPAND"), flag("MAZEMAIL_BENCH_FLAT"));
 
     let text_system = gpui_platform::current_platform(true).text_system();
     let mut cx = HeadlessAppContext::with_platform(
@@ -57,18 +64,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     cx.update_window(window, |_, window, cx| {
         view.update(cx, |mail, cx| {
             mail.thread_list().update(cx, |list, cx| {
+                let started = Instant::now();
                 list.open(
                     ThreadScope::Folder(FakeMailSource::large_folder()),
                     "Archives".into(),
                     None,
                     cx,
                 );
+                println!(
+                    "folder switch to 1M threads (keys + first rows): {:.1} ms",
+                    started.elapsed().as_secs_f64() * 1e3
+                );
                 if table {
                     list.toggle_mode(window, cx);
+                }
+                if flat {
+                    let started = Instant::now();
+                    list.toggle_threads(cx);
+                    println!(
+                        "threads off: {} message keys in {:.1} ms",
+                        list.key_count(),
+                        started.elapsed().as_secs_f64() * 1e3
+                    );
                 }
             });
         });
     })?;
+    if expand {
+        let started = Instant::now();
+        cx.update_window(window, |_, _, cx| {
+            view.update(cx, |mail, cx| {
+                mail.thread_list()
+                    .update(cx, |list, cx| list.expand_all(cx));
+            });
+        })?;
+        let on_main = started.elapsed();
+        cx.run_until_parked();
+        let rows = cx.update_window(window, |_, _, cx| {
+            view.read(cx).thread_list().read(cx).len()
+        })?;
+        println!(
+            "expand all: {:.1} ms on the main thread, {:.1} ms until the counts are in, {rows} rows",
+            on_main.as_secs_f64() * 1e3,
+            started.elapsed().as_secs_f64() * 1e3,
+        );
+    }
     let row_height = if table { TABLE_ROW_HEIGHT } else { CARD_HEIGHT };
 
     let draw = |cx: &mut HeadlessAppContext,
@@ -124,7 +164,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         Ok(())
     };
-    let view_name = if table { "table 24px" } else { "cards 52px" };
+    let view_name = match (table, expand, flat) {
+        (true, true, _) => "table 24px, all expanded",
+        (true, _, true) => "table 24px, threads off",
+        (true, _, _) => "table 24px",
+        (false, true, _) => "cards 52px, all expanded",
+        (false, _, true) => "cards 52px, threads off",
+        (false, _, _) => "cards 52px",
+    };
     report(&format!("{view_name}, top of 1M"), 0., &mut cx)?;
     report(&format!("{view_name}, from row 900k"), 900_000., &mut cx)?;
 

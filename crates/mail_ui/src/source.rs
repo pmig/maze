@@ -1,8 +1,9 @@
 //! The data interface of the mail UI.
 //!
 //! The UI never talks to the store. Everything it shows comes through [`MailSource`]:
-//! the folder tree, the thread keys of a folder, rows for the visible range, and the
-//! message to display. Reads are synchronous and cheap (PLAN §4.1: the core answers
+//! the folder tree, the thread (or, with threads off, message) keys of a folder, rows
+//! for the visible range, the reply tree of an expanded thread, and the message to
+//! display. Reads are synchronous and cheap (PLAN §4.1: the core answers
 //! them from a reader connection); slow ones (text search) run on a background
 //! thread, which is why the trait is `Send + Sync`.
 //!
@@ -112,11 +113,38 @@ pub struct FolderEntry {
 /// fetched for the visible range (PLAN §8, "keys-only thread list").
 pub type ThreadKeys = Arc<[ThreadId]>;
 
+/// The message ids of an unthreaded list in display order. Keys only, like
+/// [`ThreadKeys`].
+pub type MessageKeys = Arc<[MessageId]>;
+
+/// The order of a list, by date (the only order the store sorts by).
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ListSort {
+    /// Newest first.
+    #[default]
+    NewestFirst,
+    /// Oldest first.
+    OldestFirst,
+}
+
+impl ListSort {
+    /// The other order.
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::NewestFirst => Self::OldestFirst,
+            Self::OldestFirst => Self::NewestFirst,
+        }
+    }
+}
+
 /// Which threads a list shows.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct ThreadFilter {
     /// Case-insensitive search terms; every whitespace-separated term must occur in
-    /// the subject or the sender.
+    /// the subject, the sender or the recipients.
     pub text: Option<String>,
     /// Only unread threads.
     pub unread: bool,
@@ -137,23 +165,41 @@ impl ThreadFilter {
 
     /// Whether a row passes the filter.
     pub fn matches(&self, row: &ThreadRow) -> bool {
-        if self.unread && row.flags.contains(Flags::SEEN) {
+        self.passes(
+            row.flags,
+            row.has_attachments,
+            [&row.subject, &row.sender, &row.recipients],
+        )
+    }
+
+    /// Whether a message row passes the filter.
+    pub fn matches_message(&self, row: &MessageRow) -> bool {
+        self.passes(
+            row.flags,
+            row.has_attachments,
+            [&row.subject, &row.sender, &row.recipients],
+        )
+    }
+
+    fn passes(&self, flags: Flags, attachments: bool, text: [&Sensitive<SharedString>; 3]) -> bool {
+        if self.unread && flags.contains(Flags::SEEN) {
             return false;
         }
-        if self.starred && !row.flags.contains(Flags::FLAGGED) {
+        if self.starred && !flags.contains(Flags::FLAGGED) {
             return false;
         }
-        if self.attachments && !row.has_attachments {
+        if self.attachments && !attachments {
             return false;
         }
         match self.text.as_deref().map(str::trim) {
             None | Some("") => true,
-            Some(text) => {
-                let subject = row.subject.expose().to_lowercase();
-                let sender = row.sender.expose().to_lowercase();
-                text.to_lowercase()
+            Some(filter) => {
+                let haystack: Vec<String> =
+                    text.iter().map(|t| t.expose().to_lowercase()).collect();
+                filter
+                    .to_lowercase()
                     .split_whitespace()
-                    .all(|term| subject.contains(term) || sender.contains(term))
+                    .all(|term| haystack.iter().any(|h| h.contains(term)))
             }
         }
     }
@@ -177,6 +223,11 @@ pub struct ThreadRow {
     pub subject: Sensitive<SharedString>,
     /// Display name (or address) of the newest message's sender.
     pub sender: Sensitive<SharedString>,
+    /// Recipients of the newest message, display names joined with ", ".
+    pub recipients: Sensitive<SharedString>,
+    /// The newest message is mail you sent: the Correspondents column shows its
+    /// recipients (with a "sent" arrow) instead of the sender, as in Thunderbird.
+    pub outgoing: bool,
     /// Date of the newest message.
     pub date: OffsetDateTime,
     /// Flags of the thread (unread if any message is unread).
@@ -187,7 +238,83 @@ pub struct ThreadRow {
     pub message_count: u32,
     /// Size of the newest message in bytes.
     pub size: u64,
+    /// The account's name.
+    pub account: SharedString,
+    /// Tag names.
+    pub tags: Vec<SharedString>,
 }
+
+impl ThreadRow {
+    /// What the Correspondents column shows: the recipients of mail you sent, else the
+    /// sender.
+    pub fn correspondents(&self) -> &Sensitive<SharedString> {
+        if self.outgoing {
+            &self.recipients
+        } else {
+            &self.sender
+        }
+    }
+}
+
+/// One message row: a message of an unthreaded list or of an expanded thread.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MessageRow {
+    /// The message.
+    pub id: MessageId,
+    /// Its thread.
+    pub thread: ThreadId,
+    /// Subject.
+    pub subject: Sensitive<SharedString>,
+    /// Display name (or address) of the sender.
+    pub sender: Sensitive<SharedString>,
+    /// Recipients, display names joined with ", ".
+    pub recipients: Sensitive<SharedString>,
+    /// Mail you sent (see [`ThreadRow::outgoing`]).
+    pub outgoing: bool,
+    /// Date.
+    pub date: OffsetDateTime,
+    /// Flags.
+    pub flags: Flags,
+    /// Whether it has attachments.
+    pub has_attachments: bool,
+    /// Size in bytes.
+    pub size: u64,
+    /// The account's name.
+    pub account: SharedString,
+    /// Tag names.
+    pub tags: Vec<SharedString>,
+}
+
+impl MessageRow {
+    /// What the Correspondents column shows (see [`ThreadRow::correspondents`]).
+    pub fn correspondents(&self) -> &Sensitive<SharedString> {
+        if self.outgoing {
+            &self.recipients
+        } else {
+            &self.sender
+        }
+    }
+
+    /// Whether the message is unread.
+    pub fn is_unread(&self) -> bool {
+        !self.flags.contains(Flags::SEEN)
+    }
+}
+
+/// One message of a thread's reply tree, in display order (depth first, replies by
+/// date).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TreeNode {
+    /// The message.
+    pub message: MessageId,
+    /// The message it replies to, if that is in the tree.
+    pub parent: Option<MessageId>,
+    /// 0 for the thread's first messages, 1 for their replies, …
+    pub depth: u16,
+}
+
+/// The reply tree of a thread, see [`MailSource::thread_tree`].
+pub type ThreadTree = Arc<[TreeNode]>;
 
 impl ThreadRow {
     /// Whether the thread has unread messages.
@@ -305,6 +432,13 @@ impl ThreadPredicate {
             Self::Unread => row.is_unread(),
         }
     }
+
+    /// Whether a message row matches.
+    pub fn matches_message(self, row: &MessageRow) -> bool {
+        match self {
+            Self::Unread => row.is_unread(),
+        }
+    }
 }
 
 /// Sync state shown in the status bar.
@@ -407,6 +541,9 @@ pub enum SourceError {
     /// The thread doesn't exist (any more).
     #[error("thread {0} not found")]
     ThreadNotFound(ThreadId),
+    /// The message doesn't exist (any more).
+    #[error("message {0} not found")]
+    MessageNotFound(MessageId),
     /// The folder doesn't exist (any more).
     #[error("folder not found")]
     FolderNotFound,
@@ -424,7 +561,7 @@ pub trait MailSource: Send + Sync + 'static {
     /// Unread threads in a folder (cached counts, cheap).
     fn unread_count(&self, folder: &FolderKey) -> u64;
 
-    /// Thread keys of a scope in display order, newest first, after `filter`.
+    /// Thread keys of a scope in display order (`sort`), after `filter`.
     ///
     /// With a text filter this can take a while on large folders; call it off the
     /// main thread then.
@@ -432,10 +569,92 @@ pub trait MailSource: Send + Sync + 'static {
         &self,
         scope: &ThreadScope,
         filter: &ThreadFilter,
+        sort: ListSort,
     ) -> Result<ThreadKeys, SourceError>;
 
     /// Rows for `keys`, in the same order. Threads that no longer exist are left out.
     fn thread_rows(&self, keys: &[ThreadId]) -> Vec<ThreadRow>;
+
+    /// Message keys of a scope (threads off: one row per message) in display order,
+    /// after `filter`. Like [`MailSource::thread_keys`], slow with a text filter.
+    fn message_keys(
+        &self,
+        scope: &ThreadScope,
+        filter: &ThreadFilter,
+        sort: ListSort,
+    ) -> Result<MessageKeys, SourceError>;
+
+    /// Rows for messages, in the same order. Messages that no longer exist are left
+    /// out.
+    fn message_rows(&self, keys: &[MessageId]) -> Vec<MessageRow>;
+
+    /// The reply tree of a thread: its messages in the open list's folder (as many as
+    /// the thread row's `message_count`), depth first.
+    fn thread_tree(&self, thread: ThreadId) -> Result<ThreadTree, SourceError>;
+
+    /// The message count of each thread, in the order given (0 for threads that are
+    /// gone): what "expand all" sizes the list with. Can be slow for a million threads;
+    /// call it off the main thread then.
+    fn message_counts(&self, threads: &[ThreadId]) -> Vec<u32> {
+        const CHUNK: usize = 512;
+        let mut out = Vec::with_capacity(threads.len());
+        for chunk in threads.chunks(CHUNK) {
+            let mut rows = self.thread_rows(chunk).into_iter().peekable();
+            out.extend(chunk.iter().map(|id| {
+                rows.next_if(|row| row.id == *id)
+                    .map_or(0, |row| row.message_count)
+            }));
+        }
+        out
+    }
+
+    /// The index of the next message in `keys` matching `predicate`, starting after (or
+    /// before) `from`, like [`MailSource::find`].
+    fn find_message(
+        &self,
+        keys: &[MessageId],
+        from: Option<usize>,
+        direction: Direction,
+        predicate: ThreadPredicate,
+    ) -> Option<usize> {
+        const CHUNK: usize = 512;
+        let hit_in = |start: usize, end: usize, forward: bool| {
+            let rows = self.message_rows(&keys[start..end]);
+            let hit = if forward {
+                rows.iter().find(|row| predicate.matches_message(row))
+            } else {
+                rows.iter().rev().find(|row| predicate.matches_message(row))
+            }?;
+            keys[start..end]
+                .iter()
+                .position(|id| *id == hit.id)
+                .map(|offset| start + offset)
+        };
+        match direction {
+            Direction::Forward => {
+                let mut start = from.map_or(0, |ix| ix + 1);
+                while start < keys.len() {
+                    let end = (start + CHUNK).min(keys.len());
+                    if let Some(ix) = hit_in(start, end, true) {
+                        return Some(ix);
+                    }
+                    start = end;
+                }
+                None
+            }
+            Direction::Backward => {
+                let mut end = from.unwrap_or(keys.len()).min(keys.len());
+                while end > 0 {
+                    let start = end.saturating_sub(CHUNK);
+                    if let Some(ix) = hit_in(start, end, false) {
+                        return Some(ix);
+                    }
+                    end = start;
+                }
+                None
+            }
+        }
+    }
 
     /// The index of the next thread in `keys` matching `predicate`, starting after
     /// (or before) `from`. `from = None` starts at the edge of the list.
@@ -486,12 +705,27 @@ pub trait MailSource: Send + Sync + 'static {
     /// The newest message of a thread, ready to display.
     fn message(&self, thread: ThreadId) -> Result<MessageDocument, SourceError>;
 
+    /// One message, ready to display (a message row of an expanded thread or of an
+    /// unthreaded list).
+    fn message_document(&self, message: MessageId) -> Result<MessageDocument, SourceError>;
+
     /// Adds and removes flags on threads (mark read, star, …).
     fn set_flags(&self, threads: &[ThreadId], add: Flags, remove: Flags)
     -> Result<(), SourceError>;
 
+    /// Adds and removes flags on single messages.
+    fn set_message_flags(
+        &self,
+        messages: &[MessageId],
+        add: Flags,
+        remove: Flags,
+    ) -> Result<(), SourceError>;
+
     /// Moves threads to their account's Archives folder.
     fn archive(&self, threads: &[ThreadId]) -> Result<(), SourceError>;
+
+    /// Moves single messages to their account's Archives folder.
+    fn archive_messages(&self, messages: &[MessageId]) -> Result<(), SourceError>;
 
     /// Connection, sync and outbox state.
     fn status(&self) -> SourceStatus;

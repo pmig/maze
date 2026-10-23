@@ -74,11 +74,12 @@ struct RunningServer {
 
 /// Runs the app until the user quits.
 pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
-    let window_options = MailWindowOptions {
+    let mut window_options = MailWindowOptions {
         local_offset: options.local_offset,
         process_start: options.process_start,
         benchmark: ScrollBenchmark::from_env(),
         window_size: None,
+        ..MailWindowOptions::default()
     };
     if std::env::var(DEMO_ENV).is_ok_and(|value| value.trim() == "1") {
         run_demo(window_options);
@@ -86,6 +87,7 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
     }
 
     let paths = Paths::current().context("finding the data directory")?;
+    window_options.ui_state = startup::ui_state(&paths);
     let key_store = keys::key_store(paths.data_dir())?;
     let secrets = keys::secret_store(paths.data_dir());
     let authorizer = TokenAuthorizer::new();
@@ -161,9 +163,11 @@ fn run_demo(window_options: MailWindowOptions) {
     let app = ui::kit::application().with_assets(ui::assets::Assets);
     app.on_reopen({
         let source = source.clone();
+        let window_options = window_options.clone();
         move |cx| {
             if cx.windows().is_empty()
-                && let Err(error) = mail_ui::open_main_window(source.clone(), window_options, cx)
+                && let Err(error) =
+                    mail_ui::open_main_window(source.clone(), window_options.clone(), cx)
             {
                 tracing::error!(%error, "could not open the main window");
             }
@@ -189,7 +193,7 @@ fn open_window(cx: &mut App) {
         let state = cx.global::<AppState>();
         (
             state.source.clone() as Arc<dyn MailSource>,
-            state.window_options,
+            state.window_options.clone(),
         )
     };
     match mail_ui::open_main_window(source, options, cx) {

@@ -21,6 +21,10 @@
       "f8": "workspace::ToggleMessagePane",
       "cmd-k": "search::FocusSearch",
       "cmd-shift-k": "search::QuickFilter",
+      // Not Thunderbird defaults (it has no keys for these); cmd-alt avoids its
+      // single-key and cmd-shift bindings.
+      "cmd-alt-t": "view::ToggleTableView",
+      "cmd-alt-g": "view::ToggleThreads",
       "cmd-r": "mail::Reply",
       "cmd-shift-r": "mail::ReplyAll",
       "cmd-l": "mail::Forward"
@@ -37,7 +41,8 @@
       "p": "mail::PreviousUnread",
       "m": "mail::ToggleRead",
       "s": "mail::ToggleStar",
-      "a": "mail::Archive"
+      "a": "mail::Archive",
+      "cmd-shift-a": "mail::SelectThread"
     }
   },
   {
@@ -48,7 +53,21 @@
       "home": "mail::FirstMessage",
       "end": "mail::LastMessage",
       "pagedown": "mail::PageDown",
-      "pageup": "mail::PageUp"
+      "pageup": "mail::PageUp",
+      "right": "mail::ExpandThread",
+      "left": "mail::CollapseThread",
+      "*": "mail::ExpandAllThreads",
+      "shift-8": "mail::ExpandAllThreads",
+      "\\": "mail::CollapseAllThreads"
+    }
+  },
+  {
+    // The table's own left/right move between columns; in the message list they open
+    // and close threads, as in Thunderbird.
+    "context": "ThreadList > DataTable",
+    "bindings": {
+      "right": "mail::ExpandThread",
+      "left": "mail::CollapseThread"
     }
   }
 ]

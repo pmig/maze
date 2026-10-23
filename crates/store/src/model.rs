@@ -839,6 +839,83 @@ redacted_debug!(ThreadRow {
 });
 
 // ---------------------------------------------------------------------------------------
+// Message lists (threads off)
+
+/// One entry of a message list snapshot (16 bytes), also the keyset cursor: the
+/// message and its date.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MessageKey {
+    pub message: MessageId,
+    pub key: SortKey,
+}
+
+/// A page request for [`Queries::message_list_keys`](crate::Queries::message_list_keys).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MessagePage {
+    /// Continue after this key (the last key of the previous page).
+    pub after: Option<MessageKey>,
+    pub limit: usize,
+}
+
+impl MessagePage {
+    /// The first `limit` keys.
+    pub fn first(limit: usize) -> Self {
+        Self { after: None, limit }
+    }
+
+    /// The `limit` keys after `key`.
+    pub fn after(key: MessageKey, limit: usize) -> Self {
+        Self {
+            after: Some(key),
+            limit,
+        }
+    }
+}
+
+/// The data of one visible message row (threads off, or a message of an expanded
+/// thread).
+#[derive(Clone, PartialEq, Eq)]
+pub struct MessageRow {
+    pub id: MessageId,
+    pub thread: ThreadId,
+    pub account: AccountId,
+    pub subject: Option<String>,
+    pub from: Option<Address>,
+    pub to: Vec<Address>,
+    pub cc: Vec<Address>,
+    pub date: UnixTime,
+    pub size: Option<u64>,
+    pub has_attachments: bool,
+    /// Flags of the copy in the context folder, else the effective flags.
+    pub flags: mazemail_types::Flags,
+    /// The message has a copy in a Sent, Drafts or Outbox folder.
+    pub in_sent: bool,
+    pub tags: Vec<TagId>,
+}
+redacted_debug!(MessageRow {
+    id,
+    thread,
+    account,
+    date,
+    has_attachments,
+    flags,
+    in_sent,
+    tags
+});
+
+/// What building the reply tree of a thread needs about one of its messages.
+#[derive(Clone, PartialEq, Eq)]
+pub struct TreeMessage {
+    pub id: MessageId,
+    pub date: UnixTime,
+    pub rfc_message_id: Option<String>,
+    pub in_reply_to: Option<String>,
+    /// `References`, oldest first.
+    pub references: Vec<String>,
+}
+redacted_debug!(TreeMessage { id, date });
+
+// ---------------------------------------------------------------------------------------
 // Search filters
 
 /// Metadata conditions applied to search candidates in SQL (PLAN §4.4 "Mutable

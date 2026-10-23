@@ -115,6 +115,24 @@ example:
 Accounts, identities and SMTP servers are stored in the encrypted database, never in
 `settings.json`.
 
+### The message list
+
+The list shows two-line cards or, a click (or `cmd-alt-t`) away, Thunderbird's table
+with the columns Star · Subject · Correspondents · Date. Correspondents is the sender
+of mail you received and the recipients, with a small arrow, of mail you sent. More
+columns (Attachment, Unread, Size, Tags, Account, Sender, Recipients) come from the
+columns button in the list header or by right-clicking a column header; drag a header's
+edge to resize it, and click **Date** to switch between newest and oldest first.
+
+Threads are on by default: a thread is one row with its message count; `→` or a click
+on the count opens its messages as a reply tree, `←` closes it, `*` opens all threads
+and `\` closes them, `cmd-shift-a` selects a whole thread. The threads button (or
+`cmd-alt-g`) turns threads off and lists every message on its own.
+
+Cards or table, threads, sort order, columns and widths are remembered per folder in
+`ui_state.json` in the data directory. A folder you haven't changed follows
+`thread_list.view` and `thread_list.threaded` in `settings.json`.
+
 ## Import mail
 
 Maze imports mbox files, Maildir directories and whole Thunderbird profiles. Importing
@@ -306,13 +324,17 @@ Maze uses Thunderbird's shortcuts and fills the gaps with Zed's. These are bound
 | Toggle read                          | `m`                         |
 | Star                                 | `s`                         |
 | Archive                              | `a`                         |
+| Open / close a thread                | `right` / `left`            |
+| Open / close all threads             | `*` / `\`                   |
+| Select the whole thread              | `cmd-shift-a`               |
+| Table view / threads on or off       | `cmd-alt-t` / `cmd-alt-g`   |
 | Hide Maze / hide others / minimize   | `cmd-h` / `cmd-alt-h` / `cmd-m` |
 | Quit                                 | `cmd-q`                     |
 
 Single-letter shortcuts work when the message list or a message has focus, never inside
 a text field. Reply (`cmd-r`), reply all (`cmd-shift-r`) and forward (`cmd-l`) are bound
 but only show a notice until the composer lands. The rest of Thunderbird's keymap
-(tags `1`–`9`, junk, delete, threads, history) follows as the features arrive.
+(tags `1`–`9`, junk, delete, history) follows as the features arrive.
 
 ## Getting help
 

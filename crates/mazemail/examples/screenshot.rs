@@ -9,8 +9,9 @@
 //! (`MAZEMAIL_INSECURE_DEV_KEYSTORE`'s store, as `seed-demo` creates it), shows it
 //! through `CoreMailSource` in GPUI's headless app context with the Metal headless
 //! renderer (no window on screen, no screen-recording permission), and captures it at
-//! 2x scale. `MAZEMAIL_SCREENSHOT_DARK=1` uses the dark theme. Maze must not be
-//! running on the same data directory.
+//! 2x scale. `MAZEMAIL_SCREENSHOT_DARK=1` uses the dark theme. The message list uses
+//! the data directory's `ui_state.json` (per-folder view, threads, columns), as the
+//! app does. Maze must not be running on the same data directory.
 
 // A command-line tool: it reports where it saved the file.
 #![allow(clippy::print_stdout)]
@@ -20,7 +21,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{AppContext as _, HeadlessAppContext, px, size};
-use mail_ui::{MailSource, MailWindow, MailWindowOptions};
+use mail_ui::{
+    ListDefaults, MailSource, MailWindow, MailWindowOptions, UI_STATE_FILE, UiStateStore,
+};
 use mazemail::keys::insecure_dev_key_store;
 use mazemail::source::CoreMailSource;
 use mazemail_core::{CoreConfig, CoreHandle};
@@ -58,6 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
     let source: Arc<dyn MailSource> = Arc::new(CoreMailSource::new(core.clone()));
     let options = MailWindowOptions {
+        ui_state: UiStateStore::load(data_dir.join(UI_STATE_FILE), ListDefaults::default()),
         local_offset,
         ..MailWindowOptions::default()
     };

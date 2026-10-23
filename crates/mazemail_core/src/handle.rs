@@ -23,6 +23,7 @@ use crate::commands::{
     self, CommandOutcome, CommandReceipt, ExecContext, MailCommand, Origin, UndoAction,
 };
 use crate::config::CoreConfig;
+use crate::correspondents::{IdentityEmails, is_outgoing};
 use crate::crash_guard::{CrashGuard, CrashGuardStatus};
 use crate::events::{self, CoreEvent, CoreEventBatch};
 use crate::folders::{self, FolderNode};
@@ -36,12 +37,14 @@ use crate::message::{
     AuthStatus, Body, MessageView, RemoteContent, StoreContacts, load_rendered, persist_auth,
     stored_auth,
 };
+use crate::message_list::{MessageListRow, MessageListSnapshot, all_message_keys};
 use crate::row_cache::{RowCache, RowCacheStats};
 use crate::runtime::RuntimeHolder;
 use crate::sync_bridge::{FetchPriority, SyncBridge, SyncStatusSink};
 use crate::sync_engine::SyncEngine;
 use crate::sync_ingest::CoreIngest;
 use crate::thread_list::{ListQuery, TextCache, ThreadListSnapshot, all_keys};
+use crate::thread_tree::{self, TreeNode};
 use crate::{Error, Result};
 
 /// Name of the index directory inside `mail/`.
@@ -114,6 +117,28 @@ pub(crate) fn store_config(config: &CoreConfig) -> StoreConfig {
     store.readers = config.store_readers.max(1);
     store.gc_interval = config.blob_gc_interval;
     store
+}
+
+fn identity_emails(reader: &store::Reader) -> Result<IdentityEmails> {
+    let identities = reader.identities(None)?;
+    Ok(IdentityEmails::new(
+        identities.iter().map(|i| i.input.email.as_str()),
+    ))
+}
+
+/// Keeps the message keys whose thread is in `threads`.
+fn retain_messages_of(
+    reader: &store::Reader,
+    keys: &mut Vec<store::MessageKey>,
+    threads: HashSet<ThreadId>,
+) -> Result<()> {
+    let threads: Vec<ThreadId> = threads.into_iter().collect();
+    let mut messages: HashSet<MessageId> = HashSet::new();
+    for chunk in threads.chunks(50_000) {
+        messages.extend(reader.messages_of_threads(chunk)?);
+    }
+    keys.retain(|k| messages.contains(&k.message));
+    Ok(())
 }
 
 fn map_store(err: store::Error) -> Error {
@@ -445,6 +470,135 @@ impl CoreHandle {
     pub fn thread_message_ids(&self, thread: ThreadId) -> Result<Vec<MessageId>> {
         self.ensure_open()?;
         Ok(self.inner.store.reader()?.thread_message_ids(thread)?)
+    }
+
+    // ---- message lists and thread trees (CONCEPT §8.2) --------------------------------
+
+    /// The keys of a message list (threads off; 16 bytes per row). Metadata toggles of
+    /// the Quick Filter run in SQL; typed text keeps the messages of the threads whose
+    /// subject or senders match (see [`crate::message_list`]), and
+    /// [`CoreHandle::message_quick_filter_body`] adds body matches.
+    pub fn message_list(&self, query: &ListQuery) -> Result<MessageListSnapshot> {
+        self.ensure_open()?;
+        let reader = self.inner.store.reader()?;
+        let filter = query.quick_filter.list_filter();
+        let mut keys = all_message_keys(&reader, query.scope, query.sort, &filter)?;
+        if let Some(words) = query.quick_filter.words() {
+            let threads = all_keys(&reader, query.scope, query.sort, &filter)?;
+            let matching = self
+                .inner
+                .text
+                .matching(&reader, query.scope, &threads, &words)?;
+            retain_messages_of(&reader, &mut keys, matching)?;
+        }
+        Ok(MessageListSnapshot::new(query.clone(), keys))
+    }
+
+    /// [`CoreHandle::message_list`] with body matches: the messages of the threads that
+    /// match the text in their subject or senders, or with a message matching it in the
+    /// index (as [`CoreHandle::quick_filter_body`]).
+    pub async fn message_quick_filter_body(
+        &self,
+        query: &ListQuery,
+    ) -> Result<MessageListSnapshot> {
+        self.ensure_open()?;
+        let (Some(text), Some(words)) =
+            (query.quick_filter.text.clone(), query.quick_filter.words())
+        else {
+            return self.message_list(query);
+        };
+        let inner = Arc::clone(&self.inner);
+        let query = query.clone();
+        self.inner
+            .runtime
+            .blocking(move || {
+                let reader = inner.store.reader()?;
+                let filter = query.quick_filter.list_filter();
+                let mut keys = all_message_keys(&reader, query.scope, query.sort, &filter)?;
+                let threads = all_keys(&reader, query.scope, query.sort, &filter)?;
+                let mut matching = inner
+                    .text
+                    .matching(&reader, query.scope, &threads, &words)?;
+                matching.extend(core_search::body_matching_threads(
+                    &inner.index,
+                    &reader,
+                    &core_search::message_scope(query.scope),
+                    text.expose(),
+                )?);
+                retain_messages_of(&reader, &mut keys, matching)?;
+                Ok(MessageListSnapshot::new(query, keys))
+            })
+            .await
+    }
+
+    /// Row data for visible messages, in the given order (unknown messages are left
+    /// out), with whether each is mail you sent (for the Correspondents column).
+    /// `context` is [`MessageListSnapshot::context`] (or the open thread list's): flags
+    /// are those of the copy in that folder.
+    pub fn message_rows(
+        &self,
+        ids: &[MessageId],
+        context: Option<FolderId>,
+    ) -> Result<Vec<MessageListRow>> {
+        self.ensure_open()?;
+        let reader = self.inner.store.reader()?;
+        let rows = reader.message_rows(ids, context)?;
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+        let identities = identity_emails(&reader)?;
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                let outgoing = is_outgoing(row.from.as_ref(), row.in_sent, &identities);
+                MessageListRow { row, outgoing }
+            })
+            .collect())
+    }
+
+    /// The addresses of every identity, for telling sent from received mail.
+    pub fn identity_emails(&self) -> Result<IdentityEmails> {
+        self.ensure_open()?;
+        identity_emails(&self.inner.store.reader()?)
+    }
+
+    /// The reply tree of a thread in display order (see [`crate::thread_tree`]). With
+    /// `context`, only the thread's messages in that folder, as its row counts them.
+    pub fn thread_tree(
+        &self,
+        thread: ThreadId,
+        context: Option<FolderId>,
+    ) -> Result<Vec<TreeNode>> {
+        self.ensure_open()?;
+        let messages = self
+            .inner
+            .store
+            .reader()?
+            .thread_tree_messages(thread, context)?;
+        Ok(thread_tree::build(&messages))
+    }
+
+    /// The number of messages of each thread (in `context`, as its row counts them), in
+    /// the given order; 0 for unknown threads. "Expand all" sizes the list with it.
+    pub fn thread_message_counts(
+        &self,
+        ids: &[ThreadId],
+        context: Option<FolderId>,
+    ) -> Result<Vec<u32>> {
+        const CHUNK: usize = 50_000;
+        self.ensure_open()?;
+        let reader = self.inner.store.reader()?;
+        let mut out = Vec::with_capacity(ids.len());
+        for chunk in ids.chunks(CHUNK) {
+            out.extend(reader.thread_message_counts(chunk, context)?);
+        }
+        Ok(out)
+    }
+
+    /// All tags, by ordinal.
+    pub fn tags(&self) -> Result<Vec<store::Tag>> {
+        self.ensure_open()?;
+        Ok(self.inner.store.reader()?.tags()?)
     }
 
     /// Row cache statistics.

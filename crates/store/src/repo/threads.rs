@@ -116,6 +116,54 @@ pub(crate) fn thread_message_ids(conn: &Connection, thread: ThreadId) -> Result<
         .collect::<rusqlite::Result<_>>()?)
 }
 
+/// The messages (with a location) of the threads in `ids`, ascending.
+pub(crate) fn messages_of_threads(conn: &Connection, ids: &[ThreadId]) -> Result<Vec<MessageId>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn.prepare_cached(
+        "SELECT m.id FROM rarray(?1) x
+         CROSS JOIN message m INDEXED BY message_thread ON m.thread_id = x.value
+         WHERE m.detached_at IS NULL ORDER BY m.id",
+    )?;
+    Ok(stmt
+        .query_map([int_array(ids.iter().map(|t| t.0))], |row| {
+            row.get(0).map(MessageId)
+        })?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// The number of messages of each thread in `ids` (in `context`, if the thread has
+/// messages there), in the order given; 0 for unknown threads.
+pub(crate) fn thread_message_counts(
+    conn: &Connection,
+    ids: &[ThreadId],
+    context: Option<FolderId>,
+) -> Result<Vec<u32>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut counts: HashMap<i64, u32> = HashMap::with_capacity(ids.len());
+    let mut stmt = conn.prepare_cached(
+        "SELECT t.id, COALESCE(ft.message_count, t.message_count)
+         FROM rarray(?1) x
+         CROSS JOIN thread t ON t.id = x.value
+         LEFT JOIN folder_thread ft ON ft.folder_id = ?2 AND ft.thread_id = t.id",
+    )?;
+    let mut query = stmt.query(params![
+        int_array(ids.iter().map(|t| t.0)),
+        context.map(|f| f.0)
+    ])?;
+    while let Some(row) = query.next()? {
+        let count: i64 = row.get(1)?;
+        counts.insert(row.get(0)?, u32::try_from(count.max(0)).unwrap_or(u32::MAX));
+    }
+    Ok(ids
+        .iter()
+        .map(|id| counts.get(&id.0).copied().unwrap_or(0))
+        .collect())
+}
+
 /// Row data for `ids`, in the order given; unknown ids are skipped. With `context`, the
 /// date and counts are those of the thread in that folder.
 pub(crate) fn thread_rows(

@@ -1,5 +1,5 @@
-//! Thread list keys (keyset pagination), metadata filters over search candidates, and
-//! scope id sets (PLAN §4.3 "Thread list model", §4.4 "Mutable fields").
+//! Thread and message list keys (keyset pagination), metadata filters over search
+//! candidates, and scope id sets (PLAN §4.3 "Thread list model", §4.4 "Mutable fields").
 
 use std::collections::HashSet;
 use std::fmt::Write as _;
@@ -9,13 +9,16 @@ use rusqlite::types::Value;
 use rusqlite::{Connection, ToSql};
 
 use crate::Result;
-use crate::model::{ListFilter, ListKey, ListScope, MessageScope, MetadataFilter, Page, SortOrder};
+use crate::model::{
+    ListFilter, ListKey, ListScope, MessageKey, MessagePage, MessageScope, MetadataFilter, Page,
+    SortOrder,
+};
 use crate::repo::folders::folders_with_role;
 use crate::repo::threads::int_array;
 
 /// Effective message flags over all locations: `\Seen` (bit 0) only if every location
 /// has it, every other flag if any location has it.
-const EFFECTIVE_FLAGS: &str = "(MIN(ml.flags & 1) | MAX(ml.flags & 2) | MAX(ml.flags & 4) \
+pub(crate) const EFFECTIVE_FLAGS: &str = "(MIN(ml.flags & 1) | MAX(ml.flags & 2) | MAX(ml.flags & 4) \
      | MAX(ml.flags & 8) | MAX(ml.flags & 16) | MAX(ml.flags & 32) | MAX(ml.flags & 64) \
      | MAX(ml.flags & 128))";
 
@@ -188,6 +191,154 @@ fn query_keys(conn: &Connection, sql: &str, args: &[Value]) -> Result<Vec<ListKe
     Ok(out)
 }
 
+pub(crate) fn message_list_keys(
+    conn: &Connection,
+    scope: ListScope,
+    sort: SortOrder,
+    filter: &ListFilter,
+    page: MessagePage,
+) -> Result<Vec<MessageKey>> {
+    if page.limit == 0 {
+        return Ok(Vec::new());
+    }
+    match scope {
+        ListScope::Folder(folder) => folder_message_keys(conn, folder, sort, filter, page),
+        ListScope::Account(account) => account_message_keys(conn, account, sort, filter, page),
+        ListScope::Unified(role) => {
+            let folders = folders_with_role(conn, role, None)?;
+            let mut merged: Vec<MessageKey> = Vec::new();
+            for folder in folders {
+                merged.extend(folder_message_keys(conn, folder.id, sort, filter, page)?);
+            }
+            match sort {
+                SortOrder::NewestFirst => {
+                    merged.sort_unstable_by_key(|k| std::cmp::Reverse((k.key, k.message)));
+                }
+                SortOrder::OldestFirst => merged.sort_unstable_by_key(|k| (k.key, k.message)),
+            }
+            // A message can sit in two folders with the same role; keep its first entry.
+            let mut seen = HashSet::with_capacity(merged.len());
+            merged.retain(|k| seen.insert(k.message));
+            merged.truncate(page.limit);
+            Ok(merged)
+        }
+    }
+}
+
+/// The SQL of the tag toggle for a message list; `id` is the message id column,
+/// qualified with its table (the subquery has a column of the same name). Pushes the
+/// tag parameter.
+fn message_tag_sql(sql: &mut String, args: &mut Vec<Value>, filter: &ListFilter, id: &str) {
+    if let Some(tag) = filter.tag {
+        args.push(Value::Integer(tag.0));
+        let _ = write!(
+            sql,
+            " AND EXISTS (SELECT 1 FROM message_tag mt WHERE mt.message_id = {id} AND mt.tag_id = ?{})",
+            args.len()
+        );
+    }
+}
+
+fn folder_message_keys(
+    conn: &Connection,
+    folder: FolderId,
+    sort: SortOrder,
+    filter: &ListFilter,
+    page: MessagePage,
+) -> Result<Vec<MessageKey>> {
+    let (cmp, dir) = order(sort);
+    let index = if filter.unread {
+        "location_list_unread"
+    } else if filter.flagged {
+        "location_list_flagged"
+    } else if filter.has_attachment {
+        "location_list_attachments"
+    } else {
+        "location_list"
+    };
+    let mut sql = format!(
+        "SELECT message_id, date FROM message_location INDEXED BY {index} WHERE folder_id = ?1"
+    );
+    let mut args: Vec<Value> = vec![Value::Integer(folder.0)];
+    if let Some(after) = page.after {
+        args.push(Value::Integer(after.key));
+        args.push(Value::Integer(after.message.0));
+        let _ = write!(sql, " AND (date, message_id) {cmp} (?2, ?3)");
+    }
+    // The same terms as the partial indexes, so SQLite can use them.
+    if filter.unread {
+        sql.push_str(" AND flags & 1 = 0");
+    }
+    if filter.flagged {
+        sql.push_str(" AND flags & 4 <> 0");
+    }
+    if filter.has_attachment {
+        sql.push_str(" AND attachment = 1");
+    }
+    message_tag_sql(&mut sql, &mut args, filter, "message_location.message_id");
+    args.push(Value::Integer(page.limit as i64));
+    let _ = write!(
+        sql,
+        " ORDER BY date {dir}, message_id {dir} LIMIT ?{}",
+        args.len()
+    );
+    query_message_keys(conn, &sql, &args)
+}
+
+fn account_message_keys(
+    conn: &Connection,
+    account: AccountId,
+    sort: SortOrder,
+    filter: &ListFilter,
+    page: MessagePage,
+) -> Result<Vec<MessageKey>> {
+    let (cmp, dir) = order(sort);
+    let mut sql = String::from(
+        "SELECT id, date FROM message INDEXED BY message_list
+         WHERE account_id = ?1 AND detached_at IS NULL",
+    );
+    let mut args: Vec<Value> = vec![Value::Integer(account.0)];
+    if let Some(after) = page.after {
+        args.push(Value::Integer(after.key));
+        args.push(Value::Integer(after.message.0));
+        let _ = write!(sql, " AND (date, id) {cmp} (?2, ?3)");
+    }
+    // Effective flags: unread if some copy is unread, starred if some copy is.
+    if filter.unread {
+        sql.push_str(
+            " AND EXISTS (SELECT 1 FROM message_location ml
+                 WHERE ml.message_id = message.id AND ml.flags & 1 = 0)",
+        );
+    }
+    if filter.flagged {
+        sql.push_str(
+            " AND EXISTS (SELECT 1 FROM message_location ml
+                 WHERE ml.message_id = message.id AND ml.flags & 4 <> 0)",
+        );
+    }
+    if filter.has_attachment {
+        sql.push_str(" AND has_attachments = 1");
+    }
+    message_tag_sql(&mut sql, &mut args, filter, "message.id");
+    args.push(Value::Integer(page.limit as i64));
+    let _ = write!(sql, " ORDER BY date {dir}, id {dir} LIMIT ?{}", args.len());
+    query_message_keys(conn, &sql, &args)
+}
+
+fn query_message_keys(conn: &Connection, sql: &str, args: &[Value]) -> Result<Vec<MessageKey>> {
+    let mut stmt = conn.prepare_cached(sql)?;
+    let params: Vec<&dyn ToSql> = args.iter().map(|v| v as &dyn ToSql).collect();
+    let mut rows = stmt.query(params.as_slice())?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        out.push(MessageKey {
+            message: MessageId(row.get(0)?),
+            key: row.get(1)?,
+        });
+    }
+    Ok(out)
+}
+
 /// Runs entirely on the `location_message (message_id, flags)` index and the
 /// `message_tag` primary key, both compact, so 10k random candidates touch few pages:
 /// every location of a message is in its account, so account and role conditions become
@@ -324,4 +475,89 @@ pub(crate) fn tag_counts(conn: &Connection, ids: &[MessageId]) -> Result<Vec<(Ta
             Ok((TagId(row.get(0)?), row.get::<_, i64>(1)?.max(0) as u64))
         })?
         .collect::<rusqlite::Result<_>>()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::conn::{self, Access};
+
+    fn plan(conn: &Connection, sql: &str, args: &[Value]) -> String {
+        let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+        for (i, arg) in args.iter().enumerate() {
+            stmt.raw_bind_parameter(i + 1, arg).unwrap();
+        }
+        let mut rows = stmt.raw_query();
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().unwrap() {
+            out.push(row.get::<_, String>(3).unwrap());
+        }
+        out.join(" | ")
+    }
+
+    /// Message lists of a million messages stay range scans on their indexes: no
+    /// temporary sort, no scan of the whole table.
+    #[test]
+    fn message_list_queries_read_their_index_in_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let key = vault::MasterKey::from_bytes(vault::KeyId::FIRST, [1; vault::KEY_LEN])
+            .sqlcipher_pragma_key();
+        let mut c = conn::open(&tmp.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
+        crate::migrate::migrate_main(&mut c, &key, tmp.path(), "test").unwrap();
+        let filters = [
+            (ListFilter::default(), "location_list "),
+            (
+                ListFilter {
+                    unread: true,
+                    ..ListFilter::default()
+                },
+                "location_list_unread",
+            ),
+            (
+                ListFilter {
+                    flagged: true,
+                    ..ListFilter::default()
+                },
+                "location_list_flagged",
+            ),
+            (
+                ListFilter {
+                    has_attachment: true,
+                    ..ListFilter::default()
+                },
+                "location_list_attachments",
+            ),
+        ];
+        for (filter, index) in filters {
+            for sort in [SortOrder::NewestFirst, SortOrder::OldestFirst] {
+                let (cmp, dir) = order(sort);
+                let mut sql = format!(
+                    "SELECT message_id, date FROM message_location INDEXED BY {} \
+                     WHERE folder_id = ?1 AND (date, message_id) {cmp} (?2, ?3)",
+                    index.trim()
+                );
+                if filter.unread {
+                    sql.push_str(" AND flags & 1 = 0");
+                }
+                if filter.flagged {
+                    sql.push_str(" AND flags & 4 <> 0");
+                }
+                if filter.has_attachment {
+                    sql.push_str(" AND attachment = 1");
+                }
+                let _ = write!(sql, " ORDER BY date {dir}, message_id {dir} LIMIT 10");
+                let args = [Value::Integer(1), Value::Integer(5), Value::Integer(5)];
+                let plan = plan(&c, &sql, &args);
+                assert!(plan.contains(index.trim()), "{sql}\n=> {plan}");
+                assert!(!plan.contains("TEMP B-TREE"), "{sql}\n=> {plan}");
+            }
+        }
+        let plan = plan(
+            &c,
+            "SELECT id, date FROM message INDEXED BY message_list
+             WHERE account_id = ?1 AND detached_at IS NULL ORDER BY date DESC, id DESC LIMIT 10",
+            &[Value::Integer(1)],
+        );
+        assert!(!plan.contains("TEMP B-TREE"), "{plan}");
+    }
 }

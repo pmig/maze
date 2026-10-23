@@ -18,6 +18,7 @@
 //! | Area     | Methods |
 //! | -------- | ------- |
 //! | Queries  | [`accounts`](CoreHandle::accounts), [`folders`](CoreHandle::folders), [`thread_list`](CoreHandle::thread_list), [`rows`](CoreHandle::rows): synchronous, cheap, no network |
+//! | Lists    | [`message_list`](CoreHandle::message_list), [`message_rows`](CoreHandle::message_rows) (threads off), [`thread_tree`](CoreHandle::thread_tree), [`thread_message_counts`](CoreHandle::thread_message_counts) (expanded threads) |
 //! | Messages | [`message`](CoreHandle::message), [`verify_auth`](CoreHandle::verify_auth) |
 //! | Search   | [`search`](CoreHandle::search), [`quick_filter_body`](CoreHandle::quick_filter_body) |
 //! | Commands | [`apply`](CoreHandle::apply), [`undo`](CoreHandle::undo) |
@@ -58,6 +59,7 @@ pub mod accounts;
 pub mod api;
 pub mod api_handler;
 pub mod commands;
+pub mod correspondents;
 pub mod crash_guard;
 mod credentials;
 pub mod events;
@@ -66,12 +68,14 @@ pub mod global_search;
 pub mod indexing;
 pub mod lost_key;
 pub mod message;
+pub mod message_list;
 pub mod ops;
 pub mod reader_text;
 pub mod sync_bridge;
 pub mod sync_engine;
 pub mod sync_ingest;
 pub mod thread_list;
+pub mod thread_tree;
 
 pub use accounts::{
     AccountAuth, AccountConfig, AccountErrorKind, AccountInfo, AddImapAccount, AddOAuthAccount,
@@ -99,12 +103,14 @@ pub use sync_ingest::CoreIngest;
 
 /// `auth` types that are part of this API.
 pub use auth::{ProviderKind, SecretStore};
+pub use message_list::{MessageListRow, MessageListSnapshot};
 pub use thread_list::{ListQuery, QuickFilter, ThreadListSnapshot};
+pub use thread_tree::TreeNode;
 
 /// Store types that are part of this API.
 pub use store::{
-    Account, AccountKind, ListKey, ListScope, OpId, ProposalId, RuleId, SortOrder, ThreadRow,
-    TokenId,
+    Account, AccountKind, ListKey, ListScope, MessageKey, MessageRow, OpId, ProposalId, RuleId,
+    SortOrder, Tag, ThreadRow, TokenId,
 };
 
 /// Search types that are part of this API.
