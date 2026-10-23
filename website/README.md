@@ -11,8 +11,9 @@ The design rules are in [DESIGN.md](DESIGN.md).
   those files, not copies.
 - **No client framework, no third parties.** The only script is `public/theme.js`
   (theme toggle and the `d` shortcut, about 1 KB). Fonts (IBM Plex Sans, Lilex; both
-  SIL OFL 1.1) are self-hosted from npm packages. The CSP in `public/_headers` allows
-  nothing but the site's own origin.
+  SIL OFL 1.1) are configured in `astro.config.mjs` (`fonts`, npm provider) and
+  self-hosted under `/_astro/fonts/`. The CSP in `public/_headers` allows nothing but
+  the site's own origin.
 - **Plain CSS** with custom properties (`src/styles/global.css` plus scoped `<style>`
   in components). A site this size doesn't need Tailwind's build step or class soup.
 
@@ -20,7 +21,7 @@ The design rules are in [DESIGN.md](DESIGN.md).
 
 ```
 website/
-├── astro.config.mjs        site URL, static output, Markdown plugins, sitemap
+├── astro.config.mjs        site URL, static output, fonts, CSP hashes, Markdown, sitemap
 ├── wrangler.jsonc          Cloudflare: assets-only Worker, custom domain
 ├── public/
 │   ├── _headers            CSP, HSTS, Permissions-Policy, cache rules
@@ -50,7 +51,7 @@ the repository's Rust tools from the root `mise.toml`, which mise always merges 
 ```sh
 cd website
 pnpm install
-pnpm dev            # http://localhost:4321, reloads on changes
+pnpm dev            # http://localhost:4321, reloads on changes (also: pnpm start)
 pnpm check          # astro check: TypeScript (strictest) and template diagnostics
 pnpm build          # → dist/
 pnpm check:links    # every internal link and #anchor in dist/ resolves
@@ -64,6 +65,10 @@ At build time `src/lib/release.ts` asks the GitHub API for the newest release to
 the `.dmg` files directly. Without network access, without a release, or while the
 repository is private (set `GITHUB_TOKEN` to see it), all download links fall back to
 the GitHub Releases page. `MAZE_SITE_OFFLINE=1` skips the lookup.
+
+The npm font provider reads the `@fontsource-variable/*` stylesheets from
+`node_modules` but downloads the font files from jsDelivr, at the installed version, on
+the first build; after that they're cached in `node_modules/.astro/fonts/`.
 
 The social card `public/og.png` is a screenshot of `scripts/og.html`; the command to
 regenerate it is at the top of that file.
