@@ -11,6 +11,10 @@
 //!   identifies anything is `User-Agent: mazemail/<version>`.
 //! - [`install`]: extract next to the app, check the code signature (macOS), swap the
 //!   bundle atomically, keep the previous bundle for rollback.
+//! - [`rollback`]: whether a rollback is possible after the crash guard fired, and
+//!   swapping the previous bundle back.
+//! - [`notice`]: the "Updated to x.y.z" toast after a restart (last-seen version).
+//! - [`wake`]: noticing sleep, so [`Updater::poll`] checks again after wake-up.
 //!
 //! Builds made with `MAZEMAIL_UPDATE_EXPLANATION` set (distribution packages) never
 //! update and show that message instead ([`update_explanation`]).
@@ -18,6 +22,9 @@
 pub mod install;
 pub mod keys;
 pub mod manifest;
+pub mod notice;
+pub mod rollback;
+pub mod wake;
 
 mod download;
 mod updater;
@@ -26,6 +33,8 @@ pub use download::sha256_file;
 pub use install::{BundleInstaller, CodesignCheck, InstallError, InstallRequest, Installer};
 pub use keys::{KeyError, embedded_public_keys};
 pub use manifest::{Manifest, ManifestError, Platform, UpdateDecision};
+pub use notice::{UpdateNotice, take_update_notice};
+pub use rollback::{RollbackOffer, rollback_offer};
 pub use updater::{
     CheckOutcome, DEFAULT_POLL_INTERVAL, InstallMode, UpdateError, UpdateStatus, Updater,
     UpdaterConfig,

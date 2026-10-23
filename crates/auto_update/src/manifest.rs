@@ -163,6 +163,16 @@ pub enum UpdateDecision {
 }
 
 impl Manifest {
+    /// The `.dmg` published next to a macOS `.app.tar.zst` artifact (same release, same
+    /// name), for installs Maze can't update in place. `None` for other artifacts.
+    pub fn dmg_url(&self) -> Option<Url> {
+        let path = self.url.path().strip_suffix(".app.tar.zst")?;
+        let mut url = self.url.clone();
+        url.set_path(&format!("{path}.dmg"));
+        url.set_query(None);
+        Some(url)
+    }
+
     /// Signs the manifest and returns it as pretty-printed JSON with a `signature`
     /// field (pretty so release scripts can grep it; verification canonicalizes).
     pub fn sign(&self, key: &SigningKey) -> Result<String, ManifestError> {
@@ -354,6 +364,20 @@ pub(crate) mod tests {
 
     fn v(s: &str) -> Version {
         Version::parse(s).unwrap()
+    }
+
+    #[test]
+    fn derives_the_dmg_of_a_macos_artifact() {
+        let mut manifest = sample_manifest();
+        assert_eq!(
+            manifest.dmg_url().unwrap().as_str(),
+            "https://github.com/pmig/mazemail/releases/download/0.4.0/Maze-0.4.0-macos-aarch64.dmg"
+        );
+        manifest.url = Url::parse(
+            "https://github.com/pmig/mazemail/releases/download/0.4.0/Maze-0.4.0-linux-x86_64.tar.zst",
+        )
+        .unwrap();
+        assert_eq!(manifest.dmg_url(), None);
     }
 
     #[test]

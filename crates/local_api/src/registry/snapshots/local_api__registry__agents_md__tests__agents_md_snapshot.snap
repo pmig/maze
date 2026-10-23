@@ -345,7 +345,7 @@ mazemail search [OPTIONS] <QUERY>
 
 | Argument | Description |
 | -------- | ----------- |
-| `<QUERY>` | The query: words plus `from:`, `to:`, `subject:`, `has:attachment`, `is:unread`, `tag:`, `folder:`, `list:`, `after:`, `before:`, `older_than:`. |
+| `<QUERY>` | The query: words plus `from:`, `to:`, `subject:`, `has:attachment`, `is:unread`, `tag:`, `in:`, `list:`, `after:`, `before:`, `older_than:`. |
 | `--limit <LIMIT>` | Maximum number of results. Default: `50`. |
 | `--ids` | Print only message ids, one per line (for `$(…)`). |
 
@@ -983,7 +983,7 @@ mazemail export [OPTIONS] --to <PATH> <QUERY>
 
 | Argument | Description |
 | -------- | ----------- |
-| `<QUERY>` | Which messages, as a search query (`folder:Inbox`, `tag:receipts after:2026-01-01`). |
+| `<QUERY>` | Which messages, as a search query (`in:inbox`, `tag:receipts after:2026-01-01`). |
 | `--to <PATH>` | Where to write (relative to the current directory). The export is plaintext. Required. |
 | `--format <FORMAT>` | Format. One of `mbox`, `maildir`. Default: `mbox`. |
 
@@ -1000,7 +1000,7 @@ Examples:
 
 ```sh
 # Export this year's inbox
-mazemail export 'folder:Inbox after:2026-01-01' --to inbox.mbox
+mazemail export 'in:inbox after:2026-01-01' --to inbox.mbox
 ```
 
 ### `mazemail import`

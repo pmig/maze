@@ -79,6 +79,17 @@ cargo xtask gen-update-key --out-dir ~/maze-update-key
 3. To rotate later: add the new key as a second line, ship a release signed with the old
    key, then switch the secret to the new key and remove the old line.
 
+### Check the updater locally
+
+`cargo xtask update-e2e` (macOS, a few minutes) runs the update end to end without real
+signing: it generates a throwaway key, builds two bundles of Maze with it
+(`0.0.1-e2e.1` and `0.0.1-e2e.2`, preview channel, in `target/update-e2e`), serves a
+signed manifest and the newer `.app.tar.zst` from a local server, lets the older bundle
+update itself (`mazemail --check-update-once`, debug builds only, code signature check
+skipped) and checks the swap, the kept previous version and a rollback. `--keep` keeps
+the work directory; debug builds of the app also take `MAZEMAIL_UPDATE_BASE_URL` and
+`MAZEMAIL_UPDATE_SKIP_CODESIGN=1` to try the title bar flow against such a server.
+
 ## 3. Cut the release
 
 1. **Check the version.** release-please keeps a PR named like

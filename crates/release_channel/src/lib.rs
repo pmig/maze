@@ -27,9 +27,9 @@ pub use semver::Version;
 /// The channel name the build script read from `crates/mazemail/RELEASE_CHANNEL`.
 const CHANNEL_NAME: &str = env!("MAZEMAIL_RELEASE_CHANNEL");
 
-/// The version embedded from `version.txt`, trimmed. The build script has checked that
-/// it is valid semver.
-pub const VERSION: &str = include_str!("../../../version.txt").trim_ascii();
+/// The version embedded from `version.txt` (trimmed; the build script has checked that
+/// it is valid semver).
+pub const VERSION: &str = env!("MAZEMAIL_VERSION");
 
 /// The short git commit this build was made from, or `unknown`.
 pub const COMMIT_SHA: &str = env!("MAZEMAIL_COMMIT_SHA");

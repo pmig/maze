@@ -76,6 +76,31 @@ impl Drop for AbortOnDrop {
     }
 }
 
+/// Spawns `future` on the runtime behind `handle` (not the installed one) and returns
+/// its output through a GPUI task. Dropping the task aborts the Tokio task.
+///
+/// For work that must outlive a switch of the installed runtime: the auto-updater
+/// runs on its own small runtime from startup on, while the installed runtime changes
+/// to the core's once the mail data is open.
+pub fn spawn_on<C, Fut, R>(
+    handle: &tokio::runtime::Handle,
+    cx: &C,
+    future: Fut,
+) -> Task<Result<R, JoinError>>
+where
+    C: AppContext,
+    Fut: Future<Output = R> + Send + 'static,
+    R: Send + 'static,
+{
+    let join_handle = handle.spawn(future);
+    let abort = AbortOnDrop(Some(join_handle.abort_handle()));
+    cx.background_spawn(async move {
+        let result = join_handle.await;
+        abort.disarm();
+        result
+    })
+}
+
 /// Entry points for spawning onto the installed Tokio runtime.
 #[derive(Debug)]
 pub struct Tokio;
@@ -92,15 +117,7 @@ impl Tokio {
         Fut: Future<Output = R> + Send + 'static,
         R: Send + 'static,
     {
-        cx.read_global(|tokio: &GlobalTokio, cx| {
-            let join_handle = tokio.handle.spawn(future);
-            let abort = AbortOnDrop(Some(join_handle.abort_handle()));
-            cx.background_spawn(async move {
-                let result = join_handle.await;
-                abort.disarm();
-                result
-            })
-        })
+        cx.read_global(|tokio: &GlobalTokio, cx| spawn_on(&tokio.handle, cx, future))
     }
 
     /// Like [`Tokio::spawn`] for fallible futures: a Tokio join error (panic or
@@ -182,6 +199,31 @@ mod tests {
             .update(|cx| Tokio::spawn_result(cx, async { Err(TestError::Failed) }))
             .await;
         assert_eq!(err, Err(TestError::Failed));
+    }
+
+    #[gpui::test]
+    async fn spawns_onto_a_given_runtime(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        // A current-thread runtime only runs tasks while something drives it.
+        let handle = runtime.handle().clone();
+        let driver = std::thread::spawn(move || {
+            runtime.block_on(async { tokio::time::sleep(Duration::from_millis(500)).await });
+        });
+        let task = cx.update(|cx| {
+            spawn_on(&handle, cx, async {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                tokio::runtime::Handle::current().runtime_flavor()
+            })
+        });
+        assert_eq!(
+            task.await.unwrap(),
+            tokio::runtime::RuntimeFlavor::CurrentThread
+        );
+        driver.join().unwrap();
     }
 
     #[gpui::test]

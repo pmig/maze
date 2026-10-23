@@ -54,6 +54,10 @@
 | `send` | deny | deny (ask with `--allow-send`) | deny (ask with `--allow-send`) |
 | `export` | deny | ask | ask |
 | `import` | deny | ask | ask |
+| `account list` | allow | allow | allow |
+| `account add` | deny | deny | ask |
+| `account remove` | deny | deny | ask |
+| `sync` | allow | allow | allow |
 
 Permanent delete is not available to tokens. `send` is disabled unless the token was approved with `--allow-send`, and then every send asks.
 
@@ -136,7 +140,7 @@ Output (`--json`):
     {
       access?: "allow" | "propose" | "ask" | "deny" | null,  // What happens with the caller's token (`null` without a token).
       command: string,  // As typed after `mazemail` (`draft new`).
-      permission: "read" | "draft" | "propose" | "ask" | "disabled",  // Permission class.
+      permission: "read" | "draft" | "propose" | "ask" | "disabled" | "admin",  // Permission class.
       requires_token: boolean,  // Whether the command needs a token.
       summary: string,  // One-line summary.
     }
@@ -337,7 +341,7 @@ mazemail search [OPTIONS] <QUERY>
 
 | Argument | Description |
 | -------- | ----------- |
-| `<QUERY>` | The query: words plus `from:`, `to:`, `subject:`, `has:attachment`, `is:unread`, `tag:`, `folder:`, `list:`, `after:`, `before:`, `older_than:`. |
+| `<QUERY>` | The query: words plus `from:`, `to:`, `subject:`, `has:attachment`, `is:unread`, `tag:`, `in:`, `list:`, `after:`, `before:`, `older_than:`. |
 | `--limit <LIMIT>` | Maximum number of results. Default: `50`. |
 | `--ids` | Print only message ids, one per line (for `$(…)`). |
 
@@ -975,7 +979,7 @@ mazemail export [OPTIONS] --to <PATH> <QUERY>
 
 | Argument | Description |
 | -------- | ----------- |
-| `<QUERY>` | Which messages, as a search query (`folder:Inbox`, `tag:receipts after:2026-01-01`). |
+| `<QUERY>` | Which messages, as a search query (`in:inbox`, `tag:receipts after:2026-01-01`). |
 | `--to <PATH>` | Where to write (relative to the current directory). The export is plaintext. Required. |
 | `--format <FORMAT>` | Format. One of `mbox`, `maildir`. Default: `mbox`. |
 
@@ -992,7 +996,7 @@ Examples:
 
 ```sh
 # Export this year's inbox
-mazemail export 'folder:Inbox after:2026-01-01' --to inbox.mbox
+mazemail export 'in:inbox after:2026-01-01' --to inbox.mbox
 ```
 
 ### `mazemail import`
@@ -1027,4 +1031,154 @@ Examples:
 ```sh
 # Import an mbox file
 mazemail import ~/old-mail.mbox
+```
+
+### `mazemail account list`
+
+List mail accounts and their sync state.
+
+Lists the accounts in your token's scope with their server, sign-in method and sync state (up to date, syncing, offline, sign-in required).
+
+Permission: `read`
+
+```sh
+mazemail account list
+```
+
+Output (`--json`):
+
+```ts
+[
+  {
+    auth?: string | null,  // `password`, `oauth:google` or `oauth:microsoft`, for synced accounts.
+    email?: string | null,  // The address, if known.
+    id: string,  // Account id.
+    kind: string,  // `imap`, `gmail`, `m365` or `local`.
+    name: string,  // The name in the folder pane.
+    server?: string | null,  // The IMAP server (`host:port`), for synced accounts.
+    state: string,  // `connecting`, `idle`, `syncing`, `offline`, `auth_required`, `error` or `not_synced`.
+    status: string,  // The sync state as a sentence.
+  }
+]
+```
+
+Examples:
+
+```sh
+# Accounts that need a new sign-in
+mazemail account list --json | jq -r '.[] | select(.state == "auth_required") | .id'
+```
+
+### `mazemail account add`
+
+Add an IMAP, Gmail or Microsoft account.
+
+Maze connects, logs in and lists the folders before it saves anything, then keeps the password (or the sign-in) in the system keychain and starts syncing. The password is read from the terminal without echo, or from stdin with --password-stdin; it is never a command-line argument. With --oauth google or --oauth microsoft, Maze opens the browser for the sign-in instead (Google needs auth.google.client_id in settings.json). Host, port and security are detected for well-known providers. Needs a writer token, and you approve every account in Maze.
+
+Permission: `admin`
+
+```sh
+mazemail account add [OPTIONS] <EMAIL>
+```
+
+| Argument | Description |
+| -------- | ----------- |
+| `<EMAIL>` | The account's address. |
+| `--name <NAME>` | The name in the folder pane (default: the address). |
+| `--oauth <OAUTH>` | Sign in with Google or Microsoft in the browser (no password). One of `google`, `microsoft`. |
+| `--host <HOST>` | IMAP host (default: detected from the address). |
+| `--port <PORT>` | IMAP port (default: 993 for TLS, 143 otherwise). |
+| `--security <SECURITY>` | Transport security. One of `tls`, `starttls`, `none`. |
+| `--username <USERNAME>` | Login name (default: the address). |
+| `--password-stdin` | Read the password from stdin (first line) instead of prompting on the terminal. |
+
+Output (`--json`):
+
+```ts
+{
+  auth?: string | null,  // `password`, `oauth:google` or `oauth:microsoft`, for synced accounts.
+  email?: string | null,  // The address, if known.
+  id: string,  // Account id.
+  kind: string,  // `imap`, `gmail`, `m365` or `local`.
+  name: string,  // The name in the folder pane.
+  server?: string | null,  // The IMAP server (`host:port`), for synced accounts.
+  state: string,  // `connecting`, `idle`, `syncing`, `offline`, `auth_required`, `error` or `not_synced`.
+  status: string,  // The sync state as a sentence.
+}
+```
+
+Examples:
+
+```sh
+# Add an account; asks for the password
+mazemail account add alice@example.org --host imap.example.org
+# Password from stdin (scripts)
+printf '%s\n' "$PASSWORD" | mazemail account add alice@example.org --password-stdin
+# Sign in with Google in the browser
+mazemail account add bob@gmail.com --oauth google
+```
+
+### `mazemail account remove`
+
+Remove a mail account.
+
+Stops syncing the account and deletes its local mail, folders, identities and keychain items. Nothing changes on the server. Needs a writer token, and you approve it in Maze.
+
+Permission: `admin`
+
+```sh
+mazemail account remove <ACCOUNT>
+```
+
+| Argument | Description |
+| -------- | ----------- |
+| `<ACCOUNT>` | The account (`a_…`). |
+
+Output (`--json`):
+
+```ts
+{
+  id: string,  // The removed account's id.
+  removed: boolean,  // Always `true`.
+}
+```
+
+Examples:
+
+```sh
+# Remove an account
+mazemail account remove a_b
+```
+
+### `mazemail sync`
+
+Sync accounts now.
+
+Asks every account in your token's scope (or --account) to look for new mail and replay pending changes now, and retries at once when an account is offline. Returns right away; `mazemail account list` shows the progress.
+
+Permission: `read`
+
+```sh
+mazemail sync [OPTIONS]
+```
+
+| Argument | Description |
+| -------- | ----------- |
+| `--account <ACCOUNT>` | Only this account (default: every account in scope). |
+
+Output (`--json`):
+
+```ts
+{
+  accounts: string[],  // The accounts asked to sync now.
+}
+```
+
+Examples:
+
+```sh
+# Sync every account
+mazemail sync
+# Sync one account
+mazemail sync --account a_b
 ```

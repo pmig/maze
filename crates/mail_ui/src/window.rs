@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use gpui::{
-    AnyWindowHandle, App, AppContext as _, Axis, Context, DragMoveEvent, Empty, Entity,
+    AnyView, AnyWindowHandle, App, AppContext as _, Axis, Context, DragMoveEvent, Empty, Entity,
     FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement, PromptLevel, Render,
     SharedString, Styled, Subscription, Window, WindowBounds, WindowOptions, canvas, div, point,
     prelude::FluentBuilder as _, px, size,
@@ -141,8 +141,13 @@ pub struct MailWindow {
     stats: Rc<RefCell<FrameStats>>,
     pending_benchmark: Option<ScrollBenchmark>,
     bench: Option<BenchRun>,
+    title_bar_items: Vec<AnyView>,
+    after_paint: Rc<RefCell<Vec<AfterPaint>>>,
     _subscriptions: Vec<Subscription>,
 }
+
+/// A callback for after the next frame was painted.
+type AfterPaint = Box<dyn FnOnce(&mut App)>;
 
 impl std::fmt::Debug for MailWindow {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -201,6 +206,8 @@ impl MailWindow {
             stats: Rc::new(RefCell::new(FrameStats::new(options.process_start))),
             pending_benchmark: options.benchmark,
             bench: None,
+            title_bar_items: Vec::new(),
+            after_paint: Rc::default(),
             _subscriptions: subscriptions,
         };
         this.show_selected(cx);
@@ -232,6 +239,26 @@ impl MailWindow {
     /// Whether the command palette is open.
     pub fn is_palette_open(&self) -> bool {
         self.palette.is_some()
+    }
+
+    /// Adds a view to the right of the title bar, before the search field (the
+    /// auto-updater's "Restart to update" button). Crates above `mail_ui` plug in here,
+    /// so the window doesn't depend on them.
+    pub fn add_title_bar_item(&mut self, view: AnyView, cx: &mut Context<'_, Self>) {
+        self.title_bar_items.push(view);
+        cx.notify();
+    }
+
+    /// Runs `callback` (deferred, outside of painting) after the next frame has been
+    /// painted, and requests that frame. The crash guard uses it to learn that the
+    /// window really rendered.
+    pub fn after_next_paint(
+        &mut self,
+        callback: impl FnOnce(&mut App) + 'static,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.after_paint.borrow_mut().push(Box::new(callback));
+        cx.notify();
     }
 
     /// Re-reads what `changes` affects: the folder tree, the counts, the open list's
@@ -525,6 +552,7 @@ impl MailWindow {
                             .child(list.title().clone()),
                     )
                     .child(div().flex_1())
+                    .children(self.title_bar_items.iter().cloned())
                     .child(
                         div().w(px(280.)).child(
                             Input::new(&self.search).small().cleanable(true).prefix(
@@ -639,6 +667,7 @@ impl Render for MailWindow {
         };
 
         let stats = self.stats.clone();
+        let after_paint = self.after_paint.clone();
         let has_rows = list_len > 0;
         v_flex()
             .id("mail-window")
@@ -751,8 +780,11 @@ impl Render for MailWindow {
             .child(
                 canvas(
                     |_, _, _| {},
-                    move |_, _, _, _| {
+                    move |_, _, _, cx| {
                         stats.borrow_mut().painted(has_rows);
+                        for callback in after_paint.borrow_mut().drain(..) {
+                            cx.defer(callback);
+                        }
                     },
                 )
                 .absolute()
@@ -860,5 +892,40 @@ mod tests {
             assert_eq!(w.thread_list().read(cx).len(), 1_000_000);
             assert_eq!(w.thread_list().read(cx).scope(), &ThreadScope::Folder(key));
         });
+    }
+    #[gpui::test]
+    fn runs_callbacks_after_the_next_paint(cx: &mut TestAppContext) {
+        let (view, cx) = open(cx);
+        cx.run_until_parked();
+        let ran = Rc::new(std::cell::Cell::new(0));
+        let counter = ran.clone();
+        view.update(cx, |w, cx| {
+            w.after_next_paint(move |_| counter.set(counter.get() + 1), cx);
+            // Not before the frame.
+            assert_eq!(w.after_paint.borrow().len(), 1);
+        });
+        cx.run_until_parked();
+        assert_eq!(ran.get(), 1);
+        // Once only.
+        view.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert_eq!(ran.get(), 1);
+    }
+
+    #[gpui::test]
+    fn shows_title_bar_items(cx: &mut TestAppContext) {
+        struct Item;
+        impl Render for Item {
+            fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+                div()
+                    .debug_selector(|| "title-bar-item".into())
+                    .child("Restart to update")
+            }
+        }
+        let (view, cx) = open(cx);
+        let item = cx.new(|_| Item);
+        view.update(cx, |w, cx| w.add_title_bar_item(item.into(), cx));
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("title-bar-item").is_some());
     }
 }

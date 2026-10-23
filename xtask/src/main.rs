@@ -4,6 +4,8 @@
 //! - `cargo xtask gen-update-key --out-dir <dir>` creates an update signing keypair.
 //! - `cargo xtask seed-demo --data-dir <dir>` fills a data directory with a realistic
 //!   synthetic mailbox through the real import pipeline ([`seed`]).
+//! - `cargo xtask update-e2e` runs the auto-update end to end on macOS: two bundles,
+//!   a signed manifest on a local server, the old app updating itself ([`update_e2e`]).
 //! - `cargo xtask gen-agents-md` writes `docs/AGENTS-cli.md` from the command registry
 //!   (`--check` fails if it is out of date).
 //!
@@ -13,6 +15,7 @@
 #![allow(clippy::print_stdout, clippy::print_stderr, reason = "a CLI")]
 
 mod seed;
+mod update_e2e;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -73,6 +76,10 @@ enum Command {
         #[arg(long, default_value_t = 2026)]
         seed: u64,
     },
+    /// Run the auto-update end to end (macOS): build two versions of Maze with a
+    /// throwaway key, serve a signed manifest locally and let the older one update
+    /// itself.
+    UpdateE2e(update_e2e::UpdateE2eArgs),
     /// Write docs/AGENTS-cli.md from the command registry.
     GenAgentsMd {
         /// Fail if the file is missing or out of date instead of writing it.
@@ -197,6 +204,7 @@ fn main() -> Result<()> {
             seed,
         }),
         Command::GenAgentsMd { check } => gen_agents_md(check),
+        Command::UpdateE2e(args) => update_e2e::update_e2e(&args),
     }
 }
 

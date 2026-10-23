@@ -31,19 +31,25 @@ daily driver yet. Expect rough edges, and keep your mail on the server.
 Works today:
 
 - the encrypted store (SQLCipher database, encrypted message files and search index)
-- IMAP sync, including CONDSTORE/QRESYNC delta sync, IDLE and Gmail labels
+- IMAP, Gmail and Microsoft 365 accounts: the Add Account dialog or
+  `mazemail account add`, with password or browser sign-in (Gmail with your own OAuth
+  client ID)
+- IMAP sync, including CONDSTORE/QRESYNC delta sync, IDLE and Gmail labels, of your
+  subscribed folders
 - import from mbox files, Maildir directories and Thunderbird profiles
 - search with Gmail-style operators (`from:`, `has:attachment`, `after:` …)
 - reading mail in a sanitized reader view, with DKIM/SPF/DMARC results
 - archive, move, tag, flag and mark read, with undo
 - the `mazemail` CLI and `mazemail --headless` for scripts and agents
+- updates in the background with a "Restart to update" button, and a rollback if a new
+  version keeps failing to start
 
 Not there yet:
 
 - writing mail: the composer, SMTP sending and the outbox
 - the agents column (the panel is visible, but no agent can be connected yet)
 - filter rules (imported Thunderbird filters are kept, disabled)
-- the auto-updater in the app, a settings window, showing the recovery key
+- a settings window, showing the recovery key
 
 ## Install
 
@@ -51,10 +57,10 @@ Not there yet:
 
 Download `Maze-<version>-macos-aarch64.dmg` (Apple Silicon) or `…-x86_64.dmg` (Intel)
 from [GitHub Releases](https://github.com/pmig/mazemail/releases) once the first
-release is published, open it and drag Maze to Applications. Updates come through
-Maze's built-in updater; until it is wired into the app, download new versions the same
-way. There is deliberately no Homebrew cask (see
-[ADR-010](docs/adr/0010-auto-update.md)).
+release is published, open it and drag Maze to Applications. From then on Maze updates
+itself: it installs new versions in the background and shows **Restart to update** in
+the title bar ([details](docs/getting-started.md#updates)). There is deliberately no
+Homebrew cask (see [ADR-010](docs/adr/0010-auto-update.md)).
 
 ### Linux
 
@@ -104,8 +110,11 @@ real (encrypted) store with demo mail that the CLI can talk to.
    mazemail import ~/Library/Thunderbird/Profiles/abcd1234.default-release --format thunderbird
    ```
 
-4. **Add an IMAP account.** Importing your Thunderbird profile takes its IMAP accounts
-   over. Gmail needs your own Google OAuth client ID for now; see
+4. **Add an account.** Use **Add Account…** in the folder pane, or the CLI with a
+   writer token (`mazemail account add you@example.com`, password from the terminal or
+   `--password-stdin`; `--oauth google` or `--oauth microsoft` for the browser
+   sign-in). Importing your Thunderbird profile takes its accounts over too. Gmail
+   needs your own Google OAuth client ID (`auth.google.client_id`) for now; see
    [Getting started](docs/getting-started.md#accounts).
 5. **Search and read.**
 

@@ -557,7 +557,7 @@ static REGISTRY: &[CommandSpec] = &[
         requires_token: true,
         touches_mail: true,
         examples: &[ex(
-            "mazemail export 'folder:Inbox after:2026-01-01' --to inbox.mbox",
+            "mazemail export 'in:inbox after:2026-01-01' --to inbox.mbox",
             "Export this year's inbox",
         )],
         args_schema: schema::<ExportArgs>,

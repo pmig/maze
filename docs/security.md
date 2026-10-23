@@ -138,8 +138,7 @@ for every account unless you turn it on.
 
 ## Updates
 
-The built-in updater (not wired into the app yet) only installs releases whose update
-manifest is signed with Maze's Ed25519 key, checks the SHA-256 of every download against
-it, and on macOS requires the new bundle to be signed by the same Apple team as the
-running app. It sends nothing but a plain request with
-`User-Agent: mazemail/<version>`.
+The built-in updater only installs releases whose update manifest is signed with Maze's
+Ed25519 key, checks the SHA-256 of every download against it, and on macOS requires the
+new bundle to be signed by the same Apple team as the running app. It sends nothing but
+a plain request with `User-Agent: mazemail/<version>`.
