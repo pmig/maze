@@ -41,11 +41,15 @@ pub enum GmailLabel {
 }
 
 impl GmailLabel {
-    /// Parse a label as delivered in `X-GM-LABELS` (already unquoted).
+    /// Parse a label as delivered in `X-GM-LABELS`, without its quotes.
     ///
-    /// Labels starting with `\` are system labels; anything else is a user label in
-    /// modified UTF-7. Names that are not valid modified UTF-7 are kept verbatim.
+    /// Gmail sends system labels as quoted strings with an escaped backslash
+    /// (`"\\Inbox"`), and the response parser keeps quoted strings escaped, so `\\` and
+    /// `\"` are unescaped first; atoms (`\Inbox`) have nothing to unescape. Labels
+    /// starting with `\` are system labels; anything else is a user label in modified
+    /// UTF-7. Names that are not valid modified UTF-7 are kept verbatim.
     pub fn parse(raw: &str) -> Self {
+        let raw = unescape_quoted(raw);
         if let Some(system) = raw.strip_prefix('\\') {
             match system.to_ascii_lowercase().as_str() {
                 "inbox" => Self::Inbox,
@@ -58,7 +62,7 @@ impl GmailLabel {
                 _ => Self::System(system.to_owned()),
             }
         } else {
-            Self::User(utf7::decode_lossy(raw))
+            Self::User(utf7::decode_lossy(&raw))
         }
     }
 
@@ -116,6 +120,27 @@ impl GmailLabel {
             Self::System(name) | Self::User(name) => name,
         }
     }
+}
+
+/// Undoes the escapes of an IMAP quoted string (`\\` → `\`, `\"` → `"`). A backslash
+/// before anything else stays, so an atom like `\Inbox` comes back unchanged.
+fn unescape_quoted(raw: &str) -> std::borrow::Cow<'_, str> {
+    if !raw.contains("\\\\") && !raw.contains("\\\"") {
+        return std::borrow::Cow::Borrowed(raw);
+    }
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\'
+            && let Some(&next @ ('\\' | '"')) = chars.peek()
+        {
+            out.push(next);
+            chars.next();
+        } else {
+            out.push(c);
+        }
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 impl fmt::Display for GmailLabel {
@@ -210,6 +235,25 @@ mod tests {
         );
         // Invalid modified UTF-7 stays verbatim.
         assert_eq!(GmailLabel::parse("a&b"), GmailLabel::User("a&b".into()));
+    }
+
+    #[test]
+    fn quoted_labels_are_unescaped() {
+        // Gmail's real format: `X-GM-LABELS ("\\Inbox" "\\Sent" ...)`, kept escaped by
+        // the response parser.
+        assert_eq!(GmailLabel::parse(r"\\Inbox"), GmailLabel::Inbox);
+        assert_eq!(GmailLabel::parse(r"\\Sent"), GmailLabel::Sent);
+        assert_eq!(GmailLabel::parse(r"\\Starred"), GmailLabel::Starred);
+        assert_eq!(GmailLabel::parse(r"\\Important"), GmailLabel::Important);
+        assert_eq!(GmailLabel::parse(r"\\Draft"), GmailLabel::Draft);
+        assert_eq!(
+            GmailLabel::parse(r#"Say \"hi\""#),
+            GmailLabel::User(r#"Say "hi""#.into())
+        );
+        assert_eq!(
+            GmailLabel::parse(r"back\\slash"),
+            GmailLabel::User(r"back\slash".into())
+        );
     }
 
     #[test]

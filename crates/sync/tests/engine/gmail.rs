@@ -195,3 +195,69 @@ async fn delete_moves_to_trash_and_the_message_stays_one() {
     assert_eq!(h.folder("Work").total, 0);
     handle.shutdown().await;
 }
+
+/// Builds before schema v8 dropped Gmail's quoted system labels (`"\\Inbox"`), so
+/// Inbox, Sent, Starred and Important stayed empty. The v8 migration sets All Mail's
+/// HIGHESTMODSEQ to 1; the next pass fetches every message's labels and fills them.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reset_modseq_fetches_all_labels_again() {
+    let server = FakeServer::gmail();
+    server.deliver(
+        ALL_MAIL,
+        mail(1).labels([GmailLabel::Inbox, GmailLabel::Starred]),
+    );
+    server.deliver(
+        ALL_MAIL,
+        mail(2).labels([GmailLabel::Sent, GmailLabel::Important]),
+    );
+    let h = Harness::new(server.clone()).await;
+    let handle = h.spawn(h.config());
+    wait_idle(&handle).await;
+    let labels = [
+        "INBOX",
+        "[Gmail]/Sent Mail",
+        "[Gmail]/Starred",
+        "[Gmail]/Important",
+    ];
+    assert!(labels.iter().all(|l| h.folder(l).total == 1));
+
+    // What an affected database looks like: the messages without their system labels.
+    let all_mail = h.folder(ALL_MAIL);
+    let messages = [h.message_at(ALL_MAIL, 1), h.message_at(ALL_MAIL, 2)];
+    let label_ids: Vec<_> = labels.iter().map(|l| h.folder_id(l)).collect();
+    h.store
+        .write(move |w| {
+            for message in messages {
+                for &label in &label_ids {
+                    w.remove_location(message, label)?;
+                }
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert!(labels.iter().all(|l| h.folder(l).total == 0));
+
+    // The migration's reset; the server's state is unchanged.
+    let sync = store::FolderSyncState {
+        highestmodseq: Some(1),
+        ..all_mail.sync
+    };
+    h.store
+        .write(move |w| w.set_folder_sync_state(all_mail.id, sync))
+        .await
+        .unwrap();
+    handle
+        .sync_now(SyncScope::Folder(h.folder_id(ALL_MAIL)))
+        .unwrap();
+    wait_for("the labels", || {
+        labels.iter().all(|l| h.folder(l).total == 1)
+    })
+    .await;
+    assert_eq!(
+        h.message(messages[0]).locations.len(),
+        3,
+        "All Mail, Inbox, Starred"
+    );
+    handle.shutdown().await;
+}

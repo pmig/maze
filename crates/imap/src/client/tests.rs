@@ -525,7 +525,7 @@ async fn fetch_headers_parses_header_bodystructure_and_gmail() {
         C: A0004 UID FETCH 5:* (UID FLAGS RFC822.SIZE INTERNALDATE BODYSTRUCTURE BODY.PEEK[HEADER] MODSEQ X-GM-MSGID X-GM-THRID X-GM-LABELS)
         S: * 1 FETCH (UID 4 FLAGS (\Seen) RFC822.SIZE 10 INTERNALDATE "01-Jan-2020 00:00:00 +0000" BODYSTRUCTURE ("TEXT" "PLAIN" ("CHARSET" "us-ascii") NIL NIL "7BIT" 3 1 NIL NIL NIL NIL) BODY[HEADER] {literal_header} MODSEQ (1) X-GM-MSGID 1 X-GM-THRID 1 X-GM-LABELS ())
         S: * 2 FETCH (UID 7 FLAGS (\Seen $Forwarded Work) RFC822.SIZE 4242 INTERNALDATE "17-Jul-1996 02:44:25 -0700" BODYSTRUCTURE (("TEXT" "PLAIN" ("CHARSET" "utf-8") NIL NIL "QUOTED-PRINTABLE" 120 4 NIL NIL NIL NIL)("TEXT" "HTML" ("CHARSET" "utf-8") NIL NIL "BASE64" 300 5 NIL NIL NIL NIL) "ALTERNATIVE" ("BOUNDARY" "b1") NIL NIL NIL) BODY[HEADER] {literal_header} MODSEQ (812) X-GM-MSGID 1278455344230334865 X-GM-THRID 1266894439832287888 X-GM-LABELS (\Inbox \Important "&AMQ-pfel" Work/Projects))
-        S: * 3 FETCH (UID 8 FLAGS () RFC822.SIZE 99 INTERNALDATE " 2-Feb-2021 10:00:00 +0100" BODYSTRUCTURE ((("TEXT" "PLAIN" ("CHARSET" "utf-8") NIL NIL "7BIT" 10 1 NIL NIL NIL NIL)("TEXT" "HTML" ("CHARSET" "utf-8") NIL NIL "7BIT" 20 1 NIL NIL NIL NIL) "ALTERNATIVE" ("BOUNDARY" "b2") NIL NIL NIL)("APPLICATION" "PDF" ("NAME" "invoice.pdf") NIL NIL "BASE64" 5000 NIL ("ATTACHMENT" ("FILENAME" "invoice.pdf")) NIL NIL) "MIXED" ("BOUNDARY" "b3") NIL NIL NIL) BODY[HEADER] {literal_header} MODSEQ (813) X-GM-MSGID 2 X-GM-THRID 2 X-GM-LABELS (\Sent))
+        S: * 3 FETCH (UID 8 FLAGS () RFC822.SIZE 99 INTERNALDATE " 2-Feb-2021 10:00:00 +0100" BODYSTRUCTURE ((("TEXT" "PLAIN" ("CHARSET" "utf-8") NIL NIL "7BIT" 10 1 NIL NIL NIL NIL)("TEXT" "HTML" ("CHARSET" "utf-8") NIL NIL "7BIT" 20 1 NIL NIL NIL NIL) "ALTERNATIVE" ("BOUNDARY" "b2") NIL NIL NIL)("APPLICATION" "PDF" ("NAME" "invoice.pdf") NIL NIL "BASE64" 5000 NIL ("ATTACHMENT" ("FILENAME" "invoice.pdf")) NIL NIL) "MIXED" ("BOUNDARY" "b3") NIL NIL NIL) BODY[HEADER] {literal_header} MODSEQ (813) X-GM-MSGID 2 X-GM-THRID 2 X-GM-LABELS ("\\Sent" "\\Starred" "Say \"hi\""))
         S: * 2 FETCH (FLAGS (\Seen \Flagged))
         S: A0004 OK Fetch completed
         "#,
@@ -567,6 +567,15 @@ async fn fetch_headers_parses_header_bodystructure_and_gmail() {
     assert_eq!(body.text_parts().count(), 2);
     assert!(!body.has_attachments());
 
+    // Gmail's real format: system labels as quoted strings with an escaped backslash.
+    assert_eq!(
+        headers[1].gmail.as_ref().unwrap().labels,
+        [
+            GmailLabel::Sent,
+            GmailLabel::Starred,
+            GmailLabel::User(r#"Say "hi""#.into())
+        ]
+    );
     let mixed = headers[1].body.as_ref().unwrap();
     let sections: Vec<&str> = mixed.parts.iter().map(|p| p.section.as_str()).collect();
     assert_eq!(sections, ["1.1", "1.2", "2"]);

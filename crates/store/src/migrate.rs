@@ -20,6 +20,9 @@ const MAIN: &[M<'static>] = &[
     M::up(include_str!("../migrations/main/0005_account_secret.sql")),
     M::up(include_str!("../migrations/main/0006_agent_secret.sql")),
     M::up(include_str!("../migrations/main/0007_draft_name.sql")),
+    M::up(include_str!(
+        "../migrations/main/0008_gmail_label_resync.sql"
+    )),
 ];
 
 const SENDLOG: &[M<'static>] = &[M::up(include_str!(
@@ -389,6 +392,44 @@ mod tests {
             })
             .unwrap();
         assert_eq!(listed, 2);
+    }
+
+    #[test]
+    fn v8_makes_gmail_all_mail_fetch_its_labels_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let key = key(7);
+        let mut conn = conn::open(&tmp.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
+        migrate_with_backup(&mut conn, &key, tmp.path(), "1.0.0", &MAIN[..7]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO account (id, kind, name) VALUES (1, 'gmail', 'g'), (2, 'imap', 'i');
+             INSERT INTO folder (id, account_id, remote_name, display_name, role, is_label,
+                                 highestmodseq)
+             VALUES (1, 1, '[Gmail]/All Mail', 'All Mail', 'all', 0, 900),
+                    (2, 1, 'INBOX', 'Inbox', 'inbox', 1, NULL),
+                    (3, 1, '[Gmail]/Trash', 'Trash', 'trash', 0, 800),
+                    (4, 2, 'Archive', 'Archive', 'all', 0, 700),
+                    (5, 1, '[Gmail]/Alle Nachrichten', 'All', 'all', 0, NULL);",
+        )
+        .unwrap();
+        migrate_main(&mut conn, &key, tmp.path(), "1.1.0").unwrap();
+        let modseqs: Vec<(i64, Option<i64>)> = conn
+            .prepare("SELECT id, highestmodseq FROM folder ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        // Only a synced Gmail All Mail goes back; never-synced folders stay unsynced.
+        assert_eq!(
+            modseqs,
+            [
+                (1, Some(1)),
+                (2, None),
+                (3, Some(800)),
+                (4, Some(700)),
+                (5, None)
+            ]
+        );
     }
 
     #[test]

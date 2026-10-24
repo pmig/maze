@@ -35,7 +35,8 @@
 //!   adds local drafts ([`WriteTx::create_draft`]) and the outbox's SMTP envelope
 //!   ([`OutboxEnvelope`]); v5 adds account secrets ([`WriteTx::set_account_secret`]);
 //!   v6 adds agents' sign-in keys ([`WriteTx::set_agent_secret`]); v7 adds draft
-//!   names (the two-word tab title).
+//!   names (the two-word tab title); v8 makes Gmail's All Mail fetch every
+//!   message's labels again once.
 //!   Migrations only ever add files; opening an older database backs it up first (see
 //!   [`MigrationReport`]).
 //! - **Message lists** (threads off): [`Queries::message_list_keys`] pages through the
