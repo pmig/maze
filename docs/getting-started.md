@@ -116,6 +116,35 @@ example:
 Accounts, identities and SMTP servers are stored in the encrypted database, never in
 `settings.json`.
 
+### Tabs and splits
+
+The middle of the window works like Zed's editor area: tabs, and panes split side by
+side or above each other, while the folder pane stays on the left and the agent column
+on the right.
+
+- The window starts with an **Inbox** tab: the message list and the message. Picking a
+  folder opens it in that tab (or in the mail tab you used last). Right-click a folder
+  and choose **Open in New Tab** to keep the current one open as well.
+- **Double-click** a message (or press `enter` or `cmd-o`, or choose **Open in New Tab**
+  in its menu) to open just that message in a tab of its own, full width, titled with
+  its subject.
+- **New messages, replies and forwards** open in a tab too. A new draft gets a random
+  two-word name such as `brave-otter`, which stays its tab title (the subject is the
+  tooltip) and is saved with the draft. A dot on the tab means unsaved changes; closing
+  such a tab asks whether to save the draft. Sending closes the tab. **Composer: Open
+  In New Window** in the command palette moves a draft into a window of its own.
+- **Splits:** drag a tab onto the edge of a pane to split it (the drop area is
+  highlighted), onto another pane's tab bar to move it there, or along a tab bar to
+  reorder. `cmd-\` splits the active pane to the right with a copy of its tab
+  (a draft can't be shown twice, so its split shows the selected folder);
+  `cmd-ctrl-left` / `right` / `up` / `down` split in that direction. Drag the line
+  between two panes to resize them. A pane whose last tab closes disappears.
+- The button at the left of the title bar (or `cmd-b`) hides and shows the folder pane.
+
+Maze remembers the tabs and splits in `ui_state.json` and opens them again on the next
+start: which folder, message or draft each tab shows, never subjects or other mail
+content. A tab whose message or draft no longer exists is left out.
+
 ### The folder pane
 
 The folder pane on the left has three sections: **Favorites**, **Unified Folders** (the
@@ -395,8 +424,9 @@ applications*, or assign you to it. Sign in again once they have.
 
 ## Writing mail
 
-Press `cmd-n`, click **+** next to the folder name in the title bar, or choose
-**Message → New Message**. A compose window opens, like Thunderbird's:
+Press `cmd-n`, click **+** in the title bar, or choose **Message → New Message**. The
+draft opens in a tab of its own (see [Tabs and splits](#tabs-and-splits)), named with
+two random words such as `brave-otter`; split the window to keep the Inbox next to it:
 
 - **From** picks the identity you send as. Replies pick it for you: the identity whose
   address the message was sent to (To, Cc or `Delivered-To`), else the account's default.
@@ -406,15 +436,15 @@ Press `cmd-n`, click **+** next to the folder name in the title bar, or choose
   your text as the plain-text part and renders it as the HTML part, so recipients see
   normal formatted mail. Single line breaks are kept.
 - **Attach…** (`cmd-shift-a`) adds files; they are read when the message is sent.
-- `cmd-enter` sends. Escape or closing the window asks whether to keep a draft when
-  something changed.
+- `cmd-enter` sends and closes the tab. Escape or closing the tab (`cmd-w`) asks
+  whether to keep a draft when something changed.
 
-Reply (`cmd-r`), reply all (`cmd-shift-r`) and forward (`cmd-l`) open the same window
-with the recipients, `Re:`/`Fwd:` subject and the quoted message filled in (HTML mail is
+Reply (`cmd-r`), reply all (`cmd-shift-r`) and forward (`cmd-l`) open the same kind of
+tab with the recipients, `Re:`/`Fwd:` subject and the quoted message filled in (HTML mail is
 quoted as Markdown). Messages are sent right away. When the server can't be reached,
 the message waits in the outbox and goes out by itself when it can; a message the server
 refuses (a wrong password, a rejected recipient, Microsoft 365's *SendAsDenied* for an
-address you aren't allowed to send from) keeps the window open with the explanation.
+address you aren't allowed to send from) keeps the draft open with the explanation.
 Maze records every message the server accepted, so even a crash in the middle of sending
 never sends it twice.
 
@@ -484,7 +514,7 @@ Maze uses Thunderbird's shortcuts and fills the gaps with Zed's. These are bound
 | Command palette                      | `cmd-shift-p`               |
 | Search all messages                  | `cmd-k`                     |
 | Quick Filter                         | `cmd-shift-k`               |
-| Toggle folder pane                   | `cmd-b`                     |
+| Toggle folder pane                   | `cmd-b` (or the title bar's left button) |
 | Toggle message pane                  | `F8`                        |
 | Toggle agent column                  | `cmd-?`                     |
 | New agent conversation (agent column) | `cmd-n`                    |
@@ -502,16 +532,28 @@ Maze uses Thunderbird's shortcuts and fills the gaps with Zed's. These are bound
 | Open / close a thread                | `right` / `left`            |
 | Open / close all threads             | `*` / `\`                   |
 | Select the whole thread              | `cmd-shift-a`               |
+| Open the message in a tab            | `enter`, `cmd-o`, double-click |
 | New message                          | `cmd-n`                     |
 | Reply / reply all / forward          | `cmd-r` / `cmd-shift-r` / `cmd-l` |
-| Send (compose window)                | `cmd-enter`                 |
+| Send (draft)                         | `cmd-enter`                 |
+| Close the tab                        | `cmd-w`                     |
+| Next / previous tab                  | `ctrl-tab` / `ctrl-shift-tab`, `cmd-}` / `cmd-{` |
+| Tab 1 … 8 / last tab                 | `cmd-1` … `cmd-8` / `cmd-9` |
+| Split right                          | `cmd-\`                      |
+| Split left / right / up / down       | `cmd-ctrl-left` / `right` / `up` / `down` |
+| Focus the pane left / right / above / below | `cmd-alt-left` / `right` / `up` / `down` |
 | Save draft / attach / Cc and Bcc     | `cmd-s` / `cmd-shift-a` / `cmd-shift-c` |
 | Table view / threads on or off       | `cmd-alt-t` / `cmd-alt-g`   |
 | Hide Maze / hide others / minimize   | `cmd-h` / `cmd-alt-h` / `cmd-m` |
 | Quit                                 | `cmd-q`                     |
 
 Single-letter shortcuts work when the message list or a message has focus, never inside
-a text field. The rest of Thunderbird's keymap (tags `1`–`9`, junk, delete, history)
+a text field; they act on the tab that has the focus.
+
+Zed splits and moves between panes with `cmd-k` followed by an arrow key. In Maze
+`cmd-k` is Thunderbird's search, and a two-key shortcut starting with `cmd-k` would make
+search wait a second for the second key, so Maze uses `cmd-ctrl-<arrow>` and
+`cmd-alt-<arrow>` instead. You can bind Zed's keys in your own `keymap.json`. The rest of Thunderbird's keymap (tags `1`–`9`, junk, delete, history)
 follows as the features arrive.
 
 ## Agents

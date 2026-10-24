@@ -1,8 +1,11 @@
-//! The Maze main window (layer L3), CONCEPT §8.2:
+//! The Maze main window (layer L3), CONCEPT §8.2 and ADR-018:
 //!
 //! ```text
-//! spaces | folder pane | message list | message view | agent column
+//! spaces | folder pane | center: tabs and splits | agent column
 //! ```
+//!
+//! The center is a `ui::panes::PaneGroup` of mail views (message list and message),
+//! message tabs and drafts.
 //!
 //! The UI reads everything through the [`MailSource`] trait, so it doesn't depend on
 //! any non-UI Maze crate except `mazemail_types`. The `mazemail` binary implements it
@@ -21,6 +24,8 @@ pub mod folder_pane;
 pub mod format;
 pub mod layout;
 pub mod list_model;
+pub mod mail_view;
+pub mod message_tab;
 pub mod message_view;
 pub mod perf;
 pub mod quick_move;

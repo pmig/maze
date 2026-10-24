@@ -29,7 +29,33 @@
       "cmd-alt-g": "view::ToggleThreads",
       "cmd-r": "mail::Reply",
       "cmd-shift-r": "mail::ReplyAll",
-      "cmd-l": "mail::Forward"
+      "cmd-l": "mail::Forward",
+      // Tabs and splits (Zed's keys, ADR-018). Zed's `cmd-k <arrow>` chords would make
+      // Thunderbird's `cmd-k` (search) wait a second for a second key, so splitting in
+      // a direction is `cmd-ctrl-<arrow>` and moving between panes `cmd-alt-<arrow>`.
+      "cmd-w": "pane::CloseActiveItem",
+      "ctrl-tab": "pane::ActivateNextItem",
+      "ctrl-shift-tab": "pane::ActivatePreviousItem",
+      "cmd-}": "pane::ActivateNextItem",
+      "cmd-{": "pane::ActivatePreviousItem",
+      "cmd-1": ["pane::ActivateItem", 0],
+      "cmd-2": ["pane::ActivateItem", 1],
+      "cmd-3": ["pane::ActivateItem", 2],
+      "cmd-4": ["pane::ActivateItem", 3],
+      "cmd-5": ["pane::ActivateItem", 4],
+      "cmd-6": ["pane::ActivateItem", 5],
+      "cmd-7": ["pane::ActivateItem", 6],
+      "cmd-8": ["pane::ActivateItem", 7],
+      "cmd-9": "pane::ActivateLastItem",
+      "cmd-\\": "pane::SplitRight",
+      "cmd-ctrl-left": "pane::SplitLeft",
+      "cmd-ctrl-right": "pane::SplitRight",
+      "cmd-ctrl-up": "pane::SplitUp",
+      "cmd-ctrl-down": "pane::SplitDown",
+      "cmd-alt-left": "workspace::ActivatePaneLeft",
+      "cmd-alt-right": "workspace::ActivatePaneRight",
+      "cmd-alt-up": "workspace::ActivatePaneUp",
+      "cmd-alt-down": "workspace::ActivatePaneDown"
     }
   },
   {
@@ -46,7 +72,9 @@
       "a": "mail::Archive",
       "shift-m": "mail::MoveToFolder",
       "cmd-z": "mail::Undo",
-      "cmd-shift-a": "mail::SelectThread"
+      "cmd-shift-a": "mail::SelectThread",
+      // The message in a tab of its own (a double-click on the row does the same).
+      "cmd-o": "mail::OpenMessage"
     }
   },
   {
@@ -57,6 +85,7 @@
       "shift-down": "mail::ExtendSelectionDown",
       "shift-up": "mail::ExtendSelectionUp",
       "cmd-a": "mail::SelectAll",
+      "enter": "mail::OpenMessage",
       "home": "mail::FirstMessage",
       "end": "mail::LastMessage",
       "pagedown": "mail::PageDown",

@@ -504,6 +504,7 @@ impl CoreHandle {
                 ReplyKind::Sender => DraftOrigin::Reply(message),
                 ReplyKind::All => DraftOrigin::ReplyAll(message),
             }),
+            name: String::new(),
         })
     }
 

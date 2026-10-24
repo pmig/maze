@@ -6,6 +6,8 @@
 //! - [`gpui_tokio`]: run Tokio futures from GPUI ([`Tokio::spawn`]).
 //! - [`assets`]: the embedded icon set.
 //! - [`components`]: small shared components.
+//! - [`panes`]: tabs and splits, the way Zed does them (ADR-018).
+//! - [`names`]: random two-word names (`brave-otter`) for new drafts.
 //!
 //! The component library is gpui-kit (PLAN ADR-002), re-exported as [`kit`] so crates
 //! above use the same version.
@@ -14,6 +16,8 @@ pub mod assets;
 pub mod components;
 pub mod gpui_tokio;
 pub mod keymap;
+pub mod names;
+pub mod panes;
 pub mod theme;
 
 pub use gpui_kit as kit;

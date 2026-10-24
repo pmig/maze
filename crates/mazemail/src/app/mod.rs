@@ -15,7 +15,9 @@
 //! 5. The [auto-updater](updates) starts with the window (before the core is open),
 //!    follows the core's settings once it is, and the crash guard is disarmed after
 //!    the window painted with the core open.
-//! 6. New messages, replies and forwards open [compose windows](compose).
+//! 6. New messages, replies and forwards open [draft tabs](compose) in the main window;
+//!    the window's tabs and splits are saved to `ui_state.json` and restored (ADR-018),
+//!    draft tabs once the core is open.
 //!
 //! `MAZEMAIL_DEMO=1` runs the window on synthetic mail (`FakeMailSource`) without a
 //! core, a key or a socket.
@@ -128,7 +130,8 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
                 None => tracing::info!("Add Account: the mail data isn't open yet"),
             });
         });
-        // From the title bar's "+", cmd-n (any window) or the palette: deferred, like
+        // The main window asks for new drafts itself (a `ComposeRequest`); this is
+        // cmd-n from another window, e.g. a draft in a window of its own. Deferred, like
         // Add Account, because the window is busy handling that event.
         cx.on_action(|_: &mail_ui::actions::NewMessage, cx| cx.defer(compose::new_message));
         agents::init(cx);
@@ -207,7 +210,7 @@ fn open_window(cx: &mut App) {
     match mail_ui::open_main_window(source, options, cx) {
         Ok(window) => {
             updates::add_button(&window.1, cx);
-            // Reply, Reply All, Forward on the message the window shows.
+            // New Message, and Reply, Reply All, Forward on the message the window shows.
             cx.subscribe(&window.1, |_, request: &mail_ui::ComposeRequest, cx| {
                 let request = *request;
                 cx.defer(move |cx| compose::respond(request, cx));
@@ -224,8 +227,13 @@ fn open_window(cx: &mut App) {
 
 /// Tells the window what changed.
 pub(crate) fn apply_changes(changes: &DataChanges, cx: &mut App) {
-    if let Some((_, view)) = cx.global::<AppState>().window.clone() {
-        view.update(cx, |window, cx| window.apply_changes(changes, cx));
+    if let Some((handle, view)) = cx.global::<AppState>().window.clone() {
+        let applied = handle.update(cx, |_, window, cx| {
+            view.update(cx, |view, cx| view.apply_changes(changes, window, cx));
+        });
+        if let Err(error) = applied {
+            tracing::debug!(%error, "no main window for changes");
+        }
     }
 }
 
@@ -329,6 +337,7 @@ pub(crate) fn core_ready(core: &CoreHandle, cx: &mut App) {
     cx.global_mut::<AppState>().server = Some(RunningServer { stop, task });
 
     updates::follow_core_settings(core, cx);
+    compose::register_restore(core, cx);
     agents::start(core, &authorizer, cx);
     let window = cx
         .global::<AppState>()
@@ -376,6 +385,13 @@ fn follow_events(
 
 /// Stops the server and shuts the core down, waiting at most [`SHUTDOWN_TIMEOUT`].
 fn shutdown(cx: &mut App) {
+    let Some(state) = cx.try_global::<AppState>() else {
+        return;
+    };
+    // The layout is saved a moment after each change; don't lose the last one.
+    if let Some((_, window)) = state.window.clone() {
+        window.update(cx, |window, cx| window.save_layout(cx));
+    }
     let Some(state) = cx.try_global::<AppState>() else {
         return;
     };

@@ -392,3 +392,180 @@ fn the_title_follows_the_subject(cx: &mut TestAppContext) {
     assert_eq!(view.read_with(cx, |c, _| c.title.clone()), "Plans");
     assert_eq!(cx.window_title().as_deref(), Some("Plans"));
 }
+
+// ---- in a tab of the main window ----------------------------------------------------
+
+/// A window with a pane group, binding the pane actions like Maze's main window does.
+struct Panes {
+    group: Entity<ui::panes::PaneGroup>,
+}
+
+impl Render for Panes {
+    fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+        // The pane keys are bound in the main window's `Workspace` context.
+        ui::panes::bind_actions(
+            div()
+                .size_full()
+                .key_context("Workspace")
+                .child(self.group.clone()),
+            &self.group,
+        )
+    }
+}
+
+fn open_tab(
+    cx: &mut TestAppContext,
+    backend: Arc<FakeBackend>,
+    mut options: ComposerOptions,
+) -> (
+    Entity<Composer>,
+    Entity<ui::panes::PaneGroup>,
+    &mut VisualTestContext,
+) {
+    cx.update(|cx| {
+        ui::init(cx);
+        let _ = ui::keymap::bind_keymap(ui::keymap::DEFAULT_MACOS_KEYMAP, cx);
+        crate::init(cx);
+    });
+    options.in_tab = true;
+    let backend: Arc<dyn ComposeBackend> = backend;
+    let (panes, cx) = cx.add_window_view(|window, cx| Panes {
+        group: cx.new(|cx| ui::panes::PaneGroup::new(None, window, cx)),
+    });
+    cx.update(|window, _| window.activate_window());
+    let group = panes.read_with(cx, |p, _| p.group.clone());
+    let composer = group.update_in(cx, |group, window, cx| {
+        let composer = cx.new(|cx| Composer::new(backend, options, window, cx));
+        group.add_item(Box::new(composer.clone()), true, window, cx);
+        composer
+    });
+    cx.run_until_parked();
+    (composer, group, cx)
+}
+
+fn tab_count(group: &Entity<ui::panes::PaneGroup>, cx: &mut VisualTestContext) -> usize {
+    group.read_with(cx, |g, cx| g.items(cx).len())
+}
+
+#[gpui::test]
+fn a_tab_is_titled_with_the_drafts_name(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend::default());
+    let mut options = options();
+    options.draft.name = "brave-otter".into();
+    let (composer, group, cx) = open_tab(cx, backend.clone(), options);
+    let title = |cx: &mut VisualTestContext| {
+        group.read_with(cx, |g, cx| {
+            let item = g.active_item(cx).unwrap();
+            (
+                item.tab_title(cx).to_string(),
+                item.is_dirty(cx),
+                item.serialize(cx),
+            )
+        })
+    };
+    assert_eq!(
+        title(cx),
+        ("brave-otter".into(), false, None),
+        "not saved yet"
+    );
+    // The To field has the focus in a new message, in a tab too.
+    cx.simulate_input("anna@example.com");
+    assert!(title(cx).1, "a dot while unsaved");
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
+    let (name, dirty, saved) = title(cx);
+    assert_eq!(name, "brave-otter");
+    assert!(!dirty);
+    let saved = saved.expect("restorable once saved");
+    assert_eq!(saved.kind, COMPOSE_KIND);
+    assert_eq!(saved.title.as_deref(), Some("brave-otter"));
+    assert_eq!(saved.data, serde_json::json!({ "draft": 42 }));
+    // The name is stored with the draft.
+    assert_eq!(backend.saves()[0].1.name, "brave-otter");
+    assert_eq!(
+        composer.read_with(cx, |c, _| c.name().clone()),
+        "brave-otter"
+    );
+}
+
+#[gpui::test]
+fn a_draft_without_a_name_gets_one(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend::default());
+    let (composer, _, cx) = open_tab(cx, backend, options());
+    let name = composer.read_with(cx, |c, _| c.name().to_string());
+    assert!(ui::names::is_two_word_name(&name), "{name}");
+}
+
+#[gpui::test]
+fn closing_a_tab_with_changes_asks_first(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend::default());
+    let (composer, group, cx) = open_tab(cx, backend.clone(), options());
+    cx.simulate_input("anna@example.com");
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
+    cx.simulate_input(", bob@example.com");
+    cx.simulate_keystrokes("cmd-w");
+    cx.run_until_parked();
+    assert!(cx.has_pending_prompt());
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    assert_eq!(tab_count(&group, cx), 1, "kept");
+    assert!(!composer.read_with(cx, |c, _| c.is_closed()));
+
+    cx.simulate_keystrokes("cmd-w");
+    cx.run_until_parked();
+    cx.simulate_prompt_answer("Don't Save");
+    cx.run_until_parked();
+    assert_eq!(tab_count(&group, cx), 0, "the tab closed");
+    assert_eq!(backend.deletes(), vec![DraftId(42)]);
+}
+
+#[gpui::test]
+fn a_clean_tab_closes_without_asking_and_escape_works_too(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend::default());
+    let (_, group, cx) = open_tab(cx, backend, options());
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(!cx.has_pending_prompt());
+    assert_eq!(tab_count(&group, cx), 0);
+}
+
+#[gpui::test]
+fn sending_closes_the_tab(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend::default());
+    let (_, group, cx) = open_tab(cx, backend.clone(), options());
+    cx.simulate_input("anna@example.com");
+    cx.simulate_keystrokes("cmd-enter");
+    cx.run_until_parked();
+    assert_eq!(backend.sends().len(), 1);
+    assert_eq!(tab_count(&group, cx), 0);
+    // The main window's title isn't the composer's.
+    assert_ne!(cx.window_title().as_deref(), Some("New Message"));
+}
+
+#[gpui::test]
+fn open_in_new_window_hands_the_draft_over(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend::default());
+    let mut options = options();
+    options.draft.name = "quiet-heron".into();
+    let (composer, group, cx) = open_tab(cx, backend, options);
+    let events: Rc<RefCell<Vec<ComposerEvent>>> = Rc::default();
+    cx.update(|_, cx| {
+        let events = events.clone();
+        cx.subscribe(&composer, move |_, event: &ComposerEvent, _| {
+            events.borrow_mut().push(event.clone());
+        })
+        .detach();
+    });
+    cx.simulate_input("anna@example.com");
+    cx.dispatch_action(crate::actions::OpenInNewWindow);
+    cx.run_until_parked();
+    assert_eq!(tab_count(&group, cx), 0);
+    let events = events.borrow();
+    let [ComposerEvent::OpenInNewWindow(options)] = events.as_slice() else {
+        panic!("{events:?}");
+    };
+    assert!(!options.in_tab);
+    assert_eq!(options.draft.name, "quiet-heron");
+    assert_eq!(options.draft.to[0].email, "anna@example.com");
+}

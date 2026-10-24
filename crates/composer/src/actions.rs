@@ -1,4 +1,4 @@
-//! Actions of the compose window. Keys are bound in `assets/keymaps/default-macos.json`
+//! Actions of the composer (a tab of the main window, or a window of its own). Keys are bound in `assets/keymaps/default-macos.json`
 //! (context `Composer`).
 
 use gpui::actions;
@@ -17,5 +17,7 @@ actions!(
         Attach,
         /// Show or hide the Cc and Bcc fields (`cmd-shift-c`).
         ToggleCcBcc,
+        /// Move the draft from its tab to a window of its own.
+        OpenInNewWindow,
     ]
 );

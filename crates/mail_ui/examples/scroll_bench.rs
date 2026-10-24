@@ -63,45 +63,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     cx.update_window(window, |_, window, cx| {
         view.update(cx, |mail, cx| {
-            mail.thread_list().update(cx, |list, cx| {
-                let started = Instant::now();
-                list.open(
-                    ThreadScope::Folder(FakeMailSource::large_folder()),
-                    "Archives".into(),
-                    None,
-                    cx,
-                );
-                println!(
-                    "folder switch to 1M threads (keys + first rows): {:.1} ms",
-                    started.elapsed().as_secs_f64() * 1e3
-                );
-                if table {
-                    list.toggle_mode(window, cx);
-                }
-                if flat {
+            mail.thread_list(cx)
+                .expect("a mail view")
+                .update(cx, |list, cx| {
                     let started = Instant::now();
-                    list.toggle_threads(cx);
+                    list.open(
+                        ThreadScope::Folder(FakeMailSource::large_folder()),
+                        "Archives".into(),
+                        None,
+                        cx,
+                    );
                     println!(
-                        "threads off: {} message keys in {:.1} ms",
-                        list.key_count(),
+                        "folder switch to 1M threads (keys + first rows): {:.1} ms",
                         started.elapsed().as_secs_f64() * 1e3
                     );
-                }
-            });
+                    if table {
+                        list.toggle_mode(window, cx);
+                    }
+                    if flat {
+                        let started = Instant::now();
+                        list.toggle_threads(cx);
+                        println!(
+                            "threads off: {} message keys in {:.1} ms",
+                            list.key_count(),
+                            started.elapsed().as_secs_f64() * 1e3
+                        );
+                    }
+                });
         });
     })?;
     if expand {
         let started = Instant::now();
         cx.update_window(window, |_, _, cx| {
             view.update(cx, |mail, cx| {
-                mail.thread_list()
+                mail.thread_list(cx)
+                    .expect("a mail view")
                     .update(cx, |list, cx| list.expand_all(cx));
             });
         })?;
         let on_main = started.elapsed();
         cx.run_until_parked();
         let rows = cx.update_window(window, |_, _, cx| {
-            view.read(cx).thread_list().read(cx).len()
+            view.read(cx)
+                .thread_list(cx)
+                .expect("a mail view")
+                .read(cx)
+                .len()
         })?;
         println!(
             "expand all: {:.1} ms on the main thread, {:.1} ms until the counts are in, {rows} rows",
@@ -115,7 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 offset: f32|
      -> Result<Duration, Box<dyn std::error::Error>> {
         cx.update_window(window, |_, window, cx| {
-            let list = view.read(cx).thread_list().read(cx);
+            let list = view.read(cx).thread_list(cx).expect("a mail view").read(cx);
             let y = point(px(0.), px(-offset));
             match list.mode() {
                 ListMode::Cards => list.scroll_handle().0.borrow().base_handle.set_offset(y),

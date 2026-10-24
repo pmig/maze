@@ -61,7 +61,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         cx.update_window(window.into(), |_, window, cx| {
             view.update(cx, |mail, cx| {
-                mail.thread_list()
+                mail.thread_list(cx)
+                    .expect("a mail view")
                     .update(cx, |list, cx| list.toggle_mode(window, cx))
             });
         })?;
@@ -70,7 +71,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let source = source_for_setup.clone();
         cx.update_window(window.into(), |_, window, cx| {
             view.update(cx, |mail, cx| {
-                mail.thread_list()
+                mail.thread_list(cx)
+                    .expect("a mail view")
                     .update(cx, |list, cx| match list_setup.as_str() {
                         "table-threaded" => {
                             list.toggle_mode(window, cx);

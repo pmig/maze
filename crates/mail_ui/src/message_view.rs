@@ -95,6 +95,11 @@ impl MessageView {
         self.selection
     }
 
+    /// The UTC offset dates are shown in.
+    pub fn offset(&self) -> UtcOffset {
+        self.offset
+    }
+
     /// The displayed message.
     pub fn document(&self) -> Option<&MessageDocument> {
         self.document.as_ref()

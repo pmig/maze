@@ -34,7 +34,8 @@
 //!   `account.uuid`; v3 adds `message_location.date` and the message list indexes; v4
 //!   adds local drafts ([`WriteTx::create_draft`]) and the outbox's SMTP envelope
 //!   ([`OutboxEnvelope`]); v5 adds account secrets ([`WriteTx::set_account_secret`]);
-//!   v6 adds agents' sign-in keys ([`WriteTx::set_agent_secret`]).
+//!   v6 adds agents' sign-in keys ([`WriteTx::set_agent_secret`]); v7 adds draft
+//!   names (the two-word tab title).
 //!   Migrations only ever add files; opening an older database backs it up first (see
 //!   [`MigrationReport`]).
 //! - **Message lists** (threads off): [`Queries::message_list_keys`] pages through the
