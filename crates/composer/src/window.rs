@@ -18,10 +18,10 @@
 //! # Footer and "Sent with Maze"
 //!
 //! The configured footer ([`ComposeBackend::footer`], the account's `compose.footer`)
-//! and, while "Add “Sent with Maze”" is checked, the Maze line are shown muted under
-//! the body: they are added when the message is sent, not part of the text you edit.
-//! The checkbox starts from the draft ([`Draft::support_maze`], new drafts take the
-//! `compose.support_maze` setting) and is saved with it.
+//! and, while the `compose.support_maze` setting is on
+//! ([`ComposeBackend::sent_with_maze`]), the Maze line are shown muted under the body:
+//! they are added when the message is sent, not part of the text you edit. The Maze
+//! line is only a setting; the composer has no switch for it.
 //!
 //! # In a tab
 //!
@@ -45,7 +45,6 @@ use gpui::{
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IndexPath, Sizable as _, TitleBar,
     button::{Button, ButtonVariants as _},
-    checkbox::Checkbox,
     h_flex,
     input::{self, Input, InputEvent, InputState, Textarea, TextareaState},
     select::{Select, SelectEvent, SelectItem, SelectState},
@@ -190,7 +189,7 @@ pub struct Composer {
     subject: Entity<InputState>,
     body: Entity<TextareaState>,
     attachments: Vec<DraftAttachment>,
-    /// "Add “Sent with Maze”" is checked.
+    /// The "Sent with Maze" line is added (the account's `compose.support_maze`).
     support_maze: bool,
     /// The configured footer of the selected identity's account (a preview).
     footer: SharedString,
@@ -262,6 +261,7 @@ impl Composer {
             .filter(|id| identities.iter().any(|i| i.id == *id))
             .or_else(|| identities.first().map(|i| i.id));
         let footer = backend.footer(identity).trim().to_owned().into();
+        let support_maze = backend.sent_with_maze(identity);
 
         let line = |placeholder: &'static str,
                     value: String,
@@ -343,7 +343,7 @@ impl Composer {
             backend,
             focus,
             attachments: draft.attachments.clone(),
-            support_maze: draft.support_maze,
+            support_maze,
             footer,
             base: draft,
             draft_id: options.draft_id,
@@ -420,7 +420,7 @@ impl Composer {
         self.identity
     }
 
-    /// Whether "Add “Sent with Maze”" is checked.
+    /// Whether the "Sent with Maze" line is added (from the settings).
     pub fn support_maze(&self) -> bool {
         self.support_maze
     }
@@ -436,14 +436,6 @@ impl Composer {
             lines.push(SENT_WITH_MAZE.into());
         }
         lines
-    }
-
-    /// Checks or unchecks "Add “Sent with Maze”" (saved with the draft).
-    pub fn set_support_maze(&mut self, on: bool, window: &mut Window, cx: &mut Context<'_, Self>) {
-        if self.support_maze != on {
-            self.support_maze = on;
-            self.changed(window, cx);
-        }
     }
 
     /// The draft as the fields describe it, or the first problem with the addresses.
@@ -523,8 +515,9 @@ impl Composer {
         };
         if self.identity != Some(*id) {
             self.identity = Some(*id);
-            // Another account may have another footer.
+            // Another account may have another footer and Maze line setting.
             self.footer = self.backend.footer(self.identity).trim().to_owned().into();
+            self.support_maze = self.backend.sent_with_maze(self.identity);
             self.changed(window, cx);
         }
     }
@@ -1036,24 +1029,6 @@ impl Render for Composer {
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.attach(window, cx);
                             })),
-                    )
-                    .child(
-                        Checkbox::new("support-maze")
-                            .debug_selector(|| "support-maze".to_owned())
-                            .small()
-                            .label("Add “Sent with Maze”")
-                            .tooltip("Support Maze: adds a short line with a link to mazemail.dev")
-                            .checked(self.support_maze)
-                            .on_click({
-                                let this = cx.entity().downgrade();
-                                move |checked: &bool, window, cx| {
-                                    let checked = *checked;
-                                    this.update(cx, |this, cx| {
-                                        this.set_support_maze(checked, window, cx);
-                                    })
-                                    .ok();
-                                }
-                            }),
                     )
                     .child(
                         div()

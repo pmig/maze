@@ -116,6 +116,10 @@ impl ComposeBackend for CoreComposeBackend {
     fn footer(&self, identity: Option<IdentityId>) -> String {
         self.core.compose_footer(identity).footer
     }
+
+    fn sent_with_maze(&self, identity: Option<IdentityId>) -> bool {
+        self.core.compose_footer(identity).support_maze
+    }
 }
 
 /// The open core, or `None` (logged) while Maze is still opening.

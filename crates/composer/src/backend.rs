@@ -100,4 +100,12 @@ pub trait ComposeBackend: Send + Sync + 'static {
         let _ = identity;
         String::new()
     }
+
+    /// Whether messages sent from `identity` get the "Sent with Maze" line
+    /// (`compose.support_maze`, per account). Only a setting: the composer just previews
+    /// it.
+    fn sent_with_maze(&self, identity: Option<IdentityId>) -> bool {
+        let _ = identity;
+        true
+    }
 }

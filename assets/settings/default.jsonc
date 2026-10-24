@@ -86,7 +86,6 @@
     // while you write; it isn't part of the text you edit.
     "footer": "",
     // Adds "Sent with Maze (https://mazemail.dev)" below your messages. Thank you!
-    // This is the default of the "Add “Sent with Maze”" checkbox in each message.
     "support_maze": true
   },
 
