@@ -13,10 +13,13 @@
 //! Keys (`assets/keymaps/default-macos.json`, context `AgentPanel`): `cmd-n` new
 //! thread, `cmd-shift-enter` / `cmd-shift-backspace` accept / reject all proposals, and
 //! `y` / `n` for the highlighted proposal item while the review has focus. In the prompt,
-//! `enter` sends and `shift-enter` starts a new line.
+//! `enter` sends, `shift-enter` starts a new line, and Zed's keys switch what the agent
+//! offers: `shift-tab` the mode, `alt-tab` the model, `ctrl-'` the thinking effort.
 
+mod launcher;
 mod panel;
 
+pub use launcher::{Launcher, SystemLauncher};
 pub use panel::{AgentPanel, MailContext};
 
 use gpui::actions;
@@ -47,6 +50,12 @@ actions!(
         PreviousProposal,
         /// Stop the agent's current turn.
         StopAgent,
+        /// Switch to the agent's next mode (`shift-tab` in the prompt).
+        CycleMode,
+        /// Switch to the agent's next model (`alt-tab` in the prompt).
+        CycleModel,
+        /// Switch to the next thinking effort (`ctrl-'` in the prompt).
+        CycleThinking,
     ]
 );
 

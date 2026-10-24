@@ -4,11 +4,12 @@
 //! the token authorizer's cache, so agent commands from a session are authorized), and
 //! the proposal review.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use agent::{
-    AgentHost, AgentThreadInfo, AgentThreadKey, HostError, ProposalItemStatus, ProposalItemView,
-    ProposalView, ThreadExport,
+    AgentHost, AgentKey, AgentThreadInfo, AgentThreadKey, HostError, ProposalItemStatus,
+    ProposalItemView, ProposalView, ThreadExport,
 };
 use async_trait::async_trait;
 use local_api::{AccountPolicy, TokenStore};
@@ -168,5 +169,33 @@ impl AgentHost for CoreAgentHost {
             .decide_proposal(ProposalId(proposal), accept)
             .await
             .map_err(host_error)
+    }
+
+    async fn agent_key(&self, agent_id: &str) -> Result<Option<AgentKey>, HostError> {
+        let key = self.core.agent_secret(agent_id).map_err(host_error)?;
+        Ok(key.map(|(env, key)| AgentKey { env, key }))
+    }
+
+    async fn set_agent_key(&self, agent_id: &str, key: AgentKey) -> Result<(), HostError> {
+        self.core
+            .set_agent_secret(agent_id, &key.env, key.key)
+            .await
+            .map_err(host_error)
+    }
+
+    async fn delete_agent_key(&self, agent_id: &str) -> Result<(), HostError> {
+        self.core
+            .delete_agent_secret(agent_id)
+            .await
+            .map_err(host_error)
+    }
+
+    async fn agent_key_envs(&self) -> Result<BTreeMap<String, String>, HostError> {
+        Ok(self
+            .core
+            .agent_secret_envs()
+            .map_err(host_error)?
+            .into_iter()
+            .collect())
     }
 }

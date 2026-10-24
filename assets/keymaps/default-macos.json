@@ -99,6 +99,15 @@
     }
   },
   {
+    // In the agent's prompt, Zed's keys for what the agent offers.
+    "context": "AgentPrompt > Input",
+    "bindings": {
+      "shift-tab": "agent::CycleMode",
+      "alt-tab": "agent::CycleModel",
+      "ctrl-'": "agent::CycleThinking"
+    }
+  },
+  {
     // The proposal review, once it has focus (click an item).
     "context": "AgentProposals",
     "bindings": {

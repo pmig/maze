@@ -2,15 +2,19 @@
 //! starts sessions: scratch dir, session token, sandbox policy, environment, and the
 //! sandboxed process as the ACP transport.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use mazemail_types::ThreadId;
 use settings::Settings;
 
+use mazemail_types::Sensitive;
+
+use crate::auth::{self, KeyError, LoginCommand};
 use crate::catalog::{self, AgentEntry, AgentSource};
-use crate::host::{AgentHost, AgentThreadInfo, HostError};
+use crate::controls::{ControlValue, Preferences};
+use crate::host::{AgentHost, AgentKey, AgentThreadInfo, HostError};
 use crate::http::Http;
 use crate::install::{self, InstallContext, InstallError, InstallProgress, InstalledAgent, Launch};
 use crate::node;
@@ -20,7 +24,7 @@ use crate::process::{AgentProcess, LaunchSpec};
 use crate::registry::{self, Registry, RegistryError};
 use crate::scratch::{self, Scratch};
 use crate::session::{
-    AttachedThread, SessionConfig, SessionHandle, SessionResources, StderrTail,
+    AttachedThread, AuthMethodInfo, SessionConfig, SessionHandle, SessionResources, StderrTail,
     start_with_transport,
 };
 use crate::tokens::{self, SessionTokenError};
@@ -104,6 +108,82 @@ pub struct StartedSession {
     pub sandboxed: bool,
     /// The effective policy, for the padlock.
     pub policy_description: Option<String>,
+    /// The environment variable of the user's saved key, if the agent got one.
+    pub key_env: Option<String>,
+}
+
+/// A terminal login, written as a script to open in a terminal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoginScript {
+    /// The script (`.command` on macOS, mode 0700, no secrets inside).
+    pub path: PathBuf,
+    /// The login command as shown in the sign-in card.
+    pub display: String,
+    /// Whether it runs in the agent sandbox.
+    pub sandboxed: bool,
+}
+
+/// How an agent process is started (before the session's own additions).
+struct Launch0 {
+    program: PathBuf,
+    args: Vec<String>,
+    /// Directories to read besides the defaults.
+    extra_read: Vec<PathBuf>,
+    /// `PATH` entries of the agent (Node's bin dir, …).
+    path_dirs: Vec<PathBuf>,
+    /// The agent's own environment (registry, custom agent, `agent.env`).
+    env: BTreeMap<String, String>,
+    /// The installed version it runs (registry agents).
+    version: Option<String>,
+}
+
+/// What an update round did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UpdateReport {
+    /// Agents updated: (id, name, new version).
+    pub updated: Vec<(String, String, String)>,
+    /// Agents whose update failed: (id, name, error).
+    pub failed: Vec<(String, String, String)>,
+}
+
+/// Versions running sessions use: (agent id, version) → sessions.
+type InUse = Arc<Mutex<HashMap<(String, String), usize>>>;
+
+/// Keeps an agent version installed while a session runs on it; when the last one
+/// ends, versions older than the newest are removed.
+struct VersionLease {
+    in_use: InUse,
+    paths: AgentPaths,
+    key: (String, String),
+}
+
+impl Drop for VersionLease {
+    fn drop(&mut self) {
+        let keep: Vec<String> = {
+            let mut in_use = self.in_use.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(count) = in_use.get_mut(&self.key) {
+                *count -= 1;
+                if *count == 0 {
+                    in_use.remove(&self.key);
+                }
+            }
+            in_use
+                .keys()
+                .filter(|(id, _)| *id == self.key.0)
+                .map(|(_, version)| version.clone())
+                .collect()
+        };
+        remove_unused(&self.paths, &self.key.0, keep);
+    }
+}
+
+/// Removes the versions of `id` except the newest installed one and `keep`.
+fn remove_unused(paths: &AgentPaths, id: &str, mut keep: Vec<String>) {
+    if let Some(newest) = install::installed(paths, id, None) {
+        keep.push(newest.version);
+    }
+    let keep: Vec<&str> = keep.iter().map(String::as_str).collect();
+    install::remove_versions_except(paths, id, &keep);
 }
 
 /// Starting a session failed.
@@ -136,12 +216,28 @@ pub enum StartError {
     /// The session token couldn't be created.
     #[error(transparent)]
     Token(#[from] SessionTokenError),
+    /// The login script couldn't be written.
+    #[error("the login script couldn't be written: {0}")]
+    Login(std::io::Error),
+    /// The method isn't a terminal login.
+    #[error("{0} isn't a terminal login")]
+    NotATerminalLogin(String),
+    /// A pasted key was refused.
+    #[error(transparent)]
+    Key(#[from] KeyError),
 }
+
+/// Picks an in-process agent instead of the process `LaunchSpec` describes (tests).
+#[cfg(any(test, feature = "test-support"))]
+pub type TestAgents = Arc<dyn Fn(&LaunchSpec) -> Option<crate::fake::FakeAgent> + Send + Sync>;
 
 /// Lists, installs and starts agents.
 pub struct AgentManager {
     config: ManagerConfig,
     registry: Mutex<Option<Registry>>,
+    in_use: InUse,
+    #[cfg(any(test, feature = "test-support"))]
+    test_agents: Mutex<Option<TestAgents>>,
 }
 
 impl std::fmt::Debug for AgentManager {
@@ -159,7 +255,21 @@ impl AgentManager {
         Self {
             config,
             registry: Mutex::new(None),
+            in_use: InUse::default(),
+            #[cfg(any(test, feature = "test-support"))]
+            test_agents: Mutex::new(None),
         }
+    }
+
+    /// Runs sessions with in-process agents from `agents` instead of processes, after
+    /// everything else (environment, keys, sandbox policy) is prepared as usual. For
+    /// UI tests (feature `test-support`).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_test_agents(&self, agents: TestAgents) {
+        *self
+            .test_agents
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(agents);
     }
 
     /// Maze's side of sessions (threads, transcripts, proposals).
@@ -233,8 +343,96 @@ impl AgentManager {
             sandboxed: settings.agent_sandbox.enabled,
         };
         let installed = install::install(&entry, cx, progress).await?;
-        install::remove_other_versions(&self.config.paths, &installed.id, &installed.version);
+        // Running sessions keep their version until they end.
+        let keep = self.versions_in_use(&installed.id);
+        remove_unused(&self.config.paths, &installed.id, keep);
         Ok(installed)
+    }
+
+    fn versions_in_use(&self, id: &str) -> Vec<String> {
+        self.in_use
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .keys()
+            .filter(|(agent, _)| agent == id)
+            .map(|(_, version)| version.clone())
+            .collect()
+    }
+
+    /// Installs the registry's newer version of every installed agent, and Maze's
+    /// pinned Node runtime when an npm agent needs it. New sessions use the new
+    /// versions; running ones keep theirs until they end.
+    pub async fn update_installed(&self, settings: &Settings) -> UpdateReport {
+        let mut report = UpdateReport::default();
+        let mut needs_node = false;
+        for status in self.catalog(settings, true) {
+            let Some(installed) = &status.installed else {
+                continue;
+            };
+            needs_node |= matches!(installed.launch, Launch::Node { .. });
+            if !status.update_available() || status.entry.registry_agent().is_none() {
+                continue;
+            }
+            let entry = &status.entry;
+            tracing::info!(id = entry.id, "updating an agent");
+            match self.install(&entry.id, settings, &|_| {}).await {
+                Ok(new) => {
+                    report
+                        .updated
+                        .push((entry.id.clone(), entry.name.clone(), new.version));
+                }
+                Err(error) => {
+                    tracing::warn!(id = entry.id, %error, "an agent update failed");
+                    report
+                        .failed
+                        .push((entry.id.clone(), entry.name.clone(), error.to_string()));
+                }
+            }
+        }
+        let node_dir = self.config.paths.node_dir();
+        if needs_node && node::installed(&node_dir).is_none() {
+            // Maze pins a newer Node: get it, and drop older ones nothing runs on.
+            match node::ensure(self.config.http.as_ref(), &node_dir, &|_, _| {}).await {
+                Ok(runtime) if runtime.managed => {
+                    if self.versions_in_use(NODE_LEASE).is_empty() {
+                        remove_old_node(&node_dir, &runtime.prefix);
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => report.failed.push((
+                    "node".to_owned(),
+                    "Node runtime".to_owned(),
+                    error.to_string(),
+                )),
+            }
+        }
+        report
+    }
+
+    /// One automatic update round (when `agent.auto_update` is on): refreshes the
+    /// registry when the cached copy is older than a day, then
+    /// [`AgentManager::update_installed`].
+    pub async fn auto_update(&self, settings: &Settings) -> Result<UpdateReport, RegistryError> {
+        if !settings.agent.auto_update {
+            return Ok(UpdateReport::default());
+        }
+        self.load_registry(false).await?;
+        Ok(self.update_installed(settings).await)
+    }
+
+    fn lease(&self, id: &str, version: &str) -> VersionLease {
+        let key = (id.to_owned(), version.to_owned());
+        *self
+            .in_use
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(key.clone())
+            .or_default() += 1;
+        VersionLease {
+            in_use: Arc::clone(&self.in_use),
+            paths: self.config.paths.clone(),
+            key,
+        }
     }
 
     /// Starts a session.
@@ -249,44 +447,25 @@ impl AgentManager {
             sandbox::check_available()?;
         }
 
-        // How to start the agent.
-        let mut extra_read = Vec::new();
-        let mut path_dirs = Vec::new();
-        let mut agent_env = BTreeMap::new();
-        let (program, args) = match &entry.source {
-            AgentSource::Custom(custom) => {
-                let program = resolve_program(&custom.command)
-                    .ok_or_else(|| StartError::ProgramNotFound(custom.command.clone()))?;
-                if let Some(dir) = program.parent() {
-                    extra_read.push(dir.to_owned());
-                }
-                agent_env.extend(custom.env.clone());
-                (program, custom.args.clone())
-            }
-            AgentSource::Registry(_) => {
-                let installed = install::installed(paths, &entry.id, entry.version.as_deref())
-                    .ok_or_else(|| StartError::NotInstalled(entry.name.clone()))?;
-                agent_env.extend(installed.env.clone());
-                path_dirs.extend(installed.path_dirs.clone());
-                match &installed.launch {
-                    Launch::Binary { program } => (program.clone(), installed.args.clone()),
-                    Launch::Node { script } => {
-                        let runtime = node::installed(&paths.node_dir())
-                            .or_else(node::system_node)
-                            .ok_or_else(|| node::NodeError::Missing {
-                                reason: "the managed runtime isn't installed".to_owned(),
-                            })?;
-                        if !runtime.prefix.starts_with(paths.runtimes_dir()) {
-                            extra_read.push(runtime.prefix.clone());
-                        }
-                        path_dirs.push(runtime.bin_dir.clone());
-                        let mut args = vec![script.display().to_string()];
-                        args.extend(installed.args.clone());
-                        (runtime.node, args)
-                    }
-                }
-            }
-        };
+        let launch = self.launch(&entry, settings)?;
+        let Launch0 {
+            program,
+            args,
+            extra_read,
+            path_dirs,
+            env: agent_env,
+            version,
+        } = launch;
+        let mut leases: Vec<VersionLease> = Vec::new();
+        if let Some(version) = &version {
+            leases.push(self.lease(&entry.id, version));
+        }
+        if let Some(prefix) = node::managed_prefix(&paths.node_dir())
+            && program.starts_with(&prefix)
+            && let Some(name) = prefix.file_name()
+        {
+            leases.push(self.lease(NODE_LEASE, &name.to_string_lossy()));
+        }
 
         // The session's folder, home and token.
         let session_id = scratch::new_session_id();
@@ -294,10 +473,13 @@ impl AgentManager {
         let agent_home = paths.agent_home(&safe_id(&entry.id));
         std::fs::create_dir_all(&agent_home)?;
         let cli_bin = scratch.dir().join(".bin");
+        std::fs::create_dir_all(&cli_bin)?;
         if let Some(cli) = &self.config.cli_program {
-            std::fs::create_dir_all(&cli_bin)?;
             std::os::unix::fs::symlink(cli, cli_bin.join("mazemail"))?;
         }
+        // Agents can't start a browser in the sandbox: Maze opens links for them.
+        let open_shim = auth::install_open_shim(&cli_bin)?;
+        let open_urls = scratch.dir().join(".open-urls");
 
         let host = Arc::clone(&self.config.host);
         let (attached, context_note) = match request.mail_thread {
@@ -352,73 +534,23 @@ impl AgentManager {
         // Environment: only what Maze sets.
         let mut path = vec![cli_bin.clone()];
         path.extend(path_dirs);
-        path.extend(
-            [
-                "/opt/homebrew/bin",
-                "/usr/local/bin",
-                "/usr/bin",
-                "/bin",
-                "/usr/sbin",
-                "/sbin",
-            ]
-            .into_iter()
-            .map(PathBuf::from),
+        let mut env = base_env(paths, &agent_home, scratch.tmp(), path);
+        env.insert(
+            local_api::SESSION_ENV.to_owned(),
+            minted.token.expose().to_owned(),
         );
-        let path = std::env::join_paths(&path)
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let mut env = BTreeMap::from([
-            ("PATH".to_owned(), path),
-            ("HOME".to_owned(), agent_home.display().to_string()),
-            ("TMPDIR".to_owned(), scratch.tmp().display().to_string()),
-            (
-                local_api::SESSION_ENV.to_owned(),
-                minted.token.expose().to_owned(),
-            ),
-            (
-                settings::DATA_DIR_ENV.to_owned(),
-                paths.data_dir().display().to_string(),
-            ),
-            (
-                "npm_config_cache".to_owned(),
-                agent_home.join(".npm").display().to_string(),
-            ),
-            (
-                "XDG_CONFIG_HOME".to_owned(),
-                agent_home.join(".config").display().to_string(),
-            ),
-            (
-                "XDG_CACHE_HOME".to_owned(),
-                agent_home.join(".cache").display().to_string(),
-            ),
-            (
-                "XDG_DATA_HOME".to_owned(),
-                agent_home.join(".local/share").display().to_string(),
-            ),
-            (
-                "LANG".to_owned(),
-                std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".to_owned()),
-            ),
-        ]);
-        // A shell for agents that look for one; never one from the home directory.
-        let shell = std::env::var("SHELL")
-            .ok()
-            .filter(|shell| shell.starts_with("/bin/") || shell.starts_with("/usr/bin/"))
-            .unwrap_or_else(|| "/bin/sh".to_owned());
-        env.insert("SHELL".to_owned(), shell);
-        for name in ["USER", "LOGNAME"] {
-            if let Ok(value) = std::env::var(name) {
-                env.insert(name.to_owned(), value);
-            }
-        }
+        env.insert(
+            auth::OPEN_URLS_ENV.to_owned(),
+            open_urls.display().to_string(),
+        );
+        env.insert("BROWSER".to_owned(), open_shim.display().to_string());
         let terminal_env = env.clone();
         env.extend(agent_env);
-        let configured = settings.agent.env.get(&entry.id).or_else(|| {
-            catalog::built_in(&entry.id)
-                .and_then(|b| b.aliases.iter().find_map(|a| settings.agent.env.get(*a)))
-        });
-        if let Some(extra) = configured {
-            env.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
+        // The user's saved key (encrypted store) wins over `agent.env`.
+        let key = host.agent_key(&entry.id).await?;
+        let key_env = key.as_ref().map(|key| key.env.clone());
+        if let Some(AgentKey { env: name, key }) = key {
+            env.insert(name, key.into_inner());
         }
 
         // The sandbox.
@@ -449,28 +581,25 @@ impl AgentManager {
             policy.clone()
         };
 
-        let terminal_login = Some(format!(
-            "HOME='{}' '{}' {}",
-            agent_home.display(),
-            program.display(),
-            args.join(" ")
-        ));
         let (stderr_tx, stderr_rx) = async_channel::bounded(256);
         let stderr = StderrTail::new(stderr_tx);
         let sink = {
             let stderr = stderr.clone();
             Arc::new(move |line: String| stderr.push(line))
         };
-        let process = AgentProcess::new(
-            LaunchSpec {
-                program,
-                args,
-                env,
-                cwd: scratch.dir().to_owned(),
-            },
-            agent_policy.clone(),
-        )
-        .with_stderr(sink);
+        let spec = LaunchSpec {
+            program,
+            args,
+            env,
+            cwd: scratch.dir().to_owned(),
+        };
+        #[cfg(any(test, feature = "test-support"))]
+        let test_agent = self
+            .test_agents
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .and_then(|agents| agents(&spec));
 
         let policy_description = policy.as_ref().map(sandbox::SandboxPolicy::describe);
         let config = SessionConfig {
@@ -485,13 +614,31 @@ impl AgentManager {
             terminal_policy: policy,
             attached: attached.clone(),
             transcript: transcript.clone(),
-            terminal_login,
+            open_urls: Some(open_urls),
+            key_env: key_env.clone(),
+            preferred: self.preferences().get(&entry.id),
         };
         let resources = SessionResources {
             scratch: Some(scratch),
             token: Some((token_store, minted.record.id)),
             stderr: Some(stderr),
+            lease: Some(Box::new(leases)),
         };
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(agent) = test_agent {
+            let handle =
+                start_with_transport(agent.transport(), config, host, resources, Some(stderr_rx));
+            return Ok(StartedSession {
+                handle,
+                transcript,
+                attached,
+                context_note,
+                sandboxed: agent_policy.is_some(),
+                policy_description,
+                key_env,
+            });
+        }
+        let process = AgentProcess::new(spec, agent_policy.clone()).with_stderr(sink);
         let handle = start_with_transport(process, config, host, resources, Some(stderr_rx));
         Ok(StartedSession {
             handle,
@@ -500,7 +647,234 @@ impl AgentManager {
             context_note,
             sandboxed: agent_policy.is_some(),
             policy_description,
+            key_env,
         })
+    }
+
+    /// How to start `entry`: program, arguments and its own environment.
+    fn launch(&self, entry: &AgentEntry, settings: &Settings) -> Result<Launch0, StartError> {
+        let paths = &self.config.paths;
+        let mut extra_read = Vec::new();
+        let mut path_dirs = Vec::new();
+        let mut env = BTreeMap::new();
+        let mut version = None;
+        let (program, args) = match &entry.source {
+            AgentSource::Custom(custom) => {
+                let program = resolve_program(&custom.command)
+                    .ok_or_else(|| StartError::ProgramNotFound(custom.command.clone()))?;
+                if let Some(dir) = program.parent() {
+                    extra_read.push(dir.to_owned());
+                }
+                env.extend(custom.env.clone());
+                (program, custom.args.clone())
+            }
+            AgentSource::Registry(_) => {
+                let installed = install::installed(paths, &entry.id, entry.version.as_deref())
+                    .ok_or_else(|| StartError::NotInstalled(entry.name.clone()))?;
+                env.extend(installed.env.clone());
+                path_dirs.extend(installed.path_dirs.clone());
+                version = Some(installed.version.clone());
+                match &installed.launch {
+                    Launch::Binary { program } => (program.clone(), installed.args.clone()),
+                    Launch::Node { script } => {
+                        let runtime = node::installed(&paths.node_dir())
+                            .or_else(node::system_node)
+                            .ok_or_else(|| node::NodeError::Missing {
+                                reason: "the managed runtime isn't installed".to_owned(),
+                            })?;
+                        if !runtime.prefix.starts_with(paths.runtimes_dir()) {
+                            extra_read.push(runtime.prefix.clone());
+                        }
+                        path_dirs.push(runtime.bin_dir.clone());
+                        let mut args = vec![script.display().to_string()];
+                        args.extend(installed.args.clone());
+                        (runtime.node, args)
+                    }
+                }
+            }
+        };
+        let agent_home = paths.agent_home(&safe_id(&entry.id));
+        env.extend(auth::home_env(&entry.id, &agent_home));
+        let configured = settings.agent.env.get(&entry.id).or_else(|| {
+            catalog::built_in(&entry.id)
+                .and_then(|b| b.aliases.iter().find_map(|a| settings.agent.env.get(*a)))
+        });
+        if let Some(extra) = configured {
+            env.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
+        Ok(Launch0 {
+            program,
+            args,
+            extra_read,
+            path_dirs,
+            env,
+            version,
+        })
+    }
+
+    /// Writes the script for a terminal login of `agent_id` with `method` (the agent's
+    /// command plus the method's arguments, or the method's own command), in the agent
+    /// sandbox with the agent's home and environment, minus Maze's session token and
+    /// the user's key. Open it with a terminal; it opens the login's links in the
+    /// browser.
+    pub fn terminal_login(
+        &self,
+        agent_id: &str,
+        method: &AuthMethodInfo,
+        settings: &Settings,
+    ) -> Result<LoginScript, StartError> {
+        let terminal = method
+            .terminal
+            .as_ref()
+            .ok_or_else(|| StartError::NotATerminalLogin(method.name.clone()))?;
+        let entry = self
+            .entry(settings, agent_id)
+            .ok_or_else(|| StartError::UnknownAgent(agent_id.to_owned()))?;
+        let paths = &self.config.paths;
+        let Launch0 {
+            program,
+            args,
+            extra_read,
+            path_dirs,
+            env: agent_env,
+            version: _,
+        } = self.launch(&entry, settings)?;
+        let agent_home = paths.agent_home(&safe_id(&entry.id));
+        let tmp = agent_home.join(".tmp");
+        std::fs::create_dir_all(&tmp).map_err(StartError::Login)?;
+        let login_dir = paths.agents_dir().join("login");
+        let shim_dir = login_dir.join("bin");
+        let open_shim = auth::install_open_shim(&shim_dir).map_err(StartError::Login)?;
+        let urls = agent_home.join(".mazemail-open-urls");
+
+        let mut path = vec![shim_dir];
+        path.extend(path_dirs.iter().cloned());
+        let mut env = base_env(paths, &agent_home, &tmp, path);
+        env.insert(auth::OPEN_URLS_ENV.to_owned(), urls.display().to_string());
+        env.insert("BROWSER".to_owned(), open_shim.display().to_string());
+        env.extend(agent_env);
+        env.extend(terminal.env.clone());
+
+        let (program, args) = match &terminal.command {
+            None => {
+                let mut args = args;
+                args.extend(terminal.args.clone());
+                (program, args)
+            }
+            Some(command) => {
+                let program = if Path::new(command).is_absolute() {
+                    PathBuf::from(command)
+                } else {
+                    path_dirs
+                        .iter()
+                        .map(|dir| dir.join(command))
+                        .find(|candidate| candidate.is_file())
+                        .or_else(|| resolve_program(command))
+                        .ok_or_else(|| StartError::ProgramNotFound(command.clone()))?
+                };
+                (program, terminal.args.clone())
+            }
+        };
+        let sandboxed = settings.agent_sandbox.enabled;
+        let policy = if sandboxed {
+            sandbox::check_available()?;
+            let mut read = extra_read;
+            read.push(login_dir.clone());
+            Some(session_policy(&PolicyInput {
+                paths,
+                home: self.config.home.as_deref(),
+                agent_id: &entry.id,
+                agent_home: &agent_home,
+                scratch: &agent_home,
+                tmp: &tmp,
+                cli_dir: None,
+                extra_read: &read,
+                socket: None,
+                settings: &settings.agent_sandbox,
+            })?)
+        } else {
+            None
+        };
+        let display = std::iter::once(program.display().to_string())
+            .chain(args.iter().cloned())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let command = LoginCommand {
+            title: format!("{}: {}", entry.name, method.name),
+            program,
+            args,
+            env,
+            cwd: agent_home,
+            policy,
+            urls,
+        };
+        let script = auth::login_script(&command)?;
+        let extension = if cfg!(target_os = "macos") {
+            "command"
+        } else {
+            "sh"
+        };
+        let path = login_dir.join(format!("{}.{extension}", safe_id(&entry.id)));
+        auth::write_script(&path, &script).map_err(StartError::Login)?;
+        Ok(LoginScript {
+            path,
+            display,
+            sandboxed,
+        })
+    }
+
+    /// Saves a pasted key for `agent_id` (encrypted store) and returns the environment
+    /// variable it will be passed in. `provider` is the provider of the agent's API-key
+    /// sign-in method, for agents Maze doesn't know.
+    pub async fn save_key(
+        &self,
+        agent_id: &str,
+        provider: Option<&str>,
+        key: &str,
+    ) -> Result<String, StartError> {
+        let key = auth::clean_key(key)?;
+        let env = auth::key_env(agent_id, provider, key).ok_or(KeyError::Unsupported)?;
+        self.config
+            .host
+            .set_agent_key(
+                catalog::resolve_alias(agent_id),
+                AgentKey {
+                    env: env.to_owned(),
+                    key: Sensitive::new(key.to_owned()),
+                },
+            )
+            .await?;
+        Ok(env.to_owned())
+    }
+
+    /// Deletes the saved key of `agent_id`.
+    pub async fn remove_key(&self, agent_id: &str) -> Result<(), StartError> {
+        Ok(self
+            .config
+            .host
+            .delete_agent_key(catalog::resolve_alias(agent_id))
+            .await?)
+    }
+
+    /// The remembered model, mode and other choices per agent.
+    pub fn preferences(&self) -> Preferences {
+        Preferences::new(self.config.paths.agents_dir().join("preferences.json"))
+    }
+
+    /// Remembers a choice for `agent_id`'s next sessions.
+    pub fn remember_control(
+        &self,
+        agent_id: &str,
+        id: &str,
+        value: &ControlValue,
+    ) -> std::io::Result<()> {
+        self.preferences()
+            .remember(catalog::resolve_alias(agent_id), id, value)
+    }
+
+    /// Agent id → environment variable of every saved key.
+    pub async fn key_envs(&self) -> Result<BTreeMap<String, String>, StartError> {
+        Ok(self.config.host.agent_key_envs().await?)
     }
 
     /// Attaches a different mail thread to a running session (rewrites `thread.md`).
@@ -534,6 +908,90 @@ impl AgentManager {
     }
 }
 
+/// The lease key of the managed Node runtime.
+const NODE_LEASE: &str = "#node";
+
+/// Removes managed Node runtimes other than `current`.
+fn remove_old_node(node_dir: &Path, current: &Path) {
+    let Ok(entries) = std::fs::read_dir(node_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        if path != current && name.to_string_lossy().starts_with("node-") && path.is_dir() {
+            tracing::info!(runtime = %name.to_string_lossy(), "removing an old Node runtime");
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+}
+
+/// The environment every agent process and login starts from: nothing of Maze's own
+/// environment except `LANG`, `USER`, `LOGNAME` and a system `SHELL`.
+fn base_env(
+    paths: &AgentPaths,
+    agent_home: &Path,
+    tmp: &Path,
+    mut path: Vec<PathBuf>,
+) -> BTreeMap<String, String> {
+    path.extend(
+        [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ]
+        .into_iter()
+        .map(PathBuf::from),
+    );
+    let path = std::env::join_paths(&path)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut env = BTreeMap::from([
+        ("PATH".to_owned(), path),
+        ("HOME".to_owned(), agent_home.display().to_string()),
+        ("TMPDIR".to_owned(), tmp.display().to_string()),
+        (
+            settings::DATA_DIR_ENV.to_owned(),
+            paths.data_dir().display().to_string(),
+        ),
+        (
+            "npm_config_cache".to_owned(),
+            agent_home.join(".npm").display().to_string(),
+        ),
+        (
+            "XDG_CONFIG_HOME".to_owned(),
+            agent_home.join(".config").display().to_string(),
+        ),
+        (
+            "XDG_CACHE_HOME".to_owned(),
+            agent_home.join(".cache").display().to_string(),
+        ),
+        (
+            "XDG_DATA_HOME".to_owned(),
+            agent_home.join(".local/share").display().to_string(),
+        ),
+        (
+            "LANG".to_owned(),
+            std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".to_owned()),
+        ),
+    ]);
+    // A shell for agents that look for one; never one from the home directory.
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|shell| shell.starts_with("/bin/") || shell.starts_with("/usr/bin/"))
+        .unwrap_or_else(|| "/bin/sh".to_owned());
+    env.insert("SHELL".to_owned(), shell);
+    for name in ["USER", "LOGNAME"] {
+        if let Ok(value) = std::env::var(name) {
+            env.insert(name.to_owned(), value);
+        }
+    }
+    env
+}
+
 /// An absolute program path, or a name looked up on `PATH`.
 fn resolve_program(command: &str) -> Option<PathBuf> {
     let path = Path::new(command);
@@ -549,6 +1007,165 @@ fn resolve_program(command: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::MemoryHost;
+    use crate::archive::tests::{sha256_hex, tar_gz};
+    use crate::fake::{FakeAgent, FakeStep};
+    use crate::http::tests::MemoryHttp;
+    use crate::registry::{BinaryTarget, Distribution, RegistryAgent, platform_key};
+    use crate::session::{SessionEvent, SessionStatus};
+
+    fn registry(version: &str, url: &str, sha256: String) -> Registry {
+        let mut targets = BTreeMap::new();
+        if let Some(key) = platform_key() {
+            targets.insert(
+                key.to_owned(),
+                BinaryTarget {
+                    archive: url.to_owned(),
+                    sha256: Some(sha256),
+                    cmd: "./cursor-agent".to_owned(),
+                    args: vec!["acp".to_owned()],
+                    env: BTreeMap::new(),
+                },
+            );
+        }
+        Registry {
+            version: "1.0.0".to_owned(),
+            agents: vec![RegistryAgent {
+                id: "cursor".to_owned(),
+                name: "Cursor".to_owned(),
+                version: version.to_owned(),
+                description: None,
+                repository: None,
+                website: None,
+                authors: Vec::new(),
+                license: None,
+                icon: None,
+                distribution: Distribution {
+                    binary: Some(targets),
+                    npx: None,
+                    uvx: None,
+                },
+            }],
+        }
+    }
+
+    async fn ready(handle: &SessionHandle) {
+        let events = handle.events();
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while let Ok(event) = events.recv().await {
+                if event == SessionEvent::Status(SessionStatus::Ready) {
+                    return;
+                }
+            }
+            panic!("the session ended");
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn updates_install_beside_running_sessions_and_old_versions_go_later() {
+        if platform_key().is_none() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AgentPaths::new(dir.path());
+        let http = Arc::new(MemoryHttp::default());
+        let mut sums = Vec::new();
+        for (version, url) in [
+            ("1.0.0", "https://downloads.example/agent-1.tar.gz"),
+            ("2.0.0", "https://downloads.example/agent-2.tar.gz"),
+            ("3.0.0", "https://downloads.example/agent-3.tar.gz"),
+        ] {
+            let script = format!("#!/bin/sh\necho {version}\n");
+            let archive = tar_gz(&[("cursor-agent", script.as_bytes(), true)]);
+            http.insert(url, &archive);
+            sums.push((version, url, sha256_hex(&archive)));
+        }
+        let manager = AgentManager::new(ManagerConfig {
+            paths: paths.clone(),
+            home: None,
+            cli_program: None,
+            socket: None,
+            host: Arc::new(MemoryHost::default()),
+            http: Arc::clone(&http) as Arc<dyn Http>,
+        });
+        let programs: Arc<Mutex<Vec<PathBuf>>> = Arc::default();
+        {
+            let programs = Arc::clone(&programs);
+            manager.set_test_agents(Arc::new(move |spec| {
+                programs.lock().unwrap().push(spec.program.clone());
+                Some(FakeAgent::new(vec![FakeStep::Message("hi".into())]))
+            }));
+        }
+        let mut settings = Settings::default();
+        settings.agent_sandbox.enabled = false;
+        let start = |settings: Settings| StartRequest {
+            agent_id: "cursor".to_owned(),
+            mail_thread: None,
+            resume: None,
+            settings,
+        };
+
+        let (v1, url1, sum1) = sums[0].clone();
+        manager.set_registry(registry(v1, url1, sum1));
+        manager.install("cursor", &settings, &|_| {}).await.unwrap();
+        let first = manager.start(start(settings.clone())).await.unwrap();
+        ready(&first.handle).await;
+
+        // The registry has 2.0.0: the update installs it next to the running 1.0.0.
+        let (v2, url2, sum2) = sums[1].clone();
+        manager.set_registry(registry(v2, url2, sum2));
+        let report = manager.update_installed(&settings).await;
+        assert_eq!(
+            report.updated,
+            vec![("cursor".to_owned(), "Cursor".to_owned(), "2.0.0".to_owned())]
+        );
+        assert!(report.failed.is_empty());
+        assert!(paths.install_dir("cursor", "2.0.0").is_dir());
+        assert!(
+            paths.install_dir("cursor", "1.0.0").is_dir(),
+            "still in use"
+        );
+        // The running session keeps working.
+        first.handle.prompt("still there?");
+        ready(&first.handle).await;
+        // New sessions run the new version.
+        let second = manager.start(start(settings.clone())).await.unwrap();
+        ready(&second.handle).await;
+        let programs_now = programs.lock().unwrap().clone();
+        assert!(programs_now[0].starts_with(paths.install_dir("cursor", "1.0.0")));
+        assert!(programs_now[1].starts_with(paths.install_dir("cursor", "2.0.0")));
+        // Nothing left to update.
+        assert_eq!(
+            manager.update_installed(&settings).await,
+            UpdateReport::default()
+        );
+
+        // The old version goes once its last session ended.
+        drop(first);
+        for _ in 0..500 {
+            if !paths.install_dir("cursor", "1.0.0").exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(!paths.install_dir("cursor", "1.0.0").exists());
+        assert!(paths.install_dir("cursor", "2.0.0").is_dir());
+
+        // auto_update off: nothing is fetched or installed.
+        let (v3, url3, sum3) = sums[2].clone();
+        manager.set_registry(registry(v3, url3, sum3));
+        settings.agent.auto_update = false;
+        let requests = http.requests();
+        assert_eq!(
+            manager.auto_update(&settings).await.unwrap(),
+            UpdateReport::default()
+        );
+        assert_eq!(http.requests(), requests);
+        assert!(!paths.install_dir("cursor", "3.0.0").exists());
+        drop(second);
+    }
 
     #[test]
     fn programs_resolve() {

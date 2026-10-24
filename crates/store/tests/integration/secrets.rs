@@ -95,3 +95,52 @@ fn secrets_round_trip_per_account_and_go_with_the_account() {
     );
     common::close(store);
 }
+
+fn agent_secret(store: &store::Store, agent: &str) -> Option<(String, String)> {
+    store
+        .reader()
+        .unwrap()
+        .agent_secret(agent)
+        .unwrap()
+        .map(|(env, secret)| (env, secret.as_str().to_owned()))
+}
+
+#[test]
+fn agent_keys_round_trip_and_are_deleted_on_sign_out() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = common::open(tmp.path());
+    assert_eq!(agent_secret(&store, "claude-acp"), None);
+    store
+        .write_blocking(|w| {
+            w.set_agent_secret("claude-acp", "ANTHROPIC_API_KEY", "sk-ant-api03-one")?;
+            w.set_agent_secret("claude-acp", "CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-two")?;
+            w.set_agent_secret("codex-acp", "OPENAI_API_KEY", "sk-proj-three")
+        })
+        .unwrap();
+    assert_eq!(
+        agent_secret(&store, "claude-acp"),
+        Some((
+            "CLAUDE_CODE_OAUTH_TOKEN".to_owned(),
+            "sk-ant-oat01-two".to_owned()
+        ))
+    );
+    assert_eq!(
+        store.reader().unwrap().agent_secret_envs().unwrap(),
+        vec![
+            (
+                "claude-acp".to_owned(),
+                "CLAUDE_CODE_OAUTH_TOKEN".to_owned()
+            ),
+            ("codex-acp".to_owned(), "OPENAI_API_KEY".to_owned()),
+        ]
+    );
+    store
+        .write_blocking(|w| {
+            w.delete_agent_secret("claude-acp")?;
+            w.delete_agent_secret("claude-acp")
+        })
+        .unwrap();
+    assert_eq!(agent_secret(&store, "claude-acp"), None);
+    assert!(agent_secret(&store, "codex-acp").is_some());
+    common::close(store);
+}

@@ -424,6 +424,18 @@ pub trait Queries: sealed::Sealed {
         secrets::legacy_secret_accounts(self.connection(sealed::Token))
     }
 
+    /// The sign-in key of an agent (schema v6): the environment variable it is passed
+    /// in and the secret, wiped from memory when dropped. Never log it.
+    fn agent_secret(&self, agent_id: &str) -> Result<Option<(String, zeroize::Zeroizing<String>)>> {
+        secrets::agent_secret(self.connection(sealed::Token), agent_id)
+    }
+
+    /// `(agent id, environment variable)` of every stored agent sign-in key, without
+    /// the secrets.
+    fn agent_secret_envs(&self) -> Result<Vec<(String, String)>> {
+        secrets::agent_secret_envs(self.connection(sealed::Token))
+    }
+
     // ---- tokens, proposals, audit, agents -----------------------------------------
 
     /// All API tokens (hashes only).

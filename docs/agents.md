@@ -45,8 +45,16 @@ Maze caches the registry in `<data dir>/agents/registry.json` and uses the copy 
 you're offline.
 
 **Install** puts the agent into `<data dir>/agents/<id>/<version>/`, once per
-version; Maze starts it from there and never fetches it on launch. **Update** appears
-when the registry has a newer version.
+version; Maze starts it from there and never fetches it on launch.
+
+Installed agents update themselves, like Zed's external agents: at start and every
+four hours Maze looks at the registry (downloaded at most once a day) and installs a
+newer version of each installed agent in the background, the same way as **Install**
+(sandboxed npm, checked downloads). New conversations use the new version; running
+ones keep theirs, and the old version is removed once no conversation uses it. The
+agent's row shows "Updated to v…" or why an update failed. When Maze pins a newer Node
+runtime for npm agents, the update installs it too. `"agent": { "auto_update": false }`
+turns this off; **Update** in an agent's row still updates it by hand.
 
 - npm agents run on Maze's own Node runtime (Node 24, in `<data dir>/runtimes/node/`),
   downloaded from nodejs.org on the first install and checked against digests built
@@ -71,13 +79,41 @@ context: Maze writes it as Markdown to `thread.md` in the session's folder and t
 agent about it with your first prompt. Select another thread and click **Attach selected
 thread** to switch.
 
-- `enter` sends, `shift-enter` starts a new line, the square button stops the agent.
+The column looks like Zed's agent panel: the toolbar shows the conversation's title,
+**+** opens a menu of the installed agents to start a new conversation with, the clock
+lists the conversations about the selected thread. Your messages are bordered bubbles,
+the agent's answers plain Markdown, "Thinking" collapses, tool calls are compact rows
+(click one with details to expand it), terminal commands and permission prompts are
+cards, and errors show as red callouts.
+
+- `enter` sends, `shift-enter` starts a new line, the red square button stops the
+  agent.
 - Answers stream in as Markdown. Tool calls show collapsed with their status; click one
   to see its details. Plans show as a checklist.
 - `cmd-n` (or **+**) starts a new conversation. The clock button lists the
   conversations about the selected thread; click one to continue it. Conversations are
   stored encrypted in Maze's database; agents that support `session/load` also get
   their earlier session back.
+
+### Model, mode and thinking
+
+The bar under the prompt shows what the agent lets you choose, as the agent offers it
+(ACP session config options, or session modes for agents that only have those), like
+Zed's message editor:
+
+- **Mode** on the left: for Claude Code "Manual", "Accept Edits", "Plan" and so on;
+  for Codex its permission modes; for Gemini CLI "Default", "Auto Edit", "YOLO".
+- **Model** and **thinking effort** on the right (Claude Code: model and "Effort",
+  only for models that support it; Codex: model and reasoning effort), then other
+  switches the agent offers (Claude Code's "Fast").
+
+Each shows only when the agent offers it, follows the agent when it changes something
+itself, and is disabled while the agent works. Keys in the prompt: `shift-tab` next
+mode, `alt-tab` next model, `ctrl-'` next thinking effort.
+
+Maze remembers your last choice per agent in `<data dir>/agents/preferences.json`
+(model and mode names only) and applies it to that agent's next conversations, when
+the agent still offers it.
 
 ### Permission prompts
 
@@ -109,23 +145,75 @@ the agent's token.
 ## Signing in
 
 Each agent keeps its own login in its own home, `<data dir>/agent-home/<id>/`, separate
-from the copy you use in a terminal. When an agent needs a login, the column shows its
-sign-in methods:
+from the copy you use in a terminal. When an agent needs a login (when it starts, or for
+Claude Code at your first message), the column shows a **Sign in to …** card with the
+agent's explanation and one button per way the agent offers, plus a field for an API
+key or token when the agent takes one. Once signed in, the conversation shows how
+("Signed in with an API key", "Signed in with your Claude account"), and so does the
+agent's row in the picker.
 
-- Methods the agent handles itself (for example "Log in with ChatGPT") run when you
-  click them. Agents in the sandbox can't open your browser; if the agent prints a
-  sign-in link, Maze shows it so you can open it yourself.
-- Terminal logins show the command to run in a terminal (with `HOME` pointing at the
-  agent's home in Maze). Run it, then click the method again.
+- **Sign in… (terminal logins).** Maze writes a small login script and opens it in
+  Terminal. It runs the agent's own login command with exactly the agent's environment
+  (`HOME` is the agent's home in Maze, Maze's Node runtime on `PATH`) and in the same
+  agent sandbox, so the login lands where the agent finds it and can't touch anything
+  else. Links the login wants to open (the sign-in page) open in your browser. When the
+  login says it's done, click **Done, retry** in Maze. The script is in
+  `<data dir>/agents/login/<id>.command` and contains no keys or tokens.
+- **The agent's own methods** (for example "Cursor Login", "ChatGPT", "Log in with
+  Google") run inside the agent. Agents in the sandbox can't start your browser, so
+  Maze opens the sign-in page for them and shows the link with **Open** and **Copy**
+  buttons. Finish in the browser; the card shows progress and the agent's error if the
+  sign-in fails.
+- **API key or token.** Paste it into the card and click **Save key and retry**. Maze
+  stores it encrypted in its database (never in `settings.json`, the agent's home or a
+  log) and passes it to that agent only, in one environment variable. **Remove key**
+  (in the card or in the agent's row in the picker) deletes it; conversations you start
+  afterwards run without it.
 
-Agents that read API keys from the environment don't see yours: Maze starts agents with
-an empty environment plus `PATH`, `HOME`, `TMPDIR`, `LANG`, `SHELL` and the variables
-below. To give an agent a key, add it under `agent.env` (stored in plain text in your
-settings file):
+| Agent       | Sign in from Maze                                                                 | Key variable                                                                 |
+| ----------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Claude Code | **Sign in… Claude Subscription** or **Anthropic Console** (Terminal), or a key     | `sk-ant-oat…` (from `claude setup-token`) → `CLAUDE_CODE_OAUTH_TOKEN`, else `ANTHROPIC_API_KEY` |
+| Codex       | **ChatGPT** (browser) or **API Key** with a saved key                             | `OPENAI_API_KEY`                                                             |
+| Gemini CLI  | **Log in with Google** (browser) or its Gemini API key method with a saved key   | `GEMINI_API_KEY`                                                             |
+| Cursor      | **Cursor Login** (browser), or a key                                              | `CURSOR_API_KEY`                                                             |
+| pi          | **Launch pi in the terminal** (Terminal); pi keeps its provider keys itself       | –                                                                            |
+
+### Claude Code
+
+1. Start Claude Code in the agent column and send a message. If it isn't signed in,
+   the sign-in card appears.
+2. Either click **Sign in… Claude Subscription** (or **Anthropic Console** for API
+   billing): Terminal opens, the sign-in page opens in your browser, and the Terminal
+   window says when it's done. Click **Done, retry** in Maze.
+3. Or run `claude setup-token` in your own terminal, paste the `sk-ant-oat…` token (or
+   an Anthropic API key, `sk-ant-api…`) into the card and click **Save key and retry**.
+
+Claude Code in Maze has its own configuration directory (`CLAUDE_CONFIG_DIR` in its
+home), so it never reads or replaces the login of the Claude Code you use in a
+terminal. In the sandbox it can't write to your macOS keychain, so it keeps the
+subscription login in `.claude/.credentials.json` in its home in Maze (mode 0600). The
+"Anthropic Console" login needs to create a key in the keychain and may fail in the
+sandbox; paste a Console API key instead.
+
+### Cursor
+
+Click **Cursor Login**. Maze opens Cursor's sign-in page in your browser (the agent
+asks for it; the sandbox can't open browsers itself); sign in there and the card turns
+into the conversation. If the page doesn't open, use the link's **Open** or **Copy**
+button. Or paste a Cursor API key (Cursor dashboard, Integrations).
+
+### Keys in settings.json
+
+`agent.env` still sets extra environment variables per agent, but it is plain text:
+use it for settings like a model name, not for keys. A key saved in the sign-in card
+wins over the same variable in `agent.env`.
 
 ```jsonc
-{ "agent": { "env": { "codex-acp": { "OPENAI_API_KEY": "sk-…" } } } }
+{ "agent": { "env": { "claude-acp": { "ANTHROPIC_MODEL": "claude-sonnet-4-5" } } } }
 ```
+
+Agents don't see your own environment: Maze starts agents with an empty environment
+plus `PATH`, `HOME`, `TMPDIR`, `LANG`, `SHELL`, the variables above and `agent.env`.
 
 ## What an agent sees
 

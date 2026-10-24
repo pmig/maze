@@ -477,11 +477,21 @@ pub fn installed(paths: &AgentPaths, id: &str, preferred: Option<&str>) -> Optio
 
 /// Removes every installed version of `id` except `keep`.
 pub fn remove_other_versions(paths: &AgentPaths, id: &str, keep: &str) {
+    remove_versions_except(paths, id, &[keep]);
+}
+
+/// Removes every installed version of `id` except those in `keep` (the newest one,
+/// and the ones running sessions use).
+pub fn remove_versions_except(paths: &AgentPaths, id: &str, keep: &[&str]) {
     let Ok(entries) = std::fs::read_dir(paths.agents_dir().join(safe_id(id))) else {
         return;
     };
     for entry in entries.flatten() {
-        if entry.file_name() != keep {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        // Unfinished installs (`.staging-…`, `.download-…`) belong to a running install.
+        if !name.starts_with('.') && !keep.iter().any(|k| safe_id(k) == name) {
+            tracing::info!(id, version = %name, "removing an old agent version");
             let _ = std::fs::remove_dir_all(entry.path());
         }
     }

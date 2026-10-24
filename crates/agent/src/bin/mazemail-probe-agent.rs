@@ -1,8 +1,9 @@
 //! A tiny ACP agent over stdio for the manager's end-to-end test (feature
 //! `test-support`, never shipped). A prompt `probe <path>` answers with what the agent
 //! process sees: its `HOME`, working directory, whether it got a session token, the
-//! session folder's files, whether `<path>` is readable, and whether Maze's own
-//! environment leaked into it.
+//! session folder's files, whether `<path>` is readable, whether Maze's own
+//! environment leaked into it, and which sign-in variables it got (as SHA-256, so the
+//! key itself never reaches the transcript).
 
 #![allow(clippy::print_stderr)]
 
@@ -14,6 +15,15 @@ use agent_client_protocol::schema::v1::{
 };
 use agent_client_protocol::{Agent, ByteStreams, Client, ConnectionTo, Responder};
 use tokio_util::compat::{TokioAsyncReadCompatExt as _, TokioAsyncWriteCompatExt as _};
+
+/// SHA-256 of a variable's value, or `none`.
+fn digest(name: &str) -> String {
+    use sha2::Digest as _;
+    std::env::var(name).map_or_else(
+        |_| "none".to_owned(),
+        |value| hex::encode(sha2::Sha256::digest(value.as_bytes())),
+    )
+}
 
 fn probe(path: &str) -> String {
     let env = |name: &str| std::env::var(name).unwrap_or_else(|_| "none".to_owned());
@@ -48,6 +58,13 @@ fn probe(path: &str) -> String {
             "tmp_writable={}",
             std::fs::write(std::env::temp_dir().join("probe"), b"x").is_ok()
         ),
+        format!("anthropic_key_sha256={}", digest("ANTHROPIC_API_KEY")),
+        format!("oauth_token_sha256={}", digest("CLAUDE_CODE_OAUTH_TOKEN")),
+        format!(
+            "open_urls={}",
+            std::env::var("MAZEMAIL_OPEN_URLS").is_ok_and(|p| p.ends_with(".open-urls"))
+        ),
+        format!("browser={}", env("BROWSER").ends_with("/.bin/open")),
     ]
     .join("\n")
 }

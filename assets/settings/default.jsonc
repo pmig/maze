@@ -127,9 +127,15 @@
     //               "args": ["--acp"], "env": { "MY_AGENT_MODEL": "small" } }
     // They run in the agent sandbox like registry agents.
     "custom": {},
-    // Agents start with an empty environment. Extra variables per agent id, e.g. an
-    // API key: "codex-acp": { "OPENAI_API_KEY": "sk-…" }. Stored in plain text here.
-    "env": {}
+    // Agents start with an empty environment. Extra variables per agent id, e.g.
+    // "claude-acp": { "ANTHROPIC_MODEL": "…" }. This file is plain text: don't put API
+    // keys here. Paste keys into the agent column's sign-in card instead; Maze keeps
+    // them encrypted in its database and passes them only to that agent.
+    "env": {},
+    // Install new versions of installed agents in the background (checked at start
+    // and every few hours). Running conversations keep their version. false: only
+    // the "Update" button in the agent column.
+    "auto_update": true
   },
 
   // The sandbox every agent process runs in.

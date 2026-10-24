@@ -88,6 +88,15 @@ impl ProposalView {
     }
 }
 
+/// An agent's sign-in key from Maze's encrypted store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentKey {
+    /// The environment variable it is passed in (`ANTHROPIC_API_KEY`, …).
+    pub env: String,
+    /// The key.
+    pub key: Sensitive<String>,
+}
+
 /// A host call failed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
@@ -149,6 +158,18 @@ pub trait AgentHost: Send + Sync {
 
     /// Accepts or rejects every pending item of a proposal.
     async fn decide_proposal(&self, proposal: i64, accept: bool) -> Result<(), HostError>;
+
+    /// The agent's sign-in key (encrypted store), if the user saved one.
+    async fn agent_key(&self, agent_id: &str) -> Result<Option<AgentKey>, HostError>;
+
+    /// Saves the agent's sign-in key, replacing an earlier one.
+    async fn set_agent_key(&self, agent_id: &str, key: AgentKey) -> Result<(), HostError>;
+
+    /// Deletes the agent's sign-in key ("Remove key").
+    async fn delete_agent_key(&self, agent_id: &str) -> Result<(), HostError>;
+
+    /// Agent id → environment variable of every saved key (no keys).
+    async fn agent_key_envs(&self) -> Result<BTreeMap<String, String>, HostError>;
 }
 
 #[derive(Debug, Default)]
@@ -156,6 +177,7 @@ struct MemoryState {
     exports: BTreeMap<ThreadId, String>,
     threads: Vec<(AgentThreadInfo, Option<Vec<u8>>)>,
     proposals: Vec<ProposalView>,
+    keys: BTreeMap<String, AgentKey>,
     clock: i64,
 }
 
@@ -208,6 +230,11 @@ impl MemoryHost {
     /// Every proposal, decided or not.
     pub fn proposals(&self) -> Vec<ProposalView> {
         self.state().proposals.clone()
+    }
+
+    /// A saved sign-in key, for assertions.
+    pub fn key(&self, agent_id: &str) -> Option<AgentKey> {
+        self.state().keys.get(agent_id).cloned()
     }
 
     /// A stored transcript, for assertions.
@@ -358,5 +385,28 @@ impl AgentHost for MemoryHost {
             }
         }
         Ok(())
+    }
+
+    async fn agent_key(&self, agent_id: &str) -> Result<Option<AgentKey>, HostError> {
+        Ok(self.key(agent_id))
+    }
+
+    async fn set_agent_key(&self, agent_id: &str, key: AgentKey) -> Result<(), HostError> {
+        self.state().keys.insert(agent_id.to_owned(), key);
+        Ok(())
+    }
+
+    async fn delete_agent_key(&self, agent_id: &str) -> Result<(), HostError> {
+        self.state().keys.remove(agent_id);
+        Ok(())
+    }
+
+    async fn agent_key_envs(&self) -> Result<BTreeMap<String, String>, HostError> {
+        Ok(self
+            .state()
+            .keys
+            .iter()
+            .map(|(id, key)| (id.clone(), key.env.clone()))
+            .collect())
     }
 }
