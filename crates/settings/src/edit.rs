@@ -100,6 +100,48 @@ pub fn write_setting(file: &Path, keys: &[&str], value: &Value) -> Result<(), Ed
     replace_file(&target, &out).map_err(io_error)
 }
 
+/// What a new `settings.json` holds: a pointer to the defaults and an empty object.
+pub const USER_SETTINGS_TEMPLATE: &str = "\
+// Your Maze settings. Add only the keys you want to change; they are merged over the
+// defaults (\"Maze: Open Default Settings\" in the command palette shows them all, with
+// comments). Comments and trailing commas are allowed.
+{
+}
+";
+
+/// Replaces the whole settings file with `text` (the settings editor's Save): written
+/// atomically (temporary file and rename, so the settings watcher never reads half of
+/// it), through a symlink rather than over it, with a trailing newline. The text is
+/// written as it is, even if it isn't valid JSONC: it is what the user typed.
+pub fn write_settings_file(file: &Path, text: &str) -> Result<(), EditError> {
+    let target = std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
+    let mut out = text.replace("\r\n", "\n");
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    replace_file(&target, &out).map_err(|source| EditError::Io {
+        path: file.to_path_buf(),
+        source,
+    })
+}
+
+/// Reads the settings file, creating it from [`USER_SETTINGS_TEMPLATE`] first if it
+/// doesn't exist yet.
+pub fn read_or_create_settings_file(file: &Path) -> Result<String, EditError> {
+    let io_error = |source| EditError::Io {
+        path: file.to_path_buf(),
+        source,
+    };
+    match std::fs::read_to_string(file) {
+        Ok(text) => Ok(text),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            write_settings_file(file, USER_SETTINGS_TEMPLATE)?;
+            std::fs::read_to_string(file).map_err(io_error)
+        }
+        Err(err) => Err(io_error(err)),
+    }
+}
+
 /// A JSON value as CST input.
 fn cst_value(value: &Value) -> CstInputValue {
     match value {
@@ -215,6 +257,37 @@ mod tests {
             matches!(&err, Err(EditError::NotAnObject { key, .. }) if key == "folder_pane"),
             "{err:?}"
         );
+    }
+
+    #[test]
+    fn the_whole_file_is_written_with_a_trailing_newline() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config/settings.json");
+        // Created from the template, which loads cleanly.
+        let text = read_or_create_settings_file(&path).unwrap();
+        assert_eq!(text, USER_SETTINGS_TEMPLATE);
+        assert!(text.contains("Open Default Settings"));
+        assert_eq!(load_settings(&path).diagnostics, vec![]);
+        // An existing file is read as it is.
+        std::fs::write(&path, "{ \"layout\": \"wide\" }").unwrap();
+        assert_eq!(
+            read_or_create_settings_file(&path).unwrap(),
+            "{ \"layout\": \"wide\" }"
+        );
+
+        write_settings_file(&path, "{ \"layout\": \"classic\" }").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{ \"layout\": \"classic\" }\n"
+        );
+        // Broken text is written too (it's what the user typed); no temp file stays.
+        write_settings_file(&path, "{ \"layout\": \n").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ \"layout\": \n");
+        let files: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(files, vec![std::ffi::OsString::from("settings.json")]);
     }
 
     #[cfg(unix)]

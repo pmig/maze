@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Mutex;
 
-use gpui::{TestAppContext, VisualTestContext};
+use gpui::{Modifiers, TestAppContext, VisualTestContext};
 use mazemail_types::MessageId;
 use mazemail_types::compose::DraftOrigin;
 
@@ -17,6 +17,8 @@ struct FakeBackend {
     sends: Mutex<Vec<(Option<DraftId>, Draft)>>,
     send_error: Mutex<Option<String>>,
     no_identities: bool,
+    /// The footer of identity 1's account.
+    footer: String,
 }
 
 impl FakeBackend {
@@ -66,6 +68,14 @@ impl ComposeBackend for FakeBackend {
     fn delete_draft(&self, id: DraftId) -> BoxFuture<Result<(), ComposeError>> {
         self.deletes.lock().unwrap().push(id);
         Box::pin(async { Ok(()) })
+    }
+
+    fn footer(&self, identity: Option<IdentityId>) -> String {
+        if identity == Some(IdentityId(1)) {
+            self.footer.clone()
+        } else {
+            String::new()
+        }
     }
 
     fn send(
@@ -391,6 +401,71 @@ fn the_title_follows_the_subject(cx: &mut TestAppContext) {
     cx.simulate_input("Plans");
     assert_eq!(view.read_with(cx, |c, _| c.title.clone()), "Plans");
     assert_eq!(cx.window_title().as_deref(), Some("Plans"));
+}
+
+#[gpui::test]
+fn sent_with_maze_is_a_checkbox_kept_with_the_draft(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend {
+        footer: "Acme Inc. · Vienna\n".into(),
+        ..FakeBackend::default()
+    });
+    let (view, cx) = open(cx, backend.clone(), options());
+    // On by default (new drafts take `compose.support_maze`); the footer and the Maze
+    // line are previewed under the body, not part of it.
+    assert!(view.read_with(cx, |c, _| c.support_maze()));
+    assert_eq!(
+        view.read_with(cx, |c, _| c.footer_preview()),
+        vec![
+            SharedString::from("Acme Inc. · Vienna"),
+            SENT_WITH_MAZE.into()
+        ]
+    );
+    assert!(cx.debug_bounds("footer-preview").is_some());
+    cx.simulate_input("anna@example.com");
+    let body = view.read_with(cx, |c, cx| c.draft(cx).unwrap().body_markdown);
+    assert!(!body.contains("Sent with") && !body.contains("Acme"));
+
+    // Unchecking it is a change of the draft: autosaved with it.
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
+    let checkbox = cx
+        .debug_bounds("support-maze")
+        .expect("the checkbox is drawn");
+    cx.simulate_click(checkbox.center(), Modifiers::none());
+    cx.run_until_parked();
+    assert!(!view.read_with(cx, |c, _| c.support_maze()));
+    assert!(view.read_with(cx, |c, _| c.is_dirty()));
+    assert_eq!(
+        view.read_with(cx, |c, _| c.footer_preview()),
+        vec![SharedString::from("Acme Inc. · Vienna")]
+    );
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
+    let saves = backend.saves();
+    assert!(saves[0].1.support_maze);
+    assert!(!saves.last().unwrap().1.support_maze);
+
+    // And checked again; sending takes the box's state.
+    cx.simulate_click(checkbox.center(), Modifiers::none());
+    cx.run_until_parked();
+    assert!(view.read_with(cx, |c, _| c.support_maze()));
+    cx.simulate_keystrokes("cmd-enter");
+    cx.run_until_parked();
+    assert!(backend.sends()[0].1.support_maze);
+}
+
+#[gpui::test]
+fn a_draft_saved_without_the_maze_line_opens_unchecked(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend::default());
+    let mut options = options();
+    options.draft.support_maze = false;
+    let (view, cx) = open(cx, backend, options);
+    assert!(!view.read_with(cx, |c, _| c.support_maze()));
+    // No footer configured, no Maze line: no preview.
+    assert!(view.read_with(cx, |c, _| c.footer_preview()).is_empty());
+    assert!(cx.debug_bounds("footer-preview").is_none());
+    view.update_in(cx, |c, window, cx| c.set_support_maze(true, window, cx));
+    assert!(view.read_with(cx, |c, cx| c.draft(cx).unwrap().support_maze));
 }
 
 // ---- in a tab of the main window ----------------------------------------------------

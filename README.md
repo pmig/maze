@@ -44,7 +44,10 @@ Works today:
   dragged into splits, restored after a restart, with the agent column staying right
 - writing mail in a tab (Markdown, sent as plain text + HTML), each draft named with
   two random words, replies and forwards, local drafts, sending over SMTP (password or
-  OAuth) with an outbox that never sends twice
+  OAuth) with an outbox that never sends twice, a footer from the settings and an
+  optional "Sent with Maze" line
+- editing `settings.json` in a tab (`cmd-,`), applied on save, with its problems listed
+  by line
 - the `mazemail` CLI and `mazemail --headless` for scripts and agents
 - updates in the background with a "Restart to update" button, and a rollback if a new
   version keeps failing to start
@@ -54,7 +57,8 @@ Not there yet:
 - drafts on the server, send later, undo send, spell check, signatures per identity
 - the agents column (the panel is visible, but no agent can be connected yet)
 - filter rules (imported Thunderbird filters are kept, disabled)
-- a settings window, showing the recovery key
+- a settings window with forms (settings are edited as JSON for now), showing the
+  recovery key
 
 ## Install
 

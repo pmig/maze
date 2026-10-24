@@ -50,6 +50,15 @@ impl LoadedSettings {
     pub fn has_errors(&self) -> bool {
         self.diagnostics.iter().any(Diagnostic::is_error)
     }
+
+    /// Whether the user file was ignored as a whole (it can't be read, isn't valid
+    /// JSONC or isn't an object), so [`Self::settings`] are only the defaults. The
+    /// [`SettingsWatcher`](crate::SettingsWatcher) then keeps the last good settings.
+    pub fn file_ignored(&self) -> bool {
+        self.diagnostics
+            .iter()
+            .any(|d| d.is_error() && d.path.is_empty())
+    }
 }
 
 /// One problem with the user's settings file.
@@ -62,6 +71,10 @@ pub struct Diagnostic {
     pub path: String,
     /// A readable description.
     pub message: String,
+    /// The line of the user file it refers to (1-based): where the syntax error is, or
+    /// the key of an invalid or unknown value. `None` when the file can't be read or
+    /// the problem has no place in it.
+    pub line: Option<usize>,
 }
 
 /// The kind of a [`Diagnostic`].
@@ -111,6 +124,7 @@ pub fn load_settings(path: &Path) -> LoadedSettings {
                 kind: DiagnosticKind::Io,
                 path: String::new(),
                 message: format!("cannot read {}: {err}", path.display()),
+                line: None,
             });
             loaded
         }
@@ -122,10 +136,15 @@ pub fn load_settings(path: &Path) -> LoadedSettings {
 pub fn parse_settings(user_text: Option<&str>) -> LoadedSettings {
     let mut diagnostics = Vec::new();
     let mut merged = DEFAULT_VALUE.clone();
+    // Where keys are in the user file, for the diagnostics' line numbers.
+    let mut lines = KeyLines::default();
 
     if let Some(text) = user_text {
         match parse_jsonc(text) {
-            Ok(Value::Object(user)) => merge(&mut merged, Value::Object(user)),
+            Ok(Value::Object(user)) => {
+                merge(&mut merged, Value::Object(user));
+                lines = KeyLines::new(text);
+            }
             // An empty file parses as null: nothing to merge.
             Ok(Value::Null) => {}
             Ok(other) => diagnostics.push(Diagnostic {
@@ -135,10 +154,12 @@ pub fn parse_settings(user_text: Option<&str>) -> LoadedSettings {
                     "settings must be a JSON object, found {}",
                     value_kind(&other)
                 ),
+                line: KeyLines::new(text).line(&[]),
             }),
             Err(err) => diagnostics.push(Diagnostic {
                 kind: DiagnosticKind::Syntax,
                 path: String::new(),
+                line: Some(err.line_display()),
                 message: err.to_string(),
             }),
         }
@@ -147,10 +168,11 @@ pub fn parse_settings(user_text: Option<&str>) -> LoadedSettings {
     for _ in 0..MAX_REPAIRS {
         match deserialize(merged.clone()) {
             Ok((settings, ignored)) => {
-                diagnostics.extend(ignored.into_iter().map(|path| Diagnostic {
+                diagnostics.extend(ignored.into_iter().map(|segments| Diagnostic {
                     message: "unknown setting, ignored".to_owned(),
                     kind: DiagnosticKind::UnknownKey,
-                    path,
+                    path: format_path(&segments),
+                    line: lines.line(&segments),
                 }));
                 // Report in a stable order. serde_json's map order depends on whether
                 // some other crate in the build enables its `preserve_order` feature.
@@ -166,6 +188,7 @@ pub fn parse_settings(user_text: Option<&str>) -> LoadedSettings {
                     kind: DiagnosticKind::InvalidValue,
                     path: format_path(&segments),
                     message: format!("{}; using the default", err.inner()),
+                    line: lines.line(&segments),
                 });
                 if !repair(&mut merged, &DEFAULT_VALUE, segments) {
                     break;
@@ -179,6 +202,7 @@ pub fn parse_settings(user_text: Option<&str>) -> LoadedSettings {
         kind: DiagnosticKind::InvalidValue,
         path: String::new(),
         message: "settings could not be applied; using the defaults".to_owned(),
+        line: None,
     });
     LoadedSettings {
         settings: Settings::default(),
@@ -207,7 +231,7 @@ pub(crate) fn jsonc_options() -> ParseOptions {
 type DeserializeError = serde_path_to_error::Error<serde_json::Error>;
 
 /// Deserializes, collecting the paths of ignored (unknown) keys.
-fn deserialize(value: Value) -> Result<(Settings, Vec<String>), DeserializeError> {
+fn deserialize(value: Value) -> Result<(Settings, Vec<Vec<Segment>>), DeserializeError> {
     let mut ignored = Vec::new();
     let mut on_ignored = |path: serde_ignored::Path<'_>| {
         let mut segments = Vec::new();
@@ -215,7 +239,7 @@ fn deserialize(value: Value) -> Result<(Settings, Vec<String>), DeserializeError
         let is_meta =
             matches!(segments.as_slice(), [Segment::Key(key)] if META_KEYS.contains(&key.as_str()));
         if !is_meta {
-            ignored.push(format_path(&segments));
+            ignored.push(segments);
         }
     };
     let settings =
@@ -244,6 +268,54 @@ fn merge(base: &mut Value, overlay: Value) {
 enum Segment {
     Key(String),
     Index(usize),
+}
+
+/// The user file's syntax tree, to find the line of a key.
+#[derive(Default)]
+struct KeyLines<'a> {
+    text: &'a str,
+    root: Option<jsonc_parser::ast::Value<'a>>,
+}
+
+impl<'a> KeyLines<'a> {
+    fn new(text: &'a str) -> Self {
+        let root = jsonc_parser::parse_to_ast(text, &Default::default(), &jsonc_options())
+            .ok()
+            .and_then(|parsed| parsed.value);
+        Self { text, root }
+    }
+
+    /// The line (1-based) of the deepest node on `segments` that is in the file: the
+    /// key itself, or the closest parent that is (a key only the defaults have).
+    fn line(&self, segments: &[Segment]) -> Option<usize> {
+        use jsonc_parser::ast::Value as Node;
+        use jsonc_parser::common::Ranged as _;
+
+        let mut node = self.root.as_ref()?;
+        let mut start = node.start();
+        for segment in segments {
+            let (next, next_start) = match (segment, node) {
+                (Segment::Key(key), Node::Object(object)) => {
+                    let Some(prop) = object.properties.iter().find(|p| p.name.as_str() == key)
+                    else {
+                        break;
+                    };
+                    (&prop.value, prop.range.start)
+                }
+                (Segment::Index(index), Node::Array(array)) => {
+                    let Some(element) = array.elements.get(*index) else {
+                        break;
+                    };
+                    (element, element.start())
+                }
+                _ => break,
+            };
+            node = next;
+            start = next_start;
+        }
+        let before = self.text.get(..start)?;
+        Some(before.matches('\n').count() + 1)
+    }
 }
 
 fn error_segments(path: &serde_path_to_error::Path) -> Vec<Segment> {
@@ -388,7 +460,7 @@ mod tests {
         assert_eq!(loaded.diagnostics, vec![]);
         // Every key in default.jsonc is known, so nothing was ignored.
         let (_, ignored) = deserialize(value).unwrap();
-        assert_eq!(ignored, Vec::<String>::new());
+        assert_eq!(ignored, Vec::<Vec<Segment>>::new());
     }
 
     #[test]
@@ -430,8 +502,8 @@ mod tests {
             s.accounts.get("work"),
             Some(&AccountOverrides {
                 offline: Some(OfflinePolicy::All),
-                offline_recent_days: None,
                 remote_content: Some(RemoteContentPolicy::Never),
+                ..AccountOverrides::default()
             })
         );
         assert_eq!(s.agent.access_for("personal"), AgentAccess::LocalOnly);
@@ -531,6 +603,46 @@ mod tests {
             diagnostic.message
         );
         assert_eq!(loaded.settings, Settings::default());
+    }
+
+    #[test]
+    fn diagnostics_have_line_numbers() {
+        let text = r#"// my settings
+{
+  "theme": {
+    "mode": "darkish"
+  },
+  "lay_out": "wide",
+  "folder_pane": { "modes": [
+    "all",
+    7
+  ] },
+  "accounts": { "work": { "colour": 1 } }
+}
+"#;
+        let loaded = parse_settings(Some(text));
+        let lines: Vec<_> = loaded
+            .diagnostics
+            .iter()
+            .map(|d| (d.path.as_str(), d.line))
+            .collect();
+        assert_eq!(
+            lines,
+            vec![
+                ("accounts.work.colour", Some(11)),
+                ("folder_pane.modes[1]", Some(9)),
+                ("lay_out", Some(6)),
+                ("theme.mode", Some(4)),
+            ]
+        );
+
+        let broken = parse_settings(Some("{\n  \"layout\": \"wide\"\n  \"theme\": {}\n}"));
+        assert_eq!(broken.diagnostics[0].kind, DiagnosticKind::Syntax);
+        // The comma is missing at the end of line 2.
+        assert_eq!(broken.diagnostics[0].line, Some(2));
+        assert!(broken.file_ignored());
+        assert!(!loaded.file_ignored());
+        assert_eq!(parse_settings(Some("[1]")).diagnostics[0].line, Some(1));
     }
 
     #[test]

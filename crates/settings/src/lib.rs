@@ -15,7 +15,10 @@
 //!   channel, which works without a Tokio runtime, so the GPUI layer (`ui`) can
 //!   consume it directly.
 //! - [`write_setting`] changes one key of the user file and keeps its comments and
-//!   formatting (Maze writes the favorite folders, `folder_pane.favorites`).
+//!   formatting (Maze writes the favorite folders, `folder_pane.favorites`);
+//!   [`write_settings_file`] saves the whole file from Maze's settings editor.
+//! - A file with a syntax error doesn't reset anything: the watcher keeps the last
+//!   good settings and publishes the diagnostics (with line numbers) for the editor.
 //!
 //! This crate is layer L1 and has no GPUI dependency: `auth`, `sync`, `auto_update`,
 //! `agent` and `mazemail --headless` all read settings.
@@ -32,7 +35,10 @@ mod schema;
 mod watcher;
 
 pub use content::*;
-pub use edit::{EditError, write_setting};
+pub use edit::{
+    EditError, USER_SETTINGS_TEMPLATE, read_or_create_settings_file, write_setting,
+    write_settings_file,
+};
 pub use load::{
     DEFAULT_SETTINGS, Diagnostic, DiagnosticKind, LoadedSettings, default_settings, load_settings,
     parse_settings,

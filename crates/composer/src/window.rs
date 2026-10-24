@@ -15,6 +15,14 @@
 //!   draft. "Don't Save" deletes the draft this composer autosaved, but keeps a draft
 //!   that existed before it opened.
 //!
+//! # Footer and "Sent with Maze"
+//!
+//! The configured footer ([`ComposeBackend::footer`], the account's `compose.footer`)
+//! and, while "Add “Sent with Maze”" is checked, the Maze line are shown muted under
+//! the body: they are added when the message is sent, not part of the text you edit.
+//! The checkbox starts from the draft ([`Draft::support_maze`], new drafts take the
+//! `compose.support_maze` setting) and is saved with it.
+//!
 //! # In a tab
 //!
 //! Maze opens drafts in tabs of the main window ([`ComposerOptions::in_tab`], ADR-018):
@@ -30,18 +38,20 @@ use std::time::Duration;
 use gpui::{
     AnyWindowHandle, App, AppContext as _, ClickEvent, Context, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement as _, IntoElement, ParentElement as _, PathPromptOptions,
-    PromptLevel, Render, SharedString, Styled as _, Subscription, Task, Window, WindowBounds,
-    WindowOptions, div, prelude::FluentBuilder as _, px, relative, size,
+    PromptLevel, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
+    Task, Window, WindowBounds, WindowOptions, div, prelude::FluentBuilder as _, px, relative,
+    size,
 };
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IndexPath, Sizable as _, TitleBar,
     button::{Button, ButtonVariants as _},
+    checkbox::Checkbox,
     h_flex,
     input::{self, Input, InputEvent, InputState, Textarea, TextareaState},
     select::{Select, SelectEvent, SelectItem, SelectState},
     v_flex,
 };
-use mazemail_types::compose::{Draft, DraftAttachment};
+use mazemail_types::compose::{Draft, DraftAttachment, SENT_WITH_MAZE};
 use mazemail_types::{Address, DraftId, IdentityId};
 
 use ui::assets::IconName;
@@ -180,6 +190,10 @@ pub struct Composer {
     subject: Entity<InputState>,
     body: Entity<TextareaState>,
     attachments: Vec<DraftAttachment>,
+    /// "Add “Sent with Maze”" is checked.
+    support_maze: bool,
+    /// The configured footer of the selected identity's account (a preview).
+    footer: SharedString,
     cc_visible: bool,
     dirty: bool,
     sending: bool,
@@ -247,6 +261,7 @@ impl Composer {
             .identity
             .filter(|id| identities.iter().any(|i| i.id == *id))
             .or_else(|| identities.first().map(|i| i.id));
+        let footer = backend.footer(identity).trim().to_owned().into();
 
         let line = |placeholder: &'static str,
                     value: String,
@@ -328,6 +343,8 @@ impl Composer {
             backend,
             focus,
             attachments: draft.attachments.clone(),
+            support_maze: draft.support_maze,
+            footer,
             base: draft,
             draft_id: options.draft_id,
             opened_saved: options.draft_id.is_some(),
@@ -403,6 +420,32 @@ impl Composer {
         self.identity
     }
 
+    /// Whether "Add “Sent with Maze”" is checked.
+    pub fn support_maze(&self) -> bool {
+        self.support_maze
+    }
+
+    /// What is added below the message when it is sent, as the preview under the body
+    /// shows it: the footer and the Maze line, each when there is one.
+    pub fn footer_preview(&self) -> Vec<SharedString> {
+        let mut lines = Vec::new();
+        if !self.footer.is_empty() {
+            lines.push(self.footer.clone());
+        }
+        if self.support_maze {
+            lines.push(SENT_WITH_MAZE.into());
+        }
+        lines
+    }
+
+    /// Checks or unchecks "Add “Sent with Maze”" (saved with the draft).
+    pub fn set_support_maze(&mut self, on: bool, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.support_maze != on {
+            self.support_maze = on;
+            self.changed(window, cx);
+        }
+    }
+
     /// The draft as the fields describe it, or the first problem with the addresses.
     pub fn draft(&self, cx: &App) -> Result<Draft, String> {
         let value = |input: &Entity<InputState>| input.read(cx).value().to_string();
@@ -418,6 +461,7 @@ impl Composer {
             attachments: self.attachments.clone(),
             origin: self.base.origin,
             name: self.name.to_string(),
+            support_maze: self.support_maze,
         })
     }
 
@@ -479,6 +523,8 @@ impl Composer {
         };
         if self.identity != Some(*id) {
             self.identity = Some(*id);
+            // Another account may have another footer.
+            self.footer = self.backend.footer(self.identity).trim().to_owned().into();
             self.changed(window, cx);
         }
     }
@@ -873,6 +919,7 @@ impl Render for Composer {
             Status::Sending => Some(("Sending…".into(), colors.muted_foreground)),
             Status::Error(message) => Some((message.clone(), colors.danger)),
         };
+        let footer_preview = self.footer_preview();
 
         v_flex()
             .id("composer")
@@ -954,6 +1001,26 @@ impl Render for Composer {
                     .py_2()
                     .child(Textarea::new(&self.body).h(relative(1.)).appearance(false)),
             )
+            .when(!footer_preview.is_empty(), |this| {
+                this.child(
+                    v_flex()
+                        .id("footer-preview")
+                        .debug_selector(|| "footer-preview".to_owned())
+                        .flex_none()
+                        .max_h(px(120.))
+                        .overflow_y_scroll()
+                        .gap_1()
+                        .px_3()
+                        .pb_2()
+                        .text_xs()
+                        .text_color(colors.muted_foreground)
+                        .children(
+                            footer_preview
+                                .into_iter()
+                                .map(|line| div().whitespace_normal().child(line)),
+                        ),
+                )
+            })
             .child(
                 h_flex()
                     .gap_2()
@@ -969,6 +1036,24 @@ impl Render for Composer {
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.attach(window, cx);
                             })),
+                    )
+                    .child(
+                        Checkbox::new("support-maze")
+                            .debug_selector(|| "support-maze".to_owned())
+                            .small()
+                            .label("Add “Sent with Maze”")
+                            .tooltip("Support Maze: adds a short line with a link to mazemail.dev")
+                            .checked(self.support_maze)
+                            .on_click({
+                                let this = cx.entity().downgrade();
+                                move |checked: &bool, window, cx| {
+                                    let checked = *checked;
+                                    this.update(cx, |this, cx| {
+                                        this.set_support_maze(checked, window, cx);
+                                    })
+                                    .ok();
+                                }
+                            }),
                     )
                     .child(
                         div()

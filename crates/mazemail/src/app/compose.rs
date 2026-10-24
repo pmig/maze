@@ -27,7 +27,7 @@ use composer::{
 use gpui::{App, AppContext as _, Entity};
 use mail_ui::ComposeRequest;
 use mazemail_core::{CoreHandle, ReplyKind, SendResult};
-use mazemail_types::{Address, DraftId, PRODUCT_NAME};
+use mazemail_types::{Address, DraftId, IdentityId, PRODUCT_NAME};
 use ui::assets::IconName;
 use ui::kit::component::{WindowExt as _, notification::Notification};
 use ui::panes::{ItemKind, Restore, SerializedItem};
@@ -111,6 +111,10 @@ impl ComposeBackend for CoreComposeBackend {
 
     fn complete_address(&self, prefix: &str) -> Vec<Address> {
         self.core.complete_addresses(prefix, 8).unwrap_or_default()
+    }
+
+    fn footer(&self, identity: Option<IdentityId>) -> String {
+        self.core.compose_footer(identity).footer
     }
 }
 

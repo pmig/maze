@@ -18,6 +18,8 @@
 //! 6. New messages, replies and forwards open [draft tabs](compose) in the main window;
 //!    the window's tabs and splits are saved to `ui_state.json` and restored (ADR-018),
 //!    draft tabs once the core is open.
+//! 7. "Settings…" (`cmd-,`) edits `settings.json` in a tab of the main window; saving
+//!    reloads the core's settings at once ([`CoreHandle::reload_settings`]).
 //!
 //! `MAZEMAIL_DEMO=1` runs the window on synthetic mail (`FakeMailSource`) without a
 //! core, a key or a socket.
@@ -36,7 +38,9 @@ use anyhow::Context as _;
 use gpui::{AnyWindowHandle, App, AppContext as _, Entity, Global, PromptLevel};
 use local_api::LocalApiServer;
 use mail_ui::perf::ScrollBenchmark;
-use mail_ui::{DataChanges, FakeMailSource, MailSource, MailWindow, MailWindowOptions};
+use mail_ui::{
+    DataChanges, FakeMailSource, MailSource, MailWindow, MailWindowOptions, SettingsFile,
+};
 use mazemail::source::CoreMailSource;
 use mazemail::{approve, keys, startup};
 use mazemail_core::api::{self, TokenAuthorizer};
@@ -93,6 +97,15 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
 
     let paths = Paths::current().context("finding the data directory")?;
     window_options.ui_state = startup::ui_state(&paths);
+    // Saving in the settings tab applies the file at once. Before the core is open
+    // there is nothing to reload: it reads the file when it opens.
+    window_options.settings_file = Some(SettingsFile::new(paths.settings_file()).on_save(
+        |cx: &mut App| {
+            if let Some(core) = cx.try_global::<AppState>().and_then(|s| s.core.clone()) {
+                core.reload_settings();
+            }
+        },
+    ));
     let key_store = keys::key_store(paths.data_dir())?;
     let secrets = keys::secret_store(paths.data_dir());
     let authorizer = TokenAuthorizer::new();
@@ -134,6 +147,9 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
         // cmd-n from another window, e.g. a draft in a window of its own. Deferred, like
         // Add Account, because the window is busy handling that event.
         cx.on_action(|_: &mail_ui::actions::NewMessage, cx| cx.defer(compose::new_message));
+        // Settings from another window (a draft in a window of its own): they open in
+        // the main window, which handles the action itself when it has the focus.
+        cx.on_action(|_: &mail_ui::actions::OpenSettings, cx| cx.defer(open_settings));
         agents::init(cx);
         cx.set_global(AppState {
             source,
@@ -222,6 +238,20 @@ fn open_window(cx: &mut App) {
             tracing::error!(%error, "could not open the main window");
             cx.quit();
         }
+    }
+}
+
+/// Shows the settings tab in the main window and brings the window to the front.
+fn open_settings(cx: &mut App) {
+    let Some((handle, view)) = cx.global::<AppState>().window.clone() else {
+        return;
+    };
+    let opened = handle.update(cx, |_, window, cx| {
+        window.activate_window();
+        view.update(cx, |view, cx| view.open_settings(false, window, cx));
+    });
+    if let Err(error) = opened {
+        tracing::debug!(%error, "no main window for the settings");
     }
 }
 

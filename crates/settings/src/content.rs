@@ -113,6 +113,22 @@ impl Settings {
             agent_access: self.agent.access_for(label),
         }
     }
+
+    /// The footer and the "Sent with Maze" default of one account: its overrides over
+    /// `compose.footer` and `compose.support_maze`.
+    pub fn footer_for(&self, label: &str) -> FooterSettings {
+        let overrides = self.accounts.get(label);
+        FooterSettings {
+            footer: overrides
+                .and_then(|o| o.footer.as_deref())
+                .unwrap_or(&self.compose.footer)
+                .trim()
+                .to_owned(),
+            support_maze: overrides
+                .and_then(|o| o.support_maze)
+                .unwrap_or(self.compose.support_maze),
+        }
+    }
 }
 
 /// Theme selection.
@@ -383,7 +399,7 @@ pub enum RemoteContentPolicy {
 }
 
 /// Writing mail.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ComposeSettings {
     /// Where the composer opens.
@@ -392,6 +408,33 @@ pub struct ComposeSettings {
     pub format: ComposeFormat,
     /// Seconds during which a sent message can be undone (0 to 30).
     pub undo_send_seconds: UndoSendSeconds,
+    /// Added below every message you send (Markdown), after your signature and above
+    /// a quoted message. Empty: none. Can be overridden per account.
+    pub footer: String,
+    /// Add "Sent with Maze (https://mazemail.dev)" below your messages (the default of
+    /// the composer's checkbox). Can be overridden per account.
+    pub support_maze: bool,
+}
+
+impl Default for ComposeSettings {
+    fn default() -> Self {
+        Self {
+            open_in: ComposeOpenIn::default(),
+            format: ComposeFormat::default(),
+            undo_send_seconds: UndoSendSeconds::default(),
+            footer: String::new(),
+            support_maze: true,
+        }
+    }
+}
+
+/// What is added below the messages of one account, see [`Settings::footer_for`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FooterSettings {
+    /// The footer (Markdown), trimmed; empty for none.
+    pub footer: String,
+    /// Whether new messages add "Sent with Maze".
+    pub support_maze: bool,
 }
 
 /// Where the composer opens.
@@ -505,6 +548,12 @@ pub struct AccountOverrides {
     /// Overrides `reader.remote_content`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_content: Option<RemoteContentPolicy>,
+    /// Overrides `compose.footer`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footer: Option<String>,
+    /// Overrides `compose.support_maze`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub support_maze: Option<bool>,
 }
 
 /// The effective settings of one account, see [`Settings::account`].
@@ -870,5 +919,32 @@ mod tests {
         assert_eq!(other.offline, OfflinePolicy::Recent);
         assert_eq!(other.remote_content, RemoteContentPolicy::Ask);
         assert_eq!(other.agent_access, AgentAccess::Off);
+    }
+
+    #[test]
+    fn footers_per_account() {
+        let mut settings = Settings::default();
+        assert_eq!(
+            settings.footer_for("work"),
+            FooterSettings {
+                footer: String::new(),
+                support_maze: true,
+            }
+        );
+        settings.compose.footer = "  Philip · *Maze*\n".to_owned();
+        settings.accounts.insert(
+            "work".to_owned(),
+            AccountOverrides {
+                footer: Some("Acme Inc., Vienna".to_owned()),
+                support_maze: Some(false),
+                ..AccountOverrides::default()
+            },
+        );
+        let work = settings.footer_for("work");
+        assert_eq!(work.footer, "Acme Inc., Vienna");
+        assert!(!work.support_maze);
+        let personal = settings.footer_for("personal");
+        assert_eq!(personal.footer, "Philip · *Maze*");
+        assert!(personal.support_maze);
     }
 }

@@ -313,6 +313,14 @@ impl CoreHandle {
         self.inner.settings.clone()
     }
 
+    /// Reloads the settings file now (after Maze's settings editor saved it), without
+    /// waiting for the file system event. Without a settings file, nothing happens.
+    pub fn reload_settings(&self) {
+        if let Some(watcher) = lock(&self.inner.watcher).as_ref() {
+            watcher.reload();
+        }
+    }
+
     /// Where sync reports account status (see [`crate::sync_bridge`]).
     pub fn sync_status_sink(&self) -> SyncStatusSink {
         SyncStatusSink {

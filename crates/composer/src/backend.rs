@@ -93,4 +93,11 @@ pub trait ComposeBackend: Send + Sync + 'static {
         let _ = prefix;
         Vec::new()
     }
+
+    /// The footer (Markdown) added below messages sent from `identity`
+    /// (`compose.footer`, per account), shown under the body as a preview. Empty: none.
+    fn footer(&self, identity: Option<IdentityId>) -> String {
+        let _ = identity;
+        String::new()
+    }
 }

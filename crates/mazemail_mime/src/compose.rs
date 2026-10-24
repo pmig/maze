@@ -9,6 +9,16 @@
 //! Raw HTML in the Markdown is shown as text, not passed through: a quoted
 //! `<script>` stays text, and what you see in the editor is what the recipient gets.
 //! Single line breaks are kept (as `<br>`), the way people write mail.
+//!
+//! # Footer and "Sent with Maze"
+//!
+//! The configured footer (`compose.footer`, Markdown) and the "Sent with Maze" line
+//! ([`MessageFooter`]) are added when the message is built, never to the body being
+//! edited. They follow your text and signature; in a reply or forward they go above
+//! the quoted original ([`quote_start`]), the way people sign a top-posted reply, so
+//! the quote doesn't end up between your words and your footer. Text: a blank line,
+//! the footer, a blank line, `Sent with Maze (https://mazemail.dev)`. HTML: the
+//! footer rendered from Markdown and a small muted line linking "Maze".
 
 use mail_builder::MessageBuilder;
 use mail_builder::headers::address::Address as BuilderAddress;
@@ -16,6 +26,7 @@ use mail_builder::headers::date::Date;
 use mail_builder::headers::message_id::MessageId;
 use mail_builder::headers::text::Text;
 use mazemail_types::Address;
+use mazemail_types::compose::{MAZE_WEBSITE, SENT_WITH_MAZE};
 use pulldown_cmark::{Event, Options, Parser};
 
 use crate::subject::parse_subject;
@@ -33,6 +44,37 @@ pre{background:#f6f8fa;padding:8px 12px;border-radius:6px;overflow:auto;}\
 code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;}\
 table{border-collapse:collapse;}th,td{border:1px solid #d0d7de;padding:4px 8px;}\
 a{color:#0969da;}";
+
+/// The line that starts a forwarded message in the body of a forward.
+pub const FORWARD_HEADER: &str = "-------- Forwarded Message --------";
+
+/// What is added below the body of an outgoing message (see the [module docs](self)).
+/// `Debug` leaves out the footer's text.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct MessageFooter {
+    /// The configured footer, Markdown; empty for none.
+    pub markdown: String,
+    /// Add "Sent with Maze (https://mazemail.dev)".
+    pub sent_with_maze: bool,
+    /// The message is a reply or forward: the footer goes above the quoted original.
+    pub above_quote: bool,
+}
+
+impl std::fmt::Debug for MessageFooter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MessageFooter")
+            .field("footer_len", &self.markdown.len())
+            .field("sent_with_maze", &self.sent_with_maze)
+            .field("above_quote", &self.above_quote)
+            .finish()
+    }
+}
+
+impl MessageFooter {
+    fn is_empty(&self) -> bool {
+        self.markdown.trim().is_empty() && !self.sent_with_maze
+    }
+}
 
 /// A file attached to an outgoing message.
 #[derive(Clone, PartialEq, Eq)]
@@ -81,6 +123,8 @@ pub struct OutgoingMessage {
     pub attachments: Vec<OutgoingAttachment>,
     /// The `User-Agent` header, if any.
     pub user_agent: Option<String>,
+    /// The footer and the "Sent with Maze" line, added below the body.
+    pub footer: MessageFooter,
 }
 
 impl std::fmt::Debug for OutgoingMessage {
@@ -167,9 +211,8 @@ pub fn build_message(message: &OutgoingMessage) -> Result<Vec<u8>, ComposeError>
     if let Some(agent) = &message.user_agent {
         builder = builder.header("User-Agent", Text::new(agent.clone()));
     }
-    builder = builder
-        .text_body(normalize_newlines(&message.body_markdown))
-        .html_body(markdown_to_html(&message.body_markdown));
+    let (text, html) = body_parts(&message.body_markdown, &message.footer);
+    builder = builder.text_body(text).html_body(html);
     for attachment in &message.attachments {
         builder = builder.attachment(
             attachment.content_type.clone(),
@@ -180,6 +223,100 @@ pub fn build_message(message: &OutgoingMessage) -> Result<Vec<u8>, ComposeError>
     builder
         .write_to_vec()
         .map_err(|err| ComposeError::Build(err.to_string()))
+}
+
+/// The text/plain and text/html bodies: the Markdown and its rendering, with the
+/// footer between your text and a quoted original.
+pub fn body_parts(body_markdown: &str, footer: &MessageFooter) -> (String, String) {
+    if footer.is_empty() {
+        return (
+            normalize_newlines(body_markdown),
+            markdown_to_html(body_markdown),
+        );
+    }
+    let body = body_markdown.replace("\r\n", "\n");
+    let split = if footer.above_quote {
+        quote_start(&body).unwrap_or(body.len())
+    } else {
+        body.len()
+    };
+    let (own, quoted) = body.split_at(split);
+    let own = own.trim_end();
+    let quoted = quoted.trim_end();
+    let footer_text = footer.markdown.replace("\r\n", "\n");
+    let footer_text = footer_text.trim();
+
+    let mut blocks: Vec<&str> = Vec::with_capacity(4);
+    if !own.trim().is_empty() {
+        blocks.push(own);
+    }
+    if !footer_text.is_empty() {
+        blocks.push(footer_text);
+    }
+    if footer.sent_with_maze {
+        blocks.push(SENT_WITH_MAZE);
+    }
+    if !quoted.is_empty() {
+        blocks.push(quoted);
+    }
+    let text = normalize_newlines(&blocks.join("\n\n"));
+
+    let mut html = String::new();
+    if !own.trim().is_empty() {
+        html.push_str(&markdown_fragment(own));
+    }
+    if !footer_text.is_empty() {
+        html.push_str("<div class=\"footer\">\n");
+        html.push_str(&markdown_fragment(footer_text));
+        html.push_str("</div>\n");
+    }
+    if footer.sent_with_maze {
+        html.push_str(&format!(
+            "<p class=\"sent-with\" style=\"color:#8c959f;font-size:12px;\">Sent with \
+             <a href=\"{MAZE_WEBSITE}\" style=\"color:#8c959f;\">Maze</a></p>\n"
+        ));
+    }
+    if !quoted.is_empty() {
+        html.push_str(&markdown_fragment(quoted));
+    }
+    (text, html_document(&html))
+}
+
+/// Where the quoted original of a reply or forward starts in its body (a byte offset
+/// at the start of a line), or `None` if the body doesn't end with one:
+///
+/// - a forward's [`FORWARD_HEADER`] line;
+/// - the attribution line (`On …, … wrote:`, any line ending in `:`) before the
+///   trailing `>` quote, or the quote itself without one.
+///
+/// Answers written between quoted parts end with your text, not a quote: then there
+/// is nothing to go above, and the footer goes at the end.
+pub fn quote_start(body: &str) -> Option<usize> {
+    let mut lines = Vec::new();
+    let mut offset = 0;
+    for line in body.split_inclusive('\n') {
+        lines.push((offset, line.trim_end_matches(['\n', '\r'])));
+        offset += line.len();
+    }
+    if let Some((start, _)) = lines.iter().find(|(_, line)| line.trim() == FORWARD_HEADER) {
+        return Some(*start);
+    }
+    // The trailing run of quoted and blank lines, and its first quoted line.
+    let mut first_quoted = None;
+    for (ix, (_, line)) in lines.iter().enumerate().rev() {
+        let line = line.trim_start();
+        if line.starts_with('>') {
+            first_quoted = Some(ix);
+        } else if !line.is_empty() {
+            break;
+        }
+    }
+    let first_quoted = first_quoted?;
+    let start = match first_quoted.checked_sub(1).map(|ix| (ix, lines[ix].1)) {
+        Some((ix, line)) if line.trim_end().ends_with(':') => ix,
+        _ => first_quoted,
+    };
+    Some(lines[start].0)
 }
 
 fn normalize_newlines(text: &str) -> String {
@@ -194,6 +331,11 @@ fn normalize_newlines(text: &str) -> String {
 /// Renders the body Markdown as the HTML part: a complete document with the mail
 /// stylesheet. Raw HTML in the source is escaped; single line breaks are kept.
 pub fn markdown_to_html(markdown: &str) -> String {
+    html_document(&markdown_fragment(markdown))
+}
+
+/// The body HTML of `markdown`, without the document around it.
+fn markdown_fragment(markdown: &str) -> String {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TABLES);
@@ -205,6 +347,11 @@ pub fn markdown_to_html(markdown: &str) -> String {
     });
     let mut body = String::with_capacity(markdown.len() * 3 / 2 + 64);
     pulldown_cmark::html::push_html(&mut body, events);
+    body
+}
+
+/// A complete HTML document around `body`, with the mail stylesheet.
+fn html_document(body: &str) -> String {
     format!(
         "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width\">\
@@ -409,7 +556,154 @@ mod tests {
             date: 1_792_663_200,
             attachments: Vec::new(),
             user_agent: Some("Maze 0.1".into()),
+            footer: MessageFooter::default(),
         }
+    }
+
+    fn parts(raw: &[u8]) -> (String, String) {
+        let parsed = MessageParser::default().parse(raw).unwrap();
+        (
+            parsed.body_text(0).unwrap().replace("\r\n", "\n"),
+            parsed.body_html(0).unwrap().into_owned(),
+        )
+    }
+
+    const SIGNED: &str = "Hi Anna,\n\nsee you.\n\n-- \nPhilip\n";
+
+    #[test]
+    fn no_footer_and_no_maze_line_when_off() {
+        let mut message = sample();
+        message.body_markdown = SIGNED.into();
+        let (text, html) = parts(&build_message(&message).unwrap());
+        assert_eq!(text, SIGNED);
+        assert!(!text.contains("Sent with Maze") && !html.contains("Sent with"));
+        assert!(!html.contains("mazemail.dev"));
+    }
+
+    #[test]
+    fn footer_and_maze_line_follow_the_signature_in_both_parts() {
+        let mut message = sample();
+        message.body_markdown = SIGNED.into();
+        message.footer = MessageFooter {
+            markdown: "Acme Inc. · **Vienna**\n".into(),
+            sent_with_maze: true,
+            above_quote: false,
+        };
+        let (text, html) = parts(&build_message(&message).unwrap());
+        assert_eq!(
+            text,
+            "Hi Anna,\n\nsee you.\n\n-- \nPhilip\n\nAcme Inc. · **Vienna**\n\n\
+             Sent with Maze (https://mazemail.dev)\n"
+        );
+        let signature = html.find("Philip").unwrap();
+        let footer = html.find("<strong>Vienna</strong>").unwrap();
+        let maze = html
+            .find("Sent with <a href=\"https://mazemail.dev\"")
+            .unwrap();
+        assert!(signature < footer && footer < maze, "{html}");
+        assert!(html.contains(">Maze</a></p>"), "{html}");
+        // No tracking parameters.
+        assert!(!html.contains("mazemail.dev?") && !html.contains("utm_"));
+
+        // Only the footer.
+        message.footer.sent_with_maze = false;
+        let (text, html) = parts(&build_message(&message).unwrap());
+        assert!(
+            text.ends_with("-- \nPhilip\n\nAcme Inc. · **Vienna**\n"),
+            "{text}"
+        );
+        assert!(!text.contains("Sent with") && !html.contains("Sent with"));
+
+        // Only the Maze line.
+        message.footer.markdown.clear();
+        message.footer.sent_with_maze = true;
+        let (text, html) = parts(&build_message(&message).unwrap());
+        assert!(
+            text.ends_with("-- \nPhilip\n\nSent with Maze (https://mazemail.dev)\n"),
+            "{text}"
+        );
+        assert!(!html.contains("class=\"footer\""));
+        assert!(html.contains("class=\"sent-with\""));
+    }
+
+    #[test]
+    fn in_replies_the_footer_goes_above_the_quote() {
+        let body = "Sounds good!\n\n-- \nPhilip\n\n\
+                    On Mon, 3 Nov 2025 at 09:00, Anna <anna@example.com> wrote:\n\
+                    > Shall we meet?\n>\n> Anna\n";
+        let footer = MessageFooter {
+            markdown: "Acme Inc.".into(),
+            sent_with_maze: true,
+            above_quote: true,
+        };
+        let (text, html) = body_parts(body, &footer);
+        assert_eq!(
+            text,
+            "Sounds good!\n\n-- \nPhilip\n\nAcme Inc.\n\n\
+             Sent with Maze (https://mazemail.dev)\n\n\
+             On Mon, 3 Nov 2025 at 09:00, Anna <anna@example.com> wrote:\n\
+             > Shall we meet?\n>\n> Anna\n"
+        );
+        let maze = html.find("Sent with").unwrap();
+        let attribution = html.find("wrote:").unwrap();
+        let quote = html.find("<blockquote>").unwrap();
+        assert!(html.find("Acme Inc.").unwrap() < maze);
+        assert!(maze < attribution && attribution < quote, "{html}");
+
+        // A forward: above the forwarded message.
+        let forward = format!("FYI\n\n{FORWARD_HEADER}\nSubject: Report\n\nThe report.\n");
+        let (text, _) = body_parts(&forward, &footer);
+        assert!(
+            text.starts_with(
+                "FYI\n\nAcme Inc.\n\nSent with Maze (https://mazemail.dev)\n\n\
+                 -------- Forwarded Message --------\n"
+            ),
+            "{text}"
+        );
+
+        // Answers between the quoted parts: the footer goes at the end.
+        let inline = "> Shall we meet?\nYes.\n> Where?\nAt the office.\n";
+        let (text, _) = body_parts(inline, &footer);
+        assert!(
+            text.ends_with(
+                "At the office.\n\nAcme Inc.\n\nSent with Maze (https://mazemail.dev)\n"
+            ),
+            "{text}"
+        );
+
+        // A new message ending in a quote keeps its quote above the footer.
+        let new = MessageFooter {
+            above_quote: false,
+            ..footer
+        };
+        let (text, _) = body_parts("As they say:\n> less is more\n", &new);
+        assert!(
+            text.starts_with("As they say:\n> less is more\n\nAcme"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn quote_starts() {
+        assert_eq!(quote_start("Hi\n"), None);
+        assert_eq!(quote_start(""), None);
+        assert_eq!(quote_start("Hi\n\nAnna wrote:\n> x\n\n"), Some(4));
+        assert_eq!(quote_start("Hi\n> x\n"), Some(3));
+        assert_eq!(quote_start("> x\n"), Some(0));
+        assert_eq!(quote_start(&format!("a\n{FORWARD_HEADER}\n> x\n")), Some(2));
+        // An empty reply: the footer comes first, the quote after it.
+        let (text, _) = body_parts(
+            "\n\nAnna wrote:\n> x\n",
+            &MessageFooter {
+                markdown: String::new(),
+                sent_with_maze: true,
+                above_quote: true,
+            },
+        );
+        assert_eq!(
+            text,
+            "Sent with Maze (https://mazemail.dev)\n\nAnna wrote:\n> x\n"
+        );
     }
 
     #[test]

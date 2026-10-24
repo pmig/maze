@@ -100,10 +100,26 @@ environment variables to start Maze on it.
 
 ### Settings
 
+Press `cmd-,` (or choose **Maze → Settings…**, or "Maze: Open Settings" in the command
+palette) to edit `settings.json` in a tab. Maze creates the file if it doesn't exist
+yet. It's a plain JSON editor (comments and trailing commas are allowed):
+
+- `cmd-s` saves and applies the settings at once. The tab shows a dot while it has
+  unsaved changes, and closing it asks whether to save them.
+- Problems are listed below the editor with their line: syntax errors, keys Maze
+  doesn't know (ignored) and values of the wrong type (that key uses its default). A
+  file with a syntax error changes nothing: Maze keeps the settings it had until you
+  fix it.
+- When the file changes on disk while the tab is open (Maze writes your favorite
+  folders into it; you might edit it elsewhere too), the tab reloads it. If you have
+  unsaved changes, it asks instead: **Reload** or **Keep Mine**.
+- "Maze: Open Default Settings" shows all settings with their defaults and a comment
+  for each, read-only, for reference.
+
 `settings.json` only needs the keys you want to change; Maze merges it over its
-defaults and picks up changes while it runs. The defaults, with a comment for every
-key, are in [`assets/settings/default.jsonc`](../assets/settings/default.jsonc). For
-example:
+defaults and picks up changes while it runs, also when you edit it in another editor.
+The defaults, with a comment for every key, are in
+[`assets/settings/default.jsonc`](../assets/settings/default.jsonc). For example:
 
 ```jsonc
 {
@@ -436,8 +452,34 @@ two random words such as `brave-otter`; split the window to keep the Inbox next 
   your text as the plain-text part and renders it as the HTML part, so recipients see
   normal formatted mail. Single line breaks are kept.
 - **Attach…** (`cmd-shift-a`) adds files; they are read when the message is sent.
+- **Add “Sent with Maze”** (on by default) adds a short line below your message:
+  "Sent with Maze (https://mazemail.dev)", with a plain link to the website, no
+  tracking. It's a small way to support Maze; uncheck it for any message, or turn it
+  off for all new ones with `"compose": { "support_maze": false }`. The choice is
+  saved with the draft.
 - `cmd-enter` sends and closes the tab. Escape or closing the tab (`cmd-w`) asks
   whether to keep a draft when something changed.
+
+A **footer** for every message you send, such as your company's details, goes into
+`settings.json` (Markdown):
+
+```jsonc
+{
+  "compose": {
+    "footer": "Acme Inc. · Main Street 1, Vienna · [acme.example](https://acme.example)",
+    "support_maze": true
+  },
+  // Per account (by its name): another footer, or none.
+  "accounts": { "Private": { "footer": "", "support_maze": false } }
+}
+```
+
+The footer and the Maze line are shown muted under the body while you write, but
+they aren't part of the text you edit: Maze adds them when the message is sent, after
+your text and signature. In a reply or forward they go above the quoted message (where
+your own text ends), not at the very bottom below the quote. The plain-text part gets a
+blank line, the footer, a blank line and the Maze line; the HTML part the rendered
+footer and a small grey "Sent with Maze" line.
 
 Reply (`cmd-r`), reply all (`cmd-shift-r`) and forward (`cmd-l`) open the same kind of
 tab with the recipients, `Re:`/`Fwd:` subject and the quoted message filled in (HTML mail is

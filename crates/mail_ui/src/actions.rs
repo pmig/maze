@@ -22,6 +22,18 @@ actions!(
         Zoom,
         /// Add a mail account (IMAP, Gmail or Microsoft).
         AddAccount,
+        /// Edit your settings (`settings.json`) in a tab (`cmd-,`).
+        OpenSettings,
+        /// Show Maze's default settings, read-only, in a tab.
+        OpenDefaultSettings,
+    ]
+);
+
+actions!(
+    settings_editor,
+    [
+        /// Save the settings file and apply it (`cmd-s` in the settings tab).
+        SaveSettings,
     ]
 );
 
