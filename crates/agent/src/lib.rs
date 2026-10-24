@@ -8,6 +8,8 @@
 //! | [`install`], [`node`], [`archive`] | installing npx and binary agents, the managed Node runtime |
 //! | [`policy`], [`process`] | the session's sandbox policy and sandboxed processes |
 //! | [`session`], [`terminal`], [`transcript`] | one ACP session: prompts, streamed updates, permission prompts, the terminal host |
+//! | [`auth`] | signing in: API keys, terminal logins, links agents open |
+//! | [`controls`] | model, mode, thinking and other per-session choices, remembered per agent |
 //! | [`scratch`], [`tokens`] | the session's scratch dir and its `MAZEMAIL_SESSION` token |
 //! | [`host`] | what sessions need from Maze (implemented over the core by the app) |
 //! | [`manager`] | [`AgentManager`], the agent column's entry point |
@@ -29,7 +31,9 @@
 //! implements [`AgentHost`] over the core.
 
 pub mod archive;
+pub mod auth;
 pub mod catalog;
+pub mod controls;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake;
 pub mod host;
@@ -50,20 +54,24 @@ pub mod tokens;
 pub mod transcript;
 
 pub use catalog::{AgentEntry, AgentSource, PI_NOTICE};
+pub use controls::{Choice, Control, ControlCategory, ControlKind, ControlValue};
 pub use host::{
-    AgentHost, AgentThreadInfo, AgentThreadKey, HostError, MemoryHost, ProposalItemStatus,
-    ProposalItemView, ProposalView, ThreadExport,
+    AgentHost, AgentKey, AgentThreadInfo, AgentThreadKey, HostError, MemoryHost,
+    ProposalItemStatus, ProposalItemView, ProposalView, ThreadExport,
 };
 pub use http::{Http, ReqwestHttp};
 pub use install::{InstallError, InstallProgress, InstalledAgent};
+#[cfg(any(test, feature = "test-support"))]
+pub use manager::TestAgents;
 pub use manager::{
-    AgentManager, AgentStatus, ManagerConfig, StartError, StartRequest, StartedSession,
+    AgentManager, AgentStatus, LoginScript, ManagerConfig, StartError, StartRequest,
+    StartedSession, UpdateReport,
 };
 pub use paths::AgentPaths;
 pub use process::AgentProcess;
 pub use session::{
     AttachedThread, AuthMethodInfo, SessionConfig, SessionEvent, SessionHandle, SessionResources,
-    SessionStatus, start_with_transport,
+    SessionStatus, SignInProgress, SignInRequest, TerminalAuth, start_with_transport,
 };
 pub use transcript::{
     Entry, EntryUpdate, NoticeLevel, PermissionChoice, PermissionEntry, PermissionKind, PlanItem,

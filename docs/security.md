@@ -49,6 +49,10 @@ per account and secret but little protection. The master key is Maze's **only**
 keychain item: a launch reads the keychain once. Secrets are wiped from memory after
 use and never logged.
 
+API keys and tokens you paste into the agent column's sign-in card are stored the same
+way (table `agent_secret`) and handed only to that agent, in its environment. Keys
+written into `agent.env` in `settings.json` are plain text; the settings file says so.
+
 Earlier versions of Maze kept each of these secrets as its own keychain item (service
 `mazemail`, account `<account-uuid>/<kind>`, labelled "Maze account password", "Maze
 sign-in token" or "Maze SMTP password"). The first start of a newer Maze moves them
@@ -88,6 +92,10 @@ Linux).
 - **Agent session folders** (`sessions/<id>/` in the data directory): the thread you
   attached to a conversation, as Markdown, because the agent has to read it. Only what
   that session was given; deleted when the session ends, leftovers at the next start.
+- **Agent homes** (`agent-home/<id>/`): each agent's own configuration and login, as
+  the agent writes them (Claude Code's subscription login is
+  `.claude/.credentials.json` there, because the sandbox keeps it out of your keychain).
+  Terminal login scripts (`agents/login/`) hold no keys.
 
 As the features arrive, these join the list: attachments you open in another app (a
 private temporary folder, deleted on quit or after 24 hours), notification text (macOS

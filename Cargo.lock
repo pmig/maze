@@ -209,6 +209,7 @@ dependencies = [
  "gpui-kit",
  "gpui-pre",
  "mazemail_types",
+ "serde_json",
  "settings",
  "tempfile",
  "tokio",

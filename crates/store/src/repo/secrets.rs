@@ -1,5 +1,7 @@
 //! Account secrets (ADR-017): IMAP passwords, OAuth refresh tokens and SMTP
-//! passwords, in the encrypted database instead of separate OS keychain items.
+//! passwords, in the encrypted database instead of separate OS keychain items. Also
+//! agents' sign-in keys (`agent_secret`, schema v6): an API key or token per agent and
+//! the environment variable it is passed in.
 //!
 //! The store doesn't know what the secrets are: `kind` is the `auth` crate's name for
 //! it (`password`, `oauth-refresh`, `smtp-password`). Values come back in
@@ -44,7 +46,52 @@ pub(crate) fn legacy_secret_accounts(conn: &Connection) -> Result<Vec<Uuid>> {
         .collect()
 }
 
+/// The sign-in key of an agent: the environment variable and the secret.
+pub(crate) fn agent_secret(
+    conn: &Connection,
+    agent_id: &str,
+) -> Result<Option<(String, Zeroizing<String>)>> {
+    Ok(conn
+        .prepare_cached("SELECT env, secret FROM agent_secret WHERE agent_id = ?1")?
+        .query_row([agent_id], |row| {
+            Ok((row.get::<_, String>(0)?, Zeroizing::new(row.get(1)?)))
+        })
+        .optional()?)
+}
+
+/// The agents that have a sign-in key, with its environment variable (no secrets).
+pub(crate) fn agent_secret_envs(conn: &Connection) -> Result<Vec<(String, String)>> {
+    let mut stmt =
+        conn.prepare_cached("SELECT agent_id, env FROM agent_secret ORDER BY agent_id")?;
+    Ok(stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
 impl WriteTx<'_> {
+    /// Stores the sign-in key of `agent_id`, passed to the agent as `env`, replacing
+    /// any earlier one.
+    pub fn set_agent_secret(&mut self, agent_id: &str, env: &str, secret: &str) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT INTO agent_secret (agent_id, env, secret, updated)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (agent_id)
+                 DO UPDATE SET env = excluded.env, secret = excluded.secret,
+                               updated = excluded.updated",
+            )?
+            .execute(params![agent_id, env, secret, self.now])?;
+        Ok(())
+    }
+
+    /// Deletes the sign-in key of `agent_id`; succeeds if there is none.
+    pub fn delete_agent_secret(&mut self, agent_id: &str) -> Result<()> {
+        self.conn
+            .prepare_cached("DELETE FROM agent_secret WHERE agent_id = ?1")?
+            .execute([agent_id])?;
+        Ok(())
+    }
+
     /// Stores the `kind` secret of `account`, replacing any existing one.
     ///
     /// # Errors

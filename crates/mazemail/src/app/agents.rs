@@ -6,6 +6,7 @@
 //! - Session tokens left over from a previous run are revoked first.
 //! - Agent processes run on the core's runtime; quitting stops the runtime, which kills
 //!   their process groups.
+//! - Installed agents update in the background (`agent.auto_update`).
 
 use std::sync::Arc;
 
@@ -73,7 +74,11 @@ fn open_panel(core: &CoreHandle, authorizer: &TokenAuthorizer, cx: &mut App) -> 
     }));
     let settings = core.settings().settings.clone();
     let panel = handle.update(cx, |_, window, cx| {
-        cx.new(|cx| AgentPanel::new(manager, settings, window, cx))
+        cx.new(|cx| {
+            let mut panel = AgentPanel::new(manager, settings, window, cx);
+            panel.start_auto_updates(cx);
+            panel
+        })
     })?;
     window.update(cx, |window, cx| {
         window.set_agent_panel(panel.clone().into(), cx)

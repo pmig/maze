@@ -22,6 +22,7 @@ const SIGNATURE: &str = "QuokkaSignatureCanary";
 const KEYWORD: &str = "quokkakeywordcanary";
 const PASSWORD: &str = "QuokkaPasswordCanary-hunter2";
 const REFRESH_TOKEN: &str = "1//QuokkaRefreshCanary";
+const AGENT_KEY: &str = "sk-ant-api03-QuokkaAgentKeyCanary";
 
 fn files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(dir).unwrap() {
@@ -46,6 +47,7 @@ fn hits(dir: &Path) -> Vec<String> {
         KEYWORD,
         PASSWORD,
         REFRESH_TOKEN,
+        AGENT_KEY,
     ];
     // Also short, distinctive fragments, in case something stores pieces.
     let fragments = [
@@ -55,6 +57,7 @@ fn hits(dir: &Path) -> Vec<String> {
         "Zebrina",
         "QuokkaPassword",
         "QuokkaRefresh",
+        "QuokkaAgentKey",
     ];
     let mut found = Vec::new();
     let mut all = Vec::new();
@@ -136,6 +139,7 @@ fn no_plaintext_on_disk() {
                 .uuid;
             w.set_account_secret(uuid, "password", PASSWORD)?;
             w.set_account_secret(uuid, "oauth-refresh", REFRESH_TOKEN)?;
+            w.set_agent_secret("claude-acp", "ANTHROPIC_API_KEY", AGENT_KEY)?;
             Ok(())
         })
         .unwrap();

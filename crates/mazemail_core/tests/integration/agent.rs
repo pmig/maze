@@ -258,3 +258,38 @@ async fn proposals_are_reviewed_item_by_item() {
     let detail = reader.message(t.work_mail).unwrap().unwrap();
     assert!(detail.locations.iter().all(|l| l.folder != t.fixture.inbox));
 }
+
+#[tokio::test]
+async fn agent_sign_in_keys_are_kept_until_removed() {
+    let a = open().await;
+    let core = &a.core;
+    assert!(core.agent_secret("claude-acp").unwrap().is_none());
+    core.set_agent_secret(
+        "claude-acp",
+        "ANTHROPIC_API_KEY",
+        mazemail_types::Sensitive::new("sk-ant-api03-first".to_owned()),
+    )
+    .await
+    .unwrap();
+    core.set_agent_secret(
+        "claude-acp",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        mazemail_types::Sensitive::new("sk-ant-oat01-second".to_owned()),
+    )
+    .await
+    .unwrap();
+    let (env, key) = core.agent_secret("claude-acp").unwrap().unwrap();
+    assert_eq!(env, "CLAUDE_CODE_OAUTH_TOKEN");
+    assert_eq!(key.expose(), "sk-ant-oat01-second");
+    assert!(!format!("{key:?}").contains("second"));
+    assert_eq!(
+        core.agent_secret_envs().unwrap(),
+        vec![(
+            "claude-acp".to_owned(),
+            "CLAUDE_CODE_OAUTH_TOKEN".to_owned()
+        )]
+    );
+    core.delete_agent_secret("claude-acp").await.unwrap();
+    assert!(core.agent_secret("claude-acp").unwrap().is_none());
+    assert!(core.agent_secret_envs().unwrap().is_empty());
+}

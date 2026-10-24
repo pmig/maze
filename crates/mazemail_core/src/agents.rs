@@ -8,8 +8,11 @@
 //!   command with [`Origin::Agent`](crate::Origin::Agent) without asking the authorizer
 //!   again (the user's decision is the authorization); rejecting records the decision.
 //!   A proposal is `applied`, `rejected` or `partial` once no item is pending.
+//! - **Sign-in keys** (`agent_secret`): an API key or token per agent that the user
+//!   pasted into the agent column, encrypted like everything in the store (ADR-017) and
+//!   passed to the agent in one environment variable. Never in settings.json or logs.
 
-use mazemail_types::ThreadId;
+use mazemail_types::{Sensitive, ThreadId};
 use store::{
     AgentThread, AgentThreadId, Proposal, ProposalId, ProposalItemId, ProposalItemState,
     ProposalState, Queries as _,
@@ -139,6 +142,47 @@ impl CoreHandle {
         Ok(self
             .store()
             .write(move |w| w.delete_agent_thread(id))
+            .await?)
+    }
+
+    // ---- sign-in keys --------------------------------------------------------------
+
+    /// An agent's sign-in key: the environment variable it is passed in, and the key.
+    pub fn agent_secret(&self, agent_id: &str) -> Result<Option<(String, Sensitive<String>)>> {
+        Ok(self
+            .store()
+            .reader()?
+            .agent_secret(agent_id)?
+            .map(|(env, secret)| (env, Sensitive::new(secret.as_str().to_owned()))))
+    }
+
+    /// `(agent id, environment variable)` of every stored sign-in key, no secrets.
+    pub fn agent_secret_envs(&self) -> Result<Vec<(String, String)>> {
+        Ok(self.store().reader()?.agent_secret_envs()?)
+    }
+
+    /// Stores an agent's sign-in key (replacing an earlier one).
+    pub async fn set_agent_secret(
+        &self,
+        agent_id: &str,
+        env: &str,
+        secret: Sensitive<String>,
+    ) -> Result<()> {
+        let agent_id = agent_id.to_owned();
+        let env = env.to_owned();
+        let secret = zeroize::Zeroizing::new(secret.into_inner());
+        Ok(self
+            .store()
+            .write(move |w| w.set_agent_secret(&agent_id, &env, &secret))
+            .await?)
+    }
+
+    /// Deletes an agent's sign-in key ("Remove key"); fine if there is none.
+    pub async fn delete_agent_secret(&self, agent_id: &str) -> Result<()> {
+        let agent_id = agent_id.to_owned();
+        Ok(self
+            .store()
+            .write(move |w| w.delete_agent_secret(&agent_id))
             .await?)
     }
 

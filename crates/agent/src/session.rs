@@ -3,6 +3,7 @@
 //!
 //! ```text
 //! initialize (V1, terminal only) → [authenticate] → session/new | session/load
+//!   → [session/set_config_option | session/set_mode: remembered choices]
 //!   → session/prompt … (session/update stream, request_permission, terminal/*)
 //!   → session/cancel → teardown
 //! ```
@@ -22,23 +23,28 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
-    AuthMethod, AuthenticateRequest, CancelNotification, ClientCapabilities, ContentBlock,
+    AuthCapabilities, AuthMethod, AuthenticateRequest, BooleanConfigOptionCapabilities,
+    CancelNotification, ClientCapabilities, ClientSessionCapabilities, ContentBlock,
     CreateTerminalRequest, CreateTerminalResponse, ErrorCode, Implementation, InitializeRequest,
     KillTerminalRequest, KillTerminalResponse, LoadSessionRequest, NewSessionRequest,
     PermissionOptionKind, PlanEntryStatus, PromptRequest, PromptResponse, ReleaseTerminalRequest,
     ReleaseTerminalResponse, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, SelectedPermissionOutcome, SessionId, SessionNotification,
-    SessionUpdate, StopReason, TerminalExitStatus, TerminalOutputRequest, TerminalOutputResponse,
-    TextContent, ToolCallContent, ToolCallStatus, WaitForTerminalExitRequest,
-    WaitForTerminalExitResponse,
+    RequestPermissionResponse, SelectedPermissionOutcome, SessionConfigOptionsCapabilities,
+    SessionId, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
+    SetSessionModeRequest, StopReason, TerminalExitStatus, TerminalOutputRequest,
+    TerminalOutputResponse, TextContent, ToolCallContent, ToolCallStatus,
+    WaitForTerminalExitRequest, WaitForTerminalExitResponse,
 };
 use agent_client_protocol::{Agent, Client, ConnectTo, ConnectionTo, Responder};
 use local_api::{TokenId, TokenStore};
 use sandbox::SandboxPolicy;
 
+use crate::auth::{UrlInbox, links_in};
+use crate::controls::{self, Control, ControlValue};
 use crate::host::{AgentHost, AgentThreadKey};
 use crate::process::LaunchSpec;
 use crate::scratch::{Scratch, THREAD_FILE};
@@ -85,8 +91,13 @@ pub struct SessionConfig {
     pub attached: Option<AttachedThread>,
     /// The conversation so far (when resuming).
     pub transcript: Transcript,
-    /// How to sign in from a terminal for agents with terminal auth methods.
-    pub terminal_login: Option<String>,
+    /// The file the agent's `open` shim writes links to ([`crate::auth::OPEN_SHIM`]).
+    pub open_urls: Option<PathBuf>,
+    /// The environment variable carrying the user's stored API key, if any: an
+    /// `api-key` sign-in method is then used without asking.
+    pub key_env: Option<String>,
+    /// Remembered choices (control id → value) applied when the session starts.
+    pub preferred: BTreeMap<String, ControlValue>,
 }
 
 /// The session's state.
@@ -113,8 +124,42 @@ pub struct AuthMethodInfo {
     pub name: String,
     /// More text.
     pub description: Option<String>,
-    /// For terminal logins: the command to run in a terminal instead.
-    pub terminal_command: Option<String>,
+    /// A login the client runs in a terminal instead of calling `authenticate`.
+    pub terminal: Option<TerminalAuth>,
+    /// The provider of an API-key method (`_meta["api-key"].provider`, e.g. `openai`).
+    pub api_key_provider: Option<String>,
+}
+
+/// A terminal login: the agent's own command plus `args` (ACP `terminal` methods), or
+/// another `command` (the older `_meta["terminal-auth"]`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TerminalAuth {
+    /// A program to run instead of the agent's.
+    pub command: Option<String>,
+    /// Arguments (appended to the agent's own when `command` is `None`).
+    pub args: Vec<String>,
+    /// Extra environment.
+    pub env: BTreeMap<String, String>,
+}
+
+/// The agent wants a sign-in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignInRequest {
+    /// The ways it offers.
+    pub methods: Vec<AuthMethodInfo>,
+    /// What the agent said (its auth error).
+    pub message: Option<String>,
+}
+
+/// How a sign-in goes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignInProgress {
+    /// `authenticate` was sent for this method; the agent may be waiting for a browser.
+    Started(String),
+    /// It failed; the agent's error.
+    Failed(String),
+    /// It worked.
+    Succeeded,
 }
 
 /// What the UI hears from a session.
@@ -130,7 +175,20 @@ pub enum SessionEvent {
         version: String,
     },
     /// The agent needs a sign-in first.
-    SignInRequired(Vec<AuthMethodInfo>),
+    SignInRequired(SignInRequest),
+    /// A sign-in started, failed or worked.
+    SignIn(SignInProgress),
+    /// The agent wants a link opened (through its `open`, or printed while signing
+    /// in). `open` is set when Maze should open it right away: during a sign-in, for
+    /// links the agent handed to `open`.
+    Link {
+        /// An `https://` link.
+        url: String,
+        /// Open it now.
+        open: bool,
+    },
+    /// What the agent lets the user choose (model, mode, thinking, …) changed.
+    Controls(Vec<Control>),
     /// The conversation changed.
     Update(EntryUpdate),
     /// The session ended; with an error if it didn't end by request.
@@ -155,6 +213,13 @@ pub enum SessionCommand {
     Authenticate(String),
     /// The attached mail thread changed (the file is already written).
     SetAttached(Option<AttachedThread>),
+    /// Change a control (model, mode, thinking, …).
+    SetControl {
+        /// The control's id.
+        id: String,
+        /// The new value.
+        value: ControlValue,
+    },
     /// End the session.
     Shutdown,
 }
@@ -216,6 +281,14 @@ impl SessionHandle {
         self.send(SessionCommand::Authenticate(method.into()));
     }
 
+    /// Changes a control (model, mode, thinking, …).
+    pub fn set_control(&self, id: impl Into<String>, value: ControlValue) {
+        self.send(SessionCommand::SetControl {
+            id: id.into(),
+            value,
+        });
+    }
+
     /// Tells the session the attached thread changed.
     pub fn set_attached(&self, attached: Option<AttachedThread>) {
         self.send(SessionCommand::SetAttached(attached));
@@ -243,6 +316,8 @@ pub struct SessionResources {
     pub token: Option<(Arc<dyn TokenStore>, TokenId)>,
     /// The agent's last stderr lines.
     pub stderr: Option<StderrTail>,
+    /// Released when the session ended (the agent version it runs on).
+    pub lease: Option<Box<dyn std::any::Any + Send + Sync>>,
 }
 
 impl std::fmt::Debug for SessionResources {
@@ -339,6 +414,31 @@ enum HostRequest {
 /// Terminal display state shared with the callbacks.
 type TerminalViews = Arc<Mutex<HashMap<String, TerminalEntry>>>;
 
+/// The session's controls, shared with the update callback.
+type SharedControls = Arc<Mutex<Vec<Control>>>;
+
+/// Applies a mode or config option update to the controls; `false` for other updates.
+fn update_controls(
+    update: &SessionUpdate,
+    controls: &Mutex<Vec<Control>>,
+    events: &async_channel::Sender<SessionEvent>,
+) -> bool {
+    let mut controls = controls.lock().unwrap_or_else(PoisonError::into_inner);
+    match update {
+        SessionUpdate::CurrentModeUpdate(update) => {
+            if let Some(mode) = controls.iter_mut().find(|c| c.legacy_mode) {
+                mode.set(&ControlValue::Choice(update.current_mode_id.0.to_string()));
+            }
+        }
+        SessionUpdate::ConfigOptionUpdate(update) => {
+            *controls = controls::from_config_options(&update.config_options);
+        }
+        _ => return false,
+    }
+    let _ = events.try_send(SessionEvent::Controls(controls.clone()));
+    true
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run<T>(
     transport: T,
@@ -392,6 +492,7 @@ async fn run<T>(
         }
     });
     drop(resources.scratch);
+    drop(resources.lease);
     let _ = events.try_send(SessionEvent::Status(SessionStatus::Ended));
     let _ = events.try_send(SessionEvent::Ended(error));
 }
@@ -418,6 +519,8 @@ struct Loop {
     pending_commands: HashMap<u64, PendingCommand>,
     allowed_programs: HashSet<String>,
     context_sent: Option<String>,
+    sign_in: SignIn,
+    controls: SharedControls,
 }
 
 struct PendingCommand {
@@ -459,12 +562,17 @@ where
     let (requests_tx, requests_rx) = async_channel::unbounded::<HostRequest>();
     let replaying = Arc::new(AtomicBool::new(false));
     let views: TerminalViews = Arc::default();
+    let controls: SharedControls = Arc::default();
 
     let on_update = {
         let transcript = Arc::clone(&transcript);
         let events = events.clone();
         let replaying = Arc::clone(&replaying);
+        let controls = Arc::clone(&controls);
         async move |notification: SessionNotification, _cx: ConnectionTo<Agent>| {
+            if update_controls(&notification.update, &controls, &events) {
+                return Ok(());
+            }
             // `session/load` replays the old conversation; Maze has it stored already.
             if !replaying.load(Ordering::SeqCst) {
                 for update in map_update(notification.update) {
@@ -581,6 +689,7 @@ where
         let views = Arc::clone(&views);
         async move |cx: ConnectionTo<Agent>| {
             let result = session_main(
+                controls,
                 cx,
                 config,
                 host,
@@ -676,6 +785,7 @@ fn update_view(
 
 #[allow(clippy::too_many_arguments)]
 async fn session_main(
+    controls: SharedControls,
     cx: ConnectionTo<Agent>,
     config: SessionConfig,
     host: Arc<dyn AgentHost>,
@@ -693,10 +803,25 @@ async fn session_main(
         let _ = events.try_send(SessionEvent::Status(status));
     };
     status(SessionStatus::Starting);
+    // Terminal logins: ACP's `auth.terminal`, and the older `_meta["terminal-auth"]`
+    // that Claude Code's adapter also reads.
+    let mut meta = serde_json::Map::new();
+    meta.insert("terminal-auth".to_owned(), serde_json::Value::Bool(true));
     let init = cx
         .send_request(
             InitializeRequest::new(ProtocolVersion::V1)
-                .client_capabilities(ClientCapabilities::new().terminal(true))
+                .client_capabilities(
+                    ClientCapabilities::new()
+                        .terminal(true)
+                        .auth(AuthCapabilities::new().terminal(true))
+                        .session(
+                            ClientSessionCapabilities::new().config_options(
+                                SessionConfigOptionsCapabilities::new()
+                                    .boolean(BooleanConfigOptionCapabilities::new()),
+                            ),
+                        )
+                        .meta(meta),
+                )
                 .client_info(
                     Implementation::new("mazemail", env!("CARGO_PKG_VERSION"))
                         .title("Maze".to_owned()),
@@ -711,11 +836,17 @@ async fn session_main(
             version: info.version.clone(),
         });
     }
-    let methods: Vec<AuthMethodInfo> = init
-        .auth_methods
-        .iter()
-        .map(|method| auth_info(method, config.terminal_login.as_deref()))
-        .collect();
+    let methods: Vec<AuthMethodInfo> = init.auth_methods.iter().map(auth_info).collect();
+    let mut sign_in = SignIn {
+        cx: cx.clone(),
+        events: events.clone(),
+        transcript: Arc::clone(&transcript),
+        stderr: stderr_live,
+        inbox: config.open_urls.clone().map(UrlInbox::new),
+        methods,
+        key_env: config.key_env.clone(),
+        tried_key: false,
+    };
 
     let mut resume = config
         .resume_acp_session
@@ -734,7 +865,13 @@ async fn session_main(
                     .await;
                 replaying.store(false, Ordering::SeqCst);
                 match loaded {
-                    Ok(_) => Ok(SessionId::new(previous)),
+                    Ok(response) => Ok((
+                        SessionId::new(previous),
+                        controls::controls(
+                            response.config_options.as_deref(),
+                            response.modes.as_ref(),
+                        ),
+                    )),
                     Err(error) if error.code == ErrorCode::AuthRequired => Err(error),
                     Err(_) => {
                         emit_to(
@@ -755,16 +892,23 @@ async fn session_main(
                 .send_request(NewSessionRequest::new(config.cwd.clone()))
                 .block_task()
                 .await
-                .map(|response| response.session_id),
+                .map(|response| {
+                    (
+                        response.session_id,
+                        controls::controls(
+                            response.config_options.as_deref(),
+                            response.modes.as_ref(),
+                        ),
+                    )
+                }),
         };
         match attempt {
-            Ok(session) => break session,
-            Err(error) if error.code == ErrorCode::AuthRequired && !methods.is_empty() => {
-                status(SessionStatus::SignInRequired);
-                let _ = events.try_send(SessionEvent::SignInRequired(methods.clone()));
-                if !wait_for_sign_in(&cx, &commands, &transcript, &events, stderr_live.as_ref())
-                    .await
-                {
+            Ok((session, initial)) => {
+                *controls.lock().unwrap_or_else(PoisonError::into_inner) = initial;
+                break session;
+            }
+            Err(error) if error.code == ErrorCode::AuthRequired => {
+                if !sign_in.required(auth_message(&error), &commands).await {
                     return Ok(());
                 }
                 status(SessionStatus::Starting);
@@ -787,6 +931,11 @@ async fn session_main(
     {
         tracing::warn!(%error, "could not store the agent session id");
     }
+    let initial = controls
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    let _ = events.try_send(SessionEvent::Controls(initial));
     status(SessionStatus::Ready);
 
     let mut state = Loop {
@@ -804,94 +953,272 @@ async fn session_main(
         pending_commands: HashMap::new(),
         allowed_programs: HashSet::new(),
         context_sent: None,
+        sign_in,
+        controls,
     };
+    state.apply_preferences().await;
     state.run(commands, requests_rx).await
 }
 
-/// Waits for the user to pick a sign-in method and runs it. `false` if the session
-/// ended meanwhile.
-async fn wait_for_sign_in(
-    cx: &ConnectionTo<Agent>,
-    commands: &async_channel::Receiver<SessionCommand>,
-    transcript: &Mutex<Transcript>,
-    events: &async_channel::Sender<SessionEvent>,
-    stderr_live: Option<&async_channel::Receiver<String>>,
-) -> bool {
-    loop {
-        let command = match stderr_live {
-            Some(stderr) => tokio::select! {
-                command = commands.recv() => command,
-                line = stderr.recv() => {
-                    if let Ok(line) = line {
-                        for url in sign_in_links(&line) {
-                            emit_to(transcript, events, EntryUpdate::Notice(
-                                format!("The agent printed a sign-in link: {url}"),
-                                NoticeLevel::Info,
-                            ));
-                        }
-                    }
-                    continue;
+/// How often links from the agent's `open` are picked up.
+const LINK_POLL: Duration = Duration::from_millis(300);
+
+/// What a sign-in attempt came to.
+enum Authenticated {
+    /// The agent accepted it.
+    Yes,
+    /// It failed (reported to the UI).
+    No,
+    /// The user picked another method meanwhile.
+    Switch(String),
+    /// The session ended meanwhile.
+    Ended,
+}
+
+/// Sign-in state: the agent's methods, and where its links come from.
+struct SignIn {
+    cx: ConnectionTo<Agent>,
+    events: async_channel::Sender<SessionEvent>,
+    transcript: Arc<Mutex<Transcript>>,
+    stderr: Option<async_channel::Receiver<String>>,
+    inbox: Option<UrlInbox>,
+    methods: Vec<AuthMethodInfo>,
+    key_env: Option<String>,
+    tried_key: bool,
+}
+
+impl SignIn {
+    fn send(&self, event: SessionEvent) {
+        let _ = self.events.try_send(event);
+    }
+
+    /// Links the agent handed to its `open` since the last call.
+    fn relay_opened(&mut self, open: bool) {
+        if let Some(inbox) = self.inbox.as_mut() {
+            for url in inbox.take() {
+                let _ = self.events.try_send(SessionEvent::Link { url, open });
+            }
+        }
+    }
+
+    /// The next stderr line; pending forever without one.
+    async fn stderr_line(&mut self) -> Option<String> {
+        match &self.stderr {
+            Some(stderr) => match stderr.recv().await {
+                Ok(line) => Some(line),
+                Err(_) => {
+                    self.stderr = None;
+                    None
                 }
             },
-            None => commands.recv().await,
-        };
-        match command {
-            Ok(SessionCommand::Authenticate(method)) => {
-                let result = cx
-                    .send_request(AuthenticateRequest::new(method))
-                    .block_task()
-                    .await;
-                match result {
-                    Ok(_) => return true,
-                    Err(error) => emit_to(
-                        transcript,
-                        events,
-                        EntryUpdate::Notice(
-                            format!("Signing in failed: {}", describe_error(error)),
-                            NoticeLevel::Error,
-                        ),
-                    ),
+            None => std::future::pending().await,
+        }
+    }
+
+    /// Shows links the agent printed (not opened: the user clicks them).
+    fn relay_printed(&self, line: &str) {
+        for url in links_in(line) {
+            self.send(SessionEvent::Link { url, open: false });
+        }
+    }
+
+    /// The agent wants a sign-in: tells the UI and waits until the user signed in
+    /// through `authenticate` (`true`) or the session ended (`false`). Terminal logins
+    /// and keys restart the session from the UI.
+    async fn required(
+        &mut self,
+        message: Option<String>,
+        commands: &async_channel::Receiver<SessionCommand>,
+    ) -> bool {
+        self.send(SessionEvent::Status(SessionStatus::SignInRequired));
+        self.send(SessionEvent::SignInRequired(SignInRequest {
+            methods: self.methods.clone(),
+            message,
+        }));
+        // With the user's key in the environment, an API-key method needs no choice.
+        if self.key_env.is_some() && !self.tried_key {
+            self.tried_key = true;
+            if let Some(method) = self.methods.iter().find(|m| m.api_key_provider.is_some()) {
+                match self.authenticate(method.id.clone(), commands).await {
+                    Authenticated::Yes => return true,
+                    Authenticated::Ended => return false,
+                    Authenticated::No | Authenticated::Switch(_) => {}
                 }
             }
-            Ok(SessionCommand::Shutdown) | Err(_) => return false,
-            Ok(SessionCommand::Prompt(_)) => emit_to(
-                transcript,
-                events,
-                EntryUpdate::Notice("Sign in to the agent first.".to_owned(), NoticeLevel::Info),
-            ),
-            Ok(_) => {}
+        }
+        let mut tick = tokio::time::interval(LINK_POLL);
+        loop {
+            tokio::select! {
+                command = commands.recv() => match command {
+                    Ok(SessionCommand::Authenticate(method)) => {
+                        let mut method = method;
+                        loop {
+                            match self.authenticate(method, commands).await {
+                                Authenticated::Yes => return true,
+                                Authenticated::Ended => return false,
+                                Authenticated::No => break,
+                                Authenticated::Switch(other) => method = other,
+                            }
+                        }
+                    }
+                    Ok(SessionCommand::Shutdown) | Err(_) => return false,
+                    Ok(SessionCommand::Prompt(_)) => self.sign_in_first(),
+                    Ok(_) => {}
+                },
+                _ = tick.tick() => self.relay_opened(true),
+                line = self.stderr_line() => {
+                    if let Some(line) = line {
+                        self.relay_printed(&line);
+                    }
+                }
+            }
+        }
+    }
+
+    fn sign_in_first(&self) {
+        emit_to(
+            &self.transcript,
+            &self.events,
+            EntryUpdate::Notice("Sign in to the agent first.".to_owned(), NoticeLevel::Info),
+        );
+    }
+
+    /// Runs `authenticate`. Meanwhile links the agent opens are opened for it (it
+    /// can't start a browser in the sandbox) and links it prints are shown.
+    async fn authenticate(
+        &mut self,
+        method: String,
+        commands: &async_channel::Receiver<SessionCommand>,
+    ) -> Authenticated {
+        self.send(SessionEvent::SignIn(SignInProgress::Started(
+            method.clone(),
+        )));
+        let request = self
+            .cx
+            .send_request(AuthenticateRequest::new(method.clone()))
+            .block_task();
+        tokio::pin!(request);
+        let mut tick = tokio::time::interval(LINK_POLL);
+        loop {
+            tokio::select! {
+                result = &mut request => {
+                    self.relay_opened(true);
+                    return match result {
+                        Ok(_) => {
+                            self.send(SessionEvent::SignIn(SignInProgress::Succeeded));
+                            Authenticated::Yes
+                        }
+                        Err(error) => {
+                            let message = describe_error(error);
+                            for url in links_in(&message) {
+                                self.send(SessionEvent::Link { url, open: false });
+                            }
+                            self.send(SessionEvent::SignIn(SignInProgress::Failed(message)));
+                            Authenticated::No
+                        }
+                    };
+                }
+                _ = tick.tick() => self.relay_opened(true),
+                line = self.stderr_line() => {
+                    if let Some(line) = line {
+                        self.relay_printed(&line);
+                    }
+                }
+                command = commands.recv() => match command {
+                    Ok(SessionCommand::Shutdown) | Err(_) => return Authenticated::Ended,
+                    Ok(SessionCommand::Authenticate(other)) if other != method => {
+                        return Authenticated::Switch(other);
+                    }
+                    Ok(SessionCommand::Prompt(_)) => self.sign_in_first(),
+                    Ok(_) => {}
+                },
+            }
         }
     }
 }
 
-/// `https://…` links in a line of agent output.
-fn sign_in_links(line: &str) -> Vec<String> {
-    line.split_whitespace()
-        .filter(|word| word.starts_with("https://"))
-        .map(|word| {
-            word.trim_end_matches([')', ']', '>', '"', '\'', ',', '.'])
-                .to_owned()
+/// The agent's explanation of an auth error, if it gave more than the code's name.
+fn auth_message(error: &agent_client_protocol::Error) -> Option<String> {
+    let data = error
+        .data
+        .as_ref()
+        .and_then(|data| match data {
+            serde_json::Value::String(text) => Some(text.clone()),
+            serde_json::Value::Object(map) => map
+                .get("message")
+                .or_else(|| map.get("reason"))
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
+            _ => None,
         })
-        .collect()
+        .filter(|text| !text.trim().is_empty());
+    let message = Some(error.message.clone())
+        .filter(|m| !m.trim().is_empty() && m != "Authentication required");
+    match (message, data) {
+        (Some(message), Some(data)) if !message.contains(&data) => {
+            Some(format!("{message} {data}"))
+        }
+        (Some(message), _) => Some(message),
+        (None, data) => data,
+    }
 }
 
-fn auth_info(method: &AuthMethod, terminal_login: Option<&str>) -> AuthMethodInfo {
-    let terminal_command = match method {
-        AuthMethod::Terminal(terminal) => terminal_login.map(|login| {
-            let mut line = login.to_owned();
-            for arg in &terminal.args {
-                line.push(' ');
-                line.push_str(arg);
-            }
-            line
+fn auth_info(method: &AuthMethod) -> AuthMethodInfo {
+    let meta = method.meta();
+    let api_key_provider = meta
+        .and_then(|meta| meta.get("api-key"))
+        .and_then(|value| value.get("provider"))
+        .and_then(|value| value.as_str())
+        .map(str::to_owned);
+    let terminal = match method {
+        AuthMethod::Terminal(terminal) => Some(TerminalAuth {
+            command: None,
+            args: terminal.args.clone(),
+            env: terminal
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
         }),
-        _ => None,
+        // The older form: an agent method with `_meta["terminal-auth"]`.
+        _ => meta
+            .and_then(|meta| meta.get("terminal-auth"))
+            .and_then(|value| {
+                let command = value.get("command")?.as_str()?.to_owned();
+                let strings = |key: &str| -> Vec<String> {
+                    value
+                        .get(key)
+                        .and_then(|v| v.as_array())
+                        .map(|items| {
+                            items
+                                .iter()
+                                .filter_map(|v| v.as_str().map(str::to_owned))
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                };
+                let env = value
+                    .get("env")
+                    .and_then(|v| v.as_object())
+                    .map(|map| {
+                        map.iter()
+                            .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned())))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Some(TerminalAuth {
+                    command: Some(command),
+                    args: strings("args"),
+                    env,
+                })
+            }),
     };
     AuthMethodInfo {
         id: method.id().0.to_string(),
         name: method.name().to_owned(),
         description: method.description().map(str::to_owned),
-        terminal_command,
+        terminal,
+        api_key_provider,
     }
 }
 
@@ -911,6 +1238,7 @@ impl Loop {
     ) -> Result<(), String> {
         let mut prompt: Option<PromptFuture> = None;
         let cx = self.cx.clone();
+        let mut tick = tokio::time::interval(LINK_POLL);
         loop {
             tokio::select! {
                 biased;
@@ -919,6 +1247,7 @@ impl Loop {
                         self.on_request(request);
                     }
                 }
+                _ = tick.tick() => self.sign_in.relay_opened(false),
                 command = commands.recv() => match command {
                     Ok(SessionCommand::Shutdown) | Err(_) => break,
                     Ok(SessionCommand::Prompt(text)) => {
@@ -934,9 +1263,29 @@ impl Loop {
                     }
                     Ok(SessionCommand::Cancel) => self.cancel(),
                     Ok(SessionCommand::Permission { id, choice }) => self.decide(id, choice),
+                    Ok(SessionCommand::Authenticate(method)) if prompt.is_none() => {
+                        if !self.sign_in_again(method, &commands).await {
+                            break;
+                        }
+                    }
                     Ok(SessionCommand::Authenticate(_)) => {}
                     Ok(SessionCommand::SetAttached(attached)) => {
                         self.config.attached = attached;
+                    }
+                    Ok(SessionCommand::SetControl { id, value }) => {
+                        if prompt.is_some() {
+                            self.emit(EntryUpdate::Notice(
+                                "The agent is working; change this when it's done.".to_owned(),
+                                NoticeLevel::Info,
+                            ));
+                            self.emit_controls();
+                        } else if let Err(error) = self.set_control(&id, value).await {
+                            self.emit(EntryUpdate::Notice(
+                                format!("The agent didn't take the change: {error}"),
+                                NoticeLevel::Error,
+                            ));
+                            self.emit_controls();
+                        }
                     }
                 },
                 result = async {
@@ -1007,7 +1356,109 @@ impl Loop {
         }
     }
 
+    fn emit_controls(&self) {
+        let controls = self
+            .controls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let _ = self.events.try_send(SessionEvent::Controls(controls));
+    }
+
+    /// Applies the remembered choices the agent offers, one after the other (a model
+    /// change can change the other options).
+    async fn apply_preferences(&mut self) {
+        for (id, value) in self.config.preferred.clone() {
+            if let Err(error) = self.set_control(&id, value).await {
+                tracing::debug!(%error, id, "a remembered choice wasn't applied");
+            }
+        }
+    }
+
+    /// Changes a control through the agent; nothing to do if it already has `value`
+    /// or doesn't offer it.
+    async fn set_control(&mut self, id: &str, value: ControlValue) -> Result<(), String> {
+        let control = self
+            .controls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .find(|c| c.id == id)
+            .cloned();
+        let Some(control) = control else {
+            return Err(format!("the agent has no setting {id}"));
+        };
+        if control.value() == value {
+            return Ok(());
+        }
+        if !control.accepts(&value) {
+            return Err(format!("{} doesn't offer that choice", control.name));
+        }
+        if control.legacy_mode {
+            let ControlValue::Choice(mode) = &value else {
+                return Err("modes are choices".to_owned());
+            };
+            self.cx
+                .send_request(SetSessionModeRequest::new(
+                    self.session.clone(),
+                    mode.clone(),
+                ))
+                .block_task()
+                .await
+                .map_err(describe_error)?;
+            if let Some(mode) = self
+                .controls
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .iter_mut()
+                .find(|c| c.id == control.id)
+            {
+                mode.set(&value);
+            }
+        } else {
+            let response = self
+                .cx
+                .send_request(SetSessionConfigOptionRequest::new(
+                    self.session.clone(),
+                    control.id.clone(),
+                    value.to_acp(),
+                ))
+                .block_task()
+                .await
+                .map_err(describe_error)?;
+            *self.controls.lock().unwrap_or_else(PoisonError::into_inner) =
+                controls::from_config_options(&response.config_options);
+        }
+        self.emit_controls();
+        Ok(())
+    }
+
+    /// Signs in after a prompt failed for lack of a login. `false` if the session ended.
+    async fn sign_in_again(
+        &mut self,
+        method: String,
+        commands: &async_channel::Receiver<SessionCommand>,
+    ) -> bool {
+        let mut method = method;
+        loop {
+            match self.sign_in.authenticate(method, commands).await {
+                Authenticated::Yes => {
+                    self.emit(EntryUpdate::Notice(
+                        "Signed in. Send your message again.".to_owned(),
+                        NoticeLevel::Info,
+                    ));
+                    self.status(SessionStatus::Ready);
+                    return true;
+                }
+                Authenticated::No => return true,
+                Authenticated::Ended => return false,
+                Authenticated::Switch(other) => method = other,
+            }
+        }
+    }
+
     async fn turn_ended(&mut self, result: Result<PromptResponse, agent_client_protocol::Error>) {
+        let mut signed_out = false;
         match result {
             Ok(response) => {
                 let note = match response.stop_reason {
@@ -1024,12 +1475,24 @@ impl Loop {
                     self.emit(EntryUpdate::Notice(note.to_owned(), NoticeLevel::Info));
                 }
             }
+            // Claude Code only finds out at the first prompt that it isn't signed in.
+            Err(error) if error.code == ErrorCode::AuthRequired => {
+                signed_out = true;
+                self.status(SessionStatus::SignInRequired);
+                self.sign_in
+                    .send(SessionEvent::SignInRequired(SignInRequest {
+                        methods: self.sign_in.methods.clone(),
+                        message: auth_message(&error),
+                    }));
+            }
             Err(error) => self.emit(EntryUpdate::Notice(
                 format!("The agent reported an error: {}", describe_error(error)),
                 NoticeLevel::Error,
             )),
         }
-        self.status(SessionStatus::Ready);
+        if !signed_out {
+            self.status(SessionStatus::Ready);
+        }
         let (json, title) = {
             let transcript = self
                 .transcript
@@ -1483,12 +1946,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn links_are_found_in_agent_output() {
+    fn auth_errors_keep_the_agents_explanation() {
+        let plain = agent_client_protocol::Error::auth_required();
+        assert_eq!(auth_message(&plain), None);
+        let cursor = agent_client_protocol::Error::auth_required()
+            .data("Authentication required. Please run 'cursor-agent login' first.".to_owned());
         assert_eq!(
-            sign_in_links("Open https://auth.example.com/login?code=1, then return."),
-            vec!["https://auth.example.com/login?code=1".to_owned()]
+            auth_message(&cursor).as_deref(),
+            Some("Authentication required. Please run 'cursor-agent login' first.")
         );
-        assert!(sign_in_links("no links here").is_empty());
+        let gemini = agent_client_protocol::Error::new(
+            -32000,
+            "Gemini API key is missing or not configured.",
+        );
+        assert_eq!(
+            auth_message(&gemini).as_deref(),
+            Some("Gemini API key is missing or not configured.")
+        );
     }
 
     #[test]

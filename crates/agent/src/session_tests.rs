@@ -67,7 +67,9 @@ impl Harness {
             terminal_policy: None,
             attached: None,
             transcript: Transcript::default(),
-            terminal_login: Some("HOME=/x fake-agent".to_owned()),
+            open_urls: None,
+            key_env: None,
+            preferred: BTreeMap::new(),
         }
     }
 
@@ -191,7 +193,10 @@ async fn a_turn_streams_into_the_transcript_and_is_stored() {
     );
 
     let log = agent.log();
-    assert_eq!(log[0], "initialize:terminal=true:fs_read=false");
+    assert_eq!(
+        log[0],
+        "initialize:terminal=true:fs_read=false:auth_terminal=true:meta_terminal_auth=true"
+    );
     assert_eq!(log[1], format!("new_session:{}", h.dir.display()));
     // The attached thread is announced once, before the user's text.
     assert!(
@@ -394,11 +399,12 @@ async fn sign_in_comes_before_the_session() {
         matches!(e, SessionEvent::SignInRequired(_))
     })
     .await;
-    let Some(SessionEvent::SignInRequired(methods)) = events.last() else {
+    let Some(SessionEvent::SignInRequired(request)) = events.last() else {
         panic!("expected a sign-in request")
     };
-    assert_eq!(methods[0].id, "fake-login");
-    assert_eq!(methods[0].name, "Sign in with Fake");
+    assert_eq!(request.methods[0].id, "fake-login");
+    assert_eq!(request.methods[0].name, "Sign in with Fake");
+    assert_eq!(request.methods[0].terminal, None);
     handle.authenticate("fake-login");
     until(&handle, &mut transcript, is_status(SessionStatus::Ready)).await;
     let log = agent.log();
@@ -455,6 +461,7 @@ async fn teardown_revokes_the_token_and_deletes_the_scratch_dir() {
             scratch: Some(scratch),
             token: Some((h.host.token_store(), minted.record.id.clone())),
             stderr: None,
+            lease: None,
         },
     );
     let events = handle.events();
@@ -474,4 +481,308 @@ async fn teardown_revokes_the_token_and_deletes_the_scratch_dir() {
     assert!(!scratch_dir.exists(), "the scratch dir is deleted");
     let record = h.host.tokens().list().await.unwrap().remove(0);
     assert!(record.revoked_at.is_some(), "the session token is revoked");
+}
+
+#[tokio::test]
+async fn a_failed_prompt_asks_for_a_terminal_login_like_claude_code() {
+    let h = Harness::new();
+    let mut agent = FakeAgent::new(vec![FakeStep::Message("hi".into())]);
+    agent.require_auth_at_prompt = true;
+    agent.terminal_login = true;
+    agent.auth_message = Some("Not logged in. Please run /login".into());
+    let handle = h.start(&agent, h.config().await, SessionResources::default());
+    let mut transcript = Transcript::default();
+    until(&handle, &mut transcript, is_status(SessionStatus::Ready)).await;
+    handle.prompt("hello");
+    let events = until(&handle, &mut transcript, |e| {
+        matches!(e, SessionEvent::SignInRequired(_))
+    })
+    .await;
+    assert!(events.contains(&SessionEvent::Status(SessionStatus::SignInRequired)));
+    let Some(SessionEvent::SignInRequired(request)) = events.last() else {
+        panic!("expected a sign-in request")
+    };
+    assert_eq!(
+        request.message.as_deref(),
+        Some("Not logged in. Please run /login")
+    );
+    let terminal = request
+        .methods
+        .iter()
+        .find(|m| m.id == "fake-terminal")
+        .expect("the terminal login is offered once Maze says it can run one");
+    assert_eq!(
+        terminal.terminal,
+        Some(crate::TerminalAuth {
+            command: None,
+            args: vec!["--login".to_owned()],
+            env: BTreeMap::new(),
+        })
+    );
+    // The agent method still works in the running session.
+    handle.authenticate("fake-login");
+    until(&handle, &mut transcript, |e| {
+        *e == SessionEvent::SignIn(crate::SignInProgress::Succeeded)
+    })
+    .await;
+    until(&handle, &mut transcript, is_status(SessionStatus::Ready)).await;
+    handle.prompt("hello again");
+    until(&handle, &mut transcript, |e| {
+        *e == SessionEvent::Status(SessionStatus::Working)
+    })
+    .await;
+    until(&handle, &mut transcript, is_status(SessionStatus::Ready)).await;
+    assert!(agent.log().contains(&"prompt:hello again".to_owned()));
+}
+
+#[tokio::test]
+async fn links_the_agent_opens_while_signing_in_are_opened_for_it() {
+    let h = Harness::new();
+    let urls = h.dir.join(".open-urls");
+    let mut agent = FakeAgent::new(vec![]);
+    agent.require_auth = true;
+    agent.browser_login = Some("https://cursor.example/login?challenge=abc".into());
+    agent.open_urls = Some(urls.clone());
+    let mut config = h.config().await;
+    config.open_urls = Some(urls);
+    let handle = h.start(&agent, config, SessionResources::default());
+    let mut transcript = Transcript::default();
+    until(&handle, &mut transcript, |e| {
+        matches!(e, SessionEvent::SignInRequired(_))
+    })
+    .await;
+    handle.authenticate("fake-login");
+    let events = until(&handle, &mut transcript, |e| {
+        matches!(e, SessionEvent::Link { .. })
+    })
+    .await;
+    assert!(
+        events.contains(&SessionEvent::SignIn(crate::SignInProgress::Started(
+            "fake-login".into()
+        )))
+    );
+    assert_eq!(
+        events.last(),
+        Some(&SessionEvent::Link {
+            url: "https://cursor.example/login?challenge=abc".into(),
+            open: true,
+        })
+    );
+    agent.finish_browser_login();
+    until(&handle, &mut transcript, is_status(SessionStatus::Ready)).await;
+    assert!(agent.log().contains(&"browser_login:done".to_owned()));
+    // The link is not kept in the conversation.
+    assert!(transcript.entries.is_empty(), "{:?}", transcript.entries);
+}
+
+#[tokio::test]
+async fn a_saved_key_signs_in_through_the_api_key_method() {
+    let h = Harness::new();
+    let mut agent = FakeAgent::new(vec![]);
+    agent.require_auth = true;
+    agent.api_key_method = true;
+    let mut config = h.config().await;
+    config.key_env = Some("OPENAI_API_KEY".into());
+    let handle = h.start(&agent, config, SessionResources::default());
+    let mut transcript = Transcript::default();
+    until(&handle, &mut transcript, is_status(SessionStatus::Ready)).await;
+    let log = agent.log();
+    assert_eq!(
+        &log[1..],
+        [
+            "new_session:auth_required".to_owned(),
+            "authenticate:api-key".to_owned(),
+            format!("new_session:{}", h.dir.display()),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn sign_in_errors_reach_the_ui() {
+    let h = Harness::new();
+    let urls = h.dir.join(".open-urls");
+    let mut agent = FakeAgent::new(vec![]);
+    agent.require_auth = true;
+    agent.auth_message =
+        Some("Authentication required. Please run 'cursor-agent login' first.".into());
+    // A browser login whose "open" file can't be written fails.
+    agent.browser_login = Some("https://cursor.example/login".into());
+    agent.open_urls = Some(h.dir.join("missing-dir/urls"));
+    let mut config = h.config().await;
+    config.open_urls = Some(urls);
+    let handle = h.start(&agent, config, SessionResources::default());
+    let mut transcript = Transcript::default();
+    let events = until(&handle, &mut transcript, |e| {
+        matches!(e, SessionEvent::SignInRequired(_))
+    })
+    .await;
+    let Some(SessionEvent::SignInRequired(request)) = events.last() else {
+        panic!()
+    };
+    assert_eq!(
+        request.message.as_deref(),
+        Some("Authentication required. Please run 'cursor-agent login' first.")
+    );
+    handle.authenticate("fake-login");
+    let events = until(&handle, &mut transcript, |e| {
+        matches!(e, SessionEvent::SignIn(crate::SignInProgress::Failed(_)))
+    })
+    .await;
+    assert!(matches!(
+        events.last(),
+        Some(SessionEvent::SignIn(crate::SignInProgress::Failed(message))) if !message.is_empty()
+    ));
+    // Still waiting for a sign-in; ending the session works.
+    handle.shutdown();
+    until(&handle, &mut transcript, |e| {
+        matches!(e, SessionEvent::Ended(_))
+    })
+    .await;
+}
+
+fn last_controls(events: &[SessionEvent]) -> Vec<crate::Control> {
+    events
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            SessionEvent::Controls(controls) => Some(controls.clone()),
+            _ => None,
+        })
+        .expect("no controls")
+}
+
+fn current(controls: &[crate::Control], id: &str) -> Option<crate::ControlValue> {
+    controls
+        .iter()
+        .find(|c| c.id == id)
+        .map(crate::Control::value)
+}
+
+#[tokio::test]
+async fn config_options_are_shown_changed_and_followed() {
+    use crate::ControlValue::{Choice, Toggle};
+    let h = Harness::new();
+    let mut agent = FakeAgent::new(vec![FakeStep::SwitchModel("opus".into())]);
+    agent.config_options = true;
+    let handle = h.start(&agent, h.config().await, SessionResources::default());
+    let mut transcript = Transcript::default();
+    let events = until(&handle, &mut transcript, is_status(SessionStatus::Ready)).await;
+    let controls = last_controls(&events);
+    // The config options win over the modes the agent also sent.
+    let ids: Vec<&str> = controls.iter().map(|c| c.id.as_str()).collect();
+    assert_eq!(ids, ["mode", "model", "effort", "fast"]);
+    assert!(controls.iter().all(|c| !c.legacy_mode));
+    assert_eq!(current(&controls, "model"), Some(Choice("sonnet".into())));
+
+    // Picking Haiku: the agent drops the effort option.
+    handle.set_control("model", Choice("haiku".into()));
+    let events = until(&handle, &mut transcript, |e| {
+        matches!(e, SessionEvent::Controls(_))
+    })
+    .await;
+    let controls = last_controls(&events);
+    assert_eq!(current(&controls, "model"), Some(Choice("haiku".into())));
+    assert_eq!(current(&controls, "effort"), None);
+    handle.set_control("fast", Toggle(true));
+    let events = until(&handle, &mut transcript, |e| {
+        matches!(e, SessionEvent::Controls(_))
+    })
+    .await;
+    assert_eq!(current(&last_controls(&events), "fast"), Some(Toggle(true)));
+    // A choice the agent doesn't offer is refused without asking it.
+    handle.set_control("model", Choice("gpt-5".into()));
+    let events = until(&handle, &mut transcript, |e| {
+        matches!(e, SessionEvent::Controls(_))
+    })
+    .await;
+    assert_eq!(
+        current(&last_controls(&events), "model"),
+        Some(Choice("haiku".into()))
+    );
+
+    // The agent changes the model itself.
+    handle.prompt("go");
+    let events = until(&handle, &mut transcript, |e| {
+        matches!(e, SessionEvent::Controls(_))
+    })
+    .await;
+    let controls = last_controls(&events);
+    assert_eq!(current(&controls, "model"), Some(Choice("opus".into())));
+    assert_eq!(current(&controls, "effort"), Some(Choice("high".into())));
+    until(&handle, &mut transcript, is_status(SessionStatus::Ready)).await;
+    let log: Vec<String> = agent
+        .log()
+        .into_iter()
+        .filter(|l| l.starts_with("set_"))
+        .collect();
+    assert_eq!(log, ["set_config:model=haiku", "set_config:fast=true"]);
+    assert!(
+        transcript.entries.iter().any(
+            |e| matches!(e, crate::Entry::Notice { text, .. } if text.contains("doesn't offer"))
+        )
+    );
+}
+
+#[tokio::test]
+async fn remembered_choices_are_applied_when_a_session_starts() {
+    use crate::ControlValue::{Choice, Toggle};
+    let h = Harness::new();
+    let mut agent = FakeAgent::new(vec![]);
+    agent.config_options = true;
+    let mut config = h.config().await;
+    config.preferred = BTreeMap::from([
+        ("model".to_owned(), Choice("opus".into())),
+        ("effort".to_owned(), Choice("low".into())),
+        ("fast".to_owned(), Toggle(false)),
+        ("gone".to_owned(), Choice("x".into())),
+    ]);
+    let handle = h.start(&agent, config, SessionResources::default());
+    let mut transcript = Transcript::default();
+    until(&handle, &mut transcript, is_status(SessionStatus::Ready)).await;
+    let events = until(&handle, &mut transcript, |e| {
+        matches!(e, SessionEvent::Controls(c) if current(c, "model") == Some(Choice("opus".into())))
+    })
+    .await;
+    let controls = last_controls(&events);
+    assert_eq!(current(&controls, "effort"), Some(Choice("low".into())));
+    let log: Vec<String> = agent
+        .log()
+        .into_iter()
+        .filter(|l| l.starts_with("set_"))
+        .collect();
+    // Only what differs, and only what the agent offers.
+    assert_eq!(log, ["set_config:effort=low", "set_config:model=opus"]);
+}
+
+#[tokio::test]
+async fn agents_with_only_modes_get_a_mode_control() {
+    use crate::ControlValue::Choice;
+    let h = Harness::new();
+    let mut agent = FakeAgent::new(vec![FakeStep::SwitchMode("autoEdit".into())]);
+    agent.modes = true;
+    let handle = h.start(&agent, h.config().await, SessionResources::default());
+    let mut transcript = Transcript::default();
+    let events = until(&handle, &mut transcript, is_status(SessionStatus::Ready)).await;
+    let controls = last_controls(&events);
+    assert_eq!(controls.len(), 1);
+    assert!(controls[0].legacy_mode);
+    handle.set_control("mode", Choice("yolo".into()));
+    let events = until(&handle, &mut transcript, |e| {
+        matches!(e, SessionEvent::Controls(_))
+    })
+    .await;
+    assert_eq!(
+        current(&last_controls(&events), "mode"),
+        Some(Choice("yolo".into()))
+    );
+    handle.prompt("go");
+    let events = until(&handle, &mut transcript, |e| {
+        matches!(e, SessionEvent::Controls(_))
+    })
+    .await;
+    assert_eq!(
+        current(&last_controls(&events), "mode"),
+        Some(Choice("autoEdit".into()))
+    );
+    assert!(agent.log().contains(&"set_mode:yolo".to_owned()));
 }

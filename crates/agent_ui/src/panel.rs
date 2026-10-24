@@ -1,6 +1,10 @@
 //! [`AgentPanel`]: the agent column's view.
 
-use std::collections::{HashMap, HashSet};
+mod controls;
+mod sign_in;
+mod thread;
+
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use agent::{
@@ -16,10 +20,11 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _,
+    ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, StyledExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{InputEvent, Textarea, TextareaState},
+    input::{InputEvent, InputState, Textarea, TextareaState},
+    menu::{DropdownMenu as _, PopupMenu, PopupMenuItem},
     progress::Progress,
     text::TextView,
     v_flex,
@@ -29,9 +34,12 @@ use settings::Settings;
 use ui::assets::IconName;
 use ui::gpui_tokio::Tokio;
 
+use self::sign_in::SignInState;
+use crate::launcher::{Launcher, SystemLauncher};
 use crate::{
-    AcceptAllProposals, AcceptProposal, FocusPrompt, NewThread, NextProposal, PreviousProposal,
-    RejectAllProposals, RejectProposal, ShowHistory, StopAgent,
+    AcceptAllProposals, AcceptProposal, CycleMode, CycleModel, CycleThinking, FocusPrompt,
+    NewThread, NextProposal, PreviousProposal, RejectAllProposals, RejectProposal, ShowHistory,
+    StopAgent,
 };
 
 /// The mail thread selected in the window, attached to new conversations.
@@ -69,7 +77,11 @@ struct Session {
     is_pi: bool,
     status: SessionStatus,
     transcript: Transcript,
-    sign_in: Vec<AuthMethodInfo>,
+    sign_in: SignInState,
+    /// Model, mode, thinking and other choices the agent offers.
+    controls: Vec<agent::Control>,
+    /// The variable of the user's saved key the agent was started with.
+    key_env: Option<String>,
     sandboxed: bool,
     policy: Option<SharedString>,
     attached: Option<AttachedThread>,
@@ -93,10 +105,20 @@ pub struct AgentPanel {
     proposals: Vec<ProposalView>,
     proposal_cursor: usize,
     installs: HashMap<String, Install>,
+    /// Agents the background update moved to a new version: id → version.
+    updated: HashMap<String, String>,
     notice: Option<(SharedString, bool)>,
     /// No account shares mail with agents (checked on settings changes, not per frame).
     no_shared_accounts: bool,
     starting: bool,
+    /// Agent id → environment variable of its saved key.
+    keys: BTreeMap<String, String>,
+    /// Agents signed in with an account in this run.
+    accounts: HashSet<String>,
+    /// The agent whose terminal login was opened; signed in once it starts.
+    pending_account: Option<String>,
+    key_input: Entity<InputState>,
+    launcher: Arc<dyn Launcher>,
     prompt: Entity<TextareaState>,
     focus: FocusHandle,
     review_focus: FocusHandle,
@@ -128,7 +150,23 @@ impl AgentPanel {
                 .submit_on_enter(true)
                 .placeholder("Ask the agent…  ⏎ send, ⇧⏎ new line")
         });
-        let subscriptions = vec![cx.subscribe_in(&prompt, window, Self::on_prompt_event)];
+        let key_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .masked(true)
+                .placeholder("Paste a key or token")
+        });
+        let subscriptions = vec![
+            cx.subscribe_in(&prompt, window, Self::on_prompt_event),
+            cx.subscribe_in(
+                &key_input,
+                window,
+                |this, _, event: &InputEvent, window, cx| {
+                    if let InputEvent::PressEnter { .. } = event {
+                        this.save_key(window, cx);
+                    }
+                },
+            ),
+        ];
         let selected = settings
             .agent
             .default
@@ -150,9 +188,15 @@ impl AgentPanel {
             proposals: Vec::new(),
             proposal_cursor: 0,
             installs: HashMap::new(),
+            updated: HashMap::new(),
             notice: None,
             no_shared_accounts: false,
             starting: false,
+            keys: BTreeMap::new(),
+            accounts: HashSet::new(),
+            pending_account: None,
+            key_input,
+            launcher: Arc::new(SystemLauncher),
             prompt,
             focus: cx.focus_handle(),
             review_focus: cx.focus_handle(),
@@ -164,8 +208,14 @@ impl AgentPanel {
         if Tokio::is_initialized(cx) {
             this.load_registry(false, cx);
             this.refresh_proposals(cx);
+            this.load_keys(cx);
         }
         this
+    }
+
+    /// Opens links and terminal logins through `launcher` (tests use a recorder).
+    pub fn set_launcher(&mut self, launcher: Arc<dyn Launcher>) {
+        self.launcher = launcher;
     }
 
     // ---- inputs from the window ---------------------------------------------------
@@ -264,6 +314,21 @@ impl AgentPanel {
         self.review_focus.clone()
     }
 
+    #[cfg(test)]
+    pub(crate) fn updated_for_tests(&self, id: &str) -> Option<String> {
+        self.updated.get(id).cloned()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn start_for_tests(&mut self, agent_id: &str, cx: &mut Context<'_, Self>) {
+        self.start(agent_id.to_owned(), None, cx);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn key_input_for_tests(&self) -> Entity<InputState> {
+        self.key_input.clone()
+    }
+
     // ---- sessions -----------------------------------------------------------------
 
     /// Shows a started session (from [`AgentManager::start`], or a test transport).
@@ -292,7 +357,9 @@ impl AgentPanel {
             is_pi,
             status: SessionStatus::Starting,
             transcript: started.transcript,
-            sign_in: Vec::new(),
+            sign_in: SignInState::default(),
+            controls: Vec::new(),
+            key_env: started.key_env,
             sandboxed: started.sandboxed,
             policy: started.policy_description.map(Into::into),
             attached: started.attached,
@@ -353,16 +420,34 @@ impl AgentPanel {
         };
         match event {
             SessionEvent::Status(status) => {
+                let previous = session.status;
                 session.status = status;
                 if status != SessionStatus::SignInRequired {
-                    session.sign_in.clear();
+                    session.sign_in.request = None;
+                    session.sign_in.pending = None;
+                    session.sign_in.terminal = None;
+                    session.sign_in.error = None;
                 }
                 if status == SessionStatus::Ready {
+                    // After a terminal login, the first answered prompt proves it worked
+                    // (Claude Code only checks its login when it gets a prompt).
+                    if previous == SessionStatus::Working
+                        && self.pending_account.as_deref() == Some(session.agent_id.as_str())
+                    {
+                        self.pending_account = None;
+                        self.accounts.insert(session.agent_id.clone());
+                    }
                     self.load_history(cx);
                 }
             }
             SessionEvent::AgentInfo { .. } => {}
-            SessionEvent::SignInRequired(methods) => session.sign_in = methods,
+            SessionEvent::Controls(controls) => session.controls = controls,
+            event @ (SessionEvent::SignInRequired(_)
+            | SessionEvent::SignIn(_)
+            | SessionEvent::Link { .. }) => {
+                self.on_sign_in_event(event, cx);
+                return;
+            }
             SessionEvent::Update(update) => {
                 session.transcript.apply(&update);
                 self.scroll.scroll_to_bottom();
@@ -568,6 +653,64 @@ impl AgentPanel {
         cx.notify();
     }
 
+    /// Keeps installed agents up to date in the background (`agent.auto_update`): now,
+    /// then every few hours. The registry is fetched at most once a day.
+    pub fn start_auto_updates(&mut self, cx: &mut Context<'_, Self>) {
+        const EVERY: std::time::Duration = std::time::Duration::from_secs(4 * 3600);
+        self._tasks.push(cx.spawn(async move |this, cx| {
+            loop {
+                let Ok(task) = this.update(cx, |this, cx| {
+                    let manager = Arc::clone(&this.manager);
+                    let settings = this.settings.clone();
+                    Tokio::spawn(cx, async move { manager.auto_update(&settings).await })
+                }) else {
+                    break;
+                };
+                let result = task.await;
+                let alive = this
+                    .update(cx, |this, cx| this.updates_done(result, cx))
+                    .is_ok();
+                if !alive {
+                    break;
+                }
+                cx.background_executor().timer(EVERY).await;
+            }
+        }));
+    }
+
+    fn updates_done(
+        &mut self,
+        result: Result<
+            Result<agent::UpdateReport, agent::registry::RegistryError>,
+            ui::gpui_tokio::JoinError,
+        >,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match result {
+            Ok(Ok(report)) => {
+                for (id, _, version) in report.updated {
+                    self.installs.remove(&id);
+                    self.updated.insert(id, version);
+                }
+                for (id, name, error) in report.failed {
+                    if id == "node" {
+                        self.show_notice(format!("{name} couldn't be updated: {error}"), true, cx);
+                    } else {
+                        self.installs.insert(
+                            id,
+                            Install::Failed(format!("Update failed: {error}").into()),
+                        );
+                    }
+                }
+            }
+            Ok(Err(error)) => {
+                tracing::debug!(%error, "no agent updates: the registry isn't available")
+            }
+            Err(_) => {}
+        }
+        self.reload_catalog(cx);
+    }
+
     // ---- history --------------------------------------------------------------------
 
     fn load_history(&mut self, cx: &mut Context<'_, Self>) {
@@ -679,11 +822,13 @@ impl AgentPanel {
 
     fn header(&self, cx: &mut Context<'_, Self>) -> impl IntoElement + use<> {
         let theme = cx.theme().colors;
-        let name: SharedString = match &self.session {
-            Some(session) => session.name.clone(),
-            None => self
-                .status_of(&self.selected)
-                .map_or_else(|| "Agent".into(), |s| s.entry.name.clone().into()),
+        let (title, placeholder): (SharedString, bool) = match (&self.session, self.view) {
+            (_, View::History) => ("Conversations".into(), false),
+            (Some(session), View::Main) => match session.transcript.title() {
+                Some(title) => (title.into(), false),
+                None => (format!("New {} Thread", session.name).into(), true),
+            },
+            (None, View::Main) => ("Agents".into(), true),
         };
         let sandbox_on = self.settings.agent_sandbox.enabled;
         let (lock_icon, lock_tip): (IconName, SharedString) = match &self.session {
@@ -706,13 +851,24 @@ impl AgentPanel {
             ),
             None => (IconName::ShieldAlert, "The agent sandbox is off".into()),
         };
+        // "New thread" lists the agents that can start, like Zed's "+" menu.
+        let ready: Vec<(String, String)> = self
+            .catalog
+            .iter()
+            .filter(|s| s.is_ready())
+            .map(|s| (s.entry.id.clone(), s.entry.name.clone()))
+            .collect();
+        let current = self.session.as_ref().map(|s| s.agent_id.clone());
+        let panel = cx.entity().downgrade();
         h_flex()
             .flex_none()
-            .h(px(36.))
-            .px_2()
+            .h(px(32.))
+            .pl_2()
+            .pr_1()
             .gap_1()
             .border_b_1()
             .border_color(theme.border)
+            .bg(theme.tab_bar)
             .child(
                 Icon::new(IconName::Bot)
                     .small()
@@ -720,12 +876,14 @@ impl AgentPanel {
             )
             .child(
                 div()
+                    .debug_selector(|| "agent-title".to_owned())
                     .flex_1()
                     .min_w_0()
                     .truncate()
                     .text_xs()
-                    .font_semibold()
-                    .child(name),
+                    .when(placeholder, |this| this.text_color(theme.muted_foreground))
+                    .when(!placeholder, |this| this.font_semibold())
+                    .child(title),
             )
             .child(
                 Button::new("agent-padlock")
@@ -739,6 +897,7 @@ impl AgentPanel {
                     .ghost()
                     .xsmall()
                     .icon(Icon::new(IconName::Clock))
+                    .selected(self.view == View::History)
                     .tooltip("Conversations about this thread")
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.view = if this.view == View::History {
@@ -751,12 +910,47 @@ impl AgentPanel {
                     })),
             )
             .child(
-                Button::new("agent-new-thread")
-                    .ghost()
-                    .xsmall()
-                    .icon(Icon::new(IconName::Plus))
-                    .tooltip("New thread (⌘N)")
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.new_thread(cx))),
+                div()
+                    .debug_selector(|| "agent-new-thread".to_owned())
+                    .child(
+                        Button::new("agent-new-thread")
+                            .ghost()
+                            .xsmall()
+                            .icon(Icon::new(IconName::Plus))
+                            .tooltip("New thread (⌘N)")
+                            .dropdown_menu(move |menu: PopupMenu, _, _| {
+                                let mut menu = menu.label("New Thread");
+                                for (id, name) in &ready {
+                                    let panel = panel.clone();
+                                    let id = id.clone();
+                                    menu = menu.item(
+                                        PopupMenuItem::new(name.clone())
+                                            .checked(current.as_ref() == Some(&id))
+                                            .on_click(move |_, _, cx| {
+                                                panel
+                                                    .update(cx, |panel, cx| {
+                                                        panel.new_thread(cx);
+                                                        panel.start(id.clone(), None, cx);
+                                                    })
+                                                    .ok();
+                                            }),
+                                    );
+                                }
+                                let panel = panel.clone();
+                                menu.separator()
+                                    .item(PopupMenuItem::new("All Agents…").on_click(
+                                        move |_, _, cx| {
+                                            panel
+                                                .update(cx, |panel, cx| {
+                                                    panel.new_thread(cx);
+                                                    panel.show_all = true;
+                                                    cx.notify();
+                                                })
+                                                .ok();
+                                        },
+                                    ))
+                            }),
+                    ),
             )
             .child(
                 Button::new("agent-collapse")
@@ -966,10 +1160,16 @@ impl AgentPanel {
             Some(Install::Failed(error)) => Some(error.clone()),
             _ => None,
         };
-        let version: Option<SharedString> = status
-            .installed
-            .as_ref()
-            .map(|i| format!("v{}", i.version).into());
+        let version: Option<SharedString> =
+            status
+                .installed
+                .as_ref()
+                .map(|i| match self.updated.get(&i.id) {
+                    Some(updated) if *updated == i.version => {
+                        format!("Updated to v{updated}").into()
+                    }
+                    _ => format!("v{}", i.version).into(),
+                });
         let select_id = id;
         v_flex()
             .id(("agent-row", ix))
@@ -1036,6 +1236,30 @@ impl AgentPanel {
             .when_some(failed, |this, error| {
                 this.child(div().text_xs().text_color(theme.danger).child(error))
             })
+            .when_some(self.sign_in_status(&status.entry.id), |this, signed_in| {
+                let has_key = self.keys.contains_key(&status.entry.id);
+                let remove_id = status.entry.id.clone();
+                this.child(
+                    h_flex()
+                        .debug_selector(move || format!("agent-row-signed-in-{ix}"))
+                        .gap_1()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(Icon::new(IconName::KeyRound).xsmall())
+                        .child(div().flex_1().min_w_0().truncate().child(signed_in))
+                        .when(has_key, |this| {
+                            this.child(
+                                Button::new(("agent-row-remove-key", ix))
+                                    .ghost()
+                                    .xsmall()
+                                    .label("Remove key")
+                                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                        this.remove_key(remove_id.clone(), cx);
+                                    })),
+                            )
+                        }),
+                )
+            })
             .into_any_element()
     }
 
@@ -1095,351 +1319,6 @@ impl AgentPanel {
             );
         }
         list.into_any_element()
-    }
-
-    fn sign_in(&self, session: &Session, cx: &mut Context<'_, Self>) -> AnyElement {
-        let theme = cx.theme().colors;
-        let mut card = v_flex()
-            .m_2()
-            .p_3()
-            .gap_2()
-            .rounded_lg()
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.background)
-            .child(
-                div()
-                    .text_sm()
-                    .font_semibold()
-                    .child(SharedString::from(format!("Sign in to {}", session.name))),
-            )
-            .child(div().text_xs().text_color(theme.muted_foreground).child(
-                "The agent keeps its login in its own home inside Maze, separate from the copy \
-                 you use in a terminal.",
-            ));
-        for (ix, method) in session.sign_in.iter().enumerate() {
-            let id = method.id.clone();
-            card = card.child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        Button::new(("agent-sign-in", ix))
-                            .primary()
-                            .small()
-                            .label(method.name.clone())
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                if let Some(session) = &this.session {
-                                    session.handle.authenticate(id.clone());
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .when_some(method.description.clone(), |this, description| {
-                        this.child(
-                            div()
-                                .text_xs()
-                                .text_color(theme.muted_foreground)
-                                .child(description),
-                        )
-                    })
-                    .when_some(method.terminal_command.clone(), |this, command| {
-                        this.child(
-                            div()
-                                .text_xs()
-                                .text_color(theme.muted_foreground)
-                                .child("Or run this in a terminal, then try again:"),
-                        )
-                        .child(
-                            div()
-                                .p_1()
-                                .rounded_sm()
-                                .bg(theme.muted)
-                                .font_family("monospace")
-                                .text_xs()
-                                .child(command),
-                        )
-                    }),
-            );
-        }
-        card.into_any_element()
-    }
-
-    fn entry(
-        &self,
-        ix: usize,
-        entry: &Entry,
-        session: &Session,
-        cx: &mut Context<'_, Self>,
-    ) -> AnyElement {
-        let theme = cx.theme().colors;
-        let expanded = session.expanded.contains(&ix);
-        let toggle = cx.listener(move |this, _: &ClickEvent, _, cx| {
-            if let Some(session) = this.session.as_mut()
-                && !session.expanded.remove(&ix)
-            {
-                session.expanded.insert(ix);
-            }
-            cx.notify();
-        });
-        match entry {
-            Entry::User { text } => div()
-                .mx_2()
-                .p_2()
-                .rounded_md()
-                .bg(theme.muted)
-                .text_sm()
-                .child(text.clone())
-                .into_any_element(),
-            Entry::Agent { text } => div()
-                .px_2()
-                .text_sm()
-                .child(TextView::markdown(("agent-answer", ix), text.clone()))
-                .into_any_element(),
-            Entry::Thought { text } => {
-                let first = text.lines().next().unwrap_or_default().to_owned();
-                v_flex()
-                    .id(("agent-thought", ix))
-                    .px_2()
-                    .cursor_pointer()
-                    .on_click(toggle)
-                    .text_xs()
-                    .italic()
-                    .text_color(theme.muted_foreground)
-                    .child(if expanded {
-                        text.clone()
-                    } else {
-                        format!("Thinking: {first}")
-                    })
-                    .into_any_element()
-            }
-            Entry::ToolCall(call) => Self::tool_call(ix, call, expanded, toggle, cx),
-            Entry::Plan { items } => {
-                let mut plan = v_flex()
-                    .mx_2()
-                    .p_2()
-                    .gap_0p5()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(theme.border)
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_semibold()
-                            .text_color(theme.muted_foreground)
-                            .child("PLAN"),
-                    );
-                for item in items {
-                    let mark = match item.status {
-                        PlanStatus::Completed => "✓",
-                        PlanStatus::InProgress => "▸",
-                        PlanStatus::Pending => "○",
-                    };
-                    plan = plan.child(
-                        h_flex()
-                            .gap_1()
-                            .text_xs()
-                            .child(mark)
-                            .child(div().flex_1().min_w_0().child(item.content.clone())),
-                    );
-                }
-                plan.into_any_element()
-            }
-            Entry::Terminal(terminal) => Self::terminal(ix, terminal, expanded, toggle, cx),
-            Entry::Permission(prompt) => self.permission(prompt, cx),
-            Entry::Notice { text, level } => div()
-                .px_2()
-                .text_xs()
-                .text_color(match level {
-                    NoticeLevel::Error => theme.danger,
-                    NoticeLevel::Info => theme.muted_foreground,
-                })
-                .child(text.clone())
-                .into_any_element(),
-        }
-    }
-
-    fn tool_call(
-        ix: usize,
-        call: &ToolCallEntry,
-        expanded: bool,
-        toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-        cx: &App,
-    ) -> AnyElement {
-        let theme = cx.theme().colors;
-        let (icon, color) = match call.status {
-            ToolStatus::Pending | ToolStatus::Running => {
-                (IconName::LoaderCircle, theme.muted_foreground)
-            }
-            ToolStatus::Completed => (IconName::CircleCheck, theme.success),
-            ToolStatus::Failed => (IconName::CircleX, theme.danger),
-        };
-        v_flex()
-            .id(("agent-tool", ix))
-            .mx_2()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .border_1()
-            .border_color(theme.border)
-            .cursor_pointer()
-            .on_click(toggle)
-            .child(
-                h_flex()
-                    .gap_1()
-                    .text_xs()
-                    .child(Icon::new(icon).xsmall().text_color(color))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .child(call.title.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_color(theme.muted_foreground)
-                            .child(call.kind.clone()),
-                    )
-                    .child(
-                        Icon::new(if expanded {
-                            IconName::ChevronDown
-                        } else {
-                            IconName::ChevronRight
-                        })
-                        .xsmall(),
-                    ),
-            )
-            .when(expanded && !call.detail.is_empty(), |this| {
-                this.child(
-                    div()
-                        .mt_1()
-                        .text_xs()
-                        .font_family("monospace")
-                        .text_color(theme.muted_foreground)
-                        .child(call.detail.clone()),
-                )
-            })
-            .into_any_element()
-    }
-
-    fn terminal(
-        ix: usize,
-        terminal: &TerminalEntry,
-        expanded: bool,
-        toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-        cx: &App,
-    ) -> AnyElement {
-        let theme = cx.theme().colors;
-        let (label, color): (SharedString, _) = match &terminal.status {
-            TerminalStatus::AwaitingApproval => ("waiting for approval".into(), theme.warning),
-            TerminalStatus::Running => ("running".into(), theme.muted_foreground),
-            TerminalStatus::Exited { code: Some(0), .. } => ("done".into(), theme.success),
-            TerminalStatus::Exited {
-                code: Some(code), ..
-            } => (format!("exit {code}").into(), theme.danger),
-            TerminalStatus::Exited { signal, .. } => (
-                signal.clone().unwrap_or_else(|| "ended".to_owned()).into(),
-                theme.muted_foreground,
-            ),
-            TerminalStatus::Denied => ("denied".into(), theme.danger),
-            TerminalStatus::Failed { message } => (message.clone().into(), theme.danger),
-        };
-        v_flex()
-            .id(("agent-terminal", ix))
-            .mx_2()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.background)
-            .cursor_pointer()
-            .on_click(toggle)
-            .child(
-                h_flex()
-                    .gap_1()
-                    .text_xs()
-                    .child(Icon::new(IconName::SquareTerminal).xsmall())
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .font_family("monospace")
-                            .child(terminal.command.clone()),
-                    )
-                    .when(terminal.automatic, |this| {
-                        this.child(div().text_color(theme.muted_foreground).child("auto"))
-                    })
-                    .child(div().text_color(color).child(label)),
-            )
-            .when(expanded && !terminal.output.is_empty(), |this| {
-                this.child(
-                    div()
-                        .mt_1()
-                        .text_xs()
-                        .font_family("monospace")
-                        .text_color(theme.muted_foreground)
-                        .child(terminal.output.clone()),
-                )
-            })
-            .into_any_element()
-    }
-
-    fn permission(&self, prompt: &PermissionEntry, cx: &mut Context<'_, Self>) -> AnyElement {
-        let theme = cx.theme().colors;
-        let mut card = v_flex()
-            .mx_2()
-            .p_2()
-            .gap_1()
-            .rounded_md()
-            .border_1()
-            .border_color(if prompt.decision.is_none() {
-                theme.warning
-            } else {
-                theme.border
-            })
-            .child(div().text_xs().font_semibold().child(prompt.title.clone()));
-        match prompt.decision {
-            Some(choice) => {
-                card = card.child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(choice.label()),
-                );
-            }
-            None => {
-                let mut buttons = h_flex().gap_1().flex_wrap();
-                for choice in &prompt.choices {
-                    let id = prompt.id;
-                    let choice = *choice;
-                    let button = Button::new(SharedString::from(format!(
-                        "agent-permission-{id}-{choice:?}"
-                    )))
-                    .xsmall()
-                    .label(choice.label())
-                    .on_click(cx.listener(
-                        move |this, _: &ClickEvent, _, cx| {
-                            this.respond(id, choice, cx);
-                        },
-                    ));
-                    let (button, selector) = match choice {
-                        PermissionChoice::AllowOnce => {
-                            (button.primary(), "agent-permission-allow-once")
-                        }
-                        PermissionChoice::AllowSession => {
-                            (button.outline(), "agent-permission-allow-session")
-                        }
-                        PermissionChoice::Deny => (button.danger(), "agent-permission-deny"),
-                    };
-                    buttons =
-                        buttons.child(div().debug_selector(|| selector.to_owned()).child(button));
-                }
-                card = card.child(buttons);
-            }
-        }
-        card.into_any_element()
     }
 
     fn proposals_view(&self, cx: &mut Context<'_, Self>) -> Option<AnyElement> {
@@ -1586,8 +1465,19 @@ impl AgentPanel {
     fn conversation(&self, session: &Session, cx: &mut Context<'_, Self>) -> AnyElement {
         let theme = cx.theme().colors;
         let mut body = v_flex().py_2().gap_2();
-        if session.status == SessionStatus::SignInRequired && !session.sign_in.is_empty() {
-            body = body.child(self.sign_in(session, cx));
+        if session.status == SessionStatus::SignInRequired {
+            body = body.child(self.sign_in_card(session, cx));
+        } else if let Some(status) = self.sign_in_status(&session.agent_id) {
+            body = body.child(
+                h_flex()
+                    .debug_selector(|| "agent-signed-in".to_owned())
+                    .px_4()
+                    .gap_1()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(Icon::new(IconName::KeyRound).xsmall())
+                    .child(status),
+            );
         }
         if session.transcript.entries.is_empty() && session.status != SessionStatus::SignInRequired
         {
@@ -1602,11 +1492,24 @@ impl AgentPanel {
                 },
             };
             body = body.child(
-                div()
-                    .px_2()
+                v_flex()
+                    .debug_selector(|| "agent-empty".to_owned())
+                    .py_8()
+                    .px_4()
+                    .gap_2()
+                    .items_center()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child(hint),
+                    .child(
+                        Icon::new(if session.status == SessionStatus::Starting {
+                            IconName::LoaderCircle
+                        } else {
+                            IconName::Bot
+                        })
+                        .large()
+                        .text_color(theme.muted_foreground),
+                    )
+                    .child(div().text_center().child(hint)),
             );
         }
         for (ix, entry) in session.transcript.entries.iter().enumerate() {
@@ -1615,8 +1518,9 @@ impl AgentPanel {
         if session.status == SessionStatus::Working {
             body = body.child(
                 h_flex()
-                    .px_2()
-                    .gap_1()
+                    .debug_selector(|| "agent-working".to_owned())
+                    .px_4()
+                    .gap_1p5()
                     .text_xs()
                     .text_color(theme.muted_foreground)
                     .child(Icon::new(IconName::LoaderCircle).xsmall())
@@ -1624,20 +1528,39 @@ impl AgentPanel {
             );
         }
         if let Some(ended) = &session.ended {
-            let text: SharedString = match ended {
-                Some(error) => format!("The agent stopped: {error}").into(),
-                None => "The conversation ended.".into(),
+            let (text, error): (SharedString, bool) = match ended {
+                Some(error) => (format!("The agent stopped: {error}").into(), true),
+                None => ("The conversation ended.".into(), false),
             };
             body = body.child(
-                div()
-                    .px_2()
-                    .text_xs()
-                    .text_color(if ended.is_some() {
-                        theme.danger
+                h_flex()
+                    .mx_2()
+                    .p_2()
+                    .gap_2()
+                    .items_start()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(if error {
+                        theme.danger.opacity(0.4)
                     } else {
-                        theme.muted_foreground
+                        theme.border
                     })
-                    .child(text),
+                    .when(error, |this| this.bg(theme.danger.opacity(0.08)))
+                    .text_xs()
+                    .child(
+                        Icon::new(if error {
+                            IconName::CircleX
+                        } else {
+                            IconName::Info
+                        })
+                        .small()
+                        .text_color(if error {
+                            theme.danger
+                        } else {
+                            theme.muted_foreground
+                        }),
+                    )
+                    .child(div().flex_1().min_w_0().child(text)),
             );
         }
         body.into_any_element()
@@ -1662,10 +1585,13 @@ impl AgentPanel {
         };
         v_flex()
             .flex_none()
-            .p_2()
-            .gap_1()
+            .px_2()
+            .pt_1p5()
+            .pb_2()
+            .gap_1p5()
             .border_t_1()
             .border_color(theme.border)
+            .bg(theme.background)
             .when_some(session.context_note.clone(), |this, note| {
                 this.child(
                     div()
@@ -1701,17 +1627,25 @@ impl AgentPanel {
                     }),
             )
             .child(
+                div().key_context("AgentPrompt").child(
+                    Textarea::new(&self.prompt)
+                        .small()
+                        .appearance(false)
+                        .disabled(disabled),
+                ),
+            )
+            .child({
+                let (left, right) = self.control_bar(session, cx);
                 h_flex()
-                    .gap_1()
-                    .items_end()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(Textarea::new(&self.prompt).small().disabled(disabled)),
-                    )
+                    .debug_selector(|| "agent-prompt-bar".to_owned())
+                    .gap_0p5()
+                    .flex_wrap()
+                    .children(left)
+                    .child(div().flex_1())
+                    .children(right)
                     .child(if working {
                         Button::new("agent-stop")
+                            .danger()
                             .small()
                             .icon(Icon::new(IconName::Square))
                             .tooltip("Stop")
@@ -1725,14 +1659,14 @@ impl AgentPanel {
                         Button::new("agent-send")
                             .primary()
                             .small()
-                            .icon(Icon::new(IconName::Send))
+                            .icon(Icon::new(IconName::ArrowUp))
                             .tooltip("Send (⏎)")
                             .disabled(disabled)
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.send_prompt(window, cx);
                             }))
-                    }),
-            )
+                    })
+            })
             .into_any_element()
     }
 }
@@ -1777,6 +1711,15 @@ impl Render for AgentPanel {
             .on_action(
                 cx.listener(|this, _: &RejectAllProposals, _, cx| this.decide_all(false, cx)),
             )
+            .on_action(cx.listener(|this, _: &CycleMode, _, cx| {
+                this.cycle_control(agent::ControlCategory::Mode, cx);
+            }))
+            .on_action(cx.listener(|this, _: &CycleModel, _, cx| {
+                this.cycle_control(agent::ControlCategory::Model, cx);
+            }))
+            .on_action(cx.listener(|this, _: &CycleThinking, _, cx| {
+                this.cycle_control(agent::ControlCategory::ThoughtLevel, cx);
+            }))
             .on_action(cx.listener(|this, _: &StopAgent, _, cx| {
                 if let Some(session) = &this.session {
                     session.handle.cancel();

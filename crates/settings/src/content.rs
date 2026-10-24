@@ -535,8 +535,12 @@ pub struct AgentSettings {
     /// Your own ACP agents, keyed by an id of your choice.
     pub custom: BTreeMap<String, CustomAgentSettings>,
     /// Extra environment variables per agent id (agents start with an empty
-    /// environment), e.g. `"codex-acp": { "OPENAI_API_KEY": "…" }`.
+    /// environment), e.g. `"claude-acp": { "ANTHROPIC_MODEL": "…" }`. Plain text: API
+    /// keys belong in the agent column's sign-in card (encrypted store).
     pub env: BTreeMap<String, BTreeMap<String, String>>,
+    /// Install new versions of installed agents (and Maze's Node runtime for them) in
+    /// the background. Running conversations keep their version.
+    pub auto_update: bool,
 }
 
 impl Default for AgentSettings {
@@ -547,6 +551,7 @@ impl Default for AgentSettings {
             session_profile: SessionProfile::default(),
             custom: BTreeMap::new(),
             env: BTreeMap::new(),
+            auto_update: true,
         }
     }
 }
