@@ -29,6 +29,7 @@ mod agents;
 mod approval;
 mod compose;
 mod lost_key;
+mod theme;
 mod updates;
 
 use std::sync::Arc;
@@ -126,8 +127,10 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
             open_window(cx);
         }
     });
+    let theme_paths = paths.clone();
     app.run(move |cx| {
         ui::init(cx);
+        theme::apply_from_file(&theme_paths, cx);
         mail_ui::init(cx);
         composer::init(cx);
         auto_update_ui::init(cx);
@@ -367,6 +370,7 @@ pub(crate) fn core_ready(core: &CoreHandle, cx: &mut App) {
     cx.global_mut::<AppState>().server = Some(RunningServer { stop, task });
 
     updates::follow_core_settings(core, cx);
+    theme::follow_core_settings(core, cx);
     compose::register_restore(core, cx);
     agents::start(core, &authorizer, cx);
     let window = cx

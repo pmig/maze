@@ -11,10 +11,15 @@
 //!
 //! The bundled default is Zed's "One" family (One Dark / One Light, MIT licensed, see
 //! `assets/themes/LICENSE-one`). The window follows the system light/dark appearance
-//! through [`observe_system_appearance`].
+//! through [`observe_system_appearance`], unless the `theme.mode` setting forces one.
+//!
+//! [`apply_choice`] applies the `theme` setting: the light and dark theme by name,
+//! looked up in the bundled family and in Zed theme files (`*.json`) in the user's
+//! `themes/` directory, like Zed's `~/.config/zed/themes`.
 
 pub mod zed;
 
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gpui::{App, Global, Rgba, SharedString, Subscription, Window, WindowAppearance};
@@ -335,6 +340,123 @@ struct ActiveThemePair(ThemePair);
 
 impl Global for ActiveThemePair {}
 
+/// Light or dark: follow the system, or always one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Appearance {
+    /// Follow the system appearance.
+    #[default]
+    System,
+    /// Always light.
+    Light,
+    /// Always dark.
+    Dark,
+}
+
+/// The `theme` setting: the appearance and the theme used in each mode, by name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThemeChoice {
+    /// System, light or dark.
+    pub appearance: Appearance,
+    /// The theme in light mode, e.g. "One Light".
+    pub light: String,
+    /// The theme in dark mode, e.g. "One Dark".
+    pub dark: String,
+    /// Where user themes live (`<config>/themes`), if anywhere.
+    pub themes_dir: Option<PathBuf>,
+}
+
+/// The applied [`ThemeChoice`]: re-applying the same one does nothing, and a forced
+/// appearance stops [`observe_system_appearance`] from switching.
+struct AppliedChoice(ThemeChoice);
+
+impl Global for AppliedChoice {}
+
+/// Every theme Maze can use: the bundled family, then the families in `themes_dir`
+/// (files that don't parse are skipped with a warning).
+pub fn available_themes(themes_dir: Option<&Path>) -> Vec<ThemeContent> {
+    let mut themes = Vec::new();
+    match serde_json::from_str::<ThemeFamilyContent>(DEFAULT_THEME_FAMILY) {
+        Ok(family) => themes.extend(family.themes),
+        Err(error) => tracing::error!(%error, "bundled theme failed to load"),
+    }
+    let Some(dir) = themes_dir else {
+        return themes;
+    };
+    let mut files: Vec<PathBuf> = match std::fs::read_dir(dir) {
+        Ok(entries) => entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
+            .collect(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => {
+            tracing::warn!(%error, "cannot read the themes directory");
+            Vec::new()
+        }
+    };
+    files.sort();
+    for file in files {
+        let parsed = std::fs::read_to_string(&file)
+            .map_err(|e| e.to_string())
+            .and_then(|json| {
+                serde_json::from_str::<ThemeFamilyContent>(&json).map_err(|e| e.to_string())
+            });
+        match parsed {
+            Ok(family) => themes.extend(family.themes),
+            Err(error) => tracing::warn!(%error, file = %file.display(), "skipping a theme file"),
+        }
+    }
+    themes
+}
+
+/// The light and dark theme a choice names, falling back to the bundled One Light /
+/// One Dark (with a warning) for names that don't exist. Names compare ignoring case.
+pub fn resolve_choice(choice: &ThemeChoice, themes: &[ThemeContent]) -> Option<ThemePair> {
+    let find = |name: &str, appearance: AppearanceContent, fallback: &str| {
+        let by_name = |n: &str| {
+            themes
+                .iter()
+                .find(|t| t.name.trim().eq_ignore_ascii_case(n.trim()))
+        };
+        by_name(name).or_else(|| {
+            tracing::warn!(theme = name, "no such theme; using the default");
+            by_name(fallback).or_else(|| themes.iter().find(|t| t.appearance == appearance))
+        })
+    };
+    let light = find(&choice.light, AppearanceContent::Light, "One Light")?;
+    let dark = find(&choice.dark, AppearanceContent::Dark, "One Dark")?;
+    Some(ThemePair {
+        family: SharedString::from(format!("{} / {}", light.name, dark.name)),
+        light: Rc::new(theme_config(light)),
+        dark: Rc::new(theme_config(dark)),
+    })
+}
+
+/// Applies the `theme` setting (see the [module docs](self)). Does nothing if the same
+/// choice is already applied.
+pub fn apply_choice(choice: ThemeChoice, cx: &mut App) {
+    if cx
+        .try_global::<AppliedChoice>()
+        .is_some_and(|applied| applied.0 == choice)
+    {
+        return;
+    }
+    let themes = available_themes(choice.themes_dir.as_deref());
+    let Some(pair) = resolve_choice(&choice, &themes) else {
+        return;
+    };
+    cx.set_global(AppliedChoice(choice));
+    install(pair, cx);
+}
+
+/// The appearance the setting forces, if any.
+fn forced_mode(cx: &App) -> Option<ThemeMode> {
+    match cx.try_global::<AppliedChoice>().map(|c| c.0.appearance) {
+        Some(Appearance::Light) => Some(ThemeMode::Light),
+        Some(Appearance::Dark) => Some(ThemeMode::Dark),
+        Some(Appearance::System) | None => None,
+    }
+}
+
 /// Installs the bundled theme family and applies the variant matching the system
 /// appearance. Call after `gpui_kit::init`.
 pub fn init(cx: &mut App) {
@@ -356,7 +478,7 @@ pub fn install(pair: ThemePair, cx: &mut App) {
         theme.light_theme = light;
         theme.dark_theme = dark;
     });
-    let mode = mode_for(cx.window_appearance());
+    let mode = forced_mode(cx).unwrap_or_else(|| mode_for(cx.window_appearance()));
     Theme::change(mode, None, cx);
 }
 
@@ -372,6 +494,9 @@ pub fn mode_for(appearance: WindowAppearance) -> ThemeMode {
 /// returned subscription for as long as the window lives.
 pub fn observe_system_appearance(window: &Window) -> Subscription {
     window.observe_window_appearance(|window, cx| {
+        if forced_mode(cx).is_some() {
+            return;
+        }
         let mode = mode_for(window.appearance());
         if Theme::global(cx).mode != mode {
             Theme::change(mode, Some(window), cx);
@@ -504,6 +629,71 @@ mod tests {
                 .and_then(|t| t.style.color("editor.background"))
                 .map(|c| gpui::Hsla::from(Rgba::try_from(c).unwrap()));
             assert_eq!(theme.highlight_theme.style.editor_background, expected);
+        });
+    }
+
+    fn choice(light: &str, dark: &str, dir: Option<&Path>) -> ThemeChoice {
+        ThemeChoice {
+            appearance: Appearance::System,
+            light: light.into(),
+            dark: dark.into(),
+            themes_dir: dir.map(Path::to_path_buf),
+        }
+    }
+
+    #[test]
+    fn themes_come_from_the_bundle_and_the_themes_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("graphite.json"),
+            r##"{ "name": "Graphite", "author": "me", "themes": [
+                { "name": "Graphite Dark", "appearance": "dark",
+                  "style": { "editor.background": "#18181bff", "text": "#f4f4f5ff" } } ] }"##,
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("broken.json"), "{ nope").unwrap();
+        std::fs::write(tmp.path().join("notes.txt"), "ignored").unwrap();
+        let themes = available_themes(Some(tmp.path()));
+        let names: Vec<&str> = themes.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"One Light") && names.contains(&"Graphite Dark"));
+
+        // By name, ignoring case; the light theme stays the bundled one.
+        let pair = resolve_choice(&choice("One Light", "graphite dark", None), &themes).unwrap();
+        assert_eq!(pair.dark.name.as_ref(), "Graphite Dark");
+        assert_eq!(pair.light.name.as_ref(), "One Light");
+        // Unknown names fall back to the defaults.
+        let pair = resolve_choice(&choice("Nope", "Also Nope", None), &themes).unwrap();
+        assert_eq!(
+            (pair.light.name.as_ref(), pair.dark.name.as_ref()),
+            ("One Light", "One Dark")
+        );
+        // A missing directory is just the bundle.
+        assert_eq!(available_themes(Some(&tmp.path().join("missing"))).len(), 2);
+    }
+
+    #[gpui::test]
+    fn a_forced_appearance_wins_over_the_system(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            apply_choice(
+                ThemeChoice {
+                    appearance: Appearance::Dark,
+                    ..choice("One Light", "One Dark", None)
+                },
+                cx,
+            );
+            assert_eq!(Theme::global(cx).mode, ThemeMode::Dark);
+            assert_eq!(Theme::global(cx).theme_name().as_ref(), "One Dark");
+            apply_choice(
+                ThemeChoice {
+                    appearance: Appearance::Light,
+                    ..choice("One Light", "One Dark", None)
+                },
+                cx,
+            );
+            assert_eq!(Theme::global(cx).mode, ThemeMode::Light);
+            assert_eq!(Theme::global(cx).theme_name().as_ref(), "One Light");
         });
     }
 
