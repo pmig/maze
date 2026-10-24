@@ -43,7 +43,7 @@ use settings::{DEFAULT_SETTINGS, Diagnostic, DiagnosticKind};
 use ui::assets::IconName;
 use ui::panes::{Item, ItemEvent, SerializedItem};
 
-use crate::actions::SaveSettings;
+use crate::actions::{OpenDefaultSettings, SaveSettings};
 
 /// The layout kind of settings tabs (`{"kind": "settings"}`).
 pub const SETTINGS_KIND: &str = "settings";
@@ -460,6 +460,8 @@ impl SettingsEditor {
         if self.is_defaults() {
             return Some(
                 div()
+                    .id("settings-banner")
+                    .debug_selector(|| "settings-banner".to_owned())
                     .px_3()
                     .py_1p5()
                     .border_b_1()
@@ -473,7 +475,35 @@ impl SettingsEditor {
                     .into_any_element(),
             );
         }
-        None
+        Some(
+            h_flex()
+                .id("settings-banner")
+                .debug_selector(|| "settings-banner".to_owned())
+                .flex_wrap()
+                .gap_x_1()
+                .px_3()
+                .py_1p5()
+                .border_b_1()
+                .border_color(colors.border)
+                .text_sm()
+                .text_color(colors.muted_foreground)
+                .child(
+                    "Your settings: only what you set here changes Maze's defaults. Every \
+                     available setting, with its default and what it does, is in the",
+                )
+                .child(
+                    Button::new("settings-open-defaults")
+                        .debug_selector(|| "settings-open-defaults".to_owned())
+                        .link()
+                        .small()
+                        .label("default settings")
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(OpenDefaultSettings), cx);
+                        }),
+                )
+                .child("— copy keys from there into this file.")
+                .into_any_element(),
+        )
     }
 
     fn render_diagnostics(&self, cx: &mut Context<'_, Self>) -> Option<gpui::AnyElement> {

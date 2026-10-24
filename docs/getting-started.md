@@ -113,8 +113,9 @@ yet. It's a plain JSON editor (comments and trailing commas are allowed):
 - When the file changes on disk while the tab is open (Maze writes your favorite
   folders into it; you might edit it elsewhere too), the tab reloads it. If you have
   unsaved changes, it asks instead: **Reload** or **Keep Mine**.
-- "Maze: Open Default Settings" shows all settings with their defaults and a comment
-  for each, read-only, for reference.
+- "Maze: Open Default Settings" (or the **default settings** link in the banner at
+  the top of your settings) shows every available setting with its default and a
+  comment, read-only. Copy the keys you want to change into your own file.
 
 `settings.json` only needs the keys you want to change; Maze merges it over its
 defaults and picks up changes while it runs, also when you edit it in another editor.
