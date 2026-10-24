@@ -1,17 +1,33 @@
-//! The Maze main window: title bar, spaces bar, folder pane, message list, message
-//! view, agent column and status bar (CONCEPT §8.2), plus the command palette and the
-//! Quick Move picker.
+//! The Maze main window: title bar, spaces bar, folder pane, the center with its tabs
+//! and splits, the agent column and the status bar (CONCEPT §8.2, ADR-018), plus the
+//! command palette and the Quick Move picker.
+//!
+//! # The center
+//!
+//! The center is a [`PaneGroup`]: panes in splits, each with a tab bar. Its tabs are
+//! [`MailView`]s (list and message of a folder), [`MessageTab`]s (one message, full
+//! width) and drafts (the `composer` crate's view; the app opens them, see
+//! [`ComposeRequest`], and registers how they are restored). The agent column stays to
+//! the right of all of it.
+//!
+//! - Picking a folder opens it in the active mail view (or the one used last, or a new
+//!   one); "Open in New Tab" in the folder's menu opens another.
+//! - Mail actions (`a`, `m`, `s`, `shift-m`, `cmd-z`, Reply, …) act on the active tab,
+//!   wherever they come from (keys, menus, the palette).
+//! - The layout is saved to `ui_state.json` a moment after it changes and restored when
+//!   the window opens.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use gpui::{
     AnyView, AnyWindowHandle, App, AppContext as _, Axis, Context, DragMoveEvent, Empty, Entity,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
-    PromptLevel, Render, SharedString, Styled, Subscription, Window, WindowBounds, WindowOptions,
-    canvas, div, point, prelude::FluentBuilder as _, px, size,
+    EntityId, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
+    PromptLevel, Render, SharedString, Styled, Subscription, Task, Window, WindowBounds,
+    WindowOptions, canvas, div, point, prelude::FluentBuilder as _, px, size,
 };
 use gpui_kit::component::{
     ActiveTheme as _, Icon, Sizable as _, TitleBar, WindowExt as _,
@@ -25,21 +41,24 @@ use gpui_kit::component::{
 use mazemail_types::{FolderRole, MessageId, PRODUCT_NAME, ThreadId};
 use time::UtcOffset;
 use ui::assets::IconName;
+use ui::names::NameRng;
+use ui::panes::{
+    EmptyState, ItemHandle, ItemKind, Pane, PaneGroup, PaneGroupEvent, Restore, SerializedItem,
+};
 
 use crate::actions::*;
 use crate::chrome::{AgentColumn, MailStatusBar, SpacesBar};
 use crate::command_palette::{CommandPalette, Dismissed};
 use crate::folder_pane::{FolderPane, FolderPaneEvent};
 use crate::format::format_thousands;
-use crate::layout::{self, AgentPlacement, LayoutConfig, LayoutPrefs, MessagePlacement};
+use crate::layout::{self, AgentPlacement, LayoutConfig, LayoutPrefs};
+use crate::mail_view::{MAIL_KIND, MailView, MailViewContext, MailViewEvent, SerializedFolder};
+use crate::message_tab::{MESSAGE_KIND, MessageTab, SerializedMessage};
 use crate::message_view::MessageView;
 use crate::perf::{FrameStats, ScrollBenchmark, resident_memory};
 use crate::quick_move::{MoveTarget, QuickMove, QuickMoveEvent, source_folder};
 use crate::source::{DataChanges, Direction, FolderKey, MailSource, SortBy, ThreadScope};
-use crate::thread_list::{
-    CARD_HEIGHT, ItemId, ListMode, TABLE_LIST_WIDTH, TABLE_ROW_HEIGHT, ThreadList, ThreadListEvent,
-    message_menu,
-};
+use crate::thread_list::{CARD_HEIGHT, ItemId, ListMode, TABLE_ROW_HEIGHT, ThreadList};
 use crate::ui_state::{ListDefaults, UiStateStore};
 
 /// How the main window starts.
@@ -54,7 +73,7 @@ pub struct MailWindowOptions {
     pub benchmark: Option<ScrollBenchmark>,
     /// Initial window size; by default 1680×1000, shrunk to fit the screen.
     pub window_size: Option<(f32, f32)>,
-    /// The message list view (`ui_state.json`); in memory by default.
+    /// The message list view and the layout (`ui_state.json`); in memory by default.
     pub ui_state: UiStateStore,
 }
 
@@ -76,6 +95,8 @@ const DEFAULT_SIZE: (f32, f32) = (1680., 1000.);
 const MIN_SIZE: (f32, f32) = (720., 480.);
 /// Selected rows whose account Quick Move checks before it opens.
 const ACCOUNT_CHECK_ROWS: usize = 1_000;
+/// The layout is saved this long after its last change.
+const LAYOUT_SAVE_DELAY: Duration = Duration::from_millis(400);
 
 /// Opens the main window. Returns its handle and root view (for
 /// [`MailWindow::apply_changes`]).
@@ -110,12 +131,14 @@ pub fn open_main_window(
     .map_err(|error| OpenWindowError(error.to_string()))
 }
 
-/// What the window asks the app to open a compose window for (Reply, Reply All,
-/// Forward on the message shown). New messages are the app-level
-/// [`NewMessage`](crate::actions::NewMessage) action. The app opens the composer, so
-/// this crate doesn't depend on it.
+/// What the window asks the app to open a draft for: a new message (`cmd-n`, the
+/// title bar's "+"), or Reply, Reply All, Forward on the message of the active tab.
+/// The app opens the composer in a tab ([`MailWindow::add_item`]) named with
+/// [`MailWindow::new_draft_name`], so this crate doesn't depend on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComposeRequest {
+    /// A blank message.
+    New,
     /// Reply to the sender, or to everyone.
     Reply {
         /// The message replied to.
@@ -141,7 +164,6 @@ pub struct OpenWindowError(pub String);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ColumnDrag {
     FolderPane,
-    List,
     Agent,
 }
 
@@ -158,28 +180,38 @@ struct BenchRun {
     frame: usize,
 }
 
+/// What Quick Move moves: rows of a list, or the message of a tab.
+#[derive(Debug, Clone)]
+enum MoveOwner {
+    List(Entity<ThreadList>),
+    Message(Entity<MessageTab>),
+}
+
 /// The main window's root view.
 pub struct MailWindow {
     source: Arc<dyn MailSource>,
     focus: FocusHandle,
     folder_pane: Entity<FolderPane>,
-    thread_list: Entity<ThreadList>,
-    message_view: Entity<MessageView>,
+    panes: Entity<PaneGroup>,
+    views: MailViewContext,
     search: Entity<InputState>,
-    prefs: LayoutPrefs,
+    prefs: Rc<RefCell<LayoutPrefs>>,
     config: LayoutConfig,
     palette: Option<Entity<CommandPalette>>,
     palette_return_focus: Option<FocusHandle>,
     quick_move: Option<Entity<QuickMove>>,
+    quick_move_owner: Option<MoveOwner>,
     quick_move_return_focus: Option<FocusHandle>,
     ui_state: UiStateStore,
-    cards_list_width: Option<f32>,
     stats: Rc<RefCell<FrameStats>>,
     pending_benchmark: Option<ScrollBenchmark>,
     bench: Option<BenchRun>,
     title_bar_items: Vec<AnyView>,
     agent_panel: Option<AnyView>,
     after_paint: Rc<RefCell<Vec<AfterPaint>>>,
+    names: NameRng,
+    save_task: Option<Task<()>>,
+    item_subscriptions: HashMap<EntityId, Subscription>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -192,8 +224,27 @@ impl std::fmt::Debug for MailWindow {
     }
 }
 
+/// The title of a folder, from the folder pane, or the role's name for a unified
+/// folder the pane doesn't show (yet).
+fn folder_title(pane: &FolderPane, key: &FolderKey) -> Option<SharedString> {
+    pane.title_of(key).or_else(|| match key {
+        FolderKey::Unified(role) => Some(role_title(*role)),
+        FolderKey::Folder(_) => None,
+    })
+}
+
+fn role_title(role: FolderRole) -> SharedString {
+    let name = role.as_str();
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()).into(),
+        None => SharedString::default(),
+    }
+}
+
 impl MailWindow {
-    /// Builds the window content.
+    /// Builds the window content and restores the saved tabs (or opens the unified
+    /// Inbox).
     pub fn new(
         source: Arc<dyn MailSource>,
         options: &MailWindowOptions,
@@ -202,24 +253,33 @@ impl MailWindow {
     ) -> Self {
         let initial = FolderKey::Unified(FolderRole::Inbox);
         let folder_pane = cx.new(|cx| FolderPane::new(source.clone(), &initial, window, cx));
-        let title = folder_pane
-            .read(cx)
-            .title_of(&initial)
-            .unwrap_or_else(|| "Inbox".into());
-        let message_view = cx.new(|cx| MessageView::new(options.local_offset, cx));
-        let thread_list = cx.new(|cx| {
-            ThreadList::new(
-                source.clone(),
-                options.local_offset,
-                ThreadScope::Folder(initial),
-                title,
-                options.ui_state.clone(),
-                window,
-                cx,
-            )
+        let prefs = Rc::new(RefCell::new(LayoutPrefs::default()));
+        let config = LayoutConfig::default();
+        let views = MailViewContext {
+            source: source.clone(),
+            local_offset: options.local_offset,
+            ui_state: options.ui_state.clone(),
+            prefs: prefs.clone(),
+            config,
+        };
+        let empty_state: EmptyState = Rc::new(|_, cx| {
+            let theme = cx.theme().colors;
+            v_flex()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .gap_1()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child("No open tabs")
+                .child(
+                    div()
+                        .text_xs()
+                        .child("Pick a folder, or press ⌘N to write a message."),
+                )
+                .into_any_element()
         });
-        let menu = message_menu(thread_list.downgrade());
-        message_view.update(cx, |view, _| view.set_context_menu(Rc::new(menu)));
+        let panes = cx.new(|cx| PaneGroup::new(Some(empty_state), window, cx));
         let search = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Search all messages…  ⌘K")
@@ -227,7 +287,7 @@ impl MailWindow {
         });
         let subscriptions = vec![
             cx.subscribe_in(&folder_pane, window, Self::on_folder_pane_event),
-            cx.subscribe_in(&thread_list, window, Self::on_thread_list_event),
+            cx.subscribe_in(&panes, window, Self::on_pane_group_event),
             cx.subscribe_in(&search, window, Self::on_search_event),
             ui::theme::observe_system_appearance(window),
         ];
@@ -235,43 +295,174 @@ impl MailWindow {
             source,
             focus: cx.focus_handle(),
             folder_pane,
-            thread_list,
-            message_view,
+            panes,
+            views,
             search,
-            prefs: LayoutPrefs::default(),
-            config: LayoutConfig::default(),
+            prefs,
+            config,
             palette: None,
             palette_return_focus: None,
             quick_move: None,
+            quick_move_owner: None,
             quick_move_return_focus: None,
             ui_state: options.ui_state.clone(),
-            cards_list_width: None,
             stats: Rc::new(RefCell::new(FrameStats::new(options.process_start))),
             pending_benchmark: options.benchmark,
             bench: None,
             title_bar_items: Vec::new(),
             agent_panel: None,
             after_paint: Rc::default(),
+            names: NameRng::from_entropy(),
+            save_task: None,
+            item_subscriptions: HashMap::new(),
             _subscriptions: subscriptions,
         };
-        if this.thread_list.read(cx).mode() == ListMode::Table {
-            // The first folder remembered the table view.
-            this.fit_list_to_table(cx);
+        this.register_kinds(window, cx);
+        let restored = this.ui_state.layout().is_some_and(|layout| {
+            this.panes
+                .update(cx, |panes, cx| panes.load(layout, window, cx))
+        });
+        let has_items = !this.panes.read(cx).items(cx).is_empty();
+        if !restored || !has_items {
+            let title =
+                folder_title(this.folder_pane.read(cx), &initial).unwrap_or_else(|| "Inbox".into());
+            let view = this.new_mail_view(ThreadScope::Folder(initial), title, None, window, cx);
+            this.panes.update(cx, |panes, cx| {
+                panes.add_item(Box::new(view), true, window, cx)
+            });
         }
-        this.show_selected(cx);
-        let focus = this.thread_list.focus_handle(cx);
-        window.focus(&focus, cx);
+        this.track_items(window, cx);
+        this.sync_folder_selection(cx);
+        let pane = this.panes.read(cx).active_pane().clone();
+        pane.update(cx, |pane, cx| pane.focus_active_item(window, cx));
         this
     }
 
-    /// The message list.
-    pub fn thread_list(&self) -> &Entity<ThreadList> {
-        &self.thread_list
+    /// Mail views and message tabs come back from the layout file; a keyboard split of
+    /// a draft gets a mail view of the selected folder.
+    fn register_kinds(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let views = self.views.clone();
+        let folder_pane = self.folder_pane.downgrade();
+        let titles = self.folder_pane.downgrade();
+        let mail = ItemKind::new(move |item: &SerializedItem, window, cx| {
+            let Ok(folder) = serde_json::from_value::<SerializedFolder>(item.data.clone()) else {
+                return Restore::Gone;
+            };
+            let key = folder.key();
+            let Some(pane) = folder_pane.upgrade() else {
+                return Restore::Later;
+            };
+            let title = folder_title(pane.read(cx), &key);
+            let title = match title {
+                Some(title) => title,
+                // The folders aren't read yet.
+                None if views.source.placeholder().is_some() => return Restore::Later,
+                None => return Restore::Gone,
+            };
+            let views = views.clone();
+            let view = cx
+                .new(|cx| MailView::new(views, ThreadScope::Folder(key), title, None, window, cx));
+            Restore::Item(Box::new(view))
+        })
+        .icon(IconName::Inbox)
+        .title(move |item, cx| {
+            let folder = serde_json::from_value::<SerializedFolder>(item.data.clone()).ok()?;
+            folder_title(titles.upgrade()?.read(cx), &folder.key())
+        });
+
+        let source = self.source.clone();
+        let offset = self.views.local_offset;
+        let message = ItemKind::new(move |item: &SerializedItem, _, cx| {
+            let Ok(SerializedMessage { message }) =
+                serde_json::from_value::<SerializedMessage>(item.data.clone())
+            else {
+                return Restore::Gone;
+            };
+            if !MessageTab::exists(source.as_ref(), message) {
+                return Restore::Gone;
+            }
+            let source = source.clone();
+            Restore::Item(Box::new(
+                cx.new(|cx| MessageTab::new(source, offset, message, cx)),
+            ))
+        })
+        .icon(IconName::Mail)
+        .title(|_, _| Some("Message".into()));
+
+        let views = self.views.clone();
+        let fallback_pane = self.folder_pane.downgrade();
+        self.panes.update(cx, |panes, cx| {
+            panes.register_kind(MAIL_KIND, mail, window, cx);
+            panes.register_kind(MESSAGE_KIND, message, window, cx);
+            panes.set_split_fallback(Rc::new(move |window, cx| {
+                let pane = fallback_pane.upgrade()?;
+                let key = pane
+                    .read(cx)
+                    .selected()
+                    .cloned()
+                    .unwrap_or(FolderKey::Unified(FolderRole::Inbox));
+                let title = folder_title(pane.read(cx), &key).unwrap_or_else(|| "Inbox".into());
+                let views = views.clone();
+                let view = cx.new(|cx| {
+                    MailView::new(views, ThreadScope::Folder(key), title, None, window, cx)
+                });
+                Some(Box::new(view) as Box<dyn ItemHandle>)
+            }));
+        });
     }
 
-    /// The message view.
-    pub fn message_view(&self) -> &Entity<MessageView> {
-        &self.message_view
+    fn new_mail_view(
+        &self,
+        scope: ThreadScope,
+        title: SharedString,
+        search: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Entity<MailView> {
+        let views = self.views.clone();
+        cx.new(|cx| MailView::new(views, scope, title, search, window, cx))
+    }
+
+    // ---- public API ----------------------------------------------------------------
+
+    /// The center's panes and tabs.
+    pub fn panes(&self) -> &Entity<PaneGroup> {
+        &self.panes
+    }
+
+    /// The active tab, if it is a mail view.
+    pub fn active_mail_view(&self, cx: &App) -> Option<Entity<MailView>> {
+        self.panes
+            .read(cx)
+            .active_item(cx)
+            .and_then(|item| item.downcast::<MailView>())
+    }
+
+    /// The active tab, if it is a message.
+    pub fn active_message_tab(&self, cx: &App) -> Option<Entity<MessageTab>> {
+        self.panes
+            .read(cx)
+            .active_item(cx)
+            .and_then(|item| item.downcast::<MessageTab>())
+    }
+
+    /// The mail view mail actions and folder picks go to: the active tab, else the
+    /// mail view used last.
+    pub fn current_mail_view(&self, cx: &App) -> Option<Entity<MailView>> {
+        self.active_mail_view(cx)
+            .or_else(|| self.panes.read(cx).most_recent::<MailView>(cx))
+    }
+
+    /// The message list of the current mail view.
+    pub fn thread_list(&self, cx: &App) -> Option<Entity<ThreadList>> {
+        self.current_mail_view(cx)
+            .map(|view| view.read(cx).thread_list().clone())
+    }
+
+    /// The message view of the current mail view.
+    pub fn message_view(&self, cx: &App) -> Option<Entity<MessageView>> {
+        self.current_mail_view(cx)
+            .map(|view| view.read(cx).message_view().clone())
     }
 
     /// The folder pane.
@@ -280,8 +471,8 @@ impl MailWindow {
     }
 
     /// The layout preferences (column widths and toggles).
-    pub fn prefs(&self) -> &LayoutPrefs {
-        &self.prefs
+    pub fn prefs(&self) -> LayoutPrefs {
+        *self.prefs.borrow()
     }
 
     /// Whether the command palette is open.
@@ -310,16 +501,59 @@ impl MailWindow {
         cx.notify();
     }
 
-    /// The thread the agent column attaches as context: the selected thread and its
-    /// subject, when exactly one row is selected and its message is shown.
-    pub fn agent_context(&self, cx: &App) -> Option<(ThreadId, SharedString)> {
-        if self.thread_list.read(cx).selected_count() > 1 {
-            return None;
-        }
-        self.message_view
+    /// Opens `item` (a draft, from the app) in a tab of the active pane and focuses it.
+    pub fn add_item(
+        &mut self,
+        item: Box<dyn ItemHandle>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.panes
+            .update(cx, |panes, cx| panes.add_item(item, true, window, cx));
+    }
+
+    /// Registers how tabs of `kind` come back from the layout file (the app's drafts),
+    /// and restores the shown tabs of that kind.
+    pub fn register_item_kind(
+        &mut self,
+        kind: &str,
+        item_kind: ItemKind,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.panes.update(cx, |panes, cx| {
+            panes.register_kind(kind, item_kind, window, cx)
+        });
+    }
+
+    /// A random two-word name for a new draft (`brave-otter`) that no open tab has.
+    pub fn new_draft_name(&mut self, cx: &App) -> String {
+        let titles: Vec<String> = self
+            .panes
             .read(cx)
-            .document()
-            .map(|doc| (doc.thread, doc.subject.expose().clone()))
+            .items(cx)
+            .iter()
+            .map(|item| item.tab_title(cx).to_string())
+            .collect();
+        ui::names::two_word_name(&titles, &mut self.names)
+    }
+
+    /// Writes the layout to `ui_state.json` now (it is otherwise saved a moment after
+    /// each change).
+    pub fn save_layout(&mut self, cx: &App) {
+        self.save_task = None;
+        let layout = self.panes.read(cx).serialize(cx);
+        self.ui_state.set_layout(layout);
+    }
+
+    /// The thread the agent column attaches as context: from the active mail view
+    /// (when exactly one row is selected and its message is shown) or message tab.
+    pub fn agent_context(&self, cx: &App) -> Option<(ThreadId, SharedString)> {
+        if let Some(view) = self.active_mail_view(cx) {
+            return view.read(cx).agent_context(cx);
+        }
+        self.active_message_tab(cx)
+            .and_then(|tab| tab.read(cx).agent_context(cx))
     }
 
     /// Runs `callback` (deferred, outside of painting) after the next frame has been
@@ -334,9 +568,15 @@ impl MailWindow {
         cx.notify();
     }
 
-    /// Re-reads what `changes` affects: the folder tree, the counts, the open list's
-    /// keys (keeping the selection) and the displayed message.
-    pub fn apply_changes(&mut self, changes: &DataChanges, cx: &mut Context<'_, Self>) {
+    /// Re-reads what `changes` affects: the folder tree, the counts, every mail view's
+    /// list (keeping the selection) and shown message, and the message tabs. Once the
+    /// mail is open (`everything`), tabs that waited for it are restored.
+    pub fn apply_changes(
+        &mut self,
+        changes: &DataChanges,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         if changes.is_empty() {
             return;
         }
@@ -346,48 +586,172 @@ impl MailWindow {
             self.folder_pane
                 .update(cx, |pane, cx| pane.refresh_counts(cx));
         }
-        let before = self.thread_list.read(cx).selected_item();
-        if changes.everything || changes.threads || !changes.threads_updated.is_empty() {
-            self.thread_list.update(cx, |list, cx| list.refresh(cx));
+        let panes = self.panes.read(cx);
+        let views = panes.items_of::<MailView>(cx);
+        let tabs = panes.items_of::<MessageTab>(cx);
+        for view in views {
+            view.update(cx, |view, cx| view.apply_changes(changes, cx));
         }
-        // A changed selection was shown through the list's event already.
-        let list = self.thread_list.read(cx);
-        let selected = list.selected_item();
-        let selected_thread = list.selected_thread();
-        let showing_doc = self.message_view.read(cx).document();
-        let showing_selected = match (selected, showing_doc) {
-            (Some(ItemId::Thread(thread)), Some(doc)) => doc.thread == thread,
-            (Some(ItemId::Message(message)), Some(doc)) => doc.message == message,
-            (None, None) => true,
-            _ => false,
-        };
-        let message_stale =
-            showing_doc.is_some_and(|doc| changes.messages_updated.contains(&doc.message));
-        let stale = message_stale
-            || selected_thread.is_some_and(|id| changes.threads_updated.contains(&id));
-        if selected == before && (changes.everything || stale || !showing_selected) {
-            self.show_selected(cx);
+        for tab in tabs {
+            let stale = changes.everything
+                || changes.messages_updated.contains(&tab.read(cx).message())
+                || changes.threads;
+            if stale {
+                tab.update(cx, |tab, cx| tab.reload(cx));
+            }
+        }
+        if changes.everything {
+            self.panes
+                .update(cx, |panes, cx| panes.retry_pending(window, cx));
+            self.sync_folder_selection(cx);
         }
         cx.notify();
     }
 
-    fn show_selected(&mut self, cx: &mut Context<'_, Self>) {
-        let count = self.thread_list.read(cx).selected_count();
-        if count > 1 {
-            self.message_view
-                .update(cx, |view, cx| view.show_selection(count, cx));
+    // ---- tabs ------------------------------------------------------------------------
+
+    /// Subscribes to the mail views that came and forgets the ones that went.
+    fn track_items(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let views = self.panes.read(cx).items_of::<MailView>(cx);
+        let open: Vec<EntityId> = views.iter().map(|view| view.entity_id()).collect();
+        self.item_subscriptions.retain(|id, _| open.contains(id));
+        for view in views {
+            self.item_subscriptions
+                .entry(view.entity_id())
+                .or_insert_with(|| cx.subscribe_in(&view, window, Self::on_mail_view_event));
+        }
+    }
+
+    fn on_pane_group_event(
+        &mut self,
+        _: &Entity<PaneGroup>,
+        event: &PaneGroupEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match event {
+            PaneGroupEvent::LayoutChanged => {
+                self.track_items(window, cx);
+                self.schedule_layout_save(cx);
+            }
+            PaneGroupEvent::ActiveItemChanged => {
+                self.track_items(window, cx);
+                self.sync_folder_selection(cx);
+            }
+        }
+        cx.notify();
+    }
+
+    fn schedule_layout_save(&mut self, cx: &mut Context<'_, Self>) {
+        let timer = cx.background_executor().timer(LAYOUT_SAVE_DELAY);
+        self.save_task = Some(cx.spawn(async move |this, cx| {
+            timer.await;
+            this.update(cx, |this, cx| this.save_layout(cx)).ok();
+        }));
+    }
+
+    /// The folder pane shows the folder of the active mail view.
+    fn sync_folder_selection(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(view) = self.active_mail_view(cx) else {
+            return;
+        };
+        if let ThreadScope::Folder(key) = view.read(cx).scope(cx) {
+            self.folder_pane.update(cx, |pane, cx| {
+                if pane.selected() != Some(&key) {
+                    pane.select(&key, cx);
+                }
+            });
+        }
+    }
+
+    fn on_mail_view_event(
+        &mut self,
+        view: &Entity<MailView>,
+        event: &MailViewEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match event {
+            MailViewEvent::CountsChanged => {
+                self.folder_pane
+                    .update(cx, |pane, cx| pane.refresh_counts(cx));
+            }
+            MailViewEvent::SelectionChanged => {}
+            MailViewEvent::OpenMessage(message) => {
+                let pane = self.panes.read(cx).pane_of(view.entity_id(), cx);
+                self.open_message(*message, pane, window, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Opens `message` in a tab of its own in `pane` (default: the active pane), or
+    /// activates the tab it has there already.
+    pub fn open_message(
+        &mut self,
+        message: MessageId,
+        pane: Option<Entity<Pane>>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let pane = pane.unwrap_or_else(|| self.panes.read(cx).active_pane().clone());
+        let existing = pane.read(cx).items().iter().find_map(|item| {
+            item.downcast::<MessageTab>()
+                .filter(|tab| tab.read(cx).message() == message)
+                .map(|tab| tab.entity_id())
+        });
+        if let Some(id) = existing {
+            self.panes
+                .update(cx, |panes, cx| panes.activate_item(id, true, window, cx));
             return;
         }
-        let item = self.thread_list.read(cx).selected_item();
-        let document = item.map(|item| match item {
-            ItemId::Thread(thread) => self.source.message(thread),
-            ItemId::Message(message) => self.source.message_document(message),
+        let (source, offset) = (self.source.clone(), self.views.local_offset);
+        let tab = cx.new(|cx| MessageTab::new(source, offset, message, cx));
+        pane.update(cx, |pane, cx| {
+            pane.add_item(Box::new(tab), None, true, true, window, cx);
         });
-        self.message_view.update(cx, |view, cx| match document {
-            None => view.show(None, cx),
-            Some(Ok(document)) => view.show(Some(document), cx),
-            Some(Err(error)) => view.show_error(error.to_string(), cx),
-        });
+    }
+
+    /// `enter`, `cmd-o`: the message shown in the active mail view in a tab of its own.
+    fn open_selected_message(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(message) = self
+            .active_mail_view(cx)
+            .and_then(|view| view.read(cx).shown_message(cx))
+        else {
+            return;
+        };
+        self.open_message(message, None, window, cx);
+    }
+
+    /// Opens a folder in the active mail view, the one used last, or a new one.
+    fn open_folder(
+        &mut self,
+        scope: ThreadScope,
+        title: SharedString,
+        search: Option<String>,
+        new_tab: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Entity<MailView> {
+        let target = (!new_tab).then(|| self.current_mail_view(cx)).flatten();
+        match target {
+            Some(view) => {
+                if self.active_mail_view(cx).as_ref() != Some(&view) {
+                    let id = view.entity_id();
+                    self.panes
+                        .update(cx, |panes, cx| panes.activate_item(id, false, window, cx));
+                }
+                view.update(cx, |view, cx| view.open(scope, title, search, cx));
+                view
+            }
+            None => {
+                let view = self.new_mail_view(scope, title, search, window, cx);
+                self.panes.update(cx, |panes, cx| {
+                    panes.add_item(Box::new(view.clone()), false, window, cx);
+                });
+                view
+            }
+        }
     }
 
     fn on_folder_pane_event(
@@ -397,48 +761,31 @@ impl MailWindow {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let FolderPaneEvent::Selected { key, title } = event;
         self.search
             .update(cx, |search, cx| search.set_value("", window, cx));
-        self.thread_list.update(cx, |list, cx| {
-            list.open(ThreadScope::Folder(key.clone()), title.clone(), None, cx)
-        });
-    }
-
-    fn on_thread_list_event(
-        &mut self,
-        _: &Entity<ThreadList>,
-        event: &ThreadListEvent,
-        _: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
         match event {
-            ThreadListEvent::Selected(_) => self.show_selected(cx),
-            ThreadListEvent::Changed => {
-                self.folder_pane
-                    .update(cx, |pane, cx| pane.refresh_counts(cx));
+            FolderPaneEvent::Selected { key, title } => {
+                self.open_folder(
+                    ThreadScope::Folder(key.clone()),
+                    title.clone(),
+                    None,
+                    false,
+                    window,
+                    cx,
+                );
             }
-            ThreadListEvent::ModeChanged(ListMode::Table) => self.fit_list_to_table(cx),
-            ThreadListEvent::ModeChanged(ListMode::Cards) => {
-                if let Some(width) = self.cards_list_width.take() {
-                    self.prefs.list = width;
-                }
-            }
-            ThreadListEvent::ColumnsChanged => {
-                if self.thread_list.read(cx).mode() == ListMode::Table {
-                    let needed = self.thread_list.read(cx).table_width();
-                    self.prefs.list = self.prefs.list.max(needed);
-                }
+            FolderPaneEvent::OpenInNewTab { key, title } => {
+                let view = self.open_folder(
+                    ThreadScope::Folder(key.clone()),
+                    title.clone(),
+                    None,
+                    true,
+                    window,
+                    cx,
+                );
+                MailView::focus_list(&view, window, cx);
             }
         }
-        cx.notify();
-    }
-
-    /// The table needs room for its columns; remembers the card width.
-    fn fit_list_to_table(&mut self, cx: &App) {
-        self.cards_list_width = Some(self.prefs.list);
-        let needed = self.thread_list.read(cx).table_width();
-        self.prefs.list = self.prefs.list.max(needed.max(TABLE_LIST_WIDTH));
     }
 
     fn on_search_event(
@@ -454,16 +801,95 @@ impl MailWindow {
                 return;
             }
             let title: SharedString = format!("Search: “{query}”").into();
-            self.thread_list.update(cx, |list, cx| {
-                list.open(ThreadScope::AllFolders, title, Some(query), cx);
-                list.focus(window, cx);
-            });
+            let view = self.open_folder(
+                ThreadScope::AllFolders,
+                title,
+                Some(query),
+                false,
+                window,
+                cx,
+            );
+            MailView::focus_list(&view, window, cx);
         }
     }
 
-    fn effective_agent_expanded(&self, window: &Window) -> bool {
-        let width = f32::from(window.viewport_size().width);
-        layout::agent_expanded(width, &self.prefs, &self.config)
+    // ---- mail actions ---------------------------------------------------------------
+
+    /// Runs `f` on the active mail view's list.
+    fn with_list(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        f: impl FnOnce(&mut ThreadList, &mut Context<'_, ThreadList>),
+    ) {
+        if let Some(view) = self.active_mail_view(cx) {
+            let list = view.read(cx).thread_list().clone();
+            list.update(cx, f);
+        }
+    }
+
+    /// Runs a change on the active message tab, then refreshes the lists.
+    fn with_message_tab(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        f: impl FnOnce(
+            &mut MessageTab,
+            &mut Context<'_, MessageTab>,
+        ) -> Result<(), crate::source::SourceError>,
+    ) {
+        let Some(tab) = self.active_message_tab(cx) else {
+            return;
+        };
+        let message = tab.read(cx).message();
+        if let Err(error) = tab.update(cx, f) {
+            tracing::warn!(%error, "changing the message failed");
+            window.push_notification(
+                Notification::error(format!("The message couldn't be changed: {error}"))
+                    .title(PRODUCT_NAME),
+                cx,
+            );
+            return;
+        }
+        let changes = DataChanges {
+            counts: true,
+            threads: true,
+            messages_updated: vec![message],
+            ..DataChanges::default()
+        };
+        self.apply_changes(&changes, window, cx);
+    }
+
+    fn toggle_read(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.active_message_tab(cx).is_some() {
+            self.with_message_tab(window, cx, |tab, _| tab.toggle_read());
+        } else {
+            self.with_list(cx, |list, cx| list.toggle_read(cx));
+        }
+    }
+
+    fn toggle_star(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.active_message_tab(cx).is_some() {
+            self.with_message_tab(window, cx, |tab, _| tab.toggle_star());
+        } else {
+            self.with_list(cx, |list, cx| list.toggle_star(cx));
+        }
+    }
+
+    fn archive(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.active_message_tab(cx).is_some() {
+            self.with_message_tab(window, cx, |tab, cx| tab.archive(cx));
+        } else {
+            self.with_list(cx, |list, cx| list.archive_selected(cx));
+        }
+    }
+
+    fn undo(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.active_message_tab(cx).is_some() {
+            let source = self.source.clone();
+            self.with_message_tab(window, cx, move |_, _| source.undo().map(drop));
+        } else {
+            self.with_list(cx, |list, cx| list.undo(cx));
+        }
     }
 
     fn toggle_palette(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
@@ -493,29 +919,52 @@ impl MailWindow {
         }
         match self.palette_return_focus.take() {
             Some(focus) => window.focus(&focus, cx),
-            None => {
-                let focus = self.thread_list.focus_handle(cx);
-                window.focus(&focus, cx);
-            }
+            None => self.focus_active_item(window, cx),
         }
         cx.notify();
     }
 
-    /// `shift-m`: opens Quick Move for the selected rows (or thread) over their
-    /// account's folders. Run from the palette, it takes the palette's place.
+    fn focus_active_item(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let pane = self.panes.read(cx).active_pane().clone();
+        pane.update(cx, |pane, cx| pane.focus_active_item(window, cx));
+    }
+
+    /// `shift-m`: opens Quick Move for the selected rows (or thread) of the active mail
+    /// view, or the message of the active message tab, over their account's folders.
+    /// Run from the palette, it takes the palette's place.
     fn open_quick_move(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         if self.quick_move.is_some() {
             return;
         }
-        let items = self.thread_list.update(cx, |list, _| list.command_items());
+        let (owner, items, scope, return_to) = if let Some(view) = self.active_mail_view(cx) {
+            let (list, message_view) = {
+                let view = view.read(cx);
+                (view.thread_list().clone(), view.message_view().clone())
+            };
+            let items = list.update(cx, |list, _| list.command_items());
+            let scope = Some(list.read(cx).scope().clone());
+            let message = message_view.focus_handle(cx);
+            let return_to = if message.is_focused(window) {
+                message
+            } else {
+                list.focus_handle(cx)
+            };
+            (MoveOwner::List(list), items, scope, return_to)
+        } else if let Some(tab) = self.active_message_tab(cx) {
+            let items = vec![ItemId::Message(tab.read(cx).message())];
+            let return_to = tab.read(cx).focus_handle(cx);
+            (MoveOwner::Message(tab), items, None, return_to)
+        } else {
+            return;
+        };
         // Mail moves within its account. The first rows tell (checking a huge selection
         // row by row would stall; the core refuses a move across accounts anyway).
         let mut accounts = items
             .iter()
             .take(ACCOUNT_CHECK_ROWS)
-            .map(|item| match item {
-                ItemId::Thread(thread) => self.source.thread_account(*thread),
-                ItemId::Message(message) => self.source.message_account(*message),
+            .map(|item| match *item {
+                ItemId::Thread(thread) => self.source.thread_account(thread),
+                ItemId::Message(message) => self.source.message_account(message),
             });
         let Some(Some(account)) = accounts.next() else {
             return;
@@ -533,7 +982,7 @@ impl MailWindow {
             tracing::warn!("quick move: the selected mail's account is gone");
             return;
         };
-        let from = source_folder(self.thread_list.read(cx).scope(), &account);
+        let from = scope.and_then(|scope| source_folder(&scope, &account));
         let target = MoveTarget {
             items,
             account: account.id,
@@ -544,16 +993,10 @@ impl MailWindow {
             Some(_) => self.palette_return_focus.take(),
             // From a context menu the focus is on the menu, which is gone by the time
             // the picker closes: back to the message, or else to the list.
-            None => {
-                let message = self.message_view.focus_handle(cx);
-                Some(if message.is_focused(window) {
-                    message
-                } else {
-                    self.thread_list.focus_handle(cx)
-                })
-            }
+            None => Some(return_to),
         };
         self.quick_move_return_focus = return_focus;
+        self.quick_move_owner = Some(owner);
         let picker = cx.new(|cx| QuickMove::new(target, &account, recent, window, cx));
         let focus = picker.focus_handle(cx);
         self._subscriptions
@@ -572,9 +1015,25 @@ impl MailWindow {
     ) {
         if let QuickMoveEvent::Confirmed(folder) = *event {
             let target = picker.read(cx).target().clone();
-            let moved = self.thread_list.update(cx, |list, cx| {
-                list.move_items(&target.items, folder, target.from, cx)
-            });
+            let moved = match self.quick_move_owner.clone() {
+                Some(MoveOwner::List(list)) => list.update(cx, |list, cx| {
+                    list.move_items(&target.items, folder, target.from, cx)
+                }),
+                Some(MoveOwner::Message(tab)) => {
+                    let message = tab.read(cx).message();
+                    let moved = self.source.move_messages(&[message], folder, target.from);
+                    if moved.is_ok() {
+                        let changes = DataChanges {
+                            counts: true,
+                            threads: true,
+                            ..DataChanges::default()
+                        };
+                        self.apply_changes(&changes, window, cx);
+                    }
+                    moved
+                }
+                None => Ok(()),
+            };
             match moved {
                 Ok(()) => self.ui_state.remember_move_target(target.account, folder),
                 Err(error) => {
@@ -594,21 +1053,22 @@ impl MailWindow {
         if self.quick_move.take().is_none() {
             return;
         }
-        let focus = self
-            .quick_move_return_focus
-            .take()
-            .unwrap_or_else(|| self.thread_list.focus_handle(cx));
-        window.focus(&focus, cx);
+        self.quick_move_owner = None;
+        match self.quick_move_return_focus.take() {
+            Some(focus) => window.focus(&focus, cx),
+            None => self.focus_active_item(window, cx),
+        }
         cx.notify();
     }
 
-    /// `mail::ToggleFavoriteFolder`: adds the open folder to the favorites or removes
-    /// it, as the folder pane's context menu does.
+    /// `mail::ToggleFavoriteFolder`: adds the folder of the active mail view to the
+    /// favorites or removes it, as the folder pane's context menu does.
     fn toggle_favorite_folder(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let ThreadScope::Folder(key @ FolderKey::Folder(folder)) =
-            self.thread_list.read(cx).scope().clone()
-        else {
-            // A unified folder or a search.
+        let scope = self
+            .active_mail_view(cx)
+            .map(|view| view.read(cx).scope(cx));
+        let Some(ThreadScope::Folder(key @ FolderKey::Folder(folder))) = scope else {
+            // A unified folder, a search, or no mail view.
             window.push_notification(
                 Notification::info("Only folders of an account can be favorites.")
                     .title(PRODUCT_NAME),
@@ -623,20 +1083,24 @@ impl MailWindow {
     }
 
     fn sort_list(&mut self, by: SortBy, cx: &mut Context<'_, Self>) {
-        self.thread_list.update(cx, |list, cx| list.sort_by(by, cx));
+        self.with_list(cx, |list, cx| list.sort_by(by, cx));
     }
 
-    /// Reply, Reply All, Forward: asks the app to open the composer for the message
-    /// shown (the newest of a selected thread, or the selected message).
+    /// Reply, Reply All, Forward: asks the app to open a draft for the message of the
+    /// active tab (the newest of a selected thread, the selected message, or the
+    /// message tab's).
     fn request_compose(
         &mut self,
         request: impl FnOnce(MessageId) -> ComposeRequest,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let shown = (self.thread_list.read(cx).selected_count() == 1)
-            .then(|| self.message_view.read(cx).document().map(|doc| doc.message))
-            .flatten();
+        let shown = match self.active_message_tab(cx) {
+            Some(tab) => Some(tab.read(cx).message()),
+            None => self
+                .active_mail_view(cx)
+                .and_then(|view| view.read(cx).shown_message(cx)),
+        };
         match shown {
             Some(message) => cx.emit(request(message)),
             None => window.push_notification(
@@ -654,25 +1118,32 @@ impl MailWindow {
     ) {
         let x = f32::from(event.event.position.x);
         let width = f32::from(window.viewport_size().width);
-        let resolved = layout::resolve(width, &self.prefs, &self.config);
+        let mut prefs = self.prefs.borrow_mut();
         match event.drag(cx) {
             ColumnDrag::FolderPane => {
-                self.prefs.folder_pane =
-                    (x - self.config.spaces_bar).max(self.config.min_folder_pane);
-            }
-            ColumnDrag::List => {
-                let left = self.config.spaces_bar + resolved.folder_pane.unwrap_or(0.);
-                self.prefs.list = (x - left).max(self.config.min_list);
+                prefs.folder_pane = (x - self.config.spaces_bar).max(self.config.min_folder_pane);
             }
             ColumnDrag::Agent => {
-                self.prefs.agent = (width - x).max(self.config.min_agent);
+                prefs.agent = (width - x).max(self.config.min_agent);
             }
         }
+        drop(prefs);
         cx.notify();
     }
 
+    fn effective_agent_expanded(&self, window: &Window) -> bool {
+        let width = f32::from(window.viewport_size().width);
+        layout::agent_expanded(width, &self.prefs.borrow(), &self.config)
+    }
+
+    // ---- benchmark ------------------------------------------------------------------
+
     /// Advances the scroll benchmark by one frame.
     fn step_benchmark(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.bench.is_none() {
+            return;
+        }
+        let list = self.thread_list(cx);
         let Some(bench) = self.bench.as_mut() else {
             return;
         };
@@ -685,22 +1156,24 @@ impl MailWindow {
             tracing::debug!(target: "mazemail::perf", frame = bench.frame, "scroll benchmark");
         }
         let y = px(-(bench.frame as f32) * config.pixels_per_frame);
-        let list = self.thread_list.read(cx);
-        match list.mode() {
-            ListMode::Cards => list
-                .scroll_handle()
-                .0
-                .borrow()
-                .base_handle
-                .set_offset(point(px(0.), y)),
-            ListMode::Table => list
-                .table()
-                .read(cx)
-                .vertical_scroll_handle
-                .0
-                .borrow()
-                .base_handle
-                .set_offset(point(px(0.), y)),
+        if let Some(list) = list {
+            let list = list.read(cx);
+            match list.mode() {
+                ListMode::Cards => list
+                    .scroll_handle()
+                    .0
+                    .borrow()
+                    .base_handle
+                    .set_offset(point(px(0.), y)),
+                ListMode::Table => list
+                    .table()
+                    .read(cx)
+                    .vertical_scroll_handle
+                    .0
+                    .borrow()
+                    .base_handle
+                    .set_offset(point(px(0.), y)),
+            }
         }
         if bench.frame > config.frames {
             let (cpu, intervals) = self.stats.borrow_mut().stop_recording();
@@ -748,8 +1221,9 @@ impl MailWindow {
             .unwrap_or_else(|| "Archives".into());
         self.folder_pane
             .update(cx, |pane, cx| pane.select(&key, cx));
-        self.thread_list.update(cx, |list, cx| {
-            list.open(ThreadScope::Folder(key), title, None, cx);
+        let view = self.open_folder(ThreadScope::Folder(key), title, None, false, window, cx);
+        let list = view.read(cx).thread_list().clone();
+        list.update(cx, |list, cx| {
             if config.table != (list.mode() == ListMode::Table) {
                 list.toggle_mode(window, cx);
             }
@@ -759,9 +1233,11 @@ impl MailWindow {
         window.request_animation_frame();
     }
 
+    // ---- rendering ------------------------------------------------------------------
+
     fn render_title_bar(&self, cx: &mut Context<'_, Self>) -> impl IntoElement + use<> {
         let theme = cx.theme().colors;
-        let list = self.thread_list.read(cx);
+        let folders_visible = self.prefs.borrow().folder_pane_visible;
         TitleBar::new()
             .bg(theme.title_bar)
             .border_b_1()
@@ -770,35 +1246,42 @@ impl MailWindow {
                 h_flex()
                     .w_full()
                     .pr_2()
-                    .gap_2()
+                    .gap_1()
+                    .child(
+                        div().debug_selector(|| "toggle-folder-pane".into()).child(
+                            Button::new("toggle-folder-pane")
+                                .ghost()
+                                .xsmall()
+                                .icon(Icon::new(if folders_visible {
+                                    IconName::PanelLeftClose
+                                } else {
+                                    IconName::PanelLeftOpen
+                                }))
+                                .tooltip_with_action(
+                                    if folders_visible {
+                                        "Hide Folder Pane"
+                                    } else {
+                                        "Show Folder Pane"
+                                    },
+                                    &ToggleFolderPane,
+                                    Some("Workspace"),
+                                )
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(Box::new(ToggleFolderPane), cx);
+                                }),
+                        ),
+                    )
                     .child(
                         div().debug_selector(|| "new-message".into()).child(
                             Button::new("new-message")
                                 .ghost()
                                 .xsmall()
                                 .icon(Icon::new(IconName::Plus))
-                                .tooltip("New Message (⌘N)")
+                                .tooltip_with_action("New Message", &NewMessage, Some("Workspace"))
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(Box::new(NewMessage), cx);
                                 }),
                         ),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_1p5()
-                            .px_2()
-                            .py_0p5()
-                            .rounded_md()
-                            .bg(theme.background)
-                            .border_1()
-                            .border_color(theme.border)
-                            .text_xs()
-                            .child(
-                                Icon::new(IconName::Mail)
-                                    .xsmall()
-                                    .text_color(theme.muted_foreground),
-                            )
-                            .child(list.title().clone()),
                     )
                     .child(div().flex_1())
                     .children(self.title_bar_items.iter().cloned())
@@ -833,6 +1316,192 @@ impl MailWindow {
                     .on_drag(drag, |drag, _, _, cx| cx.new(|_| *drag)),
             )
     }
+
+    fn register_actions(
+        &self,
+        root: gpui::Stateful<gpui::Div>,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let root = ui::panes::bind_actions(root, &self.panes);
+        root.on_action(cx.listener(|this, _: &ToggleFolderPane, _, cx| {
+            let mut prefs = this.prefs.borrow_mut();
+            prefs.folder_pane_visible = !prefs.folder_pane_visible;
+            drop(prefs);
+            cx.notify();
+        }))
+        .on_action(cx.listener(|this, _: &ToggleAgentColumn, window, cx| {
+            let expanded = this.effective_agent_expanded(window);
+            this.prefs.borrow_mut().agent_expanded = Some(!expanded);
+            cx.notify();
+        }))
+        .on_action(cx.listener(|this, _: &ToggleMessagePane, _, cx| {
+            let mut prefs = this.prefs.borrow_mut();
+            prefs.message_visible = !prefs.message_visible;
+            drop(prefs);
+            cx.notify();
+        }))
+        .on_action(cx.listener(|this, _: &Toggle, window, cx| this.toggle_palette(window, cx)))
+        .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
+            let focus = this.search.focus_handle(cx);
+            window.focus(&focus, cx);
+        }))
+        .on_action(cx.listener(|this, _: &QuickFilter, window, cx| {
+            if let Some(list) = this
+                .active_mail_view(cx)
+                .map(|v| v.read(cx).thread_list().clone())
+            {
+                list.update(cx, |list, cx| list.focus_quick_filter(window, cx));
+            }
+        }))
+        .on_action(cx.listener(|_, _: &NewMessage, _, cx| {
+            cx.emit(ComposeRequest::New);
+        }))
+        .on_action(cx.listener(|this, _: &OpenMessage, window, cx| {
+            this.open_selected_message(window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &OpenFolderInNewTab, window, cx| {
+            let (key, title) = {
+                let pane = this.folder_pane.read(cx);
+                let key = pane
+                    .selected()
+                    .cloned()
+                    .unwrap_or(FolderKey::Unified(FolderRole::Inbox));
+                let title = folder_title(pane, &key).unwrap_or_else(|| "Inbox".into());
+                (key, title)
+            };
+            let view = this.open_folder(ThreadScope::Folder(key), title, None, true, window, cx);
+            MailView::focus_list(&view, window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &NextMessage, _, cx| {
+            this.with_list(cx, |list, cx| list.next(cx));
+        }))
+        .on_action(cx.listener(|this, _: &PreviousMessage, _, cx| {
+            this.with_list(cx, |list, cx| list.previous(cx));
+        }))
+        .on_action(cx.listener(|this, _: &NextUnread, _, cx| {
+            this.with_list(cx, |list, cx| {
+                list.jump_unread(Direction::Forward, cx);
+            });
+        }))
+        .on_action(cx.listener(|this, _: &PreviousUnread, _, cx| {
+            this.with_list(cx, |list, cx| {
+                list.jump_unread(Direction::Backward, cx);
+            });
+        }))
+        .on_action(cx.listener(|this, _: &FirstMessage, _, cx| {
+            this.with_list(cx, |list, cx| list.edge(false, cx));
+        }))
+        .on_action(cx.listener(|this, _: &LastMessage, _, cx| {
+            this.with_list(cx, |list, cx| list.edge(true, cx));
+        }))
+        .on_action(cx.listener(|this, _: &PageDown, _, cx| {
+            this.with_list(cx, |list, cx| list.page(true, cx));
+        }))
+        .on_action(cx.listener(|this, _: &PageUp, _, cx| {
+            this.with_list(cx, |list, cx| list.page(false, cx));
+        }))
+        .on_action(cx.listener(|this, _: &ToggleRead, window, cx| this.toggle_read(window, cx)))
+        .on_action(cx.listener(|this, _: &ToggleStar, window, cx| this.toggle_star(window, cx)))
+        .on_action(cx.listener(|this, _: &Archive, window, cx| this.archive(window, cx)))
+        .on_action(cx.listener(|this, _: &Undo, window, cx| this.undo(window, cx)))
+        .on_action(cx.listener(|this, _: &MoveToFolder, window, cx| {
+            this.open_quick_move(window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &ToggleFavoriteFolder, window, cx| {
+            this.toggle_favorite_folder(window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &ToggleTableView, window, cx| {
+            this.with_list(cx, |list, cx| list.toggle_mode(window, cx));
+        }))
+        .on_action(cx.listener(|this, _: &ToggleThreads, _, cx| {
+            this.with_list(cx, |list, cx| list.toggle_threads(cx));
+        }))
+        .on_action(cx.listener(|this, _: &SortByDate, _, cx| this.sort_list(SortBy::Date, cx)))
+        .on_action(cx.listener(|this, _: &SortByReceived, _, cx| {
+            this.sort_list(SortBy::Received, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SortByStar, _, cx| this.sort_list(SortBy::Star, cx)))
+        .on_action(cx.listener(|this, _: &SortByUnread, _, cx| {
+            this.sort_list(SortBy::Unread, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SortByAttachment, _, cx| {
+            this.sort_list(SortBy::Attachment, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SortBySubject, _, cx| {
+            this.sort_list(SortBy::Subject, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SortByCorrespondents, _, cx| {
+            this.sort_list(SortBy::Correspondents, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SortBySender, _, cx| {
+            this.sort_list(SortBy::Sender, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SortByRecipients, _, cx| {
+            this.sort_list(SortBy::Recipients, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SortByTags, _, cx| this.sort_list(SortBy::Tags, cx)))
+        .on_action(cx.listener(|this, _: &SortByAccount, _, cx| {
+            this.sort_list(SortBy::Account, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SortBySize, _, cx| this.sort_list(SortBy::Size, cx)))
+        .on_action(cx.listener(|this, _: &ReverseSortOrder, _, cx| {
+            this.with_list(cx, |list, cx| list.reverse_sort(cx));
+        }))
+        .on_action(cx.listener(|this, _: &ExpandThread, _, cx| {
+            this.with_list(cx, |list, cx| list.expand_selected(cx));
+        }))
+        .on_action(cx.listener(|this, _: &CollapseThread, _, cx| {
+            this.with_list(cx, |list, cx| list.collapse_selected(cx));
+        }))
+        .on_action(cx.listener(|this, _: &ExpandAllThreads, _, cx| {
+            this.with_list(cx, |list, cx| list.expand_all(cx));
+        }))
+        .on_action(cx.listener(|this, _: &CollapseAllThreads, _, cx| {
+            this.with_list(cx, |list, cx| list.collapse_all(cx));
+        }))
+        .on_action(cx.listener(|this, _: &SelectThread, _, cx| {
+            this.with_list(cx, |list, cx| list.select_thread(cx));
+        }))
+        .on_action(cx.listener(|this, _: &ExtendSelectionDown, _, cx| {
+            this.with_list(cx, |list, cx| list.extend(1, cx));
+        }))
+        .on_action(cx.listener(|this, _: &ExtendSelectionUp, _, cx| {
+            this.with_list(cx, |list, cx| list.extend(-1, cx));
+        }))
+        .on_action(cx.listener(|this, _: &SelectAll, _, cx| {
+            this.with_list(cx, |list, cx| list.select_all(cx));
+        }))
+        .on_action(cx.listener(|this, _: &Reply, window, cx| {
+            this.request_compose(
+                |message| ComposeRequest::Reply {
+                    message,
+                    all: false,
+                },
+                window,
+                cx,
+            );
+        }))
+        .on_action(cx.listener(|this, _: &ReplyAll, window, cx| {
+            this.request_compose(
+                |message| ComposeRequest::Reply { message, all: true },
+                window,
+                cx,
+            );
+        }))
+        .on_action(cx.listener(|this, _: &Forward, window, cx| {
+            this.request_compose(|message| ComposeRequest::Forward { message }, window, cx);
+        }))
+        .on_action(|_: &Minimize, window, _| window.minimize_window())
+        .on_action(|_: &Zoom, window, _| window.zoom_window())
+        .on_action(|_: &About, window, cx| {
+            let detail = format!(
+                "Version {}\nA local-first email client.",
+                env!("CARGO_PKG_VERSION")
+            );
+            // The answer doesn't matter; dropping the receiver is fine.
+            drop(window.prompt(PromptLevel::Info, PRODUCT_NAME, Some(&detail), &["OK"], cx));
+        })
+    }
 }
 
 impl Focusable for MailWindow {
@@ -847,68 +1516,31 @@ impl Render for MailWindow {
         self.step_benchmark(window, cx);
 
         let width = f32::from(window.viewport_size().width);
-        let resolved = layout::resolve(width, &self.prefs, &self.config);
+        let prefs = *self.prefs.borrow();
+        let resolved = layout::resolve(width, &prefs, &self.config);
         let theme = cx.theme().colors;
-        let list = self.thread_list.read(cx);
-        let list_len = list.key_count();
-        let noun = if list.threaded() {
-            "threads"
-        } else {
-            "messages"
-        };
-        let summary: SharedString = format!("{} {noun}", format_thousands(list_len as u64)).into();
-        let context = self
-            .message_view
-            .read(cx)
-            .document()
-            .map(|doc| doc.subject.expose().clone());
-
-        let list = self.thread_list.clone();
-        let message = div()
-            .flex_1()
-            .min_w_0()
-            .min_h_0()
-            .h_full()
-            .child(self.message_view.clone());
-        let center = match resolved.message {
-            MessagePlacement::Beside => h_flex()
-                .flex_1()
-                .min_w_0()
-                .h_full()
-                .child(Self::column(
-                    "resize-list",
-                    resolved.list.unwrap_or(self.prefs.list),
-                    ColumnDrag::List,
-                    HandleEdge::Trailing,
-                    div()
-                        .size_full()
-                        .border_r_1()
-                        .border_color(theme.border)
-                        .child(list),
-                ))
-                .child(message)
-                .into_any_element(),
-            MessagePlacement::Below => v_flex()
-                .flex_1()
-                .min_w_0()
-                .h_full()
-                .child(
-                    div()
-                        .h(gpui::relative(0.45))
-                        .w_full()
-                        .border_b_1()
-                        .border_color(theme.border)
-                        .child(list),
+        let list = self
+            .active_mail_view(cx)
+            .map(|view| view.read(cx).thread_list().clone());
+        let (summary, has_rows): (SharedString, bool) = match &list {
+            Some(list) => {
+                let list = list.read(cx);
+                let len = list.key_count();
+                let noun = if list.threaded() {
+                    "threads"
+                } else {
+                    "messages"
+                };
+                (
+                    format!("{} {noun}", format_thousands(len as u64)).into(),
+                    len > 0,
                 )
-                .child(message)
-                .into_any_element(),
-            MessagePlacement::Hidden => div()
-                .flex_1()
-                .min_w_0()
-                .h_full()
-                .child(list)
-                .into_any_element(),
+            }
+            None => (SharedString::default(), false),
         };
+        let context = self.agent_context(cx).map(|(_, subject)| subject);
+
+        let center = div().flex_1().min_w_0().h_full().child(self.panes.clone());
         let agent = match resolved.agent {
             AgentPlacement::Expanded(width) => match &self.agent_panel {
                 Some(panel) => Self::column(
@@ -937,188 +1569,15 @@ impl Render for MailWindow {
 
         let stats = self.stats.clone();
         let after_paint = self.after_paint.clone();
-        let has_rows = list_len > 0;
-        v_flex()
+        let root = v_flex()
             .id("mail-window")
             .size_full()
             .key_context("Workspace")
             .track_focus(&self.focus)
             .bg(theme.background)
             .text_color(theme.foreground)
-            .on_drag_move(cx.listener(Self::on_column_drag))
-            .on_action(cx.listener(|this, _: &ToggleFolderPane, _, cx| {
-                this.prefs.folder_pane_visible = !this.prefs.folder_pane_visible;
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &ToggleAgentColumn, window, cx| {
-                this.prefs.agent_expanded = Some(!this.effective_agent_expanded(window));
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &ToggleMessagePane, _, cx| {
-                this.prefs.message_visible = !this.prefs.message_visible;
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &Toggle, window, cx| this.toggle_palette(window, cx)))
-            .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
-                let focus = this.search.focus_handle(cx);
-                window.focus(&focus, cx);
-            }))
-            .on_action(cx.listener(|this, _: &QuickFilter, window, cx| {
-                let input = this.thread_list.read(cx).quick_filter().clone();
-                let focus = input.focus_handle(cx);
-                window.focus(&focus, cx);
-            }))
-            .on_action(cx.listener(|this, _: &NextMessage, _, cx| {
-                this.thread_list.update(cx, |list, cx| list.next(cx));
-            }))
-            .on_action(cx.listener(|this, _: &PreviousMessage, _, cx| {
-                this.thread_list.update(cx, |list, cx| list.previous(cx));
-            }))
-            .on_action(cx.listener(|this, _: &NextUnread, _, cx| {
-                this.thread_list
-                    .update(cx, |list, cx| list.jump_unread(Direction::Forward, cx));
-            }))
-            .on_action(cx.listener(|this, _: &PreviousUnread, _, cx| {
-                this.thread_list
-                    .update(cx, |list, cx| list.jump_unread(Direction::Backward, cx));
-            }))
-            .on_action(cx.listener(|this, _: &FirstMessage, _, cx| {
-                this.thread_list.update(cx, |list, cx| list.edge(false, cx));
-            }))
-            .on_action(cx.listener(|this, _: &LastMessage, _, cx| {
-                this.thread_list.update(cx, |list, cx| list.edge(true, cx));
-            }))
-            .on_action(cx.listener(|this, _: &PageDown, _, cx| {
-                this.thread_list.update(cx, |list, cx| list.page(true, cx));
-            }))
-            .on_action(cx.listener(|this, _: &PageUp, _, cx| {
-                this.thread_list.update(cx, |list, cx| list.page(false, cx));
-            }))
-            .on_action(cx.listener(|this, _: &ToggleRead, _, cx| {
-                this.thread_list.update(cx, |list, cx| list.toggle_read(cx));
-            }))
-            .on_action(cx.listener(|this, _: &ToggleStar, _, cx| {
-                this.thread_list.update(cx, |list, cx| list.toggle_star(cx));
-            }))
-            .on_action(cx.listener(|this, _: &Archive, _, cx| {
-                this.thread_list
-                    .update(cx, |list, cx| list.archive_selected(cx));
-            }))
-            .on_action(cx.listener(|this, _: &Undo, _, cx| {
-                this.thread_list.update(cx, |list, cx| list.undo(cx));
-            }))
-            .on_action(cx.listener(|this, _: &MoveToFolder, window, cx| {
-                this.open_quick_move(window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &ToggleFavoriteFolder, window, cx| {
-                this.toggle_favorite_folder(window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &ToggleTableView, window, cx| {
-                this.thread_list
-                    .update(cx, |list, cx| list.toggle_mode(window, cx));
-            }))
-            .on_action(cx.listener(|this, _: &ToggleThreads, _, cx| {
-                this.thread_list
-                    .update(cx, |list, cx| list.toggle_threads(cx));
-            }))
-            .on_action(cx.listener(|this, _: &SortByDate, _, cx| {
-                this.sort_list(SortBy::Date, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SortByReceived, _, cx| {
-                this.sort_list(SortBy::Received, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SortByStar, _, cx| {
-                this.sort_list(SortBy::Star, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SortByUnread, _, cx| {
-                this.sort_list(SortBy::Unread, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SortByAttachment, _, cx| {
-                this.sort_list(SortBy::Attachment, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SortBySubject, _, cx| {
-                this.sort_list(SortBy::Subject, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SortByCorrespondents, _, cx| {
-                this.sort_list(SortBy::Correspondents, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SortBySender, _, cx| {
-                this.sort_list(SortBy::Sender, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SortByRecipients, _, cx| {
-                this.sort_list(SortBy::Recipients, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SortByTags, _, cx| {
-                this.sort_list(SortBy::Tags, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SortByAccount, _, cx| {
-                this.sort_list(SortBy::Account, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SortBySize, _, cx| {
-                this.sort_list(SortBy::Size, cx);
-            }))
-            .on_action(cx.listener(|this, _: &ReverseSortOrder, _, cx| {
-                this.thread_list
-                    .update(cx, |list, cx| list.reverse_sort(cx));
-            }))
-            .on_action(cx.listener(|this, _: &ExpandThread, _, cx| {
-                this.thread_list
-                    .update(cx, |list, cx| list.expand_selected(cx));
-            }))
-            .on_action(cx.listener(|this, _: &CollapseThread, _, cx| {
-                this.thread_list
-                    .update(cx, |list, cx| list.collapse_selected(cx));
-            }))
-            .on_action(cx.listener(|this, _: &ExpandAllThreads, _, cx| {
-                this.thread_list.update(cx, |list, cx| list.expand_all(cx));
-            }))
-            .on_action(cx.listener(|this, _: &CollapseAllThreads, _, cx| {
-                this.thread_list
-                    .update(cx, |list, cx| list.collapse_all(cx));
-            }))
-            .on_action(cx.listener(|this, _: &SelectThread, _, cx| {
-                this.thread_list
-                    .update(cx, |list, cx| list.select_thread(cx));
-            }))
-            .on_action(cx.listener(|this, _: &ExtendSelectionDown, _, cx| {
-                this.thread_list.update(cx, |list, cx| list.extend(1, cx));
-            }))
-            .on_action(cx.listener(|this, _: &ExtendSelectionUp, _, cx| {
-                this.thread_list.update(cx, |list, cx| list.extend(-1, cx));
-            }))
-            .on_action(cx.listener(|this, _: &SelectAll, _, cx| {
-                this.thread_list.update(cx, |list, cx| list.select_all(cx));
-            }))
-            .on_action(cx.listener(|this, _: &Reply, window, cx| {
-                this.request_compose(
-                    |message| ComposeRequest::Reply {
-                        message,
-                        all: false,
-                    },
-                    window,
-                    cx,
-                );
-            }))
-            .on_action(cx.listener(|this, _: &ReplyAll, window, cx| {
-                this.request_compose(
-                    |message| ComposeRequest::Reply { message, all: true },
-                    window,
-                    cx,
-                );
-            }))
-            .on_action(cx.listener(|this, _: &Forward, window, cx| {
-                this.request_compose(|message| ComposeRequest::Forward { message }, window, cx);
-            }))
-            .on_action(|_: &Minimize, window, _| window.minimize_window())
-            .on_action(|_: &Zoom, window, _| window.zoom_window())
-            .on_action(|_: &About, window, cx| {
-                let detail = format!(
-                    "Version {}\nA local-first email client.",
-                    env!("CARGO_PKG_VERSION")
-                );
-                // The answer doesn't matter; dropping the receiver is fine.
-                drop(window.prompt(PromptLevel::Info, PRODUCT_NAME, Some(&detail), &["OK"], cx));
-            })
+            .on_drag_move(cx.listener(Self::on_column_drag));
+        self.register_actions(root, cx)
             .child(self.render_title_bar(cx))
             .child(
                 h_flex()
@@ -1179,6 +1638,7 @@ mod tests {
     use super::*;
     use crate::fake::FakeMailSource;
     use crate::source::ListSort;
+    use crate::thread_list::TABLE_LIST_WIDTH;
 
     pub(crate) fn open(cx: &mut TestAppContext) -> (Entity<MailWindow>, &mut VisualTestContext) {
         cx.update(|cx| {
@@ -1187,9 +1647,13 @@ mod tests {
         });
         let source: Arc<dyn MailSource> =
             Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
-        cx.add_window_view(|window, cx| {
+        let (view, cx) = cx.add_window_view(|window, cx| {
             MailWindow::new(source, &MailWindowOptions::default(), window, cx)
-        })
+        });
+        // Focus events (the active pane follows the focus) need an active window.
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        (view, cx)
     }
 
     #[gpui::test]
@@ -1197,7 +1661,9 @@ mod tests {
         let (view, cx) = open(cx);
         cx.run_until_parked();
         let selected = |cx: &mut VisualTestContext| {
-            view.read_with(cx, |w, cx| w.thread_list().read(cx).selected_index())
+            view.read_with(cx, |w, cx| {
+                w.thread_list(cx).unwrap().read(cx).selected_index()
+            })
         };
         assert_eq!(selected(cx), Some(0));
         cx.simulate_keystrokes("f f");
@@ -1209,9 +1675,15 @@ mod tests {
         assert!(after_n > 1);
         // The message view follows the selection.
         let shown = view.read_with(cx, |w, cx| {
-            w.message_view().read(cx).document().map(|d| d.thread)
+            w.message_view(cx)
+                .unwrap()
+                .read(cx)
+                .document()
+                .map(|d| d.thread)
         });
-        let expected = view.read_with(cx, |w, cx| w.thread_list().read(cx).selected_thread());
+        let expected = view.read_with(cx, |w, cx| {
+            w.thread_list(cx).unwrap().read(cx).selected_thread()
+        });
         assert_eq!(shown, expected);
 
         // Workspace bindings toggle columns.
@@ -1228,7 +1700,7 @@ mod tests {
     fn thunderbird_keys_drive_the_thread_tree(cx: &mut TestAppContext) {
         let (view, cx) = open(cx);
         cx.run_until_parked();
-        let list = view.read_with(cx, |w, _| w.thread_list().clone());
+        let list = view.read_with(cx, |w, cx| w.thread_list(cx).unwrap());
         // A thread with replies (the fake's data is the same for the same "now").
         let fake = FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC));
         let row = list.update(cx, |list, cx| {
@@ -1256,8 +1728,12 @@ mod tests {
         // The message view shows the selected message, not the thread's newest.
         let (shown, item) = view.read_with(cx, |w, cx| {
             (
-                w.message_view().read(cx).document().map(|d| d.message),
-                w.thread_list().read(cx).selected_item(),
+                w.message_view(cx)
+                    .unwrap()
+                    .read(cx)
+                    .document()
+                    .map(|d| d.message),
+                w.thread_list(cx).unwrap().read(cx).selected_item(),
             )
         });
         assert_eq!(item, shown.map(ItemId::Message));
@@ -1307,7 +1783,7 @@ mod tests {
         let (view, cx) =
             cx.add_window_view(|window, cx| MailWindow::new(source, &options, window, cx));
         view.read_with(cx, |w, cx| {
-            assert_eq!(w.thread_list().read(cx).mode(), ListMode::Table);
+            assert_eq!(w.thread_list(cx).unwrap().read(cx).mode(), ListMode::Table);
             assert!(w.prefs().list >= TABLE_LIST_WIDTH);
         });
     }
@@ -1353,7 +1829,7 @@ mod tests {
     fn palette_hints_come_from_the_previous_focus(cx: &mut TestAppContext) {
         let (view, cx) = open(cx);
         cx.run_until_parked();
-        let list = view.read_with(cx, |w, cx| w.thread_list().focus_handle(cx));
+        let list = view.read_with(cx, |w, cx| w.thread_list(cx).unwrap().focus_handle(cx));
         cx.update(|window, cx| window.focus(&list, cx));
         cx.run_until_parked();
         cx.simulate_keystrokes("cmd-shift-p");
@@ -1375,13 +1851,15 @@ mod tests {
     fn cmd_z_undoes_an_archive(cx: &mut TestAppContext) {
         let (view, cx) = open(cx);
         cx.run_until_parked();
-        let list = view.read_with(cx, |w, cx| w.thread_list().focus_handle(cx));
+        let list = view.read_with(cx, |w, cx| w.thread_list(cx).unwrap().focus_handle(cx));
         cx.update(|window, cx| window.focus(&list, cx));
         let rows = |cx: &mut gpui::VisualTestContext| {
-            view.read_with(cx, |w, cx| w.thread_list().read(cx).len())
+            view.read_with(cx, |w, cx| w.thread_list(cx).unwrap().read(cx).len())
         };
         let before = rows(cx);
-        let first = view.read_with(cx, |w, cx| w.thread_list().read(cx).selected_thread());
+        let first = view.read_with(cx, |w, cx| {
+            w.thread_list(cx).unwrap().read(cx).selected_thread()
+        });
         cx.simulate_keystrokes("a");
         cx.run_until_parked();
         assert_eq!(rows(cx), before - 1);
@@ -1393,7 +1871,9 @@ mod tests {
         cx.run_until_parked();
         assert_eq!(rows(cx), before);
         cx.simulate_keystrokes("home");
-        let top = view.read_with(cx, |w, cx| w.thread_list().read(cx).selected_thread());
+        let top = view.read_with(cx, |w, cx| {
+            w.thread_list(cx).unwrap().read(cx).selected_thread()
+        });
         assert_eq!(top, first, "the archived thread is back at the top");
     }
 
@@ -1406,7 +1886,11 @@ mod tests {
         // Single-key shortcuts type into the palette instead of moving the selection.
         cx.simulate_keystrokes("f");
         assert_eq!(
-            view.read_with(cx, |w, cx| w.thread_list().read(cx).selected_index()),
+            view.read_with(cx, |w, cx| w
+                .thread_list(cx)
+                .unwrap()
+                .read(cx)
+                .selected_index()),
             Some(0)
         );
         cx.simulate_keystrokes("escape escape");
@@ -1451,7 +1935,9 @@ mod tests {
         });
         cx.run_until_parked();
         let selected = |cx: &mut VisualTestContext| {
-            view.read_with(cx, |w, cx| w.thread_list().read(cx).selected_thread())
+            view.read_with(cx, |w, cx| {
+                w.thread_list(cx).unwrap().read(cx).selected_thread()
+            })
         };
         let thread = selected(cx).unwrap();
         let (trash, inbox) = trash_and_inbox(&fake, thread);
@@ -1529,7 +2015,9 @@ mod tests {
         });
         let items = |cx: &mut VisualTestContext| {
             view.update(cx, |w, cx| {
-                w.thread_list().update(cx, |l, _| l.command_items())
+                w.thread_list(cx)
+                    .unwrap()
+                    .update(cx, |l, _| l.command_items())
             })
         };
         let first = items(cx);
@@ -1538,7 +2026,7 @@ mod tests {
         assert_eq!(selected.len(), 2);
         assert_eq!(selected[0], first[0]);
         assert_eq!(
-            view.read_with(cx, |w, cx| w.message_view().read(cx).selection()),
+            view.read_with(cx, |w, cx| w.message_view(cx).unwrap().read(cx).selection()),
             Some(2),
             "the message view says how many are selected"
         );
@@ -1546,9 +2034,13 @@ mod tests {
         cx.simulate_keystrokes("down");
         assert_eq!(items(cx).len(), 1);
         cx.simulate_keystrokes("cmd-a");
-        let all = view.read_with(cx, |w, cx| w.thread_list().read(cx).len());
+        let all = view.read_with(cx, |w, cx| w.thread_list(cx).unwrap().read(cx).len());
         assert_eq!(
-            view.read_with(cx, |w, cx| w.thread_list().read(cx).selected_count()),
+            view.read_with(cx, |w, cx| w
+                .thread_list(cx)
+                .unwrap()
+                .read(cx)
+                .selected_count()),
             all
         );
         cx.simulate_keystrokes("up shift-up");
@@ -1568,7 +2060,7 @@ mod tests {
         }
         assert_eq!(items(cx).len(), 1, "one row selected after the move");
         assert_eq!(
-            view.read_with(cx, |w, cx| w.message_view().read(cx).selection()),
+            view.read_with(cx, |w, cx| w.message_view(cx).unwrap().read(cx).selection()),
             None
         );
 
@@ -1609,7 +2101,7 @@ mod tests {
             MailWindow::new(source, &MailWindowOptions::default(), window, cx)
         });
         cx.run_until_parked();
-        let list = view.read_with(cx, |w, _| w.thread_list().clone());
+        let list = view.read_with(cx, |w, cx| w.thread_list(cx).unwrap());
         let threads = |cx: &mut VisualTestContext| {
             list.read_with(cx, |list, _| {
                 let crate::thread_list::ListKeys::Threads(keys) =
@@ -1636,7 +2128,8 @@ mod tests {
         );
         assert_eq!(
             view.read_with(cx, |w, cx| w
-                .message_view()
+                .message_view(cx)
+                .unwrap()
                 .read(cx)
                 .document()
                 .map(|d| d.thread)),
@@ -1698,7 +2191,7 @@ mod tests {
         cx.simulate_keystrokes("enter");
         cx.run_until_parked();
         let sort = |cx: &mut VisualTestContext| {
-            view.read_with(cx, |w, cx| w.thread_list().read(cx).sort())
+            view.read_with(cx, |w, cx| w.thread_list(cx).unwrap().read(cx).sort())
         };
         assert_eq!(sort(cx), ListSort::by(SortBy::Subject));
         cx.simulate_keystrokes("cmd-shift-p");
@@ -1723,8 +2216,11 @@ mod tests {
                 window,
                 cx,
             );
-            assert_eq!(w.thread_list().read(cx).len(), 1_000_000);
-            assert_eq!(w.thread_list().read(cx).scope(), &ThreadScope::Folder(key));
+            assert_eq!(w.thread_list(cx).unwrap().read(cx).len(), 1_000_000);
+            assert_eq!(
+                w.thread_list(cx).unwrap().read(cx).scope(),
+                &ThreadScope::Folder(key)
+            );
         });
     }
     /// A favorite added from the palette shows under Favorites; clicking it opens the
@@ -1802,7 +2298,7 @@ mod tests {
         cx.simulate_click(bounds.center(), gpui::Modifiers::none());
         cx.run_until_parked();
         view.read_with(cx, |w, cx| {
-            let list = w.thread_list().read(cx);
+            let list = w.thread_list(cx).unwrap().read(cx);
             assert_eq!(list.scope(), &ThreadScope::Folder(club_inbox.clone()));
         });
 
@@ -1831,24 +2327,12 @@ mod tests {
         assert_eq!(ran.get(), 1);
     }
 
-    /// The title bar's "+" and `cmd-n` both run the app-level New Message action;
-    /// Reply, Reply All and Forward ask the app to compose for the shown message.
+    /// The title bar's "+" and `cmd-n` ask the app for a new draft; Reply, Reply All and
+    /// Forward ask it to compose for the shown message.
     #[gpui::test]
     fn new_message_and_replies_reach_the_app(cx: &mut TestAppContext) {
         let (view, cx) = open(cx);
         cx.run_until_parked();
-        let new_messages = Rc::new(std::cell::Cell::new(0));
-        cx.update(|_, cx| {
-            let count = new_messages.clone();
-            cx.on_action(move |_: &NewMessage, _| count.set(count.get() + 1));
-        });
-        let bounds = cx.debug_bounds("new-message").expect("the + button");
-        cx.simulate_click(bounds.center(), gpui::Modifiers::none());
-        cx.run_until_parked();
-        assert_eq!(new_messages.get(), 1, "the + button");
-        cx.simulate_keystrokes("cmd-n");
-        assert_eq!(new_messages.get(), 2, "cmd-n");
-
         let requests: Rc<RefCell<Vec<ComposeRequest>>> = Rc::default();
         let seen = requests.clone();
         let _subscription = cx.update(|_, cx| {
@@ -1856,9 +2340,24 @@ mod tests {
                 seen.borrow_mut().push(*request);
             })
         });
+        let bounds = cx.debug_bounds("new-message").expect("the + button");
+        cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        cx.simulate_keystrokes("cmd-n");
+        assert_eq!(
+            *requests.borrow(),
+            [ComposeRequest::New, ComposeRequest::New],
+            "the + button and cmd-n"
+        );
+        requests.borrow_mut().clear();
+
         let shown = view
             .read_with(cx, |w, cx| {
-                w.message_view().read(cx).document().map(|d| d.message)
+                w.message_view(cx)
+                    .unwrap()
+                    .read(cx)
+                    .document()
+                    .map(|d| d.message)
             })
             .expect("a message is shown");
         cx.simulate_keystrokes("cmd-r cmd-shift-r cmd-l");
@@ -1895,4 +2394,6 @@ mod tests {
         cx.run_until_parked();
         assert!(cx.debug_bounds("title-bar-item").is_some());
     }
+
+    mod panes;
 }

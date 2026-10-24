@@ -10,16 +10,32 @@
 //!
 //! ```json
 //! {
-//!   "version": 2,
+//!   "version": 3,
 //!   "list": { "view": "table", "threaded": false, "sort": "subject_asc",
 //!             "columns": ["star", "subject", "correspondents", "size", "date"],
 //!             "widths": { "correspondents": 220.0 } },
-//!   "move_targets": { "a2": [17, 4] }
+//!   "move_targets": { "a2": [17, 4] },
+//!   "layout": {
+//!     "root": { "split": { "axis": "horizontal", "flexes": [1.0, 1.0], "members": [
+//!       { "pane": { "active": 0, "items": [
+//!         { "kind": "mail", "data": { "type": "unified", "role": "inbox" } },
+//!         { "kind": "message", "data": { "message": 4711 } } ] } },
+//!       { "pane": { "active": 0, "items": [
+//!         { "kind": "compose", "data": { "draft": 17 }, "title": "brave-otter" } ] } }
+//!     ] } },
+//!     "active_pane": 1
+//!   }
 //! }
 //! ```
 //!
 //! `move_targets` are the folders Quick Move (`shift-m`) moved mail to last, per
 //! account, newest first ([`RECENT_MOVE_TARGETS`] at most).
+//!
+//! `layout` (version 3) is the center's panes and tabs (ADR-018): splits with their
+//! sizes, and per pane its tabs and the active one. Tabs record ids only (folders,
+//! messages, drafts) plus a draft's random two-word name, never subjects. Tabs whose
+//! message or draft is gone are dropped when restored. Without `layout` (versions 1
+//! and 2) the window opens the unified Inbox.
 //!
 //! What isn't in `list` follows the defaults from `settings.json`
 //! (`thread_list.view`, `thread_list.threaded`, `thread_list.sort`), [`ListDefaults`]:
@@ -37,6 +53,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use serde::{Deserialize, Serialize};
 
 use mazemail_types::{AccountId, FolderId};
+
+use ui::panes::SerializedLayout;
 
 use crate::source::{ListSort, SortBy};
 
@@ -298,25 +316,32 @@ impl ListPrefs {
     }
 }
 
+/// The format version written now.
+pub const UI_STATE_VERSION: u32 = 3;
+
 /// The contents of `ui_state.json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiState {
-    /// Format version, 2.
+    /// Format version, [`UI_STATE_VERSION`].
     pub version: u32,
     /// The list view, the same in every folder.
     pub list: ListState,
     /// Quick Move targets per account (keyed by its public id, `a2`), newest first.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub move_targets: BTreeMap<String, Vec<FolderId>>,
+    /// The center's panes and tabs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout: Option<SerializedLayout>,
 }
 
 impl Default for UiState {
     fn default() -> Self {
         Self {
-            version: 2,
+            version: UI_STATE_VERSION,
             list: ListState::default(),
             move_targets: BTreeMap::new(),
+            layout: None,
         }
     }
 }
@@ -413,11 +438,26 @@ impl UiStateStore {
         });
     }
 
+    /// The center's panes and tabs, as saved last.
+    pub fn layout(&self) -> Option<SerializedLayout> {
+        self.lock().state.layout.clone()
+    }
+
+    /// Remembers the center's panes and tabs and writes the file (if there is one and
+    /// the layout changed).
+    pub fn set_layout(&self, layout: SerializedLayout) {
+        if self.lock().state.layout.as_ref() == Some(&layout) {
+            return;
+        }
+        self.change(|inner| inner.state.layout = Some(layout));
+    }
+
     /// Changes the state and writes the file (if there is one).
     fn change(&self, edit: impl FnOnce(&mut Inner)) {
         let snapshot = {
             let mut inner = self.lock();
             edit(&mut inner);
+            inner.state.version = UI_STATE_VERSION;
             inner.path.clone().map(|path| (path, inner.state.clone()))
         };
         if let Some((path, state)) = snapshot
@@ -555,6 +595,50 @@ mod tests {
         assert_eq!(reopened.move_targets(work), expected);
         let json = std::fs::read_to_string(&path).unwrap();
         assert!(json.contains("\"move_targets\""), "{json}");
+    }
+
+    #[test]
+    fn the_layout_survives_a_restart_and_older_files_still_load() {
+        use ui::panes::{SerializedAxis, SerializedItem, SerializedMember, SerializedPane};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(UI_STATE_FILE);
+        // Version 2: no layout, the rest reads as before.
+        std::fs::write(&path, r#"{ "version": 2, "list": { "view": "table" } }"#).unwrap();
+        let store = UiStateStore::load(&path, ListDefaults::default());
+        assert_eq!(store.layout(), None);
+        assert_eq!(store.prefs().mode, ListMode::Table);
+
+        let layout = SerializedLayout {
+            root: SerializedMember::Split {
+                axis: SerializedAxis::Horizontal,
+                members: vec![
+                    SerializedMember::Pane(SerializedPane {
+                        items: vec![SerializedItem::new(
+                            "mail",
+                            serde_json::json!({ "type": "unified", "role": "inbox" }),
+                        )],
+                        active: 0,
+                    }),
+                    SerializedMember::Pane(SerializedPane {
+                        items: vec![
+                            SerializedItem::new("compose", serde_json::json!({ "draft": 17 }))
+                                .with_title("brave-otter"),
+                        ],
+                        active: 0,
+                    }),
+                ],
+                flexes: vec![1.5, 1.],
+            },
+            active_pane: 1,
+        };
+        store.set_layout(layout.clone());
+        let reopened = UiStateStore::load(&path, ListDefaults::default());
+        assert_eq!(reopened.layout(), Some(layout));
+        assert_eq!(reopened.state().version, UI_STATE_VERSION);
+        let json = std::fs::read_to_string(&path).unwrap();
+        assert!(json.contains("\"brave-otter\""), "{json}");
+        assert!(json.contains("\"version\": 3"), "{json}");
     }
 
     #[test]

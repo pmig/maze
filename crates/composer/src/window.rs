@@ -10,10 +10,18 @@
 //!   otherwise insert a line break) validates the fields, hands the draft to
 //!   [`ComposeBackend::send`] and, once it is accepted (sent or queued), emits
 //!   [`ComposerEvent::Sent`] and closes the window. Errors keep the window open.
-//! - **Close** (Escape, or the window's close button) closes at once when nothing
-//!   changed since the last save; otherwise it asks whether to save the draft. "Don't
-//!   Save" deletes the draft this window autosaved, but keeps a draft that existed
-//!   before the window opened.
+//! - **Close** (Escape, the window's close button, or closing its tab) closes at once
+//!   when nothing changed since the last save; otherwise it asks whether to save the
+//!   draft. "Don't Save" deletes the draft this composer autosaved, but keeps a draft
+//!   that existed before it opened.
+//!
+//! # In a tab
+//!
+//! Maze opens drafts in tabs of the main window ([`ComposerOptions::in_tab`], ADR-018):
+//! the composer is then a [`ui::panes::Item`] titled with the draft's random two-word
+//! name (the subject is the tab's tooltip), with a dot while there are unsaved changes.
+//! Closing (or sending) closes the tab instead of a window. "Open in New Window"
+//! (`composer::OpenInNewWindow`) hands the draft to a window of its own.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -36,7 +44,11 @@ use gpui_kit::component::{
 use mazemail_types::compose::{Draft, DraftAttachment};
 use mazemail_types::{Address, DraftId, IdentityId};
 
-use crate::actions::{Attach, Close, SaveDraft, Send, ToggleCcBcc};
+use ui::assets::IconName;
+use ui::names::NameRng;
+use ui::panes::{Item, ItemEvent, SerializedItem};
+
+use crate::actions::{Attach, Close, OpenInNewWindow, SaveDraft, Send, ToggleCcBcc};
 use crate::backend::{ComposeBackend, IdentityChoice, SendOutcome};
 
 /// Default window size.
@@ -46,8 +58,18 @@ const MIN_SIZE: (f32, f32) = (480., 360.);
 /// The window title without a subject.
 const UNTITLED: &str = "New Message";
 
+/// The layout kind of draft tabs (`{"kind": "compose", "data": {"draft": 17}}`).
+pub const COMPOSE_KIND: &str = "compose";
+
+/// What a draft tab keeps in the layout file (its name is the tab's stored title).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SerializedDraft {
+    /// The saved draft.
+    pub draft: DraftId,
+}
+
 /// How a compose window starts.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComposerOptions {
     /// The draft to edit (prefilled for replies and forwards).
     pub draft: Draft,
@@ -55,15 +77,26 @@ pub struct ComposerOptions {
     pub draft_id: Option<DraftId>,
     /// How long after the last change the draft is autosaved.
     pub autosave_after: Duration,
+    /// The composer is a tab of the main window rather than a window of its own.
+    pub in_tab: bool,
 }
 
 impl ComposerOptions {
-    /// Options for writing `draft` (not saved yet).
+    /// Options for writing `draft` (not saved yet) in a window of its own.
     pub fn new(draft: Draft) -> Self {
         Self {
             draft,
             draft_id: None,
             autosave_after: Duration::from_secs(2),
+            in_tab: false,
+        }
+    }
+
+    /// Options for writing `draft` in a tab of the main window.
+    pub fn in_tab(draft: Draft) -> Self {
+        Self {
+            in_tab: true,
+            ..Self::new(draft)
         }
     }
 }
@@ -71,8 +104,11 @@ impl ComposerOptions {
 /// What a compose window reports.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ComposerEvent {
-    /// The message was handed to the outbox (and the window closes).
+    /// The message was handed to the outbox (and the window or tab closes).
     Sent(SendOutcome),
+    /// "Open in New Window" from a tab: the tab closed; open a window with these
+    /// options.
+    OpenInNewWindow(Box<ComposerOptions>),
 }
 
 /// The compose window couldn't be opened.
@@ -152,6 +188,9 @@ pub struct Composer {
     autosave_after: Duration,
     autosave: Option<Task<()>>,
     title: SharedString,
+    /// The draft's two-word name, the tab's title.
+    name: SharedString,
+    in_tab: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -167,6 +206,7 @@ impl std::fmt::Debug for Composer {
 }
 
 impl EventEmitter<ComposerEvent> for Composer {}
+impl EventEmitter<ItemEvent> for Composer {}
 
 fn title_for(subject: &str) -> SharedString {
     let subject = subject.trim();
@@ -255,15 +295,27 @@ impl Composer {
             subscriptions.push(cx.subscribe_in(from, window, Self::on_identity_event));
         }
 
-        // The window's close button runs the same flow as Escape.
-        let this = cx.entity().downgrade();
-        window.on_window_should_close(cx, move |window, cx| {
-            this.update(cx, |this, cx| this.request_close(window, cx))
-                .unwrap_or(true)
-        });
-
+        let focus = cx.focus_handle();
         let title = title_for(&draft.subject);
-        window.set_window_title(&title);
+        if options.in_tab {
+            // Activating the tab focuses the composer: on into a field.
+            subscriptions.push(cx.on_focus(&focus, window, |this, window, cx| {
+                this.focus_first_field(window, cx);
+            }));
+        } else {
+            // The window's close button runs the same flow as Escape.
+            let this = cx.entity().downgrade();
+            window.on_window_should_close(cx, move |window, cx| {
+                this.update(cx, |this, cx| this.request_close(window, cx))
+                    .unwrap_or(true)
+            });
+            window.set_window_title(&title);
+        }
+        let name: SharedString = if draft.name.trim().is_empty() {
+            ui::names::two_word_name::<&str>(&[], &mut NameRng::from_entropy()).into()
+        } else {
+            draft.name.clone().into()
+        };
         let cc_visible = !draft.cc.is_empty() || !draft.bcc.is_empty();
         let initial_focus = if draft.to.is_empty() {
             to.focus_handle(cx)
@@ -274,7 +326,7 @@ impl Composer {
 
         Self {
             backend,
-            focus: cx.focus_handle(),
+            focus,
             attachments: draft.attachments.clone(),
             base: draft,
             draft_id: options.draft_id,
@@ -295,8 +347,25 @@ impl Composer {
             autosave_after: options.autosave_after,
             autosave: None,
             title,
+            name,
+            in_tab: options.in_tab,
             _subscriptions: subscriptions,
         }
+    }
+
+    fn focus_first_field(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let to_empty = self.to.read(cx).value().trim().is_empty();
+        let field = if to_empty {
+            self.to.focus_handle(cx)
+        } else {
+            self.body.focus_handle(cx)
+        };
+        window.focus(&field, cx);
+    }
+
+    /// The draft's two-word name.
+    pub fn name(&self) -> &SharedString {
+        &self.name
     }
 
     // ---- state accessors ------------------------------------------------------------
@@ -348,6 +417,7 @@ impl Composer {
             references: self.base.references.clone(),
             attachments: self.attachments.clone(),
             origin: self.base.origin,
+            name: self.name.to_string(),
         })
     }
 
@@ -375,8 +445,11 @@ impl Composer {
         if matches!(event, InputEvent::Change) {
             let title = title_for(&subject.read(cx).value());
             if title != self.title {
-                window.set_window_title(&title);
+                if !self.in_tab {
+                    window.set_window_title(&title);
+                }
                 self.title = title;
+                cx.emit(ItemEvent::UpdateTab);
             }
             self.changed(window, cx);
         }
@@ -414,6 +487,9 @@ impl Composer {
     fn changed(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         if self.closed {
             return;
+        }
+        if !self.dirty {
+            cx.emit(ItemEvent::UpdateTab);
         }
         self.dirty = true;
         if matches!(self.status, Status::Saved | Status::Error(_)) && !self.sending {
@@ -472,15 +548,20 @@ impl Composer {
                         }
                     }
                     Ok(id) => {
-                        this.draft_id = Some(id);
+                        if this.draft_id != Some(id) {
+                            this.draft_id = Some(id);
+                            // The tab can be restored now.
+                            cx.emit(ItemEvent::Edited);
+                        }
                         // Changes typed while saving keep the window dirty (their own
                         // timer saves them).
                         if this.autosave.is_none() {
                             this.dirty = false;
                         }
+                        cx.emit(ItemEvent::UpdateTab);
                         this.status = Status::Saved;
                         if then_close {
-                            this.close_window(window);
+                            this.close_window(window, cx);
                         }
                     }
                     Err(err) => {
@@ -543,7 +624,7 @@ impl Composer {
                     Ok(outcome) => {
                         this.dirty = false;
                         cx.emit(ComposerEvent::Sent(outcome));
-                        this.close_window(window);
+                        this.close_window(window, cx);
                     }
                     Err(err) => {
                         this.status = Status::Error(err.message.into());
@@ -671,7 +752,7 @@ impl Composer {
                         })
                         .detach();
                     }
-                    this.close_window(window);
+                    this.close_window(window, cx);
                 }
                 _ => {}
             });
@@ -682,14 +763,45 @@ impl Composer {
 
     fn close(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         if self.request_close(window, cx) {
-            self.close_window(window);
+            self.close_window(window, cx);
         }
     }
 
-    fn close_window(&mut self, window: &mut Window) {
+    /// Closes the window, or the tab.
+    fn close_window(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.autosave = None;
         self.closed = true;
-        window.remove_window();
+        if self.in_tab {
+            cx.emit(ItemEvent::Close);
+        } else {
+            window.remove_window();
+        }
+    }
+
+    /// "Open in New Window": the tab closes and the app opens a window with the draft
+    /// as it is now.
+    fn open_in_new_window(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.in_tab || self.sending || self.closed {
+            return;
+        }
+        let draft = match self.draft(cx) {
+            Ok(draft) => draft,
+            Err(message) => {
+                self.status = Status::Error(message.into());
+                cx.notify();
+                return;
+            }
+        };
+        let options = ComposerOptions {
+            draft,
+            draft_id: self.draft_id,
+            autosave_after: self.autosave_after,
+            in_tab: false,
+        };
+        self.autosave = None;
+        self.closed = true;
+        cx.emit(ComposerEvent::OpenInNewWindow(Box::new(options)));
+        cx.emit(ItemEvent::Close);
     }
 
     // ---- rendering --------------------------------------------------------------------
@@ -782,19 +894,22 @@ impl Render for Composer {
             .on_action(cx.listener(|this, _: &SaveDraft, window, cx| this.save_now(window, cx)))
             .on_action(cx.listener(|this, _: &Attach, window, cx| this.attach(window, cx)))
             .on_action(cx.listener(|this, _: &ToggleCcBcc, window, cx| this.toggle_cc(window, cx)))
-            .child(
-                TitleBar::new()
-                    .bg(colors.title_bar)
-                    .border_b_1()
-                    .border_color(colors.border)
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .justify_center()
-                            .text_sm()
-                            .child(self.title.clone()),
-                    ),
-            )
+            .on_action(cx.listener(|this, _: &OpenInNewWindow, _, cx| this.open_in_new_window(cx)))
+            .when(!self.in_tab, |this| {
+                this.child(
+                    TitleBar::new()
+                        .bg(colors.title_bar)
+                        .border_b_1()
+                        .border_color(colors.border)
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .justify_center()
+                                .text_sm()
+                                .child(self.title.clone()),
+                        ),
+                )
+            })
             .child(
                 v_flex()
                     .gap_1p5()
@@ -876,6 +991,36 @@ impl Render for Composer {
                             })),
                     ),
             )
+    }
+}
+
+impl Item for Composer {
+    fn tab_title(&self, _: &App) -> SharedString {
+        self.name.clone()
+    }
+
+    fn tab_icon(&self, _: &App) -> Option<IconName> {
+        Some(IconName::SquarePen)
+    }
+
+    fn tab_tooltip(&self, _: &App) -> Option<SharedString> {
+        Some(self.title.clone())
+    }
+
+    fn is_dirty(&self, _: &App) -> bool {
+        self.dirty
+    }
+
+    fn request_close(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> bool {
+        Composer::request_close(self, window, cx)
+    }
+
+    fn serialize(&self, _: &App) -> Option<SerializedItem> {
+        let data = serde_json::to_value(SerializedDraft {
+            draft: self.draft_id?,
+        })
+        .ok()?;
+        Some(SerializedItem::new(COMPOSE_KIND, data).with_title(self.name.to_string()))
     }
 }
 

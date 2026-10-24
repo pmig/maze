@@ -258,6 +258,7 @@ fn drafts_round_trip() {
             size: 3,
         }],
         origin: Some(DraftOrigin::ReplyAll(MessageId(7))),
+        name: "brave-otter".into(),
     };
     let saved = draft.clone();
     let id = store

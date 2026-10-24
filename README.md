@@ -40,9 +40,11 @@ Works today:
 - search with Gmail-style operators (`from:`, `has:attachment`, `after:` …)
 - reading mail in a sanitized reader view, with DKIM/SPF/DMARC results
 - archive, move, tag, flag and mark read, with undo
-- writing mail in a compose window (Markdown, sent as plain text + HTML), replies and
-  forwards, local drafts, sending over SMTP (password or OAuth) with an outbox that
-  never sends twice
+- tabs and splits like Zed's: mail views, single messages and drafts side by side,
+  dragged into splits, restored after a restart, with the agent column staying right
+- writing mail in a tab (Markdown, sent as plain text + HTML), each draft named with
+  two random words, replies and forwards, local drafts, sending over SMTP (password or
+  OAuth) with an outbox that never sends twice
 - the `mazemail` CLI and `mazemail --headless` for scripts and agents
 - updates in the background with a "Restart to update" button, and a rollback if a new
   version keeps failing to start

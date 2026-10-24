@@ -72,6 +72,13 @@ pub enum FolderPaneEvent {
         /// Its title for the list header.
         title: SharedString,
     },
+    /// "Open in New Tab" from a folder's context menu.
+    OpenInNewTab {
+        /// The folder.
+        key: FolderKey,
+        /// Its title for the list header.
+        title: SharedString,
+    },
 }
 
 /// The folder pane view.
@@ -464,6 +471,11 @@ impl FolderPane {
         });
     }
 
+    /// The selected folder.
+    pub fn selected(&self) -> Option<&FolderKey> {
+        self.selected.as_ref()
+    }
+
     /// The title of a folder as the list header shows it.
     pub fn title_of(&self, key: &FolderKey) -> Option<SharedString> {
         self.nodes.values().find_map(|node| match node {
@@ -513,14 +525,31 @@ impl FolderPane {
         }
     }
 
-    /// The context menu of a row: "Add to Favorites" or "Remove from Favorites" on
-    /// folders of an account.
+    /// The context menu of a row: "Open in New Tab" on folders, and "Add to Favorites"
+    /// or "Remove from Favorites" on folders of an account.
     fn context_menu(
         menu: PopupMenu,
         node: Option<&Node>,
         favorites: &HashSet<FolderKey>,
         pane: &WeakEntity<Self>,
     ) -> PopupMenu {
+        let menu = match node {
+            Some(Node::Folder { key, title, .. }) => {
+                let (key, title, pane) = (key.clone(), title.clone(), pane.clone());
+                menu.item(
+                    PopupMenuItem::new("Open in New Tab").on_click(move |_, _, cx| {
+                        pane.update(cx, |_, cx| {
+                            cx.emit(FolderPaneEvent::OpenInNewTab {
+                                key: key.clone(),
+                                title: title.clone(),
+                            });
+                        })
+                        .ok();
+                    }),
+                )
+            }
+            _ => menu,
+        };
         let Some((folder, favorite)) = favorite_toggle(node, favorites) else {
             return menu;
         };

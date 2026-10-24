@@ -75,6 +75,10 @@ pub struct Draft {
     pub attachments: Vec<DraftAttachment>,
     /// What this draft answers or forwards.
     pub origin: Option<DraftOrigin>,
+    /// The draft's random two-word name (`brave-otter`), given when it is created; its
+    /// tab is titled with it. Empty for drafts from before names.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
 }
 
 impl fmt::Debug for Draft {
@@ -96,7 +100,8 @@ impl Draft {
         self.to.iter().chain(&self.cc).chain(&self.bcc)
     }
 
-    /// Whether nothing has been written: no recipients, subject, body or attachments.
+    /// Whether nothing has been written: no recipients, subject, body or attachments
+    /// (the name doesn't count).
     pub fn is_blank(&self) -> bool {
         self.recipients().next().is_none()
             && self.subject.trim().is_empty()
@@ -117,6 +122,7 @@ mod tests {
             subject: "Secret plans".into(),
             body_markdown: "Hello **Anna**".into(),
             origin: Some(DraftOrigin::Reply(MessageId(9))),
+            name: "brave-otter".into(),
             attachments: vec![DraftAttachment {
                 path: "/tmp/plan.pdf".into(),
                 name: "plan.pdf".into(),

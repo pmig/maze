@@ -111,6 +111,11 @@ actions!(
         SelectAll,
         /// Add the open folder to the favorites, or remove it.
         ToggleFavoriteFolder,
+        /// Open the selected message in a tab of its own (`enter`, `cmd-o`, a
+        /// double-click).
+        OpenMessage,
+        /// Open the selected folder in a new tab (the folder pane's menu).
+        OpenFolderInNewTab,
     ]
 );
 
@@ -171,7 +176,15 @@ pub fn sort_action(by: crate::source::SortBy) -> Box<dyn gpui::Action> {
 }
 
 /// Action namespaces the command palette lists.
-pub const PALETTE_NAMESPACES: &[&str] = &["maze", "workspace", "search", "mail", "view", "agent"];
+pub const PALETTE_NAMESPACES: &[&str] = &[
+    "maze",
+    "workspace",
+    "pane",
+    "search",
+    "mail",
+    "view",
+    "agent",
+];
 
 /// "mail::NextUnread" becomes "Mail: Next Unread", the way Zed's palette shows actions.
 pub fn humanize_action_name(name: &str) -> String {

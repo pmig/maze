@@ -87,7 +87,8 @@ use time::UtcOffset;
 use ui::assets::IconName;
 
 use crate::actions::{
-    Archive, Forward, MoveToFolder, Reply, ReplyAll, SelectThread, ToggleRead, ToggleStar,
+    Archive, Forward, MoveToFolder, OpenMessage, Reply, ReplyAll, SelectThread, ToggleRead,
+    ToggleStar,
 };
 use crate::format::{DateFormatter, format_size, format_thousands};
 use crate::list_model::{Expansions, RowPosition, TreeRow, tree_rows};
@@ -544,6 +545,8 @@ pub enum ThreadListEvent {
     ModeChanged(ListMode),
     /// Table columns or widths changed: the list may need more room.
     ColumnsChanged,
+    /// A row was double-clicked: open its message in a tab of its own.
+    Open(ItemId),
 }
 
 /// What "expand all" or individual expansions keep.
@@ -717,6 +720,11 @@ impl ThreadList {
     /// The open scope.
     pub fn scope(&self) -> &ThreadScope {
         &self.scope
+    }
+
+    /// The search query, when the list shows search results.
+    pub fn search(&self) -> Option<&str> {
+        self.search.as_deref()
     }
 
     /// Title of the open folder.
@@ -1118,6 +1126,13 @@ impl ThreadList {
     }
 
     /// The identity of visible row `ix`.
+    /// A double-click on row `ix`: asks for its message in a tab of its own.
+    fn open_row(&mut self, ix: usize, cx: &mut Context<'_, Self>) {
+        if let Some(item) = self.item_at(ix).map(|selected| selected.item) {
+            cx.emit(ThreadListEvent::Open(item));
+        }
+    }
+
     fn item_at(&self, ix: usize) -> Option<Selected> {
         let mut model = self.model.borrow_mut();
         let item = model.item(ix)?;
@@ -1975,6 +1990,7 @@ impl ThreadList {
                     self.select(*ix, cx);
                 }
             }
+            TableEvent::DoubleClickedRow(ix) => self.open_row(*ix, cx),
             TableEvent::RightClickedRow(Some(ix)) => {
                 let ix = *ix;
                 if !self.selection.is_selected(ix) {
@@ -2132,6 +2148,9 @@ impl ThreadList {
                     this.toggle_row(ix, cx);
                 } else {
                     this.select(ix, cx);
+                    if event.click_count() >= 2 {
+                        this.open_row(ix, cx);
+                    }
                 }
             }))
     }
@@ -2378,6 +2397,7 @@ impl ThreadList {
             entry("Move to Folder…", Box::new(MoveToFolder)),
             None,
             entry("Select Thread", Box::new(SelectThread)),
+            entry("Open in New Tab", Box::new(OpenMessage)),
         ]
     }
 

@@ -19,6 +19,7 @@ const MAIN: &[M<'static>] = &[
     M::up(include_str!("../migrations/main/0004_compose.sql")),
     M::up(include_str!("../migrations/main/0005_account_secret.sql")),
     M::up(include_str!("../migrations/main/0006_agent_secret.sql")),
+    M::up(include_str!("../migrations/main/0007_draft_name.sql")),
 ];
 
 const SENDLOG: &[M<'static>] = &[M::up(include_str!(

@@ -1485,6 +1485,8 @@ dependencies = [
  "gpui-kit",
  "gpui-pre",
  "mazemail_types",
+ "serde",
+ "serde_json",
  "thiserror 2.0.21",
  "tracing",
  "ui",
@@ -9523,6 +9525,7 @@ version = "0.0.0"
 dependencies = [
  "gpui-kit",
  "gpui-pre",
+ "schemars 1.2.3",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
