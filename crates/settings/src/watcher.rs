@@ -142,8 +142,13 @@ fn handle_events(
 }
 
 /// Loads `path` and sends the result if it differs from the current settings.
+///
+/// A file that is ignored as a whole (a syntax error while it is being edited, say)
+/// keeps the settings that were in effect, with the new diagnostics: a typo must not
+/// switch everything back to the defaults. Invalid single values still fall back to
+/// their defaults, key by key.
 fn publish(path: &Path, sender: &watch::Sender<Arc<LoadedSettings>>) {
-    let loaded = load_settings(path);
+    let mut loaded = load_settings(path);
     for diagnostic in &loaded.diagnostics {
         if diagnostic.is_error() {
             tracing::warn!(%diagnostic, "settings");
@@ -152,6 +157,9 @@ fn publish(path: &Path, sender: &watch::Sender<Arc<LoadedSettings>>) {
         }
     }
     sender.send_if_modified(|current| {
+        if loaded.file_ignored() {
+            loaded.settings = current.settings.clone();
+        }
         if **current == loaded {
             false
         } else {
@@ -221,6 +229,32 @@ mod tests {
         // Nothing new: no notification.
         watcher.reload();
         assert!(!receiver.has_changed().unwrap());
+    }
+
+    #[test]
+    fn syntax_errors_keep_the_last_good_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{ "layout": "wide" }"#).unwrap();
+        let (watcher, mut receiver) =
+            SettingsWatcher::start(&path, Duration::from_secs(60)).unwrap();
+        assert_eq!(receiver.borrow_and_update().settings.layout, Layout::Wide);
+
+        // Half typed: the diagnostics change, the settings stay.
+        std::fs::write(&path, "{ \"layout\": \"wide\",\n  \"theme\": }").unwrap();
+        watcher.reload();
+        assert!(receiver.has_changed().unwrap());
+        let loaded = receiver.borrow_and_update().clone();
+        assert_eq!(loaded.settings.layout, Layout::Wide);
+        assert!(loaded.file_ignored());
+        assert_eq!(loaded.diagnostics[0].line, Some(2));
+
+        // Fixed: the new settings apply.
+        std::fs::write(&path, r#"{ "layout": "classic" }"#).unwrap();
+        watcher.reload();
+        let loaded = receiver.borrow_and_update().clone();
+        assert_eq!(loaded.settings.layout, Layout::Classic);
+        assert!(loaded.diagnostics.is_empty());
     }
 
     #[test]

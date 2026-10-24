@@ -80,7 +80,14 @@
     // "markdown" or "plain".
     "format": "markdown",
     // Seconds during which a sent message can still be undone (0 to 30).
-    "undo_send_seconds": 10
+    "undo_send_seconds": 10,
+    // Added below every message you send (Markdown), after your signature and above
+    // the quoted message of a reply or forward. Empty: none. Shown under the body
+    // while you write; it isn't part of the text you edit.
+    "footer": "",
+    // Adds "Sent with Maze (https://mazemail.dev)" below your messages. Thank you!
+    // This is the default of the "Add “Sent with Maze”" checkbox in each message.
+    "support_maze": true
   },
 
   // Spell-check languages as BCP 47 tags, e.g. ["de-AT", "en-US"]. Empty: the
@@ -93,8 +100,9 @@
   "offline_recent_days": 90,
 
   // Overrides per account, keyed by the account's label, e.g.
-  // "work": { "offline": "all", "remote_content": "never" }
-  // Supported keys: "offline", "offline_recent_days", "remote_content".
+  // "work": { "offline": "all", "remote_content": "never", "footer": "Acme Inc." }
+  // Supported keys: "offline", "offline_recent_days", "remote_content", "footer",
+  // "support_maze".
   "accounts": {},
 
   // OAuth clients for "Sign in with Google" and "Sign in with Microsoft". Maze has no

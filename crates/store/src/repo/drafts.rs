@@ -9,7 +9,8 @@ use crate::repo::accounts::ensure_changed;
 use crate::{Result, WriteTx};
 
 const DRAFT_COLUMNS: &str = "id, identity_id, to_json, cc_json, bcc_json, subject, body, \
-     in_reply_to, references_json, attachments_json, origin_json, created, updated, name";
+     in_reply_to, references_json, attachments_json, origin_json, created, updated, name, \
+     support_maze";
 
 fn json<T: serde::de::DeserializeOwned>(row: &Row<'_>, ix: usize) -> rusqlite::Result<T> {
     let text: String = row.get(ix)?;
@@ -40,6 +41,7 @@ fn draft_row(row: &Row<'_>) -> rusqlite::Result<StoredDraft> {
             attachments: json::<Vec<DraftAttachment>>(row, 9)?,
             origin,
             name: row.get(13)?,
+            support_maze: row.get(14)?,
         },
         created: row.get(11)?,
         updated: row.get(12)?,
@@ -96,8 +98,8 @@ impl WriteTx<'_> {
             .prepare_cached(
                 "INSERT INTO draft (identity_id, to_json, cc_json, bcc_json, subject, body,
                    in_reply_to, references_json, attachments_json, origin_json, created, updated,
-                   name)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12)",
+                   name, support_maze)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12, ?13)",
             )?
             .execute(params![
                 draft.identity.map(|i| i.0),
@@ -111,7 +113,8 @@ impl WriteTx<'_> {
                 c.attachments,
                 c.origin,
                 self.now,
-                draft.name
+                draft.name,
+                draft.support_maze
             ])?;
         self.changes.drafts = true;
         Ok(DraftId(self.conn.last_insert_rowid()))
@@ -125,7 +128,8 @@ impl WriteTx<'_> {
             .prepare_cached(
                 "UPDATE draft SET identity_id = ?2, to_json = ?3, cc_json = ?4, bcc_json = ?5,
                    subject = ?6, body = ?7, in_reply_to = ?8, references_json = ?9,
-                   attachments_json = ?10, origin_json = ?11, updated = ?12, name = ?13
+                   attachments_json = ?10, origin_json = ?11, updated = ?12, name = ?13,
+                   support_maze = ?14
                  WHERE id = ?1",
             )?
             .execute(params![
@@ -141,7 +145,8 @@ impl WriteTx<'_> {
                 c.attachments,
                 c.origin,
                 self.now,
-                draft.name
+                draft.name,
+                draft.support_maze
             ])?;
         ensure_changed(changed, "draft", id.0)?;
         self.changes.drafts = true;

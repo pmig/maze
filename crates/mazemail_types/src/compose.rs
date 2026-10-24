@@ -11,6 +11,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Address, IdentityId, MessageId};
 
+/// Maze's website, linked from the "Sent with Maze" line (no tracking parameters).
+pub const MAZE_WEBSITE: &str = "https://mazemail.dev";
+
+/// The line added below messages whose [`Draft::support_maze`] is set (the plain-text
+/// part; the HTML part links "Maze").
+pub const SENT_WITH_MAZE: &str = "Sent with Maze (https://mazemail.dev)";
+
 /// What a draft answers or forwards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "message", rename_all = "snake_case")]
@@ -53,7 +60,7 @@ impl fmt::Debug for DraftAttachment {
 }
 
 /// A message being written. `Debug` leaves out addresses and content.
-#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Draft {
     /// The sending identity; `None` until one is picked (the account's default is used).
     pub identity: Option<IdentityId>,
@@ -79,6 +86,34 @@ pub struct Draft {
     /// tab is titled with it. Empty for drafts from before names.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
+    /// Add [`SENT_WITH_MAZE`] below the message when it is sent (the composer's "Add
+    /// “Sent with Maze”" checkbox; new drafts take `compose.support_maze`). Like the
+    /// configured footer, it is added at send time, never to the body you edit.
+    #[serde(default = "yes")]
+    pub support_maze: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for Draft {
+    fn default() -> Self {
+        Self {
+            identity: None,
+            to: Vec::new(),
+            cc: Vec::new(),
+            bcc: Vec::new(),
+            subject: String::new(),
+            body_markdown: String::new(),
+            in_reply_to: None,
+            references: Vec::new(),
+            attachments: Vec::new(),
+            origin: None,
+            name: String::new(),
+            support_maze: true,
+        }
+    }
 }
 
 impl fmt::Debug for Draft {
@@ -90,6 +125,7 @@ impl fmt::Debug for Draft {
             .field("bcc", &self.bcc.len())
             .field("attachments", &self.attachments.len())
             .field("origin", &self.origin)
+            .field("support_maze", &self.support_maze)
             .finish_non_exhaustive()
     }
 }
@@ -137,5 +173,24 @@ mod tests {
         assert!(!draft.is_blank());
         assert!(Draft::default().is_blank());
         assert_eq!(draft.origin.unwrap().message(), MessageId(9));
+    }
+
+    #[test]
+    fn sent_with_maze_is_on_unless_turned_off() {
+        assert!(Draft::default().support_maze);
+        // Drafts serialized before the field existed keep the default.
+        let old: Draft = serde_json::from_str(
+            r#"{"identity":null,"to":[],"cc":[],"bcc":[],"subject":"","body_markdown":"",
+                "in_reply_to":null,"references":[],"attachments":[],"origin":null}"#,
+        )
+        .unwrap();
+        assert!(old.support_maze);
+        let off = Draft {
+            support_maze: false,
+            ..Draft::default()
+        };
+        let json = serde_json::to_string(&off).unwrap();
+        assert!(!serde_json::from_str::<Draft>(&json).unwrap().support_maze);
+        assert!(SENT_WITH_MAZE.ends_with(&format!("({MAZE_WEBSITE})")));
     }
 }

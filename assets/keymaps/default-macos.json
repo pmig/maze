@@ -11,7 +11,9 @@
       "cmd-alt-h": "maze::HideOthers",
       "cmd-m": "maze::Minimize",
       // Thunderbird's "New Message"; works in every window (the compose window too).
-      "cmd-n": "mail::NewMessage"
+      "cmd-n": "mail::NewMessage",
+      // The macOS convention for Settings…; opens settings.json in a tab.
+      "cmd-,": "maze::OpenSettings"
     }
   },
   {
@@ -106,6 +108,13 @@
       "cmd-s": "composer::SaveDraft",
       "cmd-shift-a": "composer::Attach",
       "cmd-shift-c": "composer::ToggleCcBcc"
+    }
+  },
+  {
+    // The settings tab (settings.json).
+    "context": "SettingsEditor",
+    "bindings": {
+      "cmd-s": "settings_editor::SaveSettings"
     }
   },
   {

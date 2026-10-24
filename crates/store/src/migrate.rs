@@ -23,6 +23,9 @@ const MAIN: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/main/0008_gmail_label_resync.sql"
     )),
+    M::up(include_str!(
+        "../migrations/main/0009_draft_support_maze.sql"
+    )),
 ];
 
 const SENDLOG: &[M<'static>] = &[M::up(include_str!(
@@ -430,6 +433,44 @@ mod tests {
                 (5, None)
             ]
         );
+    }
+
+    #[test]
+    fn v9_keeps_sent_with_maze_on_for_existing_drafts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let key = key(9);
+        let mut conn = conn::open(&tmp.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
+        migrate_with_backup(&mut conn, &key, tmp.path(), "1.0.0", &MAIN[..8]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO draft (id, to_json, cc_json, bcc_json, subject, body,
+                                references_json, attachments_json, created, updated, name)
+             VALUES (1, '[]', '[]', '[]', '', '', '[]', '[]', 1, 1, 'brave-otter');",
+        )
+        .unwrap();
+        let report = migrate_main(&mut conn, &key, tmp.path(), "1.1.0").unwrap();
+        assert_eq!((report.from, report.to), (8, SCHEMA_VERSION));
+        let on: i64 = conn
+            .query_row("SELECT support_maze FROM draft WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(on, 1);
+        // New rows default to on as well; off is stored as 0.
+        conn.execute_batch(
+            "INSERT INTO draft (id, to_json, cc_json, bcc_json, subject, body,
+                                references_json, attachments_json, created, updated)
+             VALUES (2, '[]', '[]', '[]', '', '', '[]', '[]', 1, 1);
+             UPDATE draft SET support_maze = 0 WHERE id = 1;",
+        )
+        .unwrap();
+        let values: Vec<i64> = conn
+            .prepare("SELECT support_maze FROM draft ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(values, [0, 1]);
     }
 
     #[test]

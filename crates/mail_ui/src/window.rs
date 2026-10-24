@@ -16,6 +16,8 @@
 //!   wherever they come from (keys, menus, the palette).
 //! - The layout is saved to `ui_state.json` a moment after it changes and restored when
 //!   the window opens.
+//! - "Maze: Open Settings" (`cmd-,`) and "Maze: Open Default Settings" open
+//!   [`SettingsEditor`] tabs ([`MailWindowOptions::settings_file`]).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -57,6 +59,7 @@ use crate::message_tab::{MESSAGE_KIND, MessageTab, SerializedMessage};
 use crate::message_view::MessageView;
 use crate::perf::{FrameStats, ScrollBenchmark, resident_memory};
 use crate::quick_move::{MoveTarget, QuickMove, QuickMoveEvent, source_folder};
+use crate::settings_editor::{SETTINGS_KIND, SerializedSettings, SettingsEditor, SettingsFile};
 use crate::source::{DataChanges, Direction, FolderKey, MailSource, SortBy, ThreadScope};
 use crate::thread_list::{CARD_HEIGHT, ItemId, ListMode, TABLE_ROW_HEIGHT, ThreadList};
 use crate::ui_state::{ListDefaults, UiStateStore};
@@ -75,6 +78,9 @@ pub struct MailWindowOptions {
     pub window_size: Option<(f32, f32)>,
     /// The message list view and the layout (`ui_state.json`); in memory by default.
     pub ui_state: UiStateStore,
+    /// The user's `settings.json`, edited in a tab ("Maze: Open Settings"). `None`
+    /// (tests, the demo): only the defaults can be shown.
+    pub settings_file: Option<SettingsFile>,
 }
 
 impl Default for MailWindowOptions {
@@ -85,6 +91,7 @@ impl Default for MailWindowOptions {
             benchmark: None,
             window_size: None,
             ui_state: UiStateStore::in_memory(ListDefaults::default()),
+            settings_file: None,
         }
     }
 }
@@ -210,6 +217,7 @@ pub struct MailWindow {
     agent_panel: Option<AnyView>,
     after_paint: Rc<RefCell<Vec<AfterPaint>>>,
     names: NameRng,
+    settings_file: Option<SettingsFile>,
     save_task: Option<Task<()>>,
     item_subscriptions: HashMap<EntityId, Subscription>,
     _subscriptions: Vec<Subscription>,
@@ -313,6 +321,7 @@ impl MailWindow {
             agent_panel: None,
             after_paint: Rc::default(),
             names: NameRng::from_entropy(),
+            settings_file: options.settings_file.clone(),
             save_task: None,
             item_subscriptions: HashMap::new(),
             _subscriptions: subscriptions,
@@ -389,11 +398,37 @@ impl MailWindow {
         .icon(IconName::Mail)
         .title(|_, _| Some("Message".into()));
 
+        let settings_file = self.settings_file.clone();
+        let settings = ItemKind::new(move |item: &SerializedItem, window, cx| {
+            let serialized =
+                serde_json::from_value::<SerializedSettings>(item.data.clone()).unwrap_or_default();
+            let editor = match (serialized.defaults, &settings_file) {
+                (true, _) => cx.new(|cx| SettingsEditor::defaults(window, cx)),
+                (false, Some(file)) => {
+                    let file = file.clone();
+                    cx.new(|cx| SettingsEditor::open(file, window, cx))
+                }
+                (false, None) => return Restore::Gone,
+            };
+            Restore::Item(Box::new(editor))
+        })
+        .icon(IconName::Settings)
+        .title(|item, _| {
+            let serialized =
+                serde_json::from_value::<SerializedSettings>(item.data.clone()).ok()?;
+            Some(if serialized.defaults {
+                "Default Settings".into()
+            } else {
+                "Settings".into()
+            })
+        });
+
         let views = self.views.clone();
         let fallback_pane = self.folder_pane.downgrade();
         self.panes.update(cx, |panes, cx| {
             panes.register_kind(MAIL_KIND, mail, window, cx);
             panes.register_kind(MESSAGE_KIND, message, window, cx);
+            panes.register_kind(SETTINGS_KIND, settings, window, cx);
             panes.set_split_fallback(Rc::new(move |window, cx| {
                 let pane = fallback_pane.upgrade()?;
                 let key = pane
@@ -524,6 +559,68 @@ impl MailWindow {
         self.panes.update(cx, |panes, cx| {
             panes.register_kind(kind, item_kind, window, cx)
         });
+    }
+
+    /// Shows the settings in a tab: the user's `settings.json`, or the read-only
+    /// defaults. An open tab of the same kind is activated (and focused) instead.
+    pub fn open_settings(
+        &mut self,
+        defaults: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<Entity<SettingsEditor>> {
+        let open = self
+            .panes
+            .read(cx)
+            .items_of::<SettingsEditor>(cx)
+            .into_iter()
+            .find(|editor| editor.read(cx).is_defaults() == defaults);
+        if let Some(editor) = open {
+            let id = editor.entity_id();
+            self.panes
+                .update(cx, |panes, cx| panes.activate_item(id, true, window, cx));
+            return Some(editor);
+        }
+        // A tab from the layout that isn't restored yet: show it, which restores it.
+        let pending = self
+            .panes
+            .read(cx)
+            .items_of::<ui::panes::PendingItem>(cx)
+            .into_iter()
+            .find(|pending| {
+                let serialized = pending.read(cx).serialized();
+                serialized.kind == SETTINGS_KIND
+                    && serde_json::from_value::<SerializedSettings>(serialized.data.clone())
+                        .unwrap_or_default()
+                        .defaults
+                        == defaults
+            });
+        if let Some(pending) = pending {
+            let id = pending.entity_id();
+            self.panes
+                .update(cx, |panes, cx| panes.activate_item(id, true, window, cx));
+            return self
+                .panes
+                .read(cx)
+                .items_of::<SettingsEditor>(cx)
+                .into_iter()
+                .find(|editor| editor.read(cx).is_defaults() == defaults);
+        }
+        let editor = if defaults {
+            cx.new(|cx| SettingsEditor::defaults(window, cx))
+        } else {
+            let Some(file) = self.settings_file.clone() else {
+                window.push_notification(
+                    Notification::info(format!("{PRODUCT_NAME} runs without a settings file."))
+                        .title(PRODUCT_NAME),
+                    cx,
+                );
+                return None;
+            };
+            cx.new(|cx| SettingsEditor::open(file, window, cx))
+        };
+        self.add_item(Box::new(editor.clone()), window, cx);
+        Some(editor)
     }
 
     /// A random two-word name for a new draft (`brave-otter`) that no open tab has.
@@ -1355,6 +1452,12 @@ impl MailWindow {
         }))
         .on_action(cx.listener(|_, _: &NewMessage, _, cx| {
             cx.emit(ComposeRequest::New);
+        }))
+        .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
+            this.open_settings(false, window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &OpenDefaultSettings, window, cx| {
+            this.open_settings(true, window, cx);
         }))
         .on_action(cx.listener(|this, _: &OpenMessage, window, cx| {
             this.open_selected_message(window, cx);
@@ -2396,4 +2499,5 @@ mod tests {
     }
 
     mod panes;
+    mod settings_tab;
 }

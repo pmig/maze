@@ -25,11 +25,16 @@
 //!   originals are converted to Markdown (`htmd`), plain text is quoted as is. A
 //!   forward includes the original unquoted below a header block. (The original's
 //!   attachments aren't forwarded yet.)
+//! - **"Sent with Maze"**: every new draft takes the `compose.support_maze` setting of
+//!   its identity's account ([`settings::Settings::footer_for`]); the composer's
+//!   checkbox changes it per message.
 //!
 //! # Sending
 //!
 //! [`CoreHandle::send_draft`] checks the draft, reads attached files, builds the MIME
-//! message (`multipart/alternative`, Message-ID at the identity's domain), stores it as
+//! message (`multipart/alternative`, Message-ID at the identity's domain; the
+//! account's `compose.footer` and, if the draft says so, "Sent with Maze" are added
+//! below the text and above a quoted original, see `mazemail_mime::compose`), stores it as
 //! an encrypted blob and queues it in the outbox with its SMTP envelope, then makes the
 //! first attempt right away (see [`crate::outgoing`]). A permanent refusal (for example
 //! [`smtp::SmtpError::SendAsDenied`]) comes back as [`Error::Send`] and the message is
@@ -40,12 +45,14 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use mazemail_mime::compose::{
-    OutgoingAttachment, OutgoingMessage, build_message, content_type_for, forward_subject,
-    html_to_markdown, new_message_id, quote, reply_references, reply_subject,
+    FORWARD_HEADER, MessageFooter, OutgoingAttachment, OutgoingMessage, build_message,
+    content_type_for, forward_subject, html_to_markdown, new_message_id, quote, reply_references,
+    reply_subject,
 };
 use mazemail_mime::{MessageHeaders, ParsedMessage};
 use mazemail_types::compose::{Draft, DraftOrigin};
 use mazemail_types::{AccountId, Address, DraftId, IdentityId, MessageId, PublicId as _};
+use settings::FooterSettings;
 use store::{Identity, MessageDetail, OutboxEnvelope, Queries as _, Reader};
 use time::{OffsetDateTime, UtcOffset};
 
@@ -344,6 +351,20 @@ fn format_date(unix: i64, offset: UtcOffset) -> String {
     date.to_offset(offset).format(&format).unwrap_or_default()
 }
 
+/// The name (the settings' label) of `identity`'s account.
+fn account_name(reader: &Reader, identity: Option<IdentityId>) -> Result<Option<String>> {
+    let Some(identity) = identity
+        .map(|id| reader.identity(id))
+        .transpose()?
+        .flatten()
+    else {
+        return Ok(None);
+    };
+    Ok(reader
+        .account(identity.account)?
+        .map(|account| account.name))
+}
+
 fn signature_block(reader: &Reader, identity: Option<IdentityId>) -> Result<Option<String>> {
     let Some(identity) = identity
         .map(|id| reader.identity(id))
@@ -364,6 +385,27 @@ fn signature_block(reader: &Reader, identity: Option<IdentityId>) -> Result<Opti
 }
 
 impl CoreHandle {
+    /// The footer and the "Sent with Maze" default for messages from `identity`: its
+    /// account's `compose` settings (or the global ones without an identity).
+    pub fn compose_footer(&self, identity: Option<IdentityId>) -> FooterSettings {
+        let account = self
+            .store()
+            .reader()
+            .ok()
+            .and_then(|reader| account_name(&reader, identity).ok().flatten());
+        self.settings()
+            .settings
+            .footer_for(account.as_deref().unwrap_or_default())
+    }
+
+    fn footer_with(&self, reader: &Reader, identity: Option<IdentityId>) -> Result<FooterSettings> {
+        let account = account_name(reader, identity)?;
+        Ok(self
+            .settings()
+            .settings
+            .footer_for(account.as_deref().unwrap_or_default()))
+    }
+
     /// The identities to send from: by account, each account's default first.
     pub fn identities(&self) -> Result<Vec<IdentityInfo>> {
         let reader = self.store().reader()?;
@@ -415,6 +457,7 @@ impl CoreHandle {
         Ok(Draft {
             identity,
             body_markdown: body,
+            support_maze: self.footer_with(&reader, identity)?.support_maze,
             ..Draft::default()
         })
     }
@@ -505,6 +548,7 @@ impl CoreHandle {
                 ReplyKind::All => DraftOrigin::ReplyAll(message),
             }),
             name: String::new(),
+            support_maze: self.footer_with(&reader, identity)?.support_maze,
         })
     }
 
@@ -529,7 +573,8 @@ impl CoreHandle {
             body.push_str(&sig);
             body.push_str("\n\n");
         }
-        body.push_str("-------- Forwarded Message --------\n");
+        body.push_str(FORWARD_HEADER);
+        body.push('\n');
         body.push_str(&format!("Subject: {}\n", original.subject()));
         body.push_str(&format!(
             "Date: {}\n",
@@ -557,6 +602,7 @@ impl CoreHandle {
             body_markdown: body,
             references: original.message_id().into_iter().collect(),
             origin: Some(DraftOrigin::Forward(message)),
+            support_maze: self.footer_with(&reader, identity)?.support_maze,
             ..Draft::default()
         })
     }
@@ -646,6 +692,7 @@ impl CoreHandle {
         let sender = crate::outgoing::sender(self.store(), identity_id)
             .map_err(|err| compose_error(ComposeErrorKind::CantSend, err.to_string()))?;
         let identity = &sender.identity.input;
+        let footer = self.footer_with(&reader, Some(identity_id))?;
 
         let mut attachments = Vec::with_capacity(draft.attachments.len());
         let mut total: u64 = draft.body_markdown.len() as u64;
@@ -698,6 +745,11 @@ impl CoreHandle {
             date: now,
             attachments,
             user_agent: Some(format!("Maze/{}", self.app_version())),
+            footer: MessageFooter {
+                markdown: footer.footer,
+                sent_with_maze: draft.support_maze,
+                above_quote: draft.origin.is_some(),
+            },
         };
         let raw = build_message(&message)
             .map_err(|err| compose_error(ComposeErrorKind::Build, err.to_string()))?;

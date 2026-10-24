@@ -5,10 +5,11 @@
 //! ```
 //!
 //! The center is a `ui::panes::PaneGroup` of mail views (message list and message),
-//! message tabs and drafts.
+//! message tabs, drafts and the settings ([`settings_editor`]).
 //!
-//! The UI reads everything through the [`MailSource`] trait, so it doesn't depend on
-//! any non-UI Maze crate except `mazemail_types`. The `mazemail` binary implements it
+//! The UI reads mail through the [`MailSource`] trait, so it doesn't depend on any
+//! non-UI Maze crate except `mazemail_types` and `settings` (the settings tab parses
+//! and writes `settings.json` itself). The `mazemail` binary implements it
 //! over the core (`CoreMailSource`) and feeds the core's change events in through
 //! [`MailWindow::apply_changes`]; [`FakeMailSource`] provides synthetic data
 //! (including a 1,000,000-thread folder) for demos (`MAZEMAIL_DEMO=1`), tests and
@@ -30,6 +31,7 @@ pub mod message_view;
 pub mod perf;
 pub mod quick_move;
 pub mod selection;
+pub mod settings_editor;
 pub mod source;
 pub mod thread_list;
 pub mod ui_state;
@@ -40,6 +42,7 @@ use gpui_kit::component::input;
 use mazemail_types::PRODUCT_NAME;
 
 pub use fake::FakeMailSource;
+pub use settings_editor::{SettingsEditor, SettingsFile};
 pub use source::{DataChanges, MailSource};
 pub use ui_state::{ListDefaults, ListMode, UI_STATE_FILE, UiStateStore};
 pub use window::{
@@ -48,8 +51,8 @@ pub use window::{
 
 use crate::actions::{
     About, CollapseAllThreads, ExpandAllThreads, Forward, Hide, HideOthers, Minimize, NewMessage,
-    Quit, Reply, ReplyAll, ReverseSortOrder, ShowAll, Toggle, ToggleAgentColumn, ToggleFolderPane,
-    ToggleMessagePane, ToggleTableView, ToggleThreads, Zoom, sort_action,
+    OpenSettings, Quit, Reply, ReplyAll, ReverseSortOrder, ShowAll, Toggle, ToggleAgentColumn,
+    ToggleFolderPane, ToggleMessagePane, ToggleTableView, ToggleThreads, Zoom, sort_action,
 };
 use crate::source::SortBy;
 
@@ -75,6 +78,8 @@ pub fn app_menus() -> Vec<Menu> {
     vec![
         Menu::new(PRODUCT_NAME).items([
             MenuItem::action(format!("About {PRODUCT_NAME}"), About),
+            MenuItem::separator(),
+            MenuItem::action("Settings…", OpenSettings),
             MenuItem::separator(),
             MenuItem::os_submenu("Services", SystemMenuType::Services),
             MenuItem::separator(),

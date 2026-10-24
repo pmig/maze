@@ -259,6 +259,7 @@ fn drafts_round_trip() {
         }],
         origin: Some(DraftOrigin::ReplyAll(MessageId(7))),
         name: "brave-otter".into(),
+        support_maze: true,
     };
     let saved = draft.clone();
     let id = store
@@ -271,6 +272,8 @@ fn drafts_round_trip() {
     let mut edited = draft;
     edited.subject = "Re: Plans (v2)".into();
     edited.origin = None;
+    // "Add “Sent with Maze”" unchecked: kept with the draft.
+    edited.support_maze = false;
     let saved = edited.clone();
     store
         .write_blocking(move |w| w.update_draft(id, &saved))
