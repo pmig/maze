@@ -14,11 +14,12 @@ use gpui_kit::component::{
 use ui::assets::IconName;
 use ui::components::StatusItem;
 
-use crate::actions::{Toggle, ToggleAgentColumn};
+use crate::actions::{OpenSettings, Toggle, ToggleAgentColumn};
 use crate::source::{SourceStatus, SyncState};
 
 /// The slim spaces bar on the far left (CONCEPT §8.2): Mail, Address Book, and at
-/// the bottom Extensions and Settings. Only Mail exists so far.
+/// the bottom Extensions and Settings. Mail and Settings (which opens `settings.json`
+/// in a tab) work so far.
 #[derive(IntoElement)]
 pub(crate) struct SpacesBar {
     width: f32,
@@ -75,12 +76,13 @@ impl RenderOnce for SpacesBar {
                         .disabled(true),
                     )
                     .child(
-                        space(
-                            "space-settings",
-                            IconName::Settings,
-                            "Settings (coming later)",
-                        )
-                        .disabled(true),
+                        Button::new("space-settings")
+                            .ghost()
+                            .icon(Icon::new(IconName::Settings))
+                            .tooltip_with_action("Settings", &OpenSettings, None)
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(OpenSettings), cx);
+                            }),
                     ),
             )
     }
