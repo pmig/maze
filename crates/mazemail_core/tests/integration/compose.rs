@@ -396,13 +396,6 @@ async fn the_footer_and_sent_with_maze_go_between_the_text_and_the_quote() {
     );
     draft.body_markdown = format!("Thursday works.{}", draft.body_markdown);
     let id = s.core.create_draft(draft.clone()).await.unwrap();
-    // The checkbox's state is kept with the draft.
-    let mut off = draft.clone();
-    off.support_maze = false;
-    s.core.update_draft(id, off.clone()).await.unwrap();
-    assert!(!s.core.draft(id).unwrap().support_maze);
-    s.core.update_draft(id, draft.clone()).await.unwrap();
-    assert!(s.core.draft(id).unwrap().support_maze);
 
     s.core.send_draft(Some(id), draft).await.unwrap();
     let submissions = s.mailer.submissions();
@@ -423,7 +416,9 @@ async fn the_footer_and_sent_with_maze_go_between_the_text_and_the_quote() {
         "{html}"
     );
 
-    // Unchecked: no Maze line, the footer stays.
+    // Only the setting decides: a draft saved with the old per-message flag off still
+    // gets the line while `compose.support_maze` is on. The footer goes above a
+    // forward's header too.
     let mut draft = s.core.forward_draft(message).await.unwrap();
     draft.to = vec![Address::new(None::<String>, "bob@example.net")];
     draft.support_maze = false;
@@ -431,22 +426,28 @@ async fn the_footer_and_sent_with_maze_go_between_the_text_and_the_quote() {
     let submissions = s.mailer.submissions();
     let parsed = MessageParser::default().parse(&submissions[1].raw).unwrap();
     let text = parsed.body_text(0).unwrap().replace("\r\n", "\n");
-    assert!(!text.contains("Sent with Maze"), "{text}");
-    assert!(!parsed.body_html(0).unwrap().contains("Sent with"));
+    assert!(text.contains("Sent with Maze"), "{text}");
     let footer = text.find("Alice · **Example Org**").unwrap();
     assert!(footer < text.find("-------- Forwarded Message --------").unwrap());
     s.core.shutdown().await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn support_maze_off_in_the_settings_is_the_new_drafts_default() {
+async fn support_maze_off_in_the_settings_drops_the_line() {
     let server = FakeServer::new();
     let s = open_with_settings(&server, Some(r#"{ "compose": { "support_maze": false } }"#)).await;
     let message = account_with_original(&s).await;
     assert!(!s.core.new_draft().unwrap().support_maze);
-    let reply = s.core.reply_draft(message, ReplyKind::All).await.unwrap();
+    let mut reply = s.core.reply_draft(message, ReplyKind::All).await.unwrap();
     assert!(!reply.support_maze);
     assert!(!s.core.forward_draft(message).await.unwrap().support_maze);
+    // Sending follows the setting, whatever an older draft recorded.
+    reply.support_maze = true;
+    s.core.send_draft(None, reply).await.unwrap();
+    let submissions = s.mailer.submissions();
+    let parsed = MessageParser::default().parse(&submissions[0].raw).unwrap();
+    assert!(!parsed.body_text(0).unwrap().contains("Sent with Maze"));
+    assert!(!parsed.body_html(0).unwrap().contains("Sent with"));
     // A per-account override wins (accounts are keyed by their name).
     let account = s.core.store().reader().unwrap().accounts().unwrap()[0]
         .name

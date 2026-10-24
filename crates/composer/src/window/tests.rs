@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Mutex;
 
-use gpui::{Modifiers, TestAppContext, VisualTestContext};
+use gpui::{TestAppContext, VisualTestContext};
 use mazemail_types::MessageId;
 use mazemail_types::compose::DraftOrigin;
 
@@ -19,6 +19,8 @@ struct FakeBackend {
     no_identities: bool,
     /// The footer of identity 1's account.
     footer: String,
+    /// `compose.support_maze` is off.
+    no_maze_line: bool,
 }
 
 impl FakeBackend {
@@ -76,6 +78,10 @@ impl ComposeBackend for FakeBackend {
         } else {
             String::new()
         }
+    }
+
+    fn sent_with_maze(&self, _: Option<IdentityId>) -> bool {
+        !self.no_maze_line
     }
 
     fn send(
@@ -404,14 +410,14 @@ fn the_title_follows_the_subject(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn sent_with_maze_is_a_checkbox_kept_with_the_draft(cx: &mut TestAppContext) {
+fn the_maze_line_follows_the_setting_without_a_switch(cx: &mut TestAppContext) {
     let backend = Arc::new(FakeBackend {
         footer: "Acme Inc. · Vienna\n".into(),
         ..FakeBackend::default()
     });
-    let (view, cx) = open(cx, backend.clone(), options());
-    // On by default (new drafts take `compose.support_maze`); the footer and the Maze
-    // line are previewed under the body, not part of it.
+    let (view, cx) = open(cx, backend, options());
+    // `compose.support_maze` is on: the footer and the Maze line are previewed under
+    // the body, not part of it, and there is nothing to switch it off here.
     assert!(view.read_with(cx, |c, _| c.support_maze()));
     assert_eq!(
         view.read_with(cx, |c, _| c.footer_preview()),
@@ -421,51 +427,23 @@ fn sent_with_maze_is_a_checkbox_kept_with_the_draft(cx: &mut TestAppContext) {
         ]
     );
     assert!(cx.debug_bounds("footer-preview").is_some());
+    assert!(cx.debug_bounds("support-maze").is_none(), "no checkbox");
     cx.simulate_input("anna@example.com");
     let body = view.read_with(cx, |c, cx| c.draft(cx).unwrap().body_markdown);
     assert!(!body.contains("Sent with") && !body.contains("Acme"));
-
-    // Unchecking it is a change of the draft: autosaved with it.
-    cx.executor().advance_clock(Duration::from_secs(2));
-    cx.run_until_parked();
-    let checkbox = cx
-        .debug_bounds("support-maze")
-        .expect("the checkbox is drawn");
-    cx.simulate_click(checkbox.center(), Modifiers::none());
-    cx.run_until_parked();
-    assert!(!view.read_with(cx, |c, _| c.support_maze()));
-    assert!(view.read_with(cx, |c, _| c.is_dirty()));
-    assert_eq!(
-        view.read_with(cx, |c, _| c.footer_preview()),
-        vec![SharedString::from("Acme Inc. · Vienna")]
-    );
-    cx.executor().advance_clock(Duration::from_secs(2));
-    cx.run_until_parked();
-    let saves = backend.saves();
-    assert!(saves[0].1.support_maze);
-    assert!(!saves.last().unwrap().1.support_maze);
-
-    // And checked again; sending takes the box's state.
-    cx.simulate_click(checkbox.center(), Modifiers::none());
-    cx.run_until_parked();
-    assert!(view.read_with(cx, |c, _| c.support_maze()));
-    cx.simulate_keystrokes("cmd-enter");
-    cx.run_until_parked();
-    assert!(backend.sends()[0].1.support_maze);
 }
 
 #[gpui::test]
-fn a_draft_saved_without_the_maze_line_opens_unchecked(cx: &mut TestAppContext) {
-    let backend = Arc::new(FakeBackend::default());
-    let mut options = options();
-    options.draft.support_maze = false;
-    let (view, cx) = open(cx, backend, options);
+fn without_the_setting_there_is_no_maze_line(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend {
+        no_maze_line: true,
+        ..FakeBackend::default()
+    });
+    let (view, cx) = open(cx, backend, options());
     assert!(!view.read_with(cx, |c, _| c.support_maze()));
     // No footer configured, no Maze line: no preview.
     assert!(view.read_with(cx, |c, _| c.footer_preview()).is_empty());
     assert!(cx.debug_bounds("footer-preview").is_none());
-    view.update_in(cx, |c, window, cx| c.set_support_maze(true, window, cx));
-    assert!(view.read_with(cx, |c, cx| c.draft(cx).unwrap().support_maze));
 }
 
 // ---- in a tab of the main window ----------------------------------------------------

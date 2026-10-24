@@ -25,9 +25,9 @@
 //!   originals are converted to Markdown (`htmd`), plain text is quoted as is. A
 //!   forward includes the original unquoted below a header block. (The original's
 //!   attachments aren't forwarded yet.)
-//! - **"Sent with Maze"**: every new draft takes the `compose.support_maze` setting of
-//!   its identity's account ([`settings::Settings::footer_for`]); the composer's
-//!   checkbox changes it per message.
+//! - **"Sent with Maze"**: added when the `compose.support_maze` setting of the sending
+//!   identity's account ([`settings::Settings::footer_for`]) is on at send time. It's
+//!   only a setting; the draft's `support_maze` field is no longer used for sending.
 //!
 //! # Sending
 //!
@@ -747,7 +747,7 @@ impl CoreHandle {
             user_agent: Some(format!("Maze/{}", self.app_version())),
             footer: MessageFooter {
                 markdown: footer.footer,
-                sent_with_maze: draft.support_maze,
+                sent_with_maze: footer.support_maze,
                 above_quote: draft.origin.is_some(),
             },
         };

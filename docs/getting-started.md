@@ -452,11 +452,11 @@ two random words such as `brave-otter`; split the window to keep the Inbox next 
   your text as the plain-text part and renders it as the HTML part, so recipients see
   normal formatted mail. Single line breaks are kept.
 - **Attach…** (`cmd-shift-a`) adds files; they are read when the message is sent.
-- **Add “Sent with Maze”** (on by default) adds a short line below your message:
+- **"Sent with Maze"** (on by default) adds a short line below your messages:
   "Sent with Maze (https://mazemail.dev)", with a plain link to the website, no
-  tracking. It's a small way to support Maze; uncheck it for any message, or turn it
-  off for all new ones with `"compose": { "support_maze": false }`. The choice is
-  saved with the draft.
+  tracking. It's a small way to support Maze. It's a setting, not a switch in the
+  draft: turn it off with `"compose": { "support_maze": false }` (or per account), and
+  the preview under the body shows whether it's on.
 - `cmd-enter` sends and closes the tab. Escape or closing the tab (`cmd-w`) asks
   whether to keep a draft when something changed.
 
