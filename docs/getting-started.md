@@ -132,6 +132,20 @@ The defaults, with a comment for every key, are in
 Accounts, identities and SMTP servers are stored in the encrypted database, never in
 `settings.json`.
 
+### Themes
+
+`"theme"` picks light or dark and the theme for each:
+
+```jsonc
+"theme": { "mode": "system", "light": "One Light", "dark": "One Dark" }
+```
+
+`"mode"` is `"system"` (follow macOS), `"light"` or `"dark"`. Maze reads themes in
+Zed's format: besides the built-in One Light and One Dark, put Zed theme files
+(`*.json`, e.g. from Zed's extension repository) into `~/.config/mazemail/themes/` and
+name one of their themes in `"light"` or `"dark"`. Changes apply as soon as you save,
+also to the settings editor's colors. An unknown name falls back to the built-in theme.
+
 ### Tabs and splits
 
 The middle of the window works like Zed's editor area: tabs, and panes split side by

@@ -6,8 +6,9 @@
 // Comments and trailing commas are allowed. Accounts, identities and SMTP servers live
 // in the encrypted database, not here, so this file never holds addresses.
 {
-  // Colors. "mode" is "system", "light" or "dark"; "light" and "dark" name the theme
-  // used in each mode (Zed theme format).
+  // Colors. "mode" is "system" (follow macOS), "light" or "dark"; "light" and "dark"
+  // name the theme used in each mode. Built in: "One Light" and "One Dark". More themes:
+  // put Zed theme files (*.json) into the "themes" folder next to this file.
   "theme": {
     "mode": "system",
     "light": "One Light",
