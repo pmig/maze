@@ -121,8 +121,12 @@ fn cmd_comma_opens_settings_json_and_creates_it(cx: &mut TestAppContext) {
     });
     assert_eq!(count, 1);
 
-    // The defaults, read-only.
-    cx.dispatch_action(OpenDefaultSettings);
+    // The banner explains the file and links to the defaults, read-only.
+    assert!(cx.debug_bounds("settings-banner").is_some());
+    let link = cx
+        .debug_bounds("settings-open-defaults")
+        .expect("the link to the defaults");
+    cx.simulate_click(link.center(), gpui::Modifiers::none());
     cx.run_until_parked();
     let defaults = view
         .read_with(cx, |w, cx| {
