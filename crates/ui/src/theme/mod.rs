@@ -5,6 +5,10 @@
 //! gpui-kit [`ThemeConfig`] through the table in [`COLOR_MAP`]. gpui-kit derives every
 //! color the table leaves out (hover and active shades, chart colors, …).
 //!
+//! The theme's editor colors and `syntax` styles become gpui-kit's highlight theme
+//! ([`highlight_style`]), so code editors such as the `settings.json` tab use the same
+//! colors as the rest of Maze instead of gpui-kit's built-in highlight theme.
+//!
 //! The bundled default is Zed's "One" family (One Dark / One Light, MIT licensed, see
 //! `assets/themes/LICENSE-one`). The window follows the system light/dark appearance
 //! through [`observe_system_appearance`].
@@ -14,6 +18,7 @@ pub mod zed;
 use std::rc::Rc;
 
 use gpui::{App, Global, Rgba, SharedString, Subscription, Window, WindowAppearance};
+use gpui_kit::component::highlighter::HighlightThemeStyle;
 use gpui_kit::component::{Theme, ThemeConfig, ThemeConfigColors, ThemeMode};
 use serde_json::{Map, Value};
 
@@ -174,6 +179,87 @@ pub fn is_color(value: &str) -> bool {
     Rgba::try_from(value).is_ok()
 }
 
+/// Zed's status keys that gpui-kit's highlight theme reads under the same names.
+const STATUS_KEYS: &[&str] = &[
+    "error",
+    "error.background",
+    "error.border",
+    "warning",
+    "warning.background",
+    "warning.border",
+    "info",
+    "info.background",
+    "info.border",
+    "success",
+    "success.background",
+    "success.border",
+    "hint",
+    "hint.background",
+    "hint.border",
+];
+
+/// The theme's editor colors and syntax styles as gpui-kit's highlight theme. The
+/// editor colors are set field by field; status colors and syntax styles use Zed's key
+/// names, which gpui-kit reads too. Invalid colors are skipped, `oblique` becomes
+/// italic and weights snap to the nearest of 100…900.
+pub fn highlight_style(theme: &ThemeContent) -> Option<HighlightThemeStyle> {
+    let hsla = |key: &str| {
+        theme
+            .style
+            .color(key)
+            .and_then(|c| Rgba::try_from(c).ok())
+            .map(gpui::Hsla::from)
+    };
+    let mut status = Map::new();
+    for key in STATUS_KEYS {
+        if let Some(color) = theme.style.color(key).filter(|c| is_color(c)) {
+            status.insert((*key).to_owned(), Value::String(color.to_owned()));
+        }
+    }
+    let mut syntax = Map::new();
+    for (capture, highlight) in &theme.style.syntax {
+        let mut entry = Map::new();
+        if let Some(color) = highlight.color.as_deref().filter(|c| is_color(c)) {
+            entry.insert("color".into(), Value::String(color.to_owned()));
+        }
+        match highlight.font_style.as_deref() {
+            Some("italic" | "oblique") => {
+                entry.insert("font_style".into(), Value::String("italic".into()));
+            }
+            Some("normal") => {
+                entry.insert("font_style".into(), Value::String("normal".into()));
+            }
+            _ => {}
+        }
+        if let Some(weight) = highlight.font_weight {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let weight = ((weight / 100.).round().clamp(1., 9.) as u16) * 100;
+            entry.insert("font_weight".into(), Value::from(weight));
+        }
+        if !entry.is_empty() {
+            syntax.insert(capture.clone(), Value::Object(entry));
+        }
+    }
+    let syntax = match serde_json::from_value(Value::Object(syntax)) {
+        Ok(syntax) => syntax,
+        Err(error) => {
+            tracing::warn!(%error, theme = %theme.name, "theme syntax mapping rejected");
+            return None;
+        }
+    };
+    Some(HighlightThemeStyle {
+        editor_background: hsla("editor.background"),
+        editor_foreground: hsla("editor.foreground"),
+        editor_active_line: hsla("editor.active_line.background"),
+        editor_line_number: hsla("editor.line_number"),
+        editor_active_line_number: hsla("editor.active_line_number"),
+        editor_invisible: hsla("editor.invisible"),
+        editor_gutter_background: hsla("editor.gutter.background"),
+        status: serde_json::from_value(Value::Object(status)).unwrap_or_default(),
+        syntax,
+    })
+}
+
 /// Maps one Zed theme onto a gpui-kit theme configuration.
 pub fn theme_config(theme: &ThemeContent) -> ThemeConfig {
     let mut colors = Map::new();
@@ -203,6 +289,7 @@ pub fn theme_config(theme: &ThemeContent) -> ThemeConfig {
         radius_lg: Some(UI_RADIUS_LG),
         shadow: Some(false),
         colors,
+        highlight: highlight_style(theme),
         ..ThemeConfig::default()
     }
 }
@@ -405,6 +492,54 @@ mod tests {
             let theme = Theme::global(cx);
             assert!(theme.theme_name().starts_with("One"));
             assert_eq!(theme.font_size, gpui::px(UI_FONT_SIZE));
+            // Code editors (the settings tab) use the theme's editor colors.
+            let family = family();
+            let mode = theme.mode;
+            let expected = family
+                .theme(if mode.is_dark() {
+                    AppearanceContent::Dark
+                } else {
+                    AppearanceContent::Light
+                })
+                .and_then(|t| t.style.color("editor.background"))
+                .map(|c| gpui::Hsla::from(Rgba::try_from(c).unwrap()));
+            assert_eq!(theme.highlight_theme.style.editor_background, expected);
         });
+    }
+
+    #[test]
+    fn maps_editor_colors_and_syntax_onto_the_highlight_theme() {
+        let family = family();
+        let dark = family.theme(AppearanceContent::Dark).unwrap();
+        let style = highlight_style(dark).expect("One Dark maps");
+        let color = |key: &str| {
+            dark.style
+                .color(key)
+                .map(|c| gpui::Hsla::from(Rgba::try_from(c).unwrap()))
+        };
+        assert_eq!(style.editor_background, color("editor.background"));
+        assert_eq!(style.editor_foreground, color("editor.foreground"));
+        assert_eq!(style.editor_line_number, color("editor.line_number"));
+        assert!(style.syntax.string.is_some());
+        assert!(style.syntax.property.is_some(), "JSON keys are properties");
+        assert!(style.syntax.comment.is_some());
+        assert!(theme_config(dark).highlight.is_some());
+
+        // Odd values are tolerated: oblique, off-scale weights, broken colors.
+        let theme: ThemeContent = serde_json::from_value(serde_json::json!({
+            "name": "Odd",
+            "appearance": "light",
+            "style": {
+                "editor.background": "not a color",
+                "syntax": {
+                    "keyword": { "color": "#ff0000", "font_style": "oblique", "font_weight": 650.0 },
+                    "string": { "color": "nope" }
+                }
+            }
+        }))
+        .unwrap();
+        let style = highlight_style(&theme).expect("still maps");
+        assert_eq!(style.editor_background, None);
+        assert!(style.syntax.keyword.is_some());
     }
 }
