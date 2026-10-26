@@ -7,8 +7,6 @@ import { NUMBERS, SITE, repoFile } from "../data/site";
 import { getRelease } from "../lib/release";
 import heroShot from "../../../docs/screenshots/app-real-data.png";
 import heroShotDark from "../../../docs/screenshots/app-real-data-dark.png";
-import tableShot from "../../../docs/screenshots/app-table.png";
-import tableShotDark from "../../../docs/screenshots/app-table-dark.png";
 
 const release = await getRelease();
 
@@ -72,7 +70,7 @@ const TERMINAL = [
         dark={heroShotDark}
         priority
         alt="The Maze main window with demo mail: a folder pane with unified folders and accounts, a message list, an open message with DKIM, SPF and DMARC badges, and the agent column, which says AI is off."
-        caption="Demo mailbox. The agent column on the right is a preview; connecting agents is planned."
+        caption="Demo mailbox. On the right, the agent column, where Claude Code, Codex, Cursor or pi can help once you turn AI on."
       />
     </div>
 
@@ -119,15 +117,6 @@ const TERMINAL = [
           </p>
           <p><a href="/docs/getting-started/#import-mail">Importing and accounts <span aria-hidden="true">→</span></a></p>
         </article>
-      </div>
-
-      <div class="wide-shot">
-        <Screenshot
-          src={tableShot}
-          dark={tableShotDark}
-          alt="Maze with the message list as a table: star, subject, correspondent and date columns, bold unread threads and expandable conversations."
-          caption="Table view with conversations, in the light or dark theme like this page."
-        />
       </div>
     </section>
 
@@ -400,9 +389,6 @@ const TERMINAL = [
     gap: 0.2rem;
   }
 
-  .wide-shot {
-    margin-top: 2.5rem;
-  }
 
   .stats {
     display: grid;
