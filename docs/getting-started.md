@@ -496,7 +496,7 @@ your own text ends), not at the very bottom below the quote. The plain-text part
 blank line, the footer, a blank line and the Maze line; the HTML part the rendered
 footer and a small grey "Sent with Maze" line.
 
-Reply (`cmd-r`), reply all (`cmd-shift-r`) and forward (`cmd-l`) open the same kind of
+Reply (`cmd-r`, or `r` in the list), reply all (`cmd-shift-r`, or `shift-r`) and forward (`cmd-l`) open the same kind of
 tab with the recipients, `Re:`/`Fwd:` subject and the quoted message filled in (HTML mail is
 quoted as Markdown). Messages are sent right away. When the server can't be reached,
 the message waits in the outbox and goes out by itself when it can; a message the server
@@ -592,6 +592,7 @@ Maze uses Thunderbird's shortcuts and fills the gaps with Zed's. These are bound
 | Open the message in a tab            | `enter`, `cmd-o`, double-click |
 | New message                          | `cmd-n`                     |
 | Reply / reply all / forward          | `cmd-r` / `cmd-shift-r` / `cmd-l` |
+| Reply / reply all (list and reader)  | `r` / `shift-r`             |
 | Send (draft)                         | `cmd-enter`                 |
 | Close the tab                        | `cmd-w`                     |
 | Next / previous tab                  | `ctrl-tab` / `ctrl-shift-tab`, `cmd-}` / `cmd-{` |
