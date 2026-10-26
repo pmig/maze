@@ -122,7 +122,7 @@ impl Harness {
             size: self.artifact.len() as u64,
             sha256: hex::encode(Sha256::digest(&self.artifact)),
             min_schema_from: 0,
-            notes_url: Url::parse("https://github.com/pmig/mazemail/releases/tag/0.4.0").unwrap(),
+            notes_url: Url::parse("https://github.com/pmig/maze/releases/tag/0.4.0").unwrap(),
         }
     }
 

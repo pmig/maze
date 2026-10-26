@@ -37,7 +37,7 @@ don't appear in the changelog and don't trigger a release; the site deploys on i
 
 | Secret                       | What it is                                                                                     | Used by                    |
 | ---------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------- |
-| `RELEASE_BOT_TOKEN`          | A bot token (fine-grained PAT of a bot account, or a GitHub App token) with **Contents: read and write** and **Pull requests: read and write** on `pmig/mazemail`. Not `GITHUB_TOKEN`: tags created with it don't trigger `release-artifacts.yaml` | release-please, push to `gh-pages` |
+| `RELEASE_BOT_TOKEN`          | A bot token (fine-grained PAT of a bot account, or a GitHub App token) with **Contents: read and write** and **Pull requests: read and write** on `pmig/maze`. Not `GITHUB_TOKEN`: tags created with it don't trigger `release-artifacts.yaml` | release-please, push to `gh-pages` |
 | `UPDATE_SIGNING_KEY`         | The content of `update-key.secret` (see step 2), verbatim                                      | update manifests           |
 | `APPLE_CERTIFICATE_P12`      | base64 of the **Developer ID Application** certificate with its private key, exported as `.p12` | `sign-and-notarize-mac`    |
 | `APPLE_CERTIFICATE_PASSWORD` | the password of that `.p12`                                                                    | `sign-and-notarize-mac`    |

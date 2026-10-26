@@ -18,7 +18,7 @@
 #   ASSET_DIR    directory holding the uploaded release artifacts (required)
 #   PAGES_DIR    checkout of the gh-pages branch (required)
 #   COMMIT       commit the release was built from (default: git rev-parse --short=7 HEAD)
-#   REPO         GitHub repository (default: $GITHUB_REPOSITORY, else pmig/mazemail)
+#   REPO         GitHub repository (default: $GITHUB_REPOSITORY, else pmig/maze)
 #   SKIP_MACOS   set to 1 to skip macOS manifests, e.g. when the build was not signed
 set -euo pipefail
 
@@ -30,7 +30,7 @@ cd "$repo_root"
 : "${KEY_FILE:?KEY_FILE is required}"
 : "${ASSET_DIR:?ASSET_DIR is required}"
 : "${PAGES_DIR:?PAGES_DIR is required}"
-repo=${REPO:-${GITHUB_REPOSITORY:-pmig/mazemail}}
+repo=${REPO:-${GITHUB_REPOSITORY:-pmig/maze}}
 commit=${COMMIT:-$(git rev-parse --short=7 HEAD)}
 skip_macos=${SKIP_MACOS:-0}
 

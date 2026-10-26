@@ -6,9 +6,9 @@ export const SITE = {
   url: "https://mazemail.dev",
   description:
     "Maze is the agentic email client: local-first, open source and written in Rust, crafted for speed and collaboration with humans and AI: GPU-rendered, encrypted at rest, with sandboxed AI agents next to your mail and scoped access through the mazemail CLI.",
-  repo: "https://github.com/pmig/mazemail",
-  releases: "https://github.com/pmig/mazemail/releases",
-  issues: "https://github.com/pmig/mazemail/issues",
+  repo: "https://github.com/pmig/maze",
+  releases: "https://github.com/pmig/maze/releases",
+  issues: "https://github.com/pmig/maze/issues",
   author: "Philip Miglinci",
   license: "GPL-3.0-or-later",
   status: "Pre-alpha",

@@ -93,7 +93,7 @@ Not there yet:
 ### macOS
 
 Download `Maze-<version>-macos-aarch64.dmg` (Apple Silicon) or `…-x86_64.dmg` (Intel)
-from [GitHub Releases](https://github.com/pmig/mazemail/releases) once the first
+from [GitHub Releases](https://github.com/pmig/maze/releases) once the first
 release is published, open it and drag Maze to Applications. From then on Maze updates
 itself: it installs new versions in the background and shows **Restart to update** in
 the title bar ([details](docs/getting-started.md#updates)). There is deliberately no

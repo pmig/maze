@@ -120,7 +120,7 @@ mod tests {
 
         // The updater installed alpha.2 and recorded its notes.
         let notes =
-            Url::parse("https://github.com/pmig/mazemail/releases/tag/0.1.0-alpha.2").unwrap();
+            Url::parse("https://github.com/pmig/maze/releases/tag/0.1.0-alpha.2").unwrap();
         record_installed(
             &updates,
             &InstalledUpdate {

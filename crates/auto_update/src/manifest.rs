@@ -351,13 +351,13 @@ pub(crate) mod tests {
             arch: "aarch64".to_owned(),
             published: datetime!(2026-11-02 09:00:00 UTC),
             url: Url::parse(
-                "https://github.com/pmig/mazemail/releases/download/0.4.0/Maze-0.4.0-macos-aarch64.app.tar.zst",
+                "https://github.com/pmig/maze/releases/download/0.4.0/Maze-0.4.0-macos-aarch64.app.tar.zst",
             )
             .unwrap(),
             size: 41_231_872,
             sha256: "ab".repeat(32),
             min_schema_from: 3,
-            notes_url: Url::parse("https://github.com/pmig/mazemail/releases/tag/0.4.0")
+            notes_url: Url::parse("https://github.com/pmig/maze/releases/tag/0.4.0")
                 .unwrap(),
         }
     }
@@ -371,10 +371,10 @@ pub(crate) mod tests {
         let mut manifest = sample_manifest();
         assert_eq!(
             manifest.dmg_url().unwrap().as_str(),
-            "https://github.com/pmig/mazemail/releases/download/0.4.0/Maze-0.4.0-macos-aarch64.dmg"
+            "https://github.com/pmig/maze/releases/download/0.4.0/Maze-0.4.0-macos-aarch64.dmg"
         );
         manifest.url = Url::parse(
-            "https://github.com/pmig/mazemail/releases/download/0.4.0/Maze-0.4.0-linux-x86_64.tar.zst",
+            "https://github.com/pmig/maze/releases/download/0.4.0/Maze-0.4.0-linux-x86_64.tar.zst",
         )
         .unwrap();
         assert_eq!(manifest.dmg_url(), None);
