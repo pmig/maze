@@ -773,7 +773,7 @@ async fn append_with_synchronizing_literal_returns_appenduid() {
     );
     let (mut client, server) = connected(&script).await;
     let uid = client
-        .append("Sent", message.as_bytes(), Flags::SEEN)
+        .append("Sent", message.as_bytes(), Flags::SEEN, &[])
         .await
         .unwrap();
     assert_eq!(
@@ -784,7 +784,7 @@ async fn append_with_synchronizing_literal_returns_appenduid() {
         })
     );
     match client
-        .append("Missing", message.as_bytes(), Flags::empty())
+        .append("Missing", message.as_bytes(), Flags::empty(), &[])
         .await
         .unwrap_err()
     {
@@ -799,7 +799,7 @@ async fn append_with_synchronizing_literal_returns_appenduid() {
 #[tokio::test]
 async fn append_with_literal_plus_does_not_wait() {
     let script = format!(
-        r#"{}C: A0003 APPEND "Drafts" (\Draft) {{5+}}
+        r#"{}C: A0003 APPEND "Drafts" (\Draft projekt) {{5+}}
         L: draft
         S: A0003 OK APPEND completed
         "#,
@@ -807,7 +807,13 @@ async fn append_with_literal_plus_does_not_wait() {
     );
     let (mut client, server) = connected(&script).await;
     let uid = client
-        .append("Drafts", b"draft", Flags::DRAFT)
+        // Keywords go into the flag list; one the server can't take is left out.
+        .append(
+            "Drafts",
+            b"draft",
+            Flags::DRAFT,
+            &["projekt".to_owned(), "bad(".to_owned()],
+        )
         .await
         .unwrap();
     assert_eq!(uid, None);

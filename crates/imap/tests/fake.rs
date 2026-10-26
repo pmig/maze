@@ -348,7 +348,7 @@ async fn append_returns_appenduid() {
     let server = FakeServer::new();
     let mut session = server.connect();
     let appended = session
-        .append("Sent", b"Subject: sent\r\n\r\nbody", Flags::SEEN)
+        .append("Sent", b"Subject: sent\r\n\r\nbody", Flags::SEEN, &[])
         .await
         .unwrap()
         .unwrap();
@@ -356,12 +356,15 @@ async fn append_returns_appenduid() {
     assert_eq!(Some(appended.uidvalidity), server.uidvalidity("Sent"));
     assert_eq!(server.messages("Sent")[0].flags, Flags::SEEN);
     assert!(matches!(
-        session.append("Nope", b"x", Flags::empty()).await,
+        session.append("Nope", b"x", Flags::empty(), &[]).await,
         Err(ImapError::No { code: Some(code), .. }) if code == "TRYCREATE"
     ));
     server.set_caps(&["IMAP4rev1"]);
     assert_eq!(
-        session.append("Sent", b"x", Flags::empty()).await.unwrap(),
+        session
+            .append("Sent", b"x", Flags::empty(), &[])
+            .await
+            .unwrap(),
         None
     );
 }

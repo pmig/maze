@@ -79,7 +79,7 @@ async fn syncs_a_real_server() {
         .unwrap();
     for n in 1..=5 {
         other
-            .append("INBOX", &message(n), Flags::empty())
+            .append("INBOX", &message(n), Flags::empty(), &[])
             .await
             .unwrap();
     }
@@ -128,7 +128,7 @@ async fn syncs_a_real_server() {
 
     // New mail through IDLE.
     other
-        .append("INBOX", &message(6), Flags::empty())
+        .append("INBOX", &message(6), Flags::empty(), &[])
         .await
         .unwrap();
     wait_for("IDLE delivery", || inbox().is_some_and(|f| f.total == 6)).await;

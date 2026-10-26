@@ -1,18 +1,19 @@
-//! `CoreMailSource` over a real core with mail imported through the `import` crate.
+//! `CoreMailSource` over a real core with mail stored like synced mail (`import`'s
+//! mbox reader, then `ingest` with server UIDs).
 
 #![allow(clippy::unwrap_used, reason = "tests")]
 
 use std::sync::Arc;
 
-use import::ImportTarget;
-use import::local::{ensure_folder_path, local_account};
-use ingest::Ingestor;
+use import::mbox::{Escaping, MboxReader};
+use ingest::{Ingestor, MessageMeta, RawItem};
 use mail_ui::source::{
     FolderKey, ListSort, MailSource, MessageBody, SortBy, ThreadFilter, ThreadScope,
 };
 use mazemail::source::{CoreMailSource, NO_ACCOUNTS};
 use mazemail_core::{CoreConfig, CoreHandle};
-use mazemail_types::{Flags, FolderRole};
+use mazemail_types::{AccountId, Flags, FolderId, FolderRole};
+use store::{AccountKind, NewAccount, NewFolder, NewLocation, Store};
 use vault::MemoryKeyStore;
 
 struct Seeded {
@@ -76,31 +77,57 @@ fn seeded() -> Seeded {
     let dir = tempfile::tempdir().unwrap();
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let core = open_core(&runtime, &dir.path().join("data"));
-    let file = dir.path().join("inbox.mbox");
-    std::fs::write(&file, mbox()).unwrap();
     let store = core.store().clone();
-    let account = local_account(&store, "Personal").unwrap();
-    let path = vec!["Inbox".to_owned()];
-    ensure_folder_path(&store, account, &path, Some(FolderRole::Inbox)).unwrap();
-    ensure_folder_path(
+    let account = store
+        .write_blocking(|w| {
+            w.create_account(&NewAccount {
+                kind: AccountKind::Imap,
+                name: "Personal".to_owned(),
+                config_json: "{}".to_owned(),
+                ordinal: 0,
+            })
+        })
+        .unwrap();
+    let inbox = folder(
         &store,
         account,
-        &["Archive".to_owned()],
+        None,
+        "Inbox",
+        "INBOX",
+        Some(FolderRole::Inbox),
+    );
+    folder(
+        &store,
+        account,
+        None,
+        "Archive",
+        "Archive",
         Some(FolderRole::Archive),
-    )
-    .unwrap();
+    );
     let ingestor = Ingestor::with_sink(store, Arc::new(core.index_sink()));
-    let stats = import::import_mbox(
-        &ingestor,
-        &file,
-        &ImportTarget {
-            account: Some(account),
-            folder: Some(path),
-        },
-        &import::NoProgress,
-    )
-    .unwrap();
-    assert_eq!(stats.imported, 3);
+    let text = mbox();
+    let items: Vec<RawItem> = MboxReader::new(text.as_bytes())
+        .with_escaping(Escaping::Mboxrd)
+        .enumerate()
+        .map(|(n, record)| {
+            let record = record.unwrap();
+            let r = import::reconstruct(&record.message);
+            let location = NewLocation {
+                folder: inbox,
+                uid: Some(n as u32 + 1),
+                modseq: None,
+                flags: r.mozilla.flags(),
+                keywords: r.mozilla.keywords(),
+            };
+            RawItem {
+                meta: MessageMeta::new(account, location).with_internal_date(record.envelope.date),
+                raw: r.bytes,
+            }
+        })
+        .collect();
+    let stored = ingestor.ingest_raw_batch_blocking(items);
+    assert!(stored.iter().all(Result::is_ok));
+    assert_eq!(stored.len(), 3);
     runtime.block_on(core.commit_index()).unwrap();
     Seeded {
         source: CoreMailSource::new(core.clone()),
@@ -108,6 +135,32 @@ fn seeded() -> Seeded {
         runtime,
         _dir: dir,
     }
+}
+
+/// Creates a server folder of `account`.
+fn folder(
+    store: &Store,
+    account: AccountId,
+    parent: Option<FolderId>,
+    name: &str,
+    remote: &str,
+    role: Option<FolderRole>,
+) -> FolderId {
+    let (name, remote) = (name.to_owned(), remote.to_owned());
+    store
+        .write_blocking(move |w| {
+            w.create_folder(&NewFolder {
+                account,
+                parent,
+                remote_name: Some(remote),
+                display_name: name,
+                role,
+                is_label: false,
+                sync_policy: None,
+                ordinal: 0,
+            })
+        })
+        .unwrap()
 }
 
 const INBOX: FolderKey = FolderKey::Unified(FolderRole::Inbox);
@@ -120,7 +173,7 @@ fn folders_lists_rows_and_messages() {
     assert_eq!(unified, [INBOX, FolderKey::Unified(FolderRole::Archive)]);
     assert_eq!(tree.accounts.len(), 1);
     assert_eq!(tree.accounts[0].name.as_ref(), "Personal");
-    assert_eq!(tree.accounts[0].kind, mail_ui::source::AccountKind::Local);
+    assert_eq!(tree.accounts[0].kind, mail_ui::source::AccountKind::Imap);
     let inbox = tree.accounts[0]
         .folders
         .iter()
@@ -574,13 +627,15 @@ fn quick_move_moves_threads_and_messages_undoably() {
     let FolderKey::Folder(inbox_id) = inbox else {
         panic!("a folder");
     };
-    let (projects, _) = ensure_folder_path(
+    let parent = folder(t.core.store(), account, None, "Projects", "Projects", None);
+    let projects = folder(
         t.core.store(),
         account,
-        &["Projects".to_owned(), "Maze".to_owned()],
+        Some(parent),
+        "Maze",
+        "Projects/Maze",
         None,
-    )
-    .unwrap();
+    );
     let keys = |key: FolderKey| {
         t.source
             .thread_keys(

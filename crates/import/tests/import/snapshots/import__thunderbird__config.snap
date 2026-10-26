@@ -19,6 +19,10 @@ accounts:
       - id4
     key: account4
     server: server4
+  - identities:
+      - id5
+    key: account5
+    server: server5
 default_account: account1
 default_smtp_server: smtp1
 default_store: mbox
@@ -109,6 +113,27 @@ identities:
       use_file: false
     smtp_server: ~
     templates_folder: ~
+  id5:
+    archive_enabled: true
+    archive_folder: ~
+    archive_granularity: 1
+    archive_keep_folder_structure: false
+    catch_all: false
+    catch_all_hint: []
+    draft_folder: ~
+    email: anna@example.net
+    fcc_folder: ~
+    full_name: Anna
+    key: id5
+    organization: ~
+    reply_to: ~
+    signature:
+      file: ~
+      is_html: false
+      text: ~
+      use_file: false
+    smtp_server: smtp3
+    templates_folder: ~
 local_folders_server: server3
 pane_layout: 2
 servers:
@@ -160,6 +185,18 @@ servers:
     socket: plain
     store_format: mbox
     username: ~
+  server5:
+    auth: password
+    deferred_to_account: account3
+    directory: "[profile]/Mail/pop.example.net"
+    hostname: pop.example.net
+    key: server5
+    kind: pop3
+    name: anna@example.net
+    port: 995
+    socket: tls
+    store_format: mbox
+    username: anna@example.net
 smtp_servers:
   - auth: password
     description: Example SMTP

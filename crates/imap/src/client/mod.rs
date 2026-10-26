@@ -1054,9 +1054,17 @@ impl ImapSession for ImapClient {
         folder: &str,
         raw: &[u8],
         flags: Flags,
+        keywords: &[String],
     ) -> Result<Option<AppendUid>> {
         let (_, quoted) = self.quoted_folder(folder)?;
-        let names = flags.to_imap();
+        let mut names: Vec<&str> = flags.to_imap();
+        for keyword in keywords {
+            match validate_keyword(keyword) {
+                Ok(()) => names.push(keyword),
+                // A tag the server can't store doesn't keep the message from uploading.
+                Err(_) => tracing::debug!("skipping an invalid keyword in APPEND"),
+            }
+        }
         let flag_list = if names.is_empty() {
             String::new()
         } else {

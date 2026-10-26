@@ -23,7 +23,7 @@ accounts:
     host: Local Folders
     identities: 0
     key: account3
-    kind: local
+    kind: unsupported
     name: Local Folders
     port: ~
     username: nobody
@@ -35,11 +35,19 @@ accounts:
     name: news.example.org
     port: 119
     username: ~
+  - auth: none
+    host: pop.example.net
+    identities: 1
+    key: account5
+    kind: unsupported
+    name: anna@example.net
+    port: 995
+    username: anna@example.net
 address_books:
   - contacts: 4
     lists: 1
     name: Personal Address Book
-filters: 3
+filters: 2
 filters_with_unsupported_actions: 1
 identities: 3
 layout:
@@ -53,11 +61,6 @@ layout:
   message_pane_width: 640
   pane_layout: 2
   thread_pane_list_view: 1
-local_folders:
-  - account: Local Folders
-    bytes: 2146
-    folders: 6
-    format: mbox
 offline_store_bytes: 5320
 profile: "[profile]"
 saved_searches: 2
@@ -65,9 +68,15 @@ signatures: 2
 smtp_servers: 3
 tags: 6
 unsupported:
-  - item: account news.example.org
-    reason: "News (NNTP) accounts aren't supported by Maze"
-  - item: 3 message filters
+  - item: Local Folders
+    reason: "skipped: Maze keeps all mail on your servers — move it into an IMAP folder in Thunderbird, or import its mbox files with `mazemail import <file> --account …`"
+  - item: News (NNTP) account news.example.org
+    reason: "skipped: Maze supports IMAP accounts only"
+  - item: POP3 account anna@example.net
+    reason: "skipped: Maze supports IMAP only — enable IMAP at your provider and add it"
+  - item: 1 message filters
+    reason: "skipped: they belong to accounts Maze doesn't import"
+  - item: 2 message filters
     reason: "imported disabled; review and enable them once Maze's rules engine is available"
   - item: 1 mailing lists in Personal Address Book
     reason: Maze has no contact lists yet; their members are imported as contacts

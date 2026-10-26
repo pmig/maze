@@ -105,9 +105,12 @@ doesn't donate mail to Spotlight.
 
 ## Lost key and recovery
 
-Most of `mail/` is a copy of what's on your servers, so a lost key mostly means syncing
-again. What only exists locally would be lost: Local Folders and mail you imported into
-them, tags and saved searches that aren't on a server, API tokens and the audit log.
+Maze keeps all mail in server accounts ([ADR-019](adr/0019-imap-only.md)), so `mail/` is
+a copy of what's on your servers and a lost key means syncing again. What only exists
+locally would be lost: uploads from an import that haven't reached the server yet, tags
+and saved searches that aren't on a server, API tokens, the audit log, and Local Folders
+left over from earlier versions of Maze (export them, see
+[Getting started](getting-started.md#local-folders-from-earlier-versions)).
 
 If Maze finds encrypted mail but no key (a new Mac, a reset keychain, a restored
 backup), it opens a dialog that can't be dismissed, with two ways out:
@@ -122,7 +125,7 @@ backup), it opens a dialog that can't be dismissed, with two ways out:
 
 Maze can't show you the recovery key yet (it's planned under Settings → Privacy, behind
 Touch ID or your password). Until then the keychain item is the only copy of the key,
-so keep the originals of anything you imported into Local Folders.
+so keep the originals of anything you import until the upload has reached your server.
 
 ## Local API tokens
 

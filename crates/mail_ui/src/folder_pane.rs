@@ -177,7 +177,6 @@ fn account_icon(kind: AccountKind) -> IconName {
     match kind {
         AccountKind::Gmail | AccountKind::Microsoft => IconName::Mail,
         AccountKind::Imap => IconName::Server,
-        AccountKind::Local => IconName::Mailbox,
     }
 }
 

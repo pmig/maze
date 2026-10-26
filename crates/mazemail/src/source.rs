@@ -61,7 +61,7 @@ pub const SEARCH_LIMIT: usize = 2_000;
 
 /// What the list shows before any account exists.
 pub const NO_ACCOUNTS: &str = "No accounts yet. Add your IMAP, Gmail or Microsoft account, or \
-     import mail with `mazemail import <file.mbox>`.";
+     bring your Thunderbird accounts with `mazemail import <profile folder>`.";
 
 enum State {
     Opening,
@@ -318,7 +318,6 @@ fn account_kind(kind: mazemail_core::AccountKind) -> AccountKind {
     match kind {
         mazemail_core::AccountKind::Gmail => AccountKind::Gmail,
         mazemail_core::AccountKind::M365 => AccountKind::Microsoft,
-        mazemail_core::AccountKind::Local => AccountKind::Local,
         _ => AccountKind::Imap,
     }
 }

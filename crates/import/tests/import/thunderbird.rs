@@ -6,9 +6,8 @@ use import::thunderbird::{
     ImportOptions, ProfileLocator, ThunderbirdProfile, import, model::ThunderbirdConfig,
 };
 use import::{BodyReuse, Phase, ProgressUpdate};
-use mazemail_types::{Flags, FolderRole};
 use pretty_assertions::assert_eq;
-use store::{AccountKind, MessageScope, Queries, RuleTrigger, SmtpAuth, SmtpSecurity};
+use store::{AccountKind, Queries, RuleTrigger, SmtpAuth, SmtpSecurity};
 
 use crate::common::{Env, redact, thunderbird_copy, vault};
 
@@ -78,7 +77,19 @@ fn dry_run_report_snapshot() {
     let profile = ThunderbirdProfile::load(&profile_dir).unwrap();
     let report = profile.report().unwrap();
     assert_eq!(report.sign_in_again().count(), 1);
+    // The POP3 account isn't imported, so Maze won't ask for its password.
     assert_eq!(report.password_prompts().count(), 1);
+    let skipped: Vec<String> = report.unsupported.iter().map(ToString::to_string).collect();
+    assert!(skipped.contains(
+        &"POP3 account anna@example.net skipped: Maze supports IMAP only — enable IMAP at your \
+          provider and add it"
+            .to_owned()
+    ));
+    assert!(
+        skipped
+            .iter()
+            .any(|s| s.starts_with("Local Folders skipped: "))
+    );
     insta::assert_yaml_snapshot!(
         "report",
         redact(serde_json::to_value(&report).unwrap(), &profile_dir)
@@ -98,35 +109,41 @@ fn imports_everything_and_reruns_without_duplicates() {
     let progress = |u: ProgressUpdate| updates.lock().unwrap().push(u);
     let outcome = import(
         &profile,
-        &env.ingestor,
+        &env.store,
         Some(&reuse),
         &ImportOptions::default(),
         &progress,
     )
     .unwrap();
 
-    assert_eq!(outcome.accounts_created, 3);
+    assert_eq!(outcome.accounts_created, 2);
     assert_eq!(outcome.smtp_servers, 2);
     assert_eq!(outcome.identities, 3);
     assert_eq!(outcome.signatures, 2);
     // `$label1` renamed, `projekt` new; the other defaults are seeded by the store.
     assert_eq!(outcome.tags, 2);
     assert_eq!(outcome.contacts, 4);
-    assert_eq!(outcome.rules, 3);
+    // Local Folders' filter goes with Local Folders.
+    assert_eq!(outcome.rules, 2);
     assert_eq!(outcome.saved_searches, 2);
-    assert_eq!(outcome.messages.imported, 4);
-    assert_eq!(outcome.messages.deleted, 1);
-    assert_eq!(outcome.messages.folders_created, 6);
+    assert_eq!(
+        outcome.skipped,
+        [
+            "Local Folders skipped: Maze keeps all mail on your servers — move it into an IMAP \
+             folder in Thunderbird, or import its mbox files with \
+             `mazemail import <file> --account …`",
+            "News (NNTP) account news.example.org skipped: Maze supports IMAP accounts only",
+            "POP3 account anna@example.net skipped: Maze supports IMAP only — enable IMAP at your \
+             provider and add it",
+            "1 message filters skipped: they belong to accounts Maze doesn't import",
+        ]
+    );
+    // Bodies of the IMAP accounts' offline stores are reused by the first sync.
     assert_eq!(outcome.body_index.unwrap().indexed, 10);
     assert!(outcome.warnings.is_empty(), "{:?}", outcome.warnings);
     assert!(outcome.layout.is_some());
     let phases: Vec<Phase> = updates.lock().unwrap().iter().map(|u| u.phase).collect();
-    for phase in [
-        Phase::Accounts,
-        Phase::Messages,
-        Phase::Contacts,
-        Phase::BodyIndex,
-    ] {
+    for phase in [Phase::Accounts, Phase::Contacts, Phase::BodyIndex] {
         assert!(phases.contains(&phase), "{phase:?} missing");
     }
 
@@ -139,7 +156,6 @@ fn imports_everything_and_reruns_without_duplicates() {
         vec![
             (AccountKind::Imap, "Work"),
             (AccountKind::Gmail, "anna.example@gmail.com"),
-            (AccountKind::Local, "Local Folders"),
         ]
     );
     let work_config: serde_json::Value = serde_json::from_str(&accounts[0].config_json).unwrap();
@@ -157,56 +173,10 @@ fn imports_everything_and_reruns_without_duplicates() {
     assert_eq!(gmail_smtp.security, SmtpSecurity::Tls);
     assert_eq!(gmail_smtp.auth, SmtpAuth::OAuth2);
 
-    // Local folder tree with roles.
-    let local = accounts[2].id;
-    let folders = reader.folders(Some(local)).unwrap();
-    let role = |name: &str| {
-        folders
-            .iter()
-            .find(|f| f.display_name == name)
-            .unwrap()
-            .role
-    };
-    assert_eq!(role("Inbox"), Some(FolderRole::Inbox));
-    assert_eq!(role("Trash"), Some(FolderRole::Trash));
-    assert_eq!(role("Drafts"), Some(FolderRole::Drafts));
-    assert_eq!(role("Archives"), Some(FolderRole::Archive));
-    assert_eq!(role("Unsent Messages"), None);
-    let folder = |name: &str| folders.iter().find(|f| f.display_name == name).unwrap().id;
-
-    // Messages, flags, keywords, threads.
-    let inbox_ids = reader
-        .message_ids_in_scope(&MessageScope::Folder(folder("Inbox")))
-        .unwrap();
-    assert_eq!(inbox_ids.len(), 3);
-    let details: Vec<_> = inbox_ids
-        .iter()
-        .map(|id| reader.message(*id).unwrap().unwrap())
-        .collect();
-    let by_id = |rfc: &str| {
-        details
-            .iter()
-            .find(|m| m.rfc_message_id.as_deref() == Some(rfc))
-            .unwrap()
-    };
-    let l1 = by_id("l1@local.example");
-    let l2 = by_id("l2@local.example");
-    assert_eq!(l1.thread, l2.thread);
-    assert_eq!(l1.locations[0].flags, Flags::SEEN);
-    assert_eq!(
-        l2.locations[0].flags,
-        Flags::ANSWERED | Flags::FLAGGED | Flags::FORWARDED
-    );
-    assert_eq!(l2.locations[0].keywords, vec!["$label2", "todo"]);
-    let l1_raw = env.store.blobs().read(&l1.blob.unwrap()).unwrap();
-    let text = String::from_utf8_lossy(&l1_raw);
-    assert!(text.contains("\r\n>>From two levels deep\r\n"), "{text}");
-    assert!(!text.contains("X-Mozilla"));
-    assert!(!text.contains("\n\n"));
-    let archived = reader
-        .message_ids_in_scope(&MessageScope::Folder(folder("2024")))
-        .unwrap();
-    assert_eq!(archived.len(), 1);
+    // No messages: IMAP mail comes with the first sync.
+    for account in &accounts {
+        assert!(reader.folders(Some(account.id)).unwrap().is_empty());
+    }
     let tags = reader.tags().unwrap();
     assert!(
         tags.iter()
@@ -217,7 +187,8 @@ fn imports_everything_and_reruns_without_duplicates() {
             .any(|t| t.keyword == "$label1" && t.name == "Wichtig")
     );
 
-    // Identities: signatures, SMTP, catch-all, local folders resolved.
+    // Identities: signatures, SMTP, catch-all. Their folders come with the first sync;
+    // ones in Local Folders aren't imported.
     let identities = reader.identities(None).unwrap();
     assert_eq!(identities.len(), 3);
     let anna = identities
@@ -239,8 +210,8 @@ fn imports_everything_and_reruns_without_duplicates() {
         .iter()
         .find(|i| i.input.email == "billing@example.com")
         .unwrap();
-    assert_eq!(billing.input.drafts_folder, Some(folder("Drafts")));
-    assert_eq!(billing.input.sent_folder, Some(folder("2024")));
+    assert_eq!(billing.input.drafts_folder, None);
+    assert_eq!(billing.input.sent_folder, None);
     assert_eq!(billing.input.archive_granularity, 0);
     let file_sig = reader
         .signature(billing.input.signature.unwrap())
@@ -256,7 +227,7 @@ fn imports_everything_and_reruns_without_duplicates() {
 
     // Rules are disabled with the parsed filter and a note.
     let rules = reader.rules(None).unwrap();
-    assert_eq!(rules.len(), 3);
+    assert_eq!(rules.len(), 2);
     assert!(rules.iter().all(|r| !r.input.enabled));
     let lists = rules
         .iter()
@@ -272,12 +243,7 @@ fn imports_everything_and_reruns_without_duplicates() {
             .unwrap()
             .contains("disabled")
     );
-    let periodic = rules
-        .iter()
-        .find(|r| r.input.name == "Everything periodic")
-        .unwrap();
-    assert_eq!(periodic.input.trigger, RuleTrigger::Periodic);
-    assert_eq!(periodic.input.account, Some(local));
+    assert!(!rules.iter().any(|r| r.input.name == "Everything periodic"));
     let boss = rules
         .iter()
         .find(|r| r.input.name == "Tag the boss")
@@ -285,11 +251,11 @@ fn imports_everything_and_reruns_without_duplicates() {
     let actions: serde_json::Value = serde_json::from_str(&boss.input.actions_json).unwrap();
     assert_eq!(actions[1]["supported"], false);
 
-    // Saved searches: local scopes resolve, IMAP scopes cover everything for now.
+    // Saved searches cover every folder until edited (folders come with the sync).
     let searches = reader.saved_searches().unwrap();
     let unread = searches.iter().find(|s| s.name == "Unread local").unwrap();
     assert_eq!(unread.query, "is:unread from:ben@example.org");
-    assert_eq!(unread.folders, Some(vec![folder("Inbox"), folder("2024")]));
+    assert_eq!(unread.folders, None);
     let big = searches.iter().find(|s| s.name == "Big mail").unwrap();
     assert_eq!(big.folders, None);
 
@@ -311,22 +277,20 @@ fn imports_everything_and_reruns_without_duplicates() {
     // Running the import again changes nothing.
     let again = import(
         &profile,
-        &env.ingestor,
+        &env.store,
         None,
         &ImportOptions::default(),
         &import::NoProgress,
     )
     .unwrap();
     assert_eq!(again.accounts_created, 0);
-    assert_eq!(again.accounts.len(), 3);
+    assert_eq!(again.accounts.len(), 2);
     assert_eq!(again.identities, 0);
     assert_eq!(again.tags, 0);
     assert_eq!(again.rules, 0);
     assert_eq!(again.saved_searches, 0);
-    assert_eq!(again.messages.imported, 0);
-    assert_eq!(again.messages.duplicates, 4);
     let reader = env.store.reader().unwrap();
-    assert_eq!(reader.accounts().unwrap().len(), 3);
+    assert_eq!(reader.accounts().unwrap().len(), 2);
     assert_eq!(reader.identities(None).unwrap().len(), 3);
     assert_eq!(reader.smtp_servers().unwrap().len(), 2);
     drop(reader);

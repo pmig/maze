@@ -215,8 +215,8 @@ pub(crate) fn sync(
             }
             if !synced.contains(&account) {
                 return Err(CommandError::invalid_args(format!(
-                    "account {account} isn't synced (local folders, or it needs a sign-in method \
-                     Maze can't sync)"
+                    "account {account} isn't synced (Local Folders of an older Maze, or it needs a \
+                     sign-in method Maze can't sync)"
                 )));
             }
             vec![account]

@@ -1007,7 +1007,7 @@ mazemail export 'in:inbox after:2026-01-01' --to inbox.mbox
 
 Import an mbox file, a Maildir or a Thunderbird profile.
 
-Imports into Local Folders or --account. Always asks for approval in Maze.
+Uploads mbox and Maildir mail into a folder of an IMAP account (--account, --folder; the folder is created if missing), queued and sent by the sync engine; it shows up after the folder's next sync. Messages the folder already has are skipped. A Thunderbird profile brings its IMAP accounts, identities, tags, filters, saved searches and address books; POP3 accounts and Local Folders are skipped (Maze is IMAP only). Always asks for approval in Maze.
 
 Permission: `ask`
 
@@ -1019,22 +1019,28 @@ mazemail import [OPTIONS] <PATH>
 | -------- | ----------- |
 | `<PATH>` | File or directory to import (relative to the current directory). |
 | `--format <FORMAT>` | Format (detected when omitted). One of `mbox`, `maildir`, `thunderbird`. |
-| `--account <ACCOUNT>` | Account to import into (default: Local Folders). |
+| `--account <ACCOUNT>` | Account to upload mbox and Maildir mail into (may be left out when there is only one account). Not for Thunderbird profiles, which bring their own accounts. |
+| `--folder <PATH>` | Folder of the account to upload into, as a path (`Archive/2019`); created on the server if missing. Default: a top-level folder named after the file. |
 
 Output (`--json`):
 
 ```ts
 {
+  accounts: integer,  // Accounts created (Thunderbird profiles).
+  duplicates: integer,  // Messages skipped because the folder already has them or they are queued.
   folders: integer,  // Folders created.
-  messages: integer,  // Messages imported.
+  messages: integer,  // Messages queued for upload to the server (mbox, Maildir).
+  skipped: string[],  // What wasn't imported and why ("POP3 account x@y skipped: …").
 }
 ```
 
 Examples:
 
 ```sh
-# Import an mbox file
-mazemail import ~/old-mail.mbox
+# Upload an mbox file into a folder of your account
+mazemail import ~/old-mail.mbox --account a_b --folder Archive/2019
+# Import a Thunderbird profile
+mazemail import ~/Library/Thunderbird/Profiles/abcd.default-release
 ```
 
 ### `mazemail account list`

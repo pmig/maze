@@ -26,6 +26,7 @@ const MAIN: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/main/0009_draft_support_maze.sql"
     )),
+    M::up(include_str!("../migrations/main/0010_imap_only.sql")),
 ];
 
 const SENDLOG: &[M<'static>] = &[M::up(include_str!(
@@ -471,6 +472,85 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         assert_eq!(values, [0, 1]);
+    }
+
+    #[test]
+    fn v10_removes_empty_local_accounts_and_keeps_the_ones_with_mail() {
+        let tmp = tempfile::tempdir().unwrap();
+        let key = key(10);
+        let mut conn = conn::open(&tmp.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
+        migrate_with_backup(&mut conn, &key, tmp.path(), "1.0.0", &MAIN[..9]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO account (id, kind, name) VALUES
+               (1, 'local', 'Local Folders'), (2, 'local', 'Empty'), (3, 'imap', 'Work'),
+               (4, 'imap', 'Empty IMAP');
+             INSERT INTO folder (id, account_id, remote_name, display_name)
+             VALUES (1, 1, NULL, 'Inbox'), (2, 2, NULL, 'Inbox'), (3, 3, 'INBOX', 'Inbox');
+             INSERT INTO identity (id, account_id, email, sent_folder_id)
+             VALUES (1, 3, 'me@work.example', 2);
+             INSERT INTO thread (id, account_id, last_date) VALUES (1, 1, 1);
+             INSERT INTO message (id, account_id, thread_id, date) VALUES (1, 1, 1, 1);
+             INSERT INTO message_location (message_id, folder_id, flags, date)
+             VALUES (1, 1, 0, 1);",
+        )
+        .unwrap();
+        let report = migrate_main(&mut conn, &key, tmp.path(), "1.1.0").unwrap();
+        assert_eq!((report.from, report.to), (9, SCHEMA_VERSION));
+        let accounts: Vec<(i64, String)> = conn
+            .prepare("SELECT id, kind FROM account ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        // The local account with mail stays (still a legacy local account), the empty
+        // one goes with its folder; IMAP accounts are untouched, empty or not.
+        assert_eq!(
+            accounts,
+            [
+                (1, "local".to_owned()),
+                (3, "imap".to_owned()),
+                (4, "imap".to_owned())
+            ]
+        );
+        let folders: Vec<i64> = conn
+            .prepare("SELECT id FROM folder ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(folders, [1, 3]);
+        let messages: i64 = conn
+            .query_row("SELECT COUNT(*) FROM message", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(messages, 1);
+        // An identity that filed into the removed folder just loses that setting.
+        let sent: Option<i64> = conn
+            .query_row(
+                "SELECT sent_folder_id FROM identity WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(sent, None);
+
+        // Pending ops count as blob references.
+        conn.execute_batch(
+            "INSERT INTO blob (id, size, created) VALUES (x'01', 1, 1);
+             INSERT INTO pending_op (id, account_id, kind, payload_json, origin, created,
+                                     blob_id)
+             VALUES (1, 3, 'append', '{}', 'import', 1, x'01');",
+        )
+        .unwrap();
+        let refs = |conn: &Connection| -> i64 {
+            conn.query_row("SELECT refs FROM blob WHERE id = x'01'", [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(refs(&conn), 1);
+        conn.execute_batch("DELETE FROM pending_op WHERE id = 1;")
+            .unwrap();
+        assert_eq!(refs(&conn), 0);
     }
 
     #[test]

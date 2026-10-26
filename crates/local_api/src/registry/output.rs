@@ -337,10 +337,16 @@ pub struct ExportOutput {
 /// `import`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ImportOutput {
-    /// Messages imported.
+    /// Messages queued for upload to the server (mbox, Maildir).
     pub messages: u64,
+    /// Messages skipped because the folder already has them or they are queued.
+    pub duplicates: u64,
     /// Folders created.
     pub folders: u64,
+    /// Accounts created (Thunderbird profiles).
+    pub accounts: u64,
+    /// What wasn't imported and why ("POP3 account x@y skipped: …").
+    pub skipped: Vec<String>,
 }
 
 /// One account in `account list`, and what `account add` returns.

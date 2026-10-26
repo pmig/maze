@@ -1,6 +1,6 @@
 [package]
 name = "import"
-description = "Maze importers and exporters: mbox, Maildir and Thunderbird profiles, plus the offline body reuse index"
+description = "Maze importers and exporters: mbox and Maildir uploads into IMAP folders, Thunderbird profiles, exports, plus the offline body reuse index"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,6 +17,7 @@ rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 store = { workspace = true }
+sync = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }

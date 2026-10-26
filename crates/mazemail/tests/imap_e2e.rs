@@ -145,6 +145,7 @@ async fn headless_maze_syncs_a_real_imap_server() {
                 "INBOX",
                 &message(n, &format!("Budget report {n}")),
                 Flags::empty(),
+                &[],
             )
             .await
             .unwrap();
@@ -245,6 +246,7 @@ async fn headless_maze_syncs_a_real_imap_server() {
             "INBOX",
             &message(4, "Budget report 4 (live)"),
             Flags::empty(),
+            &[],
         )
         .await
         .unwrap();

@@ -46,7 +46,7 @@
 //! {"v":1,"op":"subscribe","name":"Lists/rust","subscribed":true}
 //! {"v":1,"op":"append_draft","folder":4,"blob":"<64 hex chars>","flags":["\\Seen","\\Draft"],
 //!  "message":88,"replaces":{"message":87,"folder":4,"uid":31}}
-//! {"v":1,"op":"append","folder":5,"blob":"<64 hex chars>","flags":["\\Seen"]}
+//! {"v":1,"op":"append","folder":5,"blob":"<64 hex chars>","flags":["\\Seen"],"keywords":["todo"]}
 //! ```
 //!
 //! # Semantics per op
@@ -65,7 +65,7 @@
 //! | `delete_folder` | `DELETE`; gone already = done | deletes a label |
 //! | `subscribe` | `SUBSCRIBE` / `UNSUBSCRIBE` | same |
 //! | `append_draft` | `APPEND` the blob with the flags; APPENDUID sets the UID; then expunges `replaces` | same |
-//! | `append` | `APPEND` the blob with exactly the flags (the Sent copy of a sent message, PLAN §4.5); the folder's next sync picks it up | same |
+//! | `append` | `APPEND` the blob with exactly the flags and keywords (the Sent copy of a sent message, PLAN §4.5, or an imported message, ADR-019); the folder's next sync picks it up | same |
 //!
 //! `append_draft` and `append` are the only ops that are not idempotent: if Maze dies
 //! between the server's `OK` and removing the op, the message is appended twice.
@@ -74,7 +74,7 @@ use std::fmt;
 
 use mazemail_types::{AccountId, BlobId, Flags, FolderId, MessageId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use store::{OpId, PendingOp, WriteTx};
+use store::{OpId, PendingOp, StagedBlob, WriteTx};
 use thiserror::Error;
 
 /// The payload format version written by this build.
@@ -246,10 +246,12 @@ pub enum OpPayload {
         /// The previous version of the draft, expunged after the upload.
         replaces: Option<LocationRef>,
     },
-    /// Upload a message to a folder as it is (the Sent copy of a sent message). The
-    /// blob must stay referenced until the op is done (the outbox keeps it).
+    /// Upload a message to a folder as it is: the Sent copy of a sent message, or an
+    /// imported message (`mazemail import` of an mbox file or Maildir). The blob must
+    /// stay referenced until the op is done: the outbox keeps a Sent copy's, an
+    /// imported message's op holds its own ([`OpPayload::enqueue_with_blob`]).
     Append {
-        /// The target folder (the identity's Sent folder).
+        /// The target folder (the identity's Sent folder, the import's folder).
         folder: FolderId,
         /// The raw message in the blob store.
         #[serde(with = "blob_hex")]
@@ -257,6 +259,9 @@ pub enum OpPayload {
         /// Flags to store it with (no `\Draft`).
         #[serde(with = "flag_names")]
         flags: Flags,
+        /// Keywords (tags) to store it with.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        keywords: Vec<String>,
     },
 }
 
@@ -359,6 +364,20 @@ impl OpPayload {
     ) -> store::Result<OpId> {
         let json = self.to_json()?;
         w.enqueue_op(account, self.kind(), &json, origin)
+    }
+
+    /// [`OpPayload::enqueue`] for an op whose blob nothing else references (an
+    /// imported message's [`OpPayload::Append`]): the queued op keeps the blob until it
+    /// is done.
+    pub fn enqueue_with_blob(
+        &self,
+        w: &mut WriteTx<'_>,
+        account: AccountId,
+        origin: &str,
+        blob: &StagedBlob,
+    ) -> store::Result<OpId> {
+        let json = self.to_json()?;
+        w.enqueue_op_with_blob(account, self.kind(), &json, origin, blob)
     }
 
     /// Absolute flags for locations.
@@ -601,6 +620,13 @@ mod tests {
                 folder: FolderId(5),
                 blob: BlobId([0xcd; 32]),
                 flags: Flags::SEEN,
+                keywords: Vec::new(),
+            },
+            OpPayload::Append {
+                folder: FolderId(6),
+                blob: BlobId([0xef; 32]),
+                flags: Flags::FLAGGED,
+                keywords: vec!["$label1".to_owned(), "todo".to_owned()],
             },
         ]
     }

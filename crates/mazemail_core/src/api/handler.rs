@@ -17,8 +17,9 @@
 //! [`Origin::Agent`]; [`Origin::Cli`] is reserved for an in-process CLI that doesn't
 //! go through the local API.
 //!
-//! `import` runs the `import` crate into a local account and `export` writes the
-//! matches of a query as mbox or Maildir (both `ask`, so the user approved them).
+//! `import` uploads mbox and Maildir mail into a folder of an IMAP account (or imports
+//! a Thunderbird profile) through the `import` crate, and `export` writes the matches
+//! of a query as mbox or Maildir (both `ask`, so the user approved them).
 //! Commands whose crates aren't part of this build yet (`draft new|edit`, `send`,
 //! `rule add`, `attachment save`) fail with a typed "not available in this version"
 //! error (`internal`, exit code 1).
@@ -941,11 +942,15 @@ impl CoreCommandHandler {
         ctx: &RequestContext,
         args: ImportArgs,
     ) -> Result<CommandOutput, CommandError> {
-        let imported = import::run(&self.core, ctx, args).await?;
+        let token = self.store_token(ctx)?;
+        let imported = import::run(&self.core, ctx, Origin::Agent { token }, args).await?;
         output(
             &ImportOutput {
-                messages: imported.stats.imported,
-                folders: imported.stats.folders_created,
+                messages: imported.stats.queued,
+                duplicates: imported.stats.duplicates,
+                folders: imported.folders,
+                accounts: imported.accounts,
+                skipped: imported.skipped,
             },
             Vec::new(),
         )

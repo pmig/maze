@@ -415,6 +415,27 @@ impl CoreHandle {
         Ok(self.inner.store.reader()?.accounts()?)
     }
 
+    /// Local Folders of an older Maze that still hold mail, with their message
+    /// counts (ADR-019). They stay readable and exportable, never sync, and a later
+    /// version removes them; the app says so at every start.
+    pub fn legacy_local_accounts(&self) -> Result<Vec<(Account, u64)>> {
+        self.ensure_open()?;
+        let reader = self.inner.store.reader()?;
+        let mut out = Vec::new();
+        for account in reader.accounts()? {
+            if account.kind != AccountKind::LegacyLocal {
+                continue;
+            }
+            let messages = reader
+                .message_ids_in_scope(&MessageScope::Account(account.id))?
+                .len() as u64;
+            if messages > 0 {
+                out.push((account, messages));
+            }
+        }
+        Ok(out)
+    }
+
     /// The folder pane: unified folders, favorites and each account's folder tree, with
     /// counts (see [`crate::folders`]).
     pub fn folders(&self) -> Result<Vec<FolderNode>> {
@@ -877,6 +898,25 @@ impl CoreHandle {
     }
 
     // ---- commands -------------------------------------------------------------------
+
+    /// Applies a command that belongs to a local API command the user already
+    /// approved in Maze (the folders an `import` creates): no second authorization.
+    pub(crate) async fn apply_approved(
+        &self,
+        command: MailCommand,
+        origin: Origin,
+    ) -> Result<CommandReceipt> {
+        self.ensure_open()?;
+        let seq = self.inner.seq.fetch_add(1, Ordering::Relaxed) + 1;
+        let origin_text = origin.as_text();
+        self.execute(seq, command, origin, origin_text).await
+    }
+
+    /// Pending ops were queued for `account` outside a command (an import's uploads):
+    /// its sync engine replays them soon.
+    pub(crate) fn ops_enqueued(&self, account: AccountId) {
+        self.inner.sync.ops_enqueued(&[account]);
+    }
 
     /// Applies a command: permission check for agents, pending ops, optimistic local
     /// change and audit entry in one transaction (see [`crate::commands`]).

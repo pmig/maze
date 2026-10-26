@@ -145,10 +145,11 @@ On a Mac that never had Maze (or after removing it and its keychain item):
 - [ ] `/Applications/Maze.app/Contents/MacOS/mazemail --version` prints
       `mazemail 0.1.0-alpha.1`; `mazemail status` shows the app running.
 - [ ] `eval "$(mazemail login --profile triage)"` shows the approval dialog; after
-      *Allow once*, `mazemail import <some.mbox>` (approve again) imports, and
+      *Allow once*, `mazemail import <some.mbox> --account <id>` (approve again)
+      uploads it into a new folder of an IMAP test account, and after the next sync
       `mazemail search <word>` and `mazemail show <id>` find and render the mail.
-- [ ] Importing a Thunderbird profile brings over its accounts and folders, and an IMAP
-      account syncs.
+- [ ] Importing a Thunderbird profile brings over its IMAP accounts (POP3 accounts and
+      Local Folders are listed as skipped), and an IMAP account syncs.
 - [ ] Quitting Maze (`cmd-q`) ends the process and removes `mazemail.sock`; the next
       start opens the same mail without asking for anything.
 - [ ] Linux: `tar --zstd -xf Maze-0.1.0-alpha.1-linux-x86_64.tar.zst -C ~/.local` and

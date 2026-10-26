@@ -523,6 +523,7 @@ impl SentHook for SentCopy {
                     folder,
                     blob,
                     flags: Flags::SEEN,
+                    keywords: Vec::new(),
                 }
                 .enqueue(w, account, "user")?;
             }

@@ -7,6 +7,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use auth::MemorySecretStore;
+use imap::fake::FakeServer;
+use import::maildir::MaildirWriter;
 use local_api::registry::args::{
     ArchiveArgs, ExportArgs, ExportFormat, FoldersArgs, ImportArgs, SearchArgs, ShowArgs,
     ShowFormat,
@@ -18,13 +21,14 @@ use local_api::{
     ServerConfig, TokenRecord, TokenScope, TokenStore, mint,
 };
 use mazemail_core::api::{self, StoreAuditSink, StoreTokenStore, TokenAuthorizer};
-use mazemail_core::{CoreHandle, MailCommand, Origin};
-use mazemail_types::{AccountId, FolderId, MessageId, Sensitive, ThreadId};
+use mazemail_core::{CoreHandle, MailCommand, Origin, SyncEngineConfig};
+use mazemail_types::{AccountId, Flags, FolderId, MessageId, Sensitive, ThreadId};
 use serde_json::{Value, json};
-use store::{AuditQuery, ProposalState, Queries};
+use store::{AuditQuery, MessageScope, ProposalState, Queries};
 use time::OffsetDateTime;
 use vault::MemoryKeyStore;
 
+use crate::accounts::{FakeConnector, PASSWORD, input, timing, wait_for};
 use crate::common::{self, Fixture, Place};
 
 struct ApiCore {
@@ -521,46 +525,73 @@ fn mbox() -> String {
 }
 
 #[tokio::test]
-async fn import_and_export_run_through_the_pipeline() {
+async fn import_queues_uploads_and_export_writes_mbox() {
     let t = open().await;
     let writer = token(&t, Profile::Writer, TokenScope::all()).await;
     let ctx = ctx(&t, &writer, ExecutionMode::Execute);
     let source = t.dir.path().join("old.mbox");
     std::fs::write(&source, mbox()).unwrap();
-
-    let out = run(
-        &t,
-        &ctx,
+    let import = |account: Option<AccountId>, folder: Option<&str>| {
         Command::Import(ImportArgs {
             path: source.clone(),
             format: None,
-            account: None,
-        }),
-    )
-    .await
-    .unwrap();
-    assert_eq!(out, json!({ "messages": 3, "folders": 1 }));
-    // Idempotent.
-    let again = run(
-        &t,
-        &ctx,
-        Command::Import(ImportArgs {
-            path: source,
-            format: None,
-            account: None,
-        }),
-    )
-    .await
-    .unwrap();
-    assert_eq!(again["messages"], 0);
+            account,
+            folder: folder.map(str::to_owned),
+        })
+    };
 
-    // Searchable right away, through the index (body text).
-    let found = t
-        .core
-        .search("zanzibar", mazemail_core::SearchOpts::default())
+    // Two accounts: which one has to be said.
+    let error = run(&t, &ctx, import(None, None)).await.unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidArgs);
+    assert!(error.message.contains("--account"), "{}", error.message);
+
+    // Into a new folder named after the file: created on the server, then one upload
+    // per message, queued for the sync engine.
+    let out = run(&t, &ctx, import(Some(t.fixture.work), None))
         .await
         .unwrap();
-    assert_eq!(found.total_threads, 3);
+    assert_eq!(
+        out,
+        json!({ "messages": 3, "duplicates": 0, "folders": 1, "accounts": 0, "skipped": [] })
+    );
+    let reader = t.core.store().reader().unwrap();
+    let folder = reader
+        .folders(Some(t.fixture.work))
+        .unwrap()
+        .into_iter()
+        .find(|f| f.display_name == "old")
+        .unwrap();
+    assert_eq!(folder.remote_name.as_deref(), Some("old"));
+    let kinds: Vec<String> = reader
+        .pending_ops(t.fixture.work)
+        .unwrap()
+        .into_iter()
+        .map(|op| op.kind)
+        .collect();
+    assert_eq!(kinds, ["create_folder", "append", "append", "append"]);
+    drop(reader);
+
+    // Idempotent; an existing folder is found by its path.
+    let again = run(&t, &ctx, import(Some(t.fixture.work), Some("old")))
+        .await
+        .unwrap();
+    assert_eq!(
+        (&again["messages"], &again["duplicates"]),
+        (&json!(0), &json!(3))
+    );
+    assert_eq!(again["folders"], 0);
+    // Nested folders are created level by level.
+    let nested = run(&t, &ctx, import(Some(t.fixture.work), Some("Imports/2025")))
+        .await
+        .unwrap();
+    assert_eq!(
+        (&nested["messages"], &nested["folders"]),
+        (&json!(3), &json!(2))
+    );
+    let error = run(&t, &ctx, import(Some(t.fixture.work), Some("Archive//x")))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidArgs);
 
     // Export of a query: mbox, oldest first, mode 0600, never overwriting.
     let target = t.dir.path().join("export.mbox");
@@ -568,7 +599,7 @@ async fn import_and_export_run_through_the_pipeline() {
         &t,
         &ctx_all(&t, &writer),
         Command::Export(ExportArgs {
-            query: Sensitive::new("zanzibar".into()),
+            query: Sensitive::new("quarterly".into()),
             to: target.clone(),
             format: ExportFormat::Mbox,
         }),
@@ -577,8 +608,8 @@ async fn import_and_export_run_through_the_pipeline() {
     .unwrap();
     assert_eq!(out["messages"], 3);
     let text = std::fs::read_to_string(&target).unwrap();
-    assert_eq!(text.matches("\nSubject: Archived note").count(), 3);
-    assert!(text.find("note 1").unwrap() < text.find("note 3").unwrap());
+    assert_eq!(text.matches("\nSubject: ").count(), 3);
+    assert!(text.find("Offsite plan").unwrap() < text.find("Your receipt").unwrap());
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -589,7 +620,7 @@ async fn import_and_export_run_through_the_pipeline() {
         &t,
         &ctx_all(&t, &writer),
         Command::Export(ExportArgs {
-            query: Sensitive::new("zanzibar".into()),
+            query: Sensitive::new("quarterly".into()),
             to: target,
             format: ExportFormat::Mbox,
         }),
@@ -599,8 +630,167 @@ async fn import_and_export_run_through_the_pipeline() {
     assert_eq!(error.code, ErrorCode::InvalidArgs);
 }
 
-/// A context whose scope includes accounts created after the token (Local Folders),
-/// as the AI policy decides on each request.
+/// An mbox with Thunderbird's status headers: one read and starred message with a tag,
+/// one unread.
+const THUNDERBIRD_MBOX: &str = "From - Mon Oct 13 09:00:00 2025\n\
+    X-Mozilla-Status: 0005\n\
+    X-Mozilla-Keys: projekt\n\
+    Message-ID: <tb1@example.org>\n\
+    Date: Mon, 13 Oct 2025 09:00:00 +0000\n\
+    From: Importer <importer@example.org>\n\
+    Subject: Kept for years\n\
+    \n\
+    The first one.\n\
+    \n\
+    From - Mon Oct 13 09:01:00 2025\n\
+    X-Mozilla-Status: 0000\n\
+    Message-ID: <tb2@example.org>\n\
+    Date: Mon, 13 Oct 2025 09:01:00 +0000\n\
+    From: Importer <importer@example.org>\n\
+    Subject: Never read\n\
+    \n\
+    The second one.\n\
+    \n";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn imported_mail_is_uploaded_to_the_imap_server_once() {
+    let server = FakeServer::new();
+    let dir = tempfile::tempdir().unwrap();
+    let keys = Arc::new(MemoryKeyStore::new());
+    let authorizer = TokenAuthorizer::new();
+    let engine = SyncEngineConfig::new(Arc::new(MemorySecretStore::new()))
+        .with_connector(Arc::new(FakeConnector {
+            server: server.clone(),
+            reachable: true,
+        }))
+        .with_timing(timing());
+    let config = common::config(&dir.path().join("data"), &keys)
+        .with_sync_engine(engine)
+        .with_authorizer(Arc::new(authorizer.clone()));
+    let core = CoreHandle::open(config).await.unwrap();
+    let account = core.add_imap_account(input(PASSWORD)).await.unwrap().id;
+    let folder_named = |name: &str| {
+        core.store()
+            .reader()
+            .unwrap()
+            .folders(Some(account))
+            .unwrap()
+            .into_iter()
+            .find(|f| f.remote_name.as_deref() == Some(name))
+    };
+    wait_for("the folder list", || folder_named("Archive").is_some()).await;
+
+    let grant = Grant {
+        profile: Profile::Writer,
+        scope: TokenScope::all(),
+        lifetime: Some(Duration::from_secs(3600)),
+        allow_send: false,
+    };
+    let now =
+        OffsetDateTime::from_unix_timestamp(OffsetDateTime::now_utc().unix_timestamp()).unwrap();
+    let (_, record) = mint(&grant, None, CreatedBy::User, now).unwrap();
+    StoreTokenStore::new(core.clone(), Arc::clone(authorizer.cache()))
+        .insert(record.clone())
+        .await
+        .unwrap();
+    let all: BTreeSet<AccountId> = core.accounts().unwrap().iter().map(|a| a.id).collect();
+    let ctx = RequestContext::new(
+        1,
+        peer(),
+        Some(record.clone()),
+        EffectiveScope::resolve(&record.scope, &all),
+        ExecutionMode::Execute,
+    );
+    let handler = api::CoreCommandHandler::new(core.clone(), Arc::clone(authorizer.cache()));
+    let source = dir.path().join("Old Mail.mbox");
+    std::fs::write(&source, THUNDERBIRD_MBOX).unwrap();
+    let import = |path: &std::path::Path, folder: &str| {
+        Command::Import(ImportArgs {
+            path: path.to_owned(),
+            format: None,
+            // The only account: no --account needed.
+            account: None,
+            folder: Some(folder.to_owned()),
+        })
+    };
+
+    // Archive exists, 2019 is created; the messages go up with their flags and tags.
+    let out = handler
+        .handle(&ctx, import(&source, "Archive/2019"))
+        .await
+        .unwrap()
+        .data
+        .into_inner();
+    assert_eq!((&out["messages"], &out["folders"]), (&json!(2), &json!(1)));
+    wait_for("the uploads", || server.messages("Archive/2019").len() == 2).await;
+    let mut uploaded = server.messages("Archive/2019");
+    uploaded.sort_by_key(|m| m.uid);
+    assert_eq!(uploaded[0].flags, Flags::SEEN | Flags::FLAGGED);
+    assert_eq!(uploaded[0].keywords, ["projekt"]);
+    assert_eq!(uploaded[1].flags, Flags::empty());
+
+    // The folder's sync brings them in like any other mail.
+    let synced = || {
+        let Some(folder) = folder_named("Archive/2019") else {
+            return 0;
+        };
+        core.store()
+            .reader()
+            .unwrap()
+            .message_ids_in_scope(&MessageScope::Folder(folder.id))
+            .unwrap()
+            .len()
+    };
+    wait_for("the uploaded mail locally", || synced() == 2).await;
+
+    // Running it again uploads nothing.
+    let again = handler
+        .handle(&ctx, import(&source, "Archive/2019"))
+        .await
+        .unwrap()
+        .data
+        .into_inner();
+    assert_eq!(
+        (&again["messages"], &again["duplicates"]),
+        (&json!(0), &json!(2))
+    );
+    assert_eq!(server.messages("Archive/2019").len(), 2);
+
+    // A Maildir with a Maildir++ subfolder: both folders are created.
+    let maildir = dir.path().join("Mail");
+    let mut writer = MaildirWriter::create(&maildir).unwrap();
+    writer
+        .write(
+            b"Message-ID: <md1@example.org>\r\nSubject: md\r\n\r\nx\r\n",
+            Flags::SEEN,
+            &[],
+        )
+        .unwrap();
+    writer.finish().unwrap();
+    let mut sent = MaildirWriter::create(&maildir.join(".Sent")).unwrap();
+    sent.write(
+        b"Message-ID: <md2@example.org>\r\nSubject: md2\r\n\r\ny\r\n",
+        Flags::SEEN,
+        &[],
+    )
+    .unwrap();
+    sent.finish().unwrap();
+    let out = handler
+        .handle(&ctx, import(&maildir, "Maildir"))
+        .await
+        .unwrap()
+        .data
+        .into_inner();
+    assert_eq!((&out["messages"], &out["folders"]), (&json!(2), &json!(2)));
+    wait_for("the Maildir uploads", || {
+        server.messages("Maildir").len() == 1 && server.messages("Maildir/Sent").len() == 1
+    })
+    .await;
+    core.shutdown().await.unwrap();
+}
+
+/// A context whose scope includes every account, as the AI policy decides on each
+/// request.
 fn ctx_all(t: &ApiCore, record: &TokenRecord) -> RequestContext {
     let all: BTreeSet<AccountId> = t.core.accounts().unwrap().iter().map(|a| a.id).collect();
     let scope = EffectiveScope::resolve(&record.scope, &all);

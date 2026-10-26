@@ -340,7 +340,8 @@ impl<'a, 'w> Tx<'a, 'w> {
         Ok(())
     }
 
-    /// The full server name of a folder (its display name for local folders).
+    /// The full server name of a folder (its display name for the folders of legacy
+    /// local accounts, which have none).
     fn remote_name(folder: &Folder) -> String {
         folder
             .remote_name

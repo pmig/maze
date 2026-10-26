@@ -259,34 +259,70 @@ and `thread_list.sort` in `settings.json` apply.
 
 ## Import mail
 
-Maze imports mbox files, Maildir directories and whole Thunderbird profiles. Importing
-goes through the CLI and needs a token with the **triage** or **writer** profile, and
-Maze asks you to approve every import:
+Maze keeps all mail in your server accounts: it speaks IMAP (including Gmail and
+Microsoft 365) and has no POP3 and no Local Folders ([ADR-019](adr/0019-imap-only.md)).
+It imports whole Thunderbird profiles, and uploads mbox files and Maildir directories
+into a folder of one of your accounts. Importing goes through the CLI and needs a token
+with the **triage** or **writer** profile, and Maze asks you to approve every import:
 
 ```sh
 eval "$(mazemail login --profile triage)"     # approve in Maze
 
-mazemail import ~/Downloads/old-mail.mbox      # into Local Folders
-mazemail import ~/Mail/archive --format maildir
+mazemail status                                # lists the accounts and their ids
+mazemail import ~/Downloads/old-mail.mbox --account a_…
+mazemail import ~/Mail/archive --format maildir --account a_… --folder Archive/2019
 mazemail import ~/Library/Thunderbird/Profiles/abcd1234.default-release --format thunderbird
 ```
 
-The format is detected when you leave out `--format`. `--account a_…` imports into a
-specific account instead of Local Folders (`mazemail status` lists the accounts and
-their ids).
+The format is detected when you leave out `--format`.
+
+### mbox files and Maildir directories
+
+`--account` picks the account; you can leave it out only when you have exactly one.
+`--folder` is a path below the account, with `/` between the levels (`Archive/2019`);
+a folder that doesn't exist yet is created on the server. Without `--folder` the mail
+goes into a new top-level folder named after the file or directory. Maildir++
+subfolders (`.Sent`, `.Archive.2024`) become subfolders of that folder.
+
+Every message is uploaded to the server with IMAP `APPEND`, with its flags (read,
+flagged, answered …) and tags. The uploads are queued like any other change and sent
+by the sync engine, so an import works offline and is retried until the server has
+everything; the messages appear in Maze after the folder's next sync. Running the
+import again skips messages that are already in the target folder (by Message-ID, or by
+date, sender and subject for messages without one) or still waiting to be uploaded.
+
+### Thunderbird profiles
 
 From a Thunderbird profile Maze takes over:
 
-- accounts with their server settings, identities, signatures and SMTP servers
-- Local Folders (and POP3 mail stores) as local accounts
+- IMAP accounts (Gmail and Microsoft 365 included) with their server settings,
+  identities, signatures and SMTP servers
 - tags, saved searches (`virtualFolders.dat`) and address books
 - message filters, imported as **disabled** rules (rules don't run yet)
+
+POP3 accounts and Local Folders are skipped, and the import result says so. For a POP3
+account, enable IMAP at your provider and add the account in Maze. To keep mail from
+Local Folders, move it into an IMAP folder in Thunderbird before importing, or import
+its mbox files (`Mail/Local Folders/` in the profile) with
+`mazemail import <file> --account …`.
 
 Running the import again doesn't create duplicates. Nothing in the profile is changed,
 so Thunderbird keeps working side by side. Passwords aren't imported: accounts that
 need one, or a new OAuth sign-in, are listed in the import result.
 
 Remember that the Thunderbird profile itself still holds all your mail in plaintext.
+
+### Local Folders from earlier versions
+
+Earlier versions of Maze imported into a local account called Local Folders. Empty
+ones are removed when you update. Local Folders that still hold mail stay readable,
+searchable and exportable, but they never sync, and a later version removes them. Maze
+reminds you at every start. To keep that mail, export it and upload it into an account:
+
+```sh
+mazemail export 'account:"Local Folders"' --to local-folders.mbox
+mazemail import local-folders.mbox --account a_… --folder "Local Folders"
+```
 
 ## Accounts
 
