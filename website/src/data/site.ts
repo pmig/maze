@@ -9,7 +9,6 @@ export const SITE = {
   repo: "https://github.com/pmig/mazemail",
   releases: "https://github.com/pmig/mazemail/releases",
   issues: "https://github.com/pmig/mazemail/issues",
-  contact: "philip@pmig.at",
   author: "Philip Miglinci",
   license: "GPL-3.0-or-later",
   status: "Pre-alpha",
