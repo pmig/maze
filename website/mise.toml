@@ -1,7 +1,28 @@
-# Node for the website, read from .node-version (the same file CI's setup-node uses),
-# so there is one pin. The Rust tools come from the repository's root mise.toml.
-[settings]
-idiomatic_version_file_enable_tools = ["node"]
-
+# The website's tools, active in this directory only (the app's are in ../mise.toml).
+# pnpm matches `packageManager` in package.json; wrangler and Astro are pinned there and
+# put on PATH from node_modules, so `wrangler login` works here after `mise run install`.
 [tools]
+node = "24"
 pnpm = "12.15.0"
+
+[env]
+_.path = ["{{config_root}}/node_modules/.bin"]
+
+[tasks.install]
+description = "Install the website's dependencies (Astro, wrangler)"
+run = "pnpm install --frozen-lockfile"
+
+[tasks.dev]
+description = "Run the website locally"
+depends = ["install"]
+run = "pnpm run dev"
+
+[tasks.check]
+description = "Type-check, build and check the links"
+depends = ["install"]
+run = ["pnpm run check", "pnpm run build", "pnpm run check:links"]
+
+[tasks.deploy]
+description = "Build and deploy mazemail.dev to Cloudflare (after `wrangler login`)"
+depends = ["install"]
+run = "pnpm run deploy"
