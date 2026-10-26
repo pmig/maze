@@ -6,7 +6,9 @@ import Terminal from "../components/Terminal.astro";
 import { NUMBERS, SITE, repoFile } from "../data/site";
 import { getRelease } from "../lib/release";
 import heroShot from "../../../docs/screenshots/app-real-data.png";
-import tableShot from "../../../docs/screenshots/s1-main-window-dark-table.png";
+import heroShotDark from "../../../docs/screenshots/app-real-data-dark.png";
+import tableShot from "../../../docs/screenshots/app-table.png";
+import tableShotDark from "../../../docs/screenshots/app-table-dark.png";
 
 const release = await getRelease();
 
@@ -67,6 +69,7 @@ const TERMINAL = [
     <div class="hero-shot">
       <Screenshot
         src={heroShot}
+        dark={heroShotDark}
         priority
         alt="The Maze main window with demo mail: a folder pane with unified folders and accounts, a message list, an open message with DKIM, SPF and DMARC badges, and the agent column, which says AI is off."
         caption="Demo mailbox. The agent column on the right is a preview; connecting agents is planned."
@@ -121,8 +124,9 @@ const TERMINAL = [
       <div class="wide-shot">
         <Screenshot
           src={tableShot}
-          alt="Maze in dark mode with the message list as a table: subject and correspondent columns, bold unread threads, several Gmail, Microsoft 365 and IMAP accounts in the folder pane."
-          caption="Dark theme, table view, several accounts."
+          dark={tableShotDark}
+          alt="Maze with the message list as a table: star, subject, correspondent and date columns, bold unread threads and expandable conversations."
+          caption="Table view with conversations, in the light or dark theme like this page."
         />
       </div>
     </section>
