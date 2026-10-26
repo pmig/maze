@@ -14,7 +14,7 @@ interface Props {
 }
 
 const { title, description = SITE.description, image = "/og.png", noindex = false } = Astro.props;
-const fullTitle = title ? `${title} · Maze` : "Maze: a local-first email client, crafted for speed";
+const fullTitle = title ? `${title} · Maze` : "Maze: the agentic email client";
 const canonical = new URL(Astro.url.pathname, Astro.site);
 const imageUrl = new URL(image, Astro.site);
 ---

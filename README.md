@@ -1,5 +1,7 @@
 # Maze
 
+**The agentic email client.** Crafted for speed and collaboration with humans and AI.
+
 An open source, local-first email client written in Rust. Built like
 [Zed](https://zed.dev) (GPU-rendered, fast, small, agent-native) and behaving like
 [Thunderbird](https://www.thunderbird.net) (same layout, same shortcuts).

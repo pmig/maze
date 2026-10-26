@@ -5,7 +5,7 @@ export const SITE = {
   name: "Maze",
   url: "https://mazemail.dev",
   description:
-    "Maze is a local-first, open source email client written in Rust, crafted for speed and collaboration with humans and AI: GPU-rendered, encrypted at rest, with scoped access for agents through the mazemail CLI.",
+    "Maze is the agentic email client: local-first, open source and written in Rust, crafted for speed and collaboration with humans and AI: GPU-rendered, encrypted at rest, with scoped access for agents through the mazemail CLI.",
   repo: "https://github.com/pmig/mazemail",
   releases: "https://github.com/pmig/mazemail/releases",
   issues: "https://github.com/pmig/mazemail/issues",
