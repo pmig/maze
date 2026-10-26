@@ -54,6 +54,7 @@ image = { workspace = true }
 imap = { workspace = true }
 import = { workspace = true }
 ingest = { workspace = true }
+store = { workspace = true }
 tempfile = { workspace = true }
 
 [lints]

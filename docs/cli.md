@@ -99,12 +99,12 @@ with what your current token may do with it.
 
 Commands marked **ask** show the same kind of dialog as a login, describing the command
 (for an import, which path; for an export, the query and the target). `import` and
-`export` always ask, because an import writes into your store and an export writes
-plaintext outside the encrypted store.
+`export` always ask, because an import uploads mail to your server (or adds accounts
+from a Thunderbird profile) and an export writes plaintext outside the encrypted store.
 
 ```sh
 eval "$(mazemail login --profile triage --label import)"
-mazemail import ~/old-mail.mbox                         # asks in Maze
+mazemail import ~/old-mail.mbox --account a_…          # asks in Maze
 mazemail export 'in:Inbox after:2026-01-01' --to inbox.mbox       # asks in Maze
 ```
 

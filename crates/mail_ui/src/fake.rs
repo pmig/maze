@@ -70,9 +70,9 @@ const ACCOUNTS: &[AccountSpec] = &[
         address: "me@example.net",
     },
     AccountSpec {
-        name: "Local Folders",
-        kind: AccountKind::Local,
-        address: "philip@localhost",
+        name: "Old ISP",
+        kind: AccountKind::Imap,
+        address: "philip@isp.example",
     },
 ];
 
@@ -149,7 +149,7 @@ const FOLDERS: &[FolderSpec] = &[
     folder(3, None, "Sent", Some(Sent), 150, 3 * YEAR),
     folder(3, None, "Junk", Some(Junk), 15, 30 * DAY),
     folder(3, None, "Trash", Some(Trash), 20, 60 * DAY),
-    // 28..=29: Local Folders
+    // 28..=29: Old ISP
     folder(4, None, "Old mail", None, 25_000, 15 * YEAR),
     folder(4, None, "Trash", Some(Trash), 0, DAY),
 ];

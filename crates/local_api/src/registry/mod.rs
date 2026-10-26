@@ -568,11 +568,25 @@ static REGISTRY: &[CommandSpec] = &[
         name: "import",
         path: &["import"],
         summary: "Import an mbox file, a Maildir or a Thunderbird profile",
-        help: "Imports into Local Folders or --account. Always asks for approval in Maze.",
+        help: "Uploads mbox and Maildir mail into a folder of an IMAP account (--account, \
+               --folder; the folder is created if missing), queued and sent by the sync \
+               engine; it shows up after the folder's next sync. Messages the folder already \
+               has are skipped. A Thunderbird profile brings its IMAP accounts, identities, \
+               tags, filters, saved searches and address books; POP3 accounts and Local \
+               Folders are skipped (Maze is IMAP only). Always asks for approval in Maze.",
         permission: Permission::Ask,
         requires_token: true,
         touches_mail: true,
-        examples: &[ex("mazemail import ~/old-mail.mbox", "Import an mbox file")],
+        examples: &[
+            ex(
+                "mazemail import ~/old-mail.mbox --account a_b --folder Archive/2019",
+                "Upload an mbox file into a folder of your account",
+            ),
+            ex(
+                "mazemail import ~/Library/Thunderbird/Profiles/abcd.default-release",
+                "Import a Thunderbird profile",
+            ),
+        ],
         args_schema: schema::<ImportArgs>,
         output_schema: schema::<ImportOutput>,
         human: Human::Fields,

@@ -98,7 +98,7 @@ macro_rules! define_id {
 }
 
 define_id!(
-    /// An account (IMAP, Gmail, Microsoft 365, local folders, …).
+    /// An account (IMAP, Gmail, Microsoft 365).
     AccountId, "a"
 );
 define_id!(

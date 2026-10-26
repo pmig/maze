@@ -719,11 +719,17 @@ pub struct ImportArgs {
     #[arg(long, value_enum)]
     #[serde(default)]
     pub format: Option<ImportFormat>,
-    /// Account to import into (default: Local Folders).
+    /// Account to upload mbox and Maildir mail into (may be left out when there is only
+    /// one account). Not for Thunderbird profiles, which bring their own accounts.
     #[arg(long, value_name = "ACCOUNT")]
     #[serde(default, with = "pubid::option")]
     #[schemars(with = "Option<String>")]
     pub account: Option<AccountId>,
+    /// Folder of the account to upload into, as a path (`Archive/2019`); created on the
+    /// server if missing. Default: a top-level folder named after the file.
+    #[arg(long, value_name = "PATH")]
+    #[serde(default)]
+    pub folder: Option<String>,
 }
 
 /// `mazemail account list`.

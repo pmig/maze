@@ -41,7 +41,10 @@ Works today:
   client ID)
 - IMAP sync, including CONDSTORE/QRESYNC delta sync, IDLE and Gmail labels, of your
   subscribed folders
-- import from mbox files, Maildir directories and Thunderbird profiles
+- import of Thunderbird profiles (accounts, identities, tags, filters, address books),
+  and of mbox files and Maildir directories, uploaded into a folder of an IMAP account
+  (Maze is IMAP only: no POP3 and no Local Folders, see
+  [ADR-019](docs/adr/0019-imap-only.md))
 - search with Gmail-style operators (`from:`, `has:attachment`, `after:` …)
 - reading mail in a sanitized reader view, with DKIM/SPF/DMARC results
 - archive, move, tag, flag and mark read, with undo
@@ -115,21 +118,27 @@ real (encrypted) store with demo mail that the CLI can talk to.
 
    Inside the app bundle the CLI is `/Applications/Maze.app/Contents/MacOS/mazemail`;
    link it into your `PATH` or use an alias.
-3. **Import mail.** An mbox file, a Maildir or a whole Thunderbird profile (accounts,
-   identities, Local Folders, tags, address books and filters). Maze asks you to approve
-   the import:
+3. **Add an account.** Use **Add Account…** in the folder pane, or the CLI with a
+   writer token (`mazemail account add you@example.com`, password from the terminal or
+   `--password-stdin`; `--oauth google` or `--oauth microsoft` for the browser
+   sign-in). Gmail needs your own Google OAuth client ID (`auth.google.client_id`) for
+   now; see [Getting started](docs/getting-started.md#accounts). Or import your
+   Thunderbird profile, which takes its IMAP accounts over, with identities, tags,
+   address books and filters:
 
    ```sh
-   mazemail import ~/old-mail.mbox
    mazemail import ~/Library/Thunderbird/Profiles/abcd1234.default-release --format thunderbird
    ```
 
-4. **Add an account.** Use **Add Account…** in the folder pane, or the CLI with a
-   writer token (`mazemail account add you@example.com`, password from the terminal or
-   `--password-stdin`; `--oauth google` or `--oauth microsoft` for the browser
-   sign-in). Importing your Thunderbird profile takes its accounts over too. Gmail
-   needs your own Google OAuth client ID (`auth.google.client_id`) for now; see
-   [Getting started](docs/getting-started.md#accounts).
+4. **Import mail files.** An mbox file or a Maildir is uploaded into a folder of one
+   of your accounts (a folder named after the file unless you pass `--folder`). Maze
+   asks you to approve the import:
+
+   ```sh
+   mazemail status                      # lists your accounts and their ids
+   mazemail import ~/old-mail.mbox --account a_… --folder Archive/2019
+   ```
+
 5. **Search and read.**
 
    ```sh

@@ -20,6 +20,7 @@ mazemail_core = { workspace = true }
 mazemail_types = { workspace = true }
 release_channel = { workspace = true }
 semver = { workspace = true }
+store = { workspace = true }
 tempfile = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }

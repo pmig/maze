@@ -6,8 +6,8 @@
 //! A message counts as sent by you ([`is_outgoing`]) when its `From` address is one of
 //! your identities' addresses (Thunderbird's `nsMsgDBView::IsOutgoingMsg`: compared
 //! case-insensitively, with `+tag` sub-addressing dropped), or when it has a copy in a
-//! Sent, Drafts or Outbox folder (identities can be missing, for example in imported
-//! Local Folders).
+//! Sent, Drafts or Outbox folder (identities can be missing, for example for mail
+//! uploaded from an old mbox file).
 
 use std::collections::HashSet;
 
@@ -162,7 +162,7 @@ mod tests {
         let nobody = IdentityEmails::default();
         let from = addr(Some("Philip"), "philip@localhost");
         let cc = [addr(Some("Team"), "team@example.com")];
-        // No identities (imported Local Folders), but the copy is in Sent.
+        // No identities (mail uploaded from an old mbox file), but the copy is in Sent.
         assert!(!is_outgoing(Some(&from), false, &nobody));
         let outgoing = is_outgoing(Some(&from), true, &nobody);
         assert!(outgoing);

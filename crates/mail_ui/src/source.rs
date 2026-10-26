@@ -93,8 +93,6 @@ pub enum AccountKind {
     Microsoft,
     /// Any other IMAP server.
     Imap,
-    /// Thunderbird's Local Folders.
-    Local,
 }
 
 /// A folder in the folder pane.
@@ -670,7 +668,7 @@ pub enum SyncState {
         /// Messages total.
         total: u64,
     },
-    /// No account syncs (none added yet, or only local folders).
+    /// No account syncs (none added yet, or only Local Folders of an older Maze).
     NoAccounts,
     /// What the sync engine says, for states without progress ("Connecting…",
     /// "Offline: … Maze will try again in 30 seconds.").

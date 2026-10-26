@@ -10,7 +10,7 @@ pub enum Phase {
     Profile,
     /// Creating accounts, identities, SMTP servers and tags.
     Accounts,
-    /// Importing messages into local folders.
+    /// Queuing messages for upload.
     Messages,
     /// Scanning offline stores for the body reuse index.
     BodyIndex,

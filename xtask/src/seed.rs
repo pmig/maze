@@ -1,11 +1,11 @@
 //! `cargo xtask seed-demo`: a realistic synthetic mailbox for demos, screenshots and
 //! end-to-end tests.
 //!
-//! The mail is generated as mbox text (deterministic for a given `--seed`) and
-//! imported with `import::import_mbox`, so it takes the real path: mboxrd parsing,
-//! `X-Mozilla-Status` flags, `ingest` (parsing, threading, encrypted blobs) and the
-//! core's search index. Two local accounts, "Personal" and "Work", get an Inbox,
-//! Archive, Sent and a Newsletters folder; about a third of the messages are replies
+//! The mail is generated as mbox text (deterministic for a given `--seed`), read with
+//! `import`'s mbox reader (mboxrd parsing, `X-Mozilla-Status` flags) and stored the way
+//! synced mail is: `ingest` (parsing, threading, encrypted blobs) with server UIDs and
+//! the core's search index. Two IMAP accounts without a server, "Personal" and "Work"
+//! (they never sync), get an Inbox, Archive, Sent and a Newsletters folder; about a third of the messages are replies
 //! (threads), some carry attachments, the newsletters are HTML with links and remote
 //! images, and a share is unread or flagged.
 //!
@@ -19,11 +19,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, bail};
-use import::ImportTarget;
-use import::local::{ensure_folder_path, local_account};
-use ingest::Ingestor;
+use import::mbox::{Escaping, MboxReader};
+use ingest::{Ingestor, MessageMeta, RawItem};
 use mazemail_core::{CoreConfig, CoreHandle};
 use mazemail_types::FolderRole;
+use store::{AccountKind, NewAccount, NewFolder, NewLocation};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc2822;
 
@@ -466,7 +466,6 @@ fn write_settings(config_dir: &Path) -> Result<PathBuf> {
     }
     let accounts: Vec<String> = ACCOUNTS
         .iter()
-        .chain(std::iter::once(&import::local::LOCAL_ACCOUNT_NAME))
         .map(|name| format!("      \"{name}\": \"any\""))
         .collect();
     fs::write(
@@ -478,6 +477,13 @@ fn write_settings(config_dir: &Path) -> Result<PathBuf> {
     )
     .with_context(|| format!("writing {}", path.display()))?;
     Ok(path)
+}
+
+/// What seeding stored.
+#[derive(Debug, Clone, Copy, Default)]
+struct Seeded {
+    stored: u64,
+    failed: u64,
 }
 
 /// Seeds the data directory. See the [module docs](self).
@@ -504,7 +510,6 @@ pub(crate) fn seed_demo(options: &SeedOptions) -> Result<()> {
 
     let now = OffsetDateTime::now_utc().unix_timestamp();
     let generated = generate(options.messages, options.seed, now);
-    let scratch = tempfile::tempdir().context("creating a scratch directory")?;
     let mut files: Vec<String> = vec![String::new(); FOLDERS.len()];
     for message in generated {
         files[message.folder].push_str(&message.text);
@@ -513,31 +518,65 @@ pub(crate) fn seed_demo(options: &SeedOptions) -> Result<()> {
     let result = runtime.block_on(async {
         let ingestor = Ingestor::with_sink(core.store().clone(), Arc::new(core.index_sink()));
         let store = core.store().clone();
-        let scratch_dir = scratch.path().to_owned();
-        let stats = tokio::task::spawn_blocking(move || -> Result<import::ImportStats> {
-            let accounts = ACCOUNTS
-                .iter()
-                .map(|name| local_account(&store, name))
-                .collect::<Result<Vec<_>, _>>()?;
-            let mut total = import::ImportStats::default();
+        let stats = tokio::task::spawn_blocking(move || -> Result<Seeded> {
+            let accounts = store.write_blocking(|w| {
+                ACCOUNTS
+                    .iter()
+                    .enumerate()
+                    .map(|(ordinal, name)| {
+                        w.create_account(&NewAccount {
+                            kind: AccountKind::Imap,
+                            name: (*name).to_owned(),
+                            config_json: "{}".to_owned(),
+                            ordinal: ordinal as i64,
+                        })
+                    })
+                    .collect::<store::Result<Vec<_>>>()
+            })?;
+            let mut total = Seeded::default();
             for (ix, (name, role, account)) in FOLDERS.iter().enumerate() {
-                let path = vec![(*name).to_owned()];
-                ensure_folder_path(&store, accounts[*account], &path, *role)?;
-                if files[ix].is_empty() {
-                    continue;
+                let account = accounts[*account];
+                let (name, role) = ((*name).to_owned(), *role);
+                let folder = store.write_blocking(move |w| {
+                    w.create_folder(&NewFolder {
+                        account,
+                        parent: None,
+                        remote_name: Some(if role == Some(FolderRole::Inbox) {
+                            "INBOX".to_owned()
+                        } else {
+                            name.clone()
+                        }),
+                        display_name: name,
+                        role,
+                        is_label: false,
+                        sync_policy: None,
+                        ordinal: ix as i64,
+                    })
+                })?;
+                let mut items = Vec::new();
+                let reader = MboxReader::new(files[ix].as_bytes()).with_escaping(Escaping::Mboxrd);
+                for (n, record) in reader.enumerate() {
+                    let record = record?;
+                    let r = import::reconstruct(&record.message);
+                    let location = NewLocation {
+                        folder,
+                        uid: Some(u32::try_from(n + 1)?),
+                        modseq: None,
+                        flags: r.mozilla.flags(),
+                        keywords: r.mozilla.keywords(),
+                    };
+                    items.push(RawItem {
+                        meta: MessageMeta::new(account, location)
+                            .with_internal_date(record.envelope.date),
+                        raw: r.bytes,
+                    });
                 }
-                let file = scratch_dir.join(format!("{}-{name}.mbox", ACCOUNTS[*account]));
-                fs::write(&file, &files[ix])?;
-                let target = ImportTarget {
-                    account: Some(accounts[*account]),
-                    folder: Some(path),
-                };
-                total.add(&import::import_mbox(
-                    &ingestor,
-                    &file,
-                    &target,
-                    &import::NoProgress,
-                )?);
+                for result in ingestor.ingest_raw_batch_blocking(items) {
+                    match result {
+                        Ok(_) => total.stored += 1,
+                        Err(_) => total.failed += 1,
+                    }
+                }
             }
             Ok(total)
         })
@@ -554,9 +593,8 @@ pub(crate) fn seed_demo(options: &SeedOptions) -> Result<()> {
     let stats = result?;
     shutdown.context("closing the data directory")?;
     println!(
-        "Seeded {} messages ({} duplicates skipped, {} failed) into {}",
-        stats.imported,
-        stats.duplicates,
+        "Seeded {} messages ({} failed) into {}",
+        stats.stored,
         stats.failed,
         options.data_dir.display()
     );

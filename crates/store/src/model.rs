@@ -149,7 +149,11 @@ text_enum!(
         Imap = "imap",
         Gmail = "gmail",
         M365 = "m365",
-        Local = "local",
+        /// Local Folders of Maze versions before ADR-019 (IMAP only). Nothing creates
+        /// them any more: the migration to schema v10 removed the empty ones, the rest
+        /// stay readable and exportable (never synced) until a later version removes
+        /// them.
+        LegacyLocal = "local",
         Jmap = "jmap",
     }
 );
@@ -192,7 +196,8 @@ redacted_debug!(NewAccount { kind, ordinal });
 pub struct NewFolder {
     pub account: AccountId,
     pub parent: Option<FolderId>,
-    /// The server's name (IMAP mailbox name or Gmail label); `None` for local folders.
+    /// The server's name (IMAP mailbox name or Gmail label); `None` only for folders of
+    /// legacy local accounts ([`AccountKind::LegacyLocal`]).
     pub remote_name: Option<String>,
     pub display_name: String,
     pub role: Option<FolderRole>,
@@ -1397,7 +1402,12 @@ mod tests {
 
     #[test]
     fn text_enums_round_trip() {
-        for kind in [AccountKind::Imap, AccountKind::Gmail, AccountKind::Jmap] {
+        for kind in [
+            AccountKind::Imap,
+            AccountKind::Gmail,
+            AccountKind::LegacyLocal,
+            AccountKind::Jmap,
+        ] {
             assert_eq!(AccountKind::parse(kind.as_str()), Some(kind));
         }
         assert_eq!(

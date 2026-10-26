@@ -298,6 +298,7 @@ async fn folder_ops_and_drafts() {
                 folder: sent,
                 blob: sent_blob_id,
                 flags: Flags::SEEN,
+                keywords: Vec::new(),
             }
             .enqueue(w, account, "user")
         })

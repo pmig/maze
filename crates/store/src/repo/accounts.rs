@@ -5,8 +5,8 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 use uuid::Uuid;
 
 use crate::model::{
-    Account, Identity, IdentityInput, IdentityRule, IdentityRuleId, IdentityRuleKind, NewAccount,
-    Signature, SignatureId, SignatureInput, SmtpServer, SmtpServerId, SmtpServerInput,
+    Account, AccountKind, Identity, IdentityInput, IdentityRule, IdentityRuleId, IdentityRuleKind,
+    NewAccount, Signature, SignatureId, SignatureInput, SmtpServer, SmtpServerId, SmtpServerInput,
 };
 use crate::{Error, Result, WriteTx};
 
@@ -194,8 +194,12 @@ pub(crate) fn ensure_changed(changed: usize, entity: &'static str, id: i64) -> R
 impl WriteTx<'_> {
     // ---- accounts ----------------------------------------------------------------
 
-    /// Creates an account with a new random [`Account::uuid`].
+    /// Creates an account with a new random [`Account::uuid`]. Legacy local accounts
+    /// can't be created (ADR-019).
     pub fn create_account(&mut self, account: &NewAccount) -> Result<AccountId> {
+        if account.kind == AccountKind::LegacyLocal {
+            return Err(Error::Invalid("local accounts are no longer supported"));
+        }
         self.conn
             .prepare_cached(
                 "INSERT INTO account (kind, name, config_json, ordinal, uuid)

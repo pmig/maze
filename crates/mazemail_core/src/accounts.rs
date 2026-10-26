@@ -184,7 +184,7 @@ fn default_auth() -> String {
 
 impl AccountConfig {
     /// Parses an account's `config_json`; `None` for accounts without an IMAP server
-    /// (local folders, empty configs).
+    /// (legacy Local Folders, empty configs).
     pub fn parse(config_json: &str) -> Option<Self> {
         serde_json::from_str::<Self>(config_json)
             .ok()
@@ -406,7 +406,7 @@ pub struct AccountInfo {
     pub server: Option<ImapServer>,
     /// How it logs in, for synced accounts.
     pub auth: Option<AccountAuth>,
-    /// The sync state; `None` when the account isn't synced (local folders, no sync
+    /// The sync state; `None` when the account isn't synced (legacy Local Folders, no sync
     /// engine, an unsupported login method).
     pub sync: Option<SyncStatus>,
 }

@@ -20,6 +20,8 @@
 //!    draft tabs once the core is open.
 //! 7. "Settings…" (`cmd-,`) edits `settings.json` in a tab of the main window; saving
 //!    reloads the core's settings at once ([`CoreHandle::reload_settings`]).
+//! 8. Local Folders of an older Maze that still hold mail get a notice at every start
+//!    ([`legacy_local`], ADR-019).
 //!
 //! `MAZEMAIL_DEMO=1` runs the window on synthetic mail (`FakeMailSource`) without a
 //! core, a key or a socket.
@@ -28,6 +30,7 @@ mod add_account;
 mod agents;
 mod approval;
 mod compose;
+mod legacy_local;
 mod lost_key;
 mod theme;
 mod updates;
@@ -379,6 +382,7 @@ pub(crate) fn core_ready(core: &CoreHandle, cx: &mut App) {
         .as_ref()
         .map(|(_, view)| view.clone());
     updates::arm_crash_guard(core, window.as_ref(), cx);
+    legacy_local::notify(core, cx);
 }
 
 /// Feeds the core's event batches into the window, merging what queued up meanwhile.

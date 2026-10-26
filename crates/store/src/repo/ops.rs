@@ -152,12 +152,46 @@ impl WriteTx<'_> {
         payload_json: &str,
         origin: &str,
     ) -> Result<OpId> {
+        self.insert_op(account, kind, payload_json, origin, None)
+    }
+
+    /// [`WriteTx::enqueue_op`] for an op that uploads a message nothing else references
+    /// (an imported message's `append`): the op holds a reference to the blob until it
+    /// is removed, so garbage collection keeps it.
+    pub fn enqueue_op_with_blob(
+        &mut self,
+        account: AccountId,
+        kind: &str,
+        payload_json: &str,
+        origin: &str,
+        blob: &StagedBlob,
+    ) -> Result<OpId> {
+        self.register_blob(blob)?;
+        self.insert_op(account, kind, payload_json, origin, Some(blob.id()))
+    }
+
+    fn insert_op(
+        &mut self,
+        account: AccountId,
+        kind: &str,
+        payload_json: &str,
+        origin: &str,
+        blob: Option<BlobId>,
+    ) -> Result<OpId> {
         self.conn
             .prepare_cached(
-                "INSERT INTO pending_op (account_id, kind, payload_json, origin, next_attempt, created)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+                "INSERT INTO pending_op (account_id, kind, payload_json, origin, next_attempt,
+                   created, blob_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6)",
             )?
-            .execute(params![account.0, kind, payload_json, origin, self.now])?;
+            .execute(params![
+                account.0,
+                kind,
+                payload_json,
+                origin,
+                self.now,
+                blob.map(|b| b.0)
+            ])?;
         self.changes.accounts.insert(account);
         Ok(OpId(self.conn.last_insert_rowid()))
     }

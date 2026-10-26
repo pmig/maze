@@ -99,9 +99,15 @@ pub trait ImapSession: Send {
     /// Permanently remove messages that are marked `\Deleted` (`UID EXPUNGE`, UIDPLUS).
     async fn expunge_uids(&mut self, uids: &UidSet) -> Result<()>;
 
-    /// Append a message. Returns `APPENDUID` when the server reports it.
-    async fn append(&mut self, folder: &str, raw: &[u8], flags: Flags)
-    -> Result<Option<AppendUid>>;
+    /// Append a message with `flags` and the keywords (tags) in `keywords`. Returns
+    /// `APPENDUID` when the server reports it.
+    async fn append(
+        &mut self,
+        folder: &str,
+        raw: &[u8],
+        flags: Flags,
+        keywords: &[String],
+    ) -> Result<Option<AppendUid>>;
 
     /// Create a folder.
     async fn create(&mut self, folder: &str) -> Result<()>;

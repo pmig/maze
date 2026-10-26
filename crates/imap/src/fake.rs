@@ -1215,13 +1215,16 @@ impl ImapSession for FakeImap {
         folder: &str,
         raw: &[u8],
         flags: Flags,
+        keywords: &[String],
     ) -> Result<Option<AppendUid>> {
         let server = self.server.clone();
         let mut state = self.begin(&server, "APPEND", folder)?;
         let uidplus = state.caps.uidplus();
         let (uidvalidity, uid) = state.insert(
             folder,
-            FakeMessage::new(Bytes::copy_from_slice(raw)).flags(flags),
+            FakeMessage::new(Bytes::copy_from_slice(raw))
+                .flags(flags)
+                .keywords(keywords.iter().cloned()),
         )?;
         drop(state);
         self.server.notify();

@@ -98,11 +98,11 @@ async fn append_fetch_store_and_search() {
     let Some(server) = server() else { return };
     let mut s = connect(&server).await;
     let appended = s
-        .append("INBOX", &message("First", "m1"), Flags::SEEN)
+        .append("INBOX", &message("First", "m1"), Flags::SEEN, &[])
         .await
         .unwrap()
         .expect("APPENDUID");
-    s.append("INBOX", &message("Second", "m2"), Flags::empty())
+    s.append("INBOX", &message("Second", "m2"), Flags::empty(), &[])
         .await
         .unwrap();
 
@@ -175,9 +175,14 @@ async fn condstore_and_qresync_resync() {
     let Some(server) = server() else { return };
     let mut a = connect(&server).await;
     for n in 0..4 {
-        a.append("INBOX", &message("Msg", &format!("q{n}")), Flags::empty())
-            .await
-            .unwrap();
+        a.append(
+            "INBOX",
+            &message("Msg", &format!("q{n}")),
+            Flags::empty(),
+            &[],
+        )
+        .await
+        .unwrap();
     }
     let info = a.select("INBOX", None).await.unwrap();
     let modseq = info.highest_modseq.unwrap();
@@ -236,6 +241,7 @@ async fn move_and_copy_report_copyuid() {
             "INBOX",
             &message("Move me", &format!("mv{n}")),
             Flags::empty(),
+            &[],
         )
         .await
         .unwrap();
@@ -281,7 +287,7 @@ async fn idle_sees_new_mail_from_another_session() {
     });
     tokio::time::sleep(Duration::from_millis(500)).await;
     writer
-        .append("INBOX", &message("Ping", "idle1"), Flags::empty())
+        .append("INBOX", &message("Ping", "idle1"), Flags::empty(), &[])
         .await
         .unwrap();
     let (outcome, events) = idle.await.unwrap();

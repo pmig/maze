@@ -7,13 +7,18 @@
 //! 3. Show the dry run: [`ThunderbirdProfile::report`] builds an [`ImportReport`]
 //!    (accounts, which need a new sign-in or a password, unsupported items, counts and
 //!    sizes) without writing anything.
-//! 4. Import: [`import`] creates SMTP servers, accounts, identities, signatures and
-//!    tags, imports Local Folders (and POP3 mail stores) into local accounts, address
-//!    books into contacts, filters as **disabled** rules, virtual folders as saved
-//!    searches, and optionally builds the offline [`BodyReuse`] index from
-//!    `ImapMail/**`. Running it again doesn't duplicate anything: accounts are
-//!    recognized by their Thunderbird origin, messages, rules, saved searches, tags
-//!    and contacts by their keys.
+//! 4. Import: [`import`] creates SMTP servers, IMAP accounts (Gmail and Microsoft 365
+//!    included), identities, signatures and tags, address books as contacts, filters
+//!    as **disabled** rules, virtual folders as saved searches, and optionally builds
+//!    the offline [`BodyReuse`] index from `ImapMail/**`, so the first sync takes
+//!    bodies from disk. Running it again doesn't duplicate anything: accounts are
+//!    recognized by their Thunderbird origin, rules, saved searches, tags and contacts
+//!    by their keys.
+//!
+//! Maze is IMAP only (ADR-019): POP3 accounts, Local Folders and other account types
+//! are skipped, each with a sentence saying why and what to do instead
+//! ([`ImportOutcome::skipped`], [`ImportReport::unsupported`]), and so are their
+//! filters.
 //!
 //! Nothing is written to the profile; it stays usable by Thunderbird (side-by-side
 //! mode).
@@ -31,24 +36,21 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use ingest::Ingestor;
-use mazemail_types::{AccountId, FolderId, FolderRole};
+use mazemail_types::AccountId;
 use serde::Serialize;
 use serde_json::json;
 use store::{
     AccountKind, IdentityInput, NewAccount, Queries, RuleInput, SavesSent, SignatureId,
-    SignatureInput, SmtpAuth, SmtpSecurity, SmtpServerId, SmtpServerInput,
+    SignatureInput, SmtpAuth, SmtpSecurity, SmtpServerId, SmtpServerInput, Store,
 };
 
 use self::filters::FilterFile;
 use self::model::{AuthMethod, ServerType, SocketType, TbServer, ThunderbirdConfig};
 use self::prefs::Prefs;
-use self::virtual_folders::{VirtualFolder, percent_decode};
+use self::virtual_folders::VirtualFolder;
 use self::xulstore::LayoutSuggestion;
-use crate::local::{ImportStats, ensure_folder_path, import_maildir_into, import_mbox_into};
 use crate::progress::{Phase, Progress, Unit, report};
 use crate::reuse::{BodyReuse, ScanStats};
-use crate::tree::{self, MailFolder, StoreFormat};
 use crate::{Error, Result};
 
 pub use self::model::TbAccount;
@@ -136,7 +138,6 @@ impl ThunderbirdProfile {
             filters: 0,
             filters_with_unsupported_actions: 0,
             address_books: Vec::new(),
-            local_folders: Vec::new(),
             offline_store_bytes: 0,
             layout: self.layout.clone(),
             unsupported: Vec::new(),
@@ -147,35 +148,13 @@ impl ThunderbirdProfile {
             };
             let plan = AccountPlan::new(account, server);
             match plan.kind {
-                PlannedKind::Unsupported => report.unsupported.push(Unsupported {
-                    item: format!("account {}", plan.label()),
-                    reason: format!("{} accounts aren't supported by Maze", server.kind.label()),
-                }),
+                PlannedKind::Unsupported => report.unsupported.push(skipped_account(&plan, server)),
                 PlannedKind::Imap | PlannedKind::Gmail | PlannedKind::M365 => {
                     report.offline_store_bytes += server
                         .directory
                         .as_deref()
                         .map(dir_size)
                         .unwrap_or_default();
-                }
-                PlannedKind::Local => {
-                    if let Some(dir) = server.directory.as_deref().filter(|d| d.is_dir()) {
-                        let folders = tree::scan(dir)?;
-                        let flat: Vec<_> = folders.iter().flat_map(MailFolder::flatten).collect();
-                        report.local_folders.push(LocalStorePlan {
-                            account: plan.label(),
-                            folders: flat.len(),
-                            bytes: flat.iter().map(|(_, f)| f.bytes).sum(),
-                            format: server.store_format,
-                        });
-                    }
-                    if server.kind == ServerType::Pop3 {
-                        report.unsupported.push(Unsupported {
-                            item: format!("account {}", plan.label()),
-                            reason: "POP3 isn't supported; its downloaded mail is imported as local folders"
-                                .to_owned(),
-                        });
-                    }
                 }
             }
             if plan.kind != PlannedKind::Unsupported {
@@ -195,13 +174,24 @@ impl ThunderbirdProfile {
         for folder in &self.virtual_folders {
             report.untranslated_search_terms += virtual_folders::to_query(&folder.terms).1.len();
         }
-        for file in self.filters.values() {
+        let mut skipped_filters = 0;
+        for (server, file) in &self.filters {
+            if !self.imports_server(server) {
+                skipped_filters += file.filters.len();
+                continue;
+            }
             report.filters += file.filters.len();
             report.filters_with_unsupported_actions += file
                 .filters
                 .iter()
                 .filter(|f| !f.unsupported_actions().is_empty())
                 .count();
+        }
+        if skipped_filters > 0 {
+            report.unsupported.push(Unsupported {
+                item: format!("{skipped_filters} message filters"),
+                reason: "skipped: they belong to accounts Maze doesn't import".to_owned(),
+            });
         }
         if report.filters > 0 {
             report.unsupported.push(Unsupported {
@@ -245,6 +235,38 @@ impl ThunderbirdProfile {
         }
         Ok(report)
     }
+
+    /// Whether the server's account is imported (IMAP, Gmail, Microsoft 365). Servers
+    /// without an account in the profile count as imported, as they always did.
+    fn imports_server(&self, server: &str) -> bool {
+        self.config
+            .servers
+            .get(server)
+            .is_none_or(|s| planned_kind(s) != PlannedKind::Unsupported)
+    }
+}
+
+/// Why an account isn't imported, and what to do instead (ADR-019).
+fn skipped_account(plan: &AccountPlan, server: &TbServer) -> Unsupported {
+    let label = plan.label();
+    match server.kind {
+        ServerType::Pop3 => Unsupported {
+            item: format!("POP3 account {label}"),
+            reason: "skipped: Maze supports IMAP only — enable IMAP at your provider and add it"
+                .to_owned(),
+        },
+        ServerType::Local => Unsupported {
+            item: "Local Folders".to_owned(),
+            reason: "skipped: Maze keeps all mail on your servers — move it into an IMAP folder \
+                     in Thunderbird, or import its mbox files with \
+                     `mazemail import <file> --account …`"
+                .to_owned(),
+        },
+        _ => Unsupported {
+            item: format!("{} account {label}", server.kind.label()),
+            reason: "skipped: Maze supports IMAP accounts only".to_owned(),
+        },
+    }
 }
 
 fn read_optional(path: &Path) -> Option<String> {
@@ -283,9 +305,8 @@ pub enum PlannedKind {
     Imap,
     Gmail,
     M365,
-    /// Local Folders, or a POP3 account's downloaded mail.
-    Local,
-    /// News, feeds, Exchange (EWS) and other types: not imported.
+    /// POP3, Local Folders, news, feeds, Exchange (EWS) and other types: not imported
+    /// (Maze is IMAP only, ADR-019).
     Unsupported,
 }
 
@@ -297,7 +318,7 @@ pub enum AuthPlan {
     SignInAgain,
     /// Password: Maze asks once and keeps it in the keychain.
     PasswordPrompt,
-    /// Nothing to sign in to (local accounts, servers without authentication).
+    /// Nothing to sign in to (skipped accounts, servers without authentication).
     None,
     /// Kerberos, NTLM or client certificates: set up manually.
     Manual,
@@ -331,7 +352,7 @@ impl AccountPlan {
     fn new(account: &TbAccount, server: &TbServer) -> Self {
         let kind = planned_kind(server);
         let auth = match (kind, server.auth) {
-            (PlannedKind::Local | PlannedKind::Unsupported, _) => AuthPlan::None,
+            (PlannedKind::Unsupported, _) => AuthPlan::None,
             (_, AuthMethod::OAuth2) => AuthPlan::SignInAgain,
             (_, AuthMethod::Password | AuthMethod::Unknown(_)) => AuthPlan::PasswordPrompt,
             (_, AuthMethod::None) => AuthPlan::None,
@@ -375,7 +396,6 @@ fn planned_kind(server: &TbServer) -> PlannedKind {
                 PlannedKind::Imap
             }
         }
-        ServerType::Local | ServerType::Pop3 => PlannedKind::Local,
         _ => PlannedKind::Unsupported,
     }
 }
@@ -389,30 +409,18 @@ pub struct BookPlan {
     pub lists: usize,
 }
 
-/// A local mail store in the dry run.
-#[derive(Clone, PartialEq, Eq, Serialize)]
-pub struct LocalStorePlan {
-    pub account: String,
-    pub folders: usize,
-    pub bytes: u64,
-    pub format: StoreFormat,
-}
-
-impl fmt::Debug for LocalStorePlan {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("LocalStorePlan")
-            .field("folders", &self.folders)
-            .field("bytes", &self.bytes)
-            .field("format", &self.format)
-            .finish_non_exhaustive()
-    }
-}
-
 /// Something that won't be imported (or only partly), with the reason.
 #[derive(Clone, PartialEq, Eq, Serialize)]
 pub struct Unsupported {
     pub item: String,
     pub reason: String,
+}
+
+impl fmt::Display for Unsupported {
+    /// The sentence shown in the import result ("POP3 account x@y skipped: …").
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {}", self.item, self.reason)
+    }
 }
 
 impl fmt::Debug for Unsupported {
@@ -438,7 +446,6 @@ pub struct ImportReport {
     pub filters: usize,
     pub filters_with_unsupported_actions: usize,
     pub address_books: Vec<BookPlan>,
-    pub local_folders: Vec<LocalStorePlan>,
     /// Size of the offline IMAP stores the body index will scan.
     pub offline_store_bytes: u64,
     pub layout: Option<LayoutSuggestion>,
@@ -468,7 +475,6 @@ impl ImportReport {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportOptions {
     pub accounts: bool,
-    pub local_folders: bool,
     pub address_books: bool,
     pub filters: bool,
     pub saved_searches: bool,
@@ -479,7 +485,6 @@ impl Default for ImportOptions {
     fn default() -> Self {
         Self {
             accounts: true,
-            local_folders: true,
             address_books: true,
             filters: true,
             saved_searches: true,
@@ -502,8 +507,9 @@ pub struct ImportOutcome {
     pub contacts: usize,
     pub rules: usize,
     pub saved_searches: usize,
-    /// Local Folders and POP3 stores.
-    pub messages: ImportStats,
+    /// Accounts and filters not imported, one sentence each ("POP3 account x@y
+    /// skipped: Maze supports IMAP only — enable IMAP at your provider and add it").
+    pub skipped: Vec<String>,
     pub body_index: Option<ScanStats>,
     pub layout: Option<LayoutSuggestion>,
     /// Non-fatal problems (unreadable files and the like), for the activity log.
@@ -522,12 +528,11 @@ struct Origin {
 /// stores of the IMAP accounts are scanned into it.
 pub fn import(
     profile: &ThunderbirdProfile,
-    ingestor: &Ingestor,
+    store: &Store,
     reuse: Option<&BodyReuse>,
     options: &ImportOptions,
     progress: &dyn Progress,
 ) -> Result<ImportOutcome> {
-    let store = ingestor.store();
     let config = &profile.config;
     let mut out = ImportOutcome {
         layout: profile.layout.clone(),
@@ -543,15 +548,11 @@ pub fn import(
 
     // SMTP servers (only for new accounts; reused accounts keep theirs).
     let mut smtp: HashMap<String, SmtpServerId> = HashMap::new();
-    let mut folder_map: HashMap<(String, Vec<String>), FolderId> = HashMap::new();
 
     if options.accounts {
         let existing = store.reader()?.accounts()?;
         let profile_key = profile.path.to_string_lossy().into_owned();
         let mut new_accounts: Vec<(&TbAccount, &TbServer, AccountId)> = Vec::new();
-        // Local stores of new and already imported accounts (re-imports only add
-        // what's new).
-        let mut local_targets: Vec<(&TbServer, AccountId)> = Vec::new();
         for (ordinal, account) in config.accounts.iter().enumerate() {
             let Some(server) = config.server_of(account) else {
                 continue;
@@ -561,8 +562,10 @@ pub fn import(
                 PlannedKind::Imap => AccountKind::Imap,
                 PlannedKind::Gmail => AccountKind::Gmail,
                 PlannedKind::M365 => AccountKind::M365,
-                PlannedKind::Local => AccountKind::Local,
-                PlannedKind::Unsupported => continue,
+                PlannedKind::Unsupported => {
+                    out.skipped.push(skipped_account(&plan, server).to_string());
+                    continue;
+                }
             };
             let origin = Origin {
                 source: "thunderbird".to_owned(),
@@ -576,7 +579,6 @@ pub fn import(
                     .is_some_and(|o| o == origin)
             }) {
                 out.accounts.insert(account.key.clone(), found.id);
-                local_targets.push((server, found.id));
                 continue;
             }
             let config_json = account_config(config, account, server, &origin);
@@ -590,7 +592,6 @@ pub fn import(
             out.accounts.insert(account.key.clone(), id);
             out.accounts_created += 1;
             new_accounts.push((account, server, id));
-            local_targets.push((server, id));
         }
 
         // SMTP servers used by identities of new accounts.
@@ -644,22 +645,8 @@ pub fn import(
             out.smtp_servers += 1;
         }
 
-        // Local Folders and POP3 stores, before identities (their folders resolve).
-        if options.local_folders {
-            for (server, id) in &local_targets {
-                if planned_kind(server) != PlannedKind::Local {
-                    continue;
-                }
-                let Some(dir) = server.directory.as_deref().filter(|d| d.is_dir()) else {
-                    continue;
-                };
-                let stats =
-                    import_local_store(ingestor, dir, *id, server, &mut folder_map, progress)?;
-                out.messages.add(&stats);
-            }
-        }
-
-        // Identities and signatures.
+        // Identities and signatures. Their folders (Sent, Drafts, Archive) exist only
+        // after the first sync; the connector reads them from the account config.
         let default_account = config.default_account.clone();
         let mut identity_ordinal = 0i64;
         for (account, _, id) in &new_accounts {
@@ -706,10 +693,6 @@ pub fn import(
                     }
                     None => None,
                 };
-                let resolve = |uri: &Option<String>| {
-                    uri.as_deref()
-                        .and_then(|u| resolve_folder_uri(u, &folder_map))
-                };
                 let input = IdentityInput {
                     label: None,
                     display_name: identity.full_name.clone(),
@@ -721,9 +704,9 @@ pub fn import(
                         .as_ref()
                         .or(config.default_smtp_server.as_ref())
                         .and_then(|k| smtp.get(k).copied()),
-                    sent_folder: resolve(&identity.fcc_folder),
-                    drafts_folder: resolve(&identity.draft_folder),
-                    archive_folder: resolve(&identity.archive_folder),
+                    sent_folder: None,
+                    drafts_folder: None,
+                    archive_folder: None,
                     archive_granularity: if identity.archive_enabled {
                         identity.archive_granularity
                     } else {
@@ -815,7 +798,12 @@ pub fn import(
         let existing = store.reader()?.rules(None)?;
         let mut ordinal = existing.len() as i64;
         let mut inputs = Vec::new();
+        let mut skipped = 0;
         for (server_key, file) in &profile.filters {
+            if !profile.imports_server(server_key) {
+                skipped += file.filters.len();
+                continue;
+            }
             let account = config
                 .account_for_server(server_key)
                 .and_then(|a| out.accounts.get(&a.key).copied());
@@ -829,6 +817,11 @@ pub fn import(
                 inputs.push(rule_input(filter, account, server_key, ordinal));
                 ordinal += 1;
             }
+        }
+        if skipped > 0 {
+            out.skipped.push(format!(
+                "{skipped} message filters skipped: they belong to accounts Maze doesn't import"
+            ));
         }
         out.rules = inputs.len();
         store.write_blocking(move |w| {
@@ -848,16 +841,9 @@ pub fn import(
                 continue;
             }
             let (query, _) = virtual_folders::to_query(&folder.terms);
-            let resolved: Vec<FolderId> = folder
-                .scope
-                .iter()
-                .filter_map(|uri| resolve_folder_uri(uri, &folder_map))
-                .collect();
-            // Only a fully resolved scope narrows the search; IMAP folders exist only
-            // after the first sync, so such searches cover everything until edited.
-            let folders = (!folder.scope.is_empty() && resolved.len() == folder.scope.len())
-                .then_some(resolved);
-            inputs.push((folder.name.clone(), query, folders, ordinal));
+            // IMAP folders exist only after the first sync, so a saved search covers
+            // every folder until it is edited.
+            inputs.push((folder.name.clone(), query, None::<Vec<_>>, ordinal));
             ordinal += 1;
         }
         out.saved_searches = inputs.len();
@@ -923,11 +909,7 @@ fn account_config(
             AuthMethod::External => "external",
             AuthMethod::Password | AuthMethod::Unknown(_) => "password",
         },
-        "protocol": match server.kind {
-            ServerType::Pop3 => "pop3",
-            ServerType::Local => "local",
-            _ => "imap",
-        },
+        "protocol": "imap",
         "identity_folders": folders,
         "import": origin,
     })
@@ -995,108 +977,69 @@ fn rule_input(
     }
 }
 
-/// The role of a top-level local folder by Thunderbird's default names.
-fn local_role(name: &str) -> Option<FolderRole> {
-    match name.to_ascii_lowercase().as_str() {
-        "inbox" => Some(FolderRole::Inbox),
-        "sent" => Some(FolderRole::Sent),
-        "drafts" => Some(FolderRole::Drafts),
-        "trash" => Some(FolderRole::Trash),
-        "junk" => Some(FolderRole::Junk),
-        "archives" | "archive" => Some(FolderRole::Archive),
-        _ => None,
-    }
-}
-
-/// The host part folder URIs of a server use (`Local Folders`, `pop.example.com`).
-fn uri_host(server: &TbServer) -> String {
-    server.hostname.clone().unwrap_or_default().to_lowercase()
-}
-
-/// Imports a Thunderbird mail directory (Local Folders or a POP3 store) into a local
-/// account, recording each folder's URI path for identity and saved-search scopes.
-fn import_local_store(
-    ingestor: &Ingestor,
-    dir: &Path,
-    account: AccountId,
-    server: &TbServer,
-    folder_map: &mut HashMap<(String, Vec<String>), FolderId>,
-    progress: &dyn Progress,
-) -> Result<ImportStats> {
-    let mut stats = ImportStats::default();
-    let host = uri_host(server);
-    for top in tree::scan(dir)? {
-        for (path, folder) in top.flatten() {
-            let role = (path.len() == 1).then(|| local_role(&path[0])).flatten();
-            let (id, created) = ensure_folder_path(ingestor.store(), account, &path, role)?;
-            stats.folders_created += created;
-            folder_map.insert((host.clone(), path.clone()), id);
-            let result = match folder.format {
-                Some(StoreFormat::Mbox) => {
-                    import_mbox_into(ingestor, &folder.path, account, id, progress)
-                }
-                Some(StoreFormat::Maildir) => {
-                    import_maildir_into(ingestor, &folder.path, account, id, progress)
-                }
-                None => Ok(ImportStats::default()),
-            };
-            match result {
-                Ok(s) => stats.add(&s),
-                Err(err) => {
-                    tracing::warn!(error = %err, "a local folder couldn't be imported");
-                    stats.failed += 1;
-                }
-            }
-        }
-    }
-    Ok(stats)
-}
-
-/// Resolves a folder URI (`mailbox://nobody@Local%20Folders/Inbox/Sub`) to an imported
-/// local folder.
-fn resolve_folder_uri(
-    uri: &str,
-    map: &HashMap<(String, Vec<String>), FolderId>,
-) -> Option<FolderId> {
-    let rest = uri.split_once("://")?.1;
-    let (authority, path) = rest.split_once('/')?;
-    let host = percent_decode(authority.rsplit('@').next()?).to_lowercase();
-    let segments: Vec<String> = path
-        .split('/')
-        .filter(|s| !s.is_empty())
-        .map(percent_decode)
-        .collect();
-    map.get(&(host, segments)).copied()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn resolves_folder_uris() {
-        let mut map = HashMap::new();
-        map.insert(
-            (
-                "local folders".to_owned(),
-                vec!["Inbox".to_owned(), "Sub Folder".to_owned()],
-            ),
-            FolderId(7),
-        );
-        assert_eq!(
-            resolve_folder_uri("mailbox://nobody@Local%20Folders/Inbox/Sub%20Folder", &map),
-            Some(FolderId(7))
-        );
-        assert_eq!(
-            resolve_folder_uri("imap://x@imap.example.com/INBOX", &map),
-            None
-        );
-        assert_eq!(resolve_folder_uri("garbage", &map), None);
+    fn server(kind: ServerType, hostname: &str) -> TbServer {
+        TbServer {
+            key: "server9".to_owned(),
+            kind,
+            hostname: Some(hostname.to_owned()),
+            port: None,
+            socket: SocketType::Plain,
+            auth: AuthMethod::Password,
+            username: Some("anna@example.com".to_owned()),
+            name: None,
+            directory: None,
+            store_format: crate::tree::StoreFormat::Mbox,
+            deferred_to_account: None,
+        }
     }
 
     #[test]
-    fn roles_by_name() {
-        assert_eq!(local_role("Archives"), Some(FolderRole::Archive));
-        assert_eq!(local_role("Unsent Messages"), None);
+    fn only_imap_servers_are_imported() {
+        assert_eq!(
+            planned_kind(&server(ServerType::Imap, "imap.gmail.com")),
+            PlannedKind::Gmail
+        );
+        assert_eq!(
+            planned_kind(&server(ServerType::Imap, "outlook.office365.com")),
+            PlannedKind::M365
+        );
+        assert_eq!(
+            planned_kind(&server(ServerType::Imap, "imap.example.com")),
+            PlannedKind::Imap
+        );
+        for kind in [ServerType::Pop3, ServerType::Local, ServerType::Nntp] {
+            assert_eq!(
+                planned_kind(&server(kind, "x.example.com")),
+                PlannedKind::Unsupported
+            );
+        }
+    }
+
+    #[test]
+    fn skipped_accounts_say_why_and_what_to_do() {
+        let pop = server(ServerType::Pop3, "pop.example.com");
+        let account = TbAccount {
+            key: "account9".to_owned(),
+            server: Some("server9".to_owned()),
+            identities: Vec::new(),
+        };
+        let plan = AccountPlan::new(&account, &pop);
+        assert_eq!(plan.auth, AuthPlan::None);
+        assert_eq!(
+            skipped_account(&plan, &pop).to_string(),
+            "POP3 account anna@example.com skipped: Maze supports IMAP only — enable IMAP at \
+             your provider and add it"
+        );
+        let local = server(ServerType::Local, "Local Folders");
+        let plan = AccountPlan::new(&account, &local);
+        assert!(
+            skipped_account(&plan, &local)
+                .to_string()
+                .starts_with("Local Folders skipped: ")
+        );
     }
 }
