@@ -3,12 +3,16 @@ rust = { version = "1.99.1", components = "rustfmt,clippy,rust-src", profile = "
 "cargo:cargo-nextest" = "latest"
 "cargo:cargo-deny" = "latest"
 "cargo:cargo-insta" = "latest"
+# Servo's build scripts (the original HTML engine, ADR-020) need Python 3.11 or newer.
+python = "3.13"
 
 [tasks.start]
-description = "Build and start Maze (dev build: fast incremental rebuilds)"
+description = "Build and start Maze (dev build with the original HTML engine: fast incremental rebuilds)"
 # script/dev-codesign gives the binary a stable signature if a "Maze Development"
 # identity exists, so keychain "Always Allow" survives rebuilds (else it does nothing).
-run = 'cargo build --locked -p mazemail && script/dev-codesign "${CARGO_TARGET_DIR:-target}/debug/mazemail" && exec "${CARGO_TARGET_DIR:-target}/debug/mazemail"'
+# The first build with the Servo engine (`original-html`) takes about 3 minutes longer;
+# after that a change rebuilds in about a second more than without it.
+run = 'cargo build --locked -p mazemail --features original-html && script/dev-codesign "${CARGO_TARGET_DIR:-target}/debug/mazemail" && exec "${CARGO_TARGET_DIR:-target}/debug/mazemail"'
 
 [tasks.fmt]
 description = "Format all crates"

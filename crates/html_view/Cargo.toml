@@ -1,0 +1,34 @@
+[package]
+name = "html_view"
+description = "Maze original HTML mode (ADR-020): the document, its load policy and the embedded Servo engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# The Servo engine. Off in dev builds and CI tests (it adds minutes to a clean build);
+# on in release builds. Without it, `OriginalView::AVAILABLE` is false and the message
+# view stays in reader mode.
+servo = ["dep:servo", "dep:dpi", "dep:euclid", "dep:http", "dep:image"]
+
+[dependencies]
+async-channel = { workspace = true }
+gpui = { workspace = true }
+mazemail_mime = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+dpi = { workspace = true, optional = true }
+euclid = { workspace = true, optional = true }
+http = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+servo = { workspace = true, optional = true }
+
+[dev-dependencies]
+image = { workspace = true }
+pretty_assertions = { workspace = true }
+
+[lints]
+workspace = true

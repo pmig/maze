@@ -13,6 +13,7 @@
 use std::sync::Arc;
 
 use gpui::SharedString;
+pub use html_view::Part;
 use mazemail_types::{
     AccountId, Address, Flags, FolderId, FolderRole, MessageId, Sensitive, ThreadId,
 };
@@ -558,6 +559,9 @@ pub struct MessageDocument {
     /// The body's links, in reading order: what the link preview shows when one is
     /// hovered (its target, and a warning for deceptive ones).
     pub links: Sensitive<Vec<BodyLink>>,
+    /// The sanitized HTML for the original mode (ADR-020); `None` for plain-text mail,
+    /// which never uses the engine.
+    pub original: Option<OriginalHtml>,
 }
 
 /// A link of a message body: the text the reader sees and where it really goes.
@@ -580,6 +584,22 @@ pub struct Deception {
     pub shown: SharedString,
     /// The domain the link opens.
     pub opens: SharedString,
+}
+
+/// A message's HTML for the original mode (ADR-020). Its links go through the same
+/// policy as the reader's ([`MessageDocument::links`], `links::open_link`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct OriginalHtml {
+    /// The HTML after the sanitizer (PLAN §4.8), before any resource rewrite.
+    pub html: Sensitive<Arc<str>>,
+    /// Whether the message's remote content decision allows remote resources (policy
+    /// `always`, or `ask` with the sender on the "Always for this sender" list).
+    pub remote_allowed: bool,
+    /// Whether blocked remote resources may be loaded on request (policy `ask`): the
+    /// view then offers "Load images" and "Always for this sender".
+    pub remote_ask: bool,
+    /// Tracking pixels the sanitizer removed.
+    pub trackers_removed: usize,
 }
 
 /// The sender's mail client, as the message header shows it.
@@ -947,6 +967,27 @@ pub trait MailSource: Send + Sync + 'static {
     /// One message, ready to display (a message row of an expanded thread or of an
     /// unthreaded list).
     fn message_document(&self, message: MessageId) -> Result<MessageDocument, SourceError>;
+
+    /// The inline part (`cid:` image) of a message with this Content-ID, for the
+    /// original mode. Served from memory, never written to disk.
+    fn inline_part(&self, _message: MessageId, _content_id: &str) -> Option<Part> {
+        None
+    }
+
+    /// A remote resource of a message, fetched by Maze (never by the engine), when the
+    /// message's remote content decision allows it, or `once` ("Load images") under
+    /// the `ask` policy. `None` when it can't be had.
+    fn remote_resource(&self, _message: MessageId, _url: &str, _once: bool) -> Option<Part> {
+        None
+    }
+
+    /// "Always for this sender": messages from `sender` load remote content without
+    /// asking (unless the policy is `never`).
+    fn allow_remote_content(&self, _sender: &str) -> Result<(), SourceError> {
+        Err(SourceError::Unavailable(
+            "remote content exceptions aren't kept here".into(),
+        ))
+    }
 
     /// Adds and removes flags on threads (mark read, star, …).
     fn set_flags(&self, threads: &[ThreadId], add: Flags, remove: Flags)

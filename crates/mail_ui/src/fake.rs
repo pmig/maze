@@ -32,8 +32,9 @@ use time::{Duration, OffsetDateTime};
 use crate::source::{
     AccountEntry, AccountKind, AttachmentInfo, BodyLink, Direction, FolderEntry, FolderKey,
     FolderTree, ListSort, MailSource, MessageBody, MessageDocument, MessageKeys, MessageRow,
-    SenderClient, SortBy, SourceError, SourceStatus, SyncState, ThreadFilter, ThreadKeys,
-    ThreadPredicate, ThreadRow, ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
+    OriginalHtml, SenderClient, SortBy, SourceError, SourceStatus, SyncState, ThreadFilter,
+    ThreadKeys, ThreadPredicate, ThreadRow, ThreadScope, ThreadTree, TreeNode, Verdict,
+    Verification,
 };
 
 /// Where the "view online" link of invoices goes, and its text.
@@ -394,6 +395,8 @@ pub struct FakeMailSource {
     sync_requests: AtomicUsize,
     /// The status [`FakeMailSource::set_status`] set; up to date by default.
     status: RwLock<Option<SourceStatus>>,
+    /// Senders allowed to load remote content ("Always for this sender").
+    remote_senders: Mutex<Vec<String>>,
 }
 
 impl std::fmt::Debug for FakeMailSource {
@@ -446,6 +449,7 @@ impl FakeMailSource {
             message_key_cache: Mutex::new(HashMap::new()),
             sync_requests: AtomicUsize::new(0),
             status: RwLock::new(None),
+            remote_senders: Mutex::new(Vec::new()),
         }
     }
 
@@ -458,6 +462,14 @@ impl FakeMailSource {
     /// "Up to date".
     pub fn set_status(&self, status: SourceStatus) {
         *self.status.write().unwrap_or_else(PoisonError::into_inner) = Some(status);
+    }
+
+    /// Senders allowed with "Always for this sender".
+    pub fn remote_senders(&self) -> Vec<String> {
+        self.remote_senders
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// The key of the 1,000,000-thread folder.
@@ -1061,7 +1073,7 @@ impl FakeMailSource {
             to: Sensitive::new(to),
             cc: Sensitive::new(cc),
             date: row.date,
-            body: MessageBody::Html(Sensitive::new(SharedString::from(body))),
+            body: MessageBody::Html(Sensitive::new(SharedString::from(body.clone()))),
             attachments,
             verification: Verification::Checked {
                 verdict: Verdict::Verified,
@@ -1075,6 +1087,12 @@ impl FakeMailSource {
                 header: header.into(),
             })),
             links: Sensitive::new(links),
+            original: Some(OriginalHtml {
+                html: Sensitive::new(Arc::from(body.as_str())),
+                remote_allowed: false,
+                remote_ask: true,
+                trackers_removed: 0,
+            }),
         })
     }
 
@@ -1488,7 +1506,26 @@ impl MailSource for FakeMailSource {
 
     fn message_document(&self, message: MessageId) -> Result<MessageDocument, SourceError> {
         let state = self.read_state();
-        self.document(&state, message)
+        let mut doc = self.document(&state, message)?;
+        let allowed = self
+            .remote_senders()
+            .contains(&doc.from.expose().email.to_lowercase());
+        if let Some(original) = &mut doc.original {
+            original.remote_allowed = allowed;
+        }
+        Ok(doc)
+    }
+
+    fn allow_remote_content(&self, sender: &str) -> Result<(), SourceError> {
+        let mut senders = self
+            .remote_senders
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let sender = sender.trim().to_lowercase();
+        if !senders.contains(&sender) {
+            senders.push(sender);
+        }
+        Ok(())
     }
 
     fn set_flags(

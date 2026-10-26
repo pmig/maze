@@ -46,6 +46,12 @@ tracing-subscriber = { workspace = true }
 ui = { workspace = true }
 vault = { workspace = true }
 
+[features]
+default = []
+# The original HTML engine (Servo, ADR-020). Release builds enable it
+# (`script/bundle-mac`, CI's release job); dev builds and tests stay without it.
+original-html = ["mail_ui/original-html"]
+
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 # `render_to_image` for the screenshot example needs the platform's test support.

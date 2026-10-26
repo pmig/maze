@@ -9,6 +9,7 @@ pub(crate) mod lists;
 pub(crate) mod messages;
 pub(crate) mod misc;
 pub(crate) mod ops;
+pub(crate) mod remote_content;
 pub(crate) mod secrets;
 pub(crate) mod sort;
 pub(crate) mod threads;
@@ -129,6 +130,12 @@ pub trait Queries: sealed::Sealed {
     /// The contact for an address (case-insensitive), address book entries first.
     fn contact_by_email(&self, email: &str) -> Result<Option<Contact>> {
         misc::contact_by_email(self.connection(sealed::Token), email)
+    }
+
+    /// Whether messages from `email` may load remote content without asking
+    /// ("Always for this sender"; case-insensitive).
+    fn remote_content_allowed(&self, email: &str) -> Result<bool> {
+        remote_content::remote_content_allowed(self.connection(sealed::Token), email)
     }
 
     // ---- folders ------------------------------------------------------------------

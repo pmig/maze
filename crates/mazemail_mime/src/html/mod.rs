@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 pub use rewrite::{
     InvalidResourceOrigin, ResourceOrigin, RewrittenHtml, content_security_policy,
-    rewrite_resources, standalone_document,
+    rewrite_for_embedding, rewrite_resources, standalone_document,
 };
 pub use sanitize::{SanitizeOptions, SanitizedHtml, sanitize};
 pub use tracking::TrackerRules;

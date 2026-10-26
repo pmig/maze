@@ -17,4 +17,5 @@ mod index;
 mod lifecycle;
 mod messages;
 mod queries;
+mod remote_content;
 mod search;

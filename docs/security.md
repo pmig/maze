@@ -100,8 +100,62 @@ Linux).
 As the features arrive, these join the list: attachments you open in another app (a
 private temporary folder, deleted on quit or after 24 hours), notification text (macOS
 keeps delivered notifications in its own database; the `notifications.content` setting
-controls whether they include the subject) and pages you open in a browser. Maze
+controls whether they include the subject) and pages you open in a browser. The
+original HTML view writes nothing (see [HTML mail](#html-mail)). Maze
 doesn't donate mail to Spotlight.
+
+## HTML mail
+
+Every HTML message goes through the same pipeline before anything shows it: Maze
+parses it and runs it through a strict sanitizer (an allowlist built on `ammonia`) that
+removes scripts, frames, objects and embeds, forms, `meta refresh`, `base`, every `on…`
+event attribute and `javascript:` URLs, and drops known tracking pixels.
+
+**Reader mode** draws the sanitized text natively and loads nothing remote.
+
+**Original mode** (ADR-020) hands the sanitized page to an embedded Servo engine,
+rendered offscreen into an image inside the Maze window. The engine is locked down in
+layers, each of which holds on its own:
+
+- **No scripts.** The page is served with `Content-Security-Policy: sandbox;
+  default-src 'none'; img-src <message origin> data:; style-src 'unsafe-inline';
+  base-uri 'none'; form-action 'none'`. `default-src 'none'` forbids every script, and
+  the `sandbox` directive (no `allow-scripts`) turns scripting off for the page
+  altogether, so even an inline handler the sanitizer missed doesn't run. Maze's
+  tests load a page with a script and an `onload` handler into the real engine and
+  check that neither ran. Servo is also built without its JIT (so Maze needs no JIT
+  entitlement) and with its faster JavaScript tiers and WebAssembly switched off.
+  SpiderMonkey's basic interpreter can't be left out of Servo, which is why the
+  sandbox and the CSP, not the build, are what keep scripts from running.
+- **Nothing reaches the network or the disk from the engine.** The page lives at
+  `https://message.mazemail.localhost/m<n>/` and every load the engine makes (the
+  page, its images, stylesheets, frames, anything) goes to Maze first. Maze answers
+  the page and the message's inline (`cid:`) images from memory and refuses
+  everything else; loads of a message the view has moved on from are refused too.
+  Remote images are fetched by Maze, never by the engine, and only when allowed.
+- **No storage.** The engine runs with temporary storage only (no profile
+  directory, no disk cache, no cookies kept), no devtools, no service or shared
+  workers, no IndexedDB and no web APIs (WebGL, WebGPU, WebXR, Bluetooth,
+  notifications, geolocation, clipboard reading). The message is never written to a
+  file: no temporary HTML, no cache.
+- **Links leave Maze.** A click on a link doesn't navigate the page: the engine
+  reports it and Maze applies the reader's link policy (normalized targets, web links
+  to your browser, `mailto:` to a new draft, every other scheme refused, a
+  confirmation first for deceptive links whose text shows another domain). Hovering a
+  link shows its real target, as in the reader.
+- **It's an image in the window.** The engine never gets a native view: it paints
+  into an offscreen buffer that Maze draws like any picture, so it can't cover dialogs
+  or menus, and keyboard focus and shortcuts stay with Maze.
+
+**Remote images** follow `reader.remote_content` (per account): `"ask"` blocks them
+until you choose **Load images** (this message, once) or **Always for this sender**
+(kept in the encrypted database, table `remote_content_sender`); `"never"` blocks them
+even for remembered senders; `"always"` loads them. Maze fetches them with its own HTTP
+client: only URLs the sanitized message references, only images, at most 5 MB each,
+8 seconds at most, no cookies, no `Referer` and a generic `User-Agent`. What a sender
+can still learn when you load images: that the message was opened, when, and from
+which IP address (and roughly where, from that address); which images you loaded if
+their URLs are unique to you. Tracking pixels Maze recognizes are dropped even then.
 
 ## Lost key and recovery
 

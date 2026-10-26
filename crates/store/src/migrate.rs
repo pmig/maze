@@ -27,6 +27,9 @@ const MAIN: &[M<'static>] = &[
         "../migrations/main/0009_draft_support_maze.sql"
     )),
     M::up(include_str!("../migrations/main/0010_imap_only.sql")),
+    M::up(include_str!(
+        "../migrations/main/0011_remote_content_senders.sql"
+    )),
 ];
 
 const SENDLOG: &[M<'static>] = &[M::up(include_str!(

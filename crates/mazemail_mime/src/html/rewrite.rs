@@ -130,11 +130,23 @@ impl fmt::Debug for RewrittenHtml {
 /// The input must come from [`sanitize`](super::sanitize); this pass doesn't
 /// sanitize again.
 pub fn rewrite_resources(sanitized_html: &str, origin: &ResourceOrigin) -> RewrittenHtml {
+    rewrite(sanitized_html, origin, false)
+}
+
+/// [`rewrite_resources`] for an embedded engine (the original mode, ADR-020): links
+/// also lose their `target`, so a click navigates the message's own frame, where the
+/// embedder intercepts it, instead of asking for a new window.
+pub fn rewrite_for_embedding(sanitized_html: &str, origin: &ResourceOrigin) -> RewrittenHtml {
+    rewrite(sanitized_html, origin, true)
+}
+
+fn rewrite(sanitized_html: &str, origin: &ResourceOrigin, strip_targets: bool) -> RewrittenHtml {
     let mut dom = Dom::parse_fragment(sanitized_html);
     let root = dom.root();
     let mut table = RemoteTable::default();
     for node in dom.descendants(root) {
         match dom.tag(node) {
+            Some("a" | "area") if strip_targets => dom.remove_attr(node, "target"),
             Some("img") => rewrite_attr(&mut dom, node, "src", origin, &mut table),
             Some("style") => {
                 for child in dom.children(node).to_vec() {
@@ -286,6 +298,20 @@ mod tests {
             ]
         );
         insta::assert_snapshot!(out.html);
+    }
+
+    #[test]
+    fn embedding_strips_link_targets() {
+        let html = r#"<a href="https://e.com" target="_blank">x</a><img src="cid:a">"#;
+        let embedded = rewrite_for_embedding(html, &origin());
+        assert!(!embedded.html.contains("target"), "{}", embedded.html);
+        assert!(embedded.html.contains("/cid/a"), "{}", embedded.html);
+        let browser = rewrite_resources(html, &origin());
+        assert!(
+            browser.html.contains("target=\"_blank\""),
+            "{}",
+            browser.html
+        );
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! A message in a tab of its own (a double-click on a row, `enter` or `cmd-o`): only
-//! the message view, full width. The tab is titled with the subject; the layout file
+//! the message view, full width, showing HTML mail as designed by default
+//! (`reader.tab_mode`, ADR-020). The tab is titled with the subject; the layout file
 //! keeps the message id only. When the message is gone (deleted, or moved away by
 //! another device) the tab closes.
 
@@ -17,7 +18,7 @@ use ui::assets::IconName;
 use ui::panes::{Item, ItemEvent, SerializedItem};
 
 use crate::actions::{Archive, Forward, Reply, ReplyAll, ToggleRead, ToggleStar};
-use crate::message_view::MessageView;
+use crate::message_view::{MessageView, ViewPlace};
 use crate::source::{MailSource, SourceError};
 
 /// The layout kind of message tabs (`{"kind": "message", "data": {"message": 17}}`).
@@ -59,7 +60,8 @@ impl MessageTab {
         message: MessageId,
         cx: &mut Context<'_, Self>,
     ) -> Self {
-        let view = cx.new(|cx| MessageView::new(local_offset, cx));
+        let view =
+            cx.new(|cx| MessageView::new(Some(source.clone()), local_offset, ViewPlace::Tab, cx));
         let menu_source = source.clone();
         view.update(cx, |view, _| {
             view.set_context_menu(Rc::new(move |menu, _, _| {

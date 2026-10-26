@@ -11,6 +11,7 @@ publish.workspace = true
 gpui = { workspace = true }
 url = { workspace = true }
 gpui-kit = { workspace = true, features = ["tree-sitter"] }
+html_view = { workspace = true }
 mazemail_types = { workspace = true }
 settings = { workspace = true }
 serde = { workspace = true }
@@ -19,6 +20,11 @@ thiserror = { workspace = true }
 time = { workspace = true }
 tracing = { workspace = true }
 ui = { workspace = true }
+
+[features]
+default = []
+# The original HTML engine (Servo, ADR-020); off by default to keep dev builds fast.
+original-html = ["html_view/servo"]
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

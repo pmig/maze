@@ -130,6 +130,39 @@ pub struct RemoteContent {
     /// Whether remote resources stay blocked (the UI shows "load remote content" for
     /// [`RemoteContentPolicy::Ask`]).
     pub blocked: bool,
+    /// Whether the sender is on the "Always for this sender" list.
+    pub sender_allowed: bool,
+}
+
+impl RemoteContent {
+    /// The decision for a message (CONCEPT §15, ADR-020): `always` loads, `never`
+    /// blocks (the sender list doesn't matter), `ask` blocks unless the sender is on
+    /// the list. Tracking pixels are dropped by the sanitizer either way.
+    pub fn decide(
+        policy: RemoteContentPolicy,
+        has_remote_resources: bool,
+        trackers_removed: usize,
+        sender_allowed: bool,
+    ) -> Self {
+        let allowed = match policy {
+            RemoteContentPolicy::Always => true,
+            RemoteContentPolicy::Never => false,
+            RemoteContentPolicy::Ask => sender_allowed,
+        };
+        Self {
+            policy,
+            has_remote_resources,
+            trackers_removed,
+            blocked: has_remote_resources && !allowed,
+            sender_allowed,
+        }
+    }
+
+    /// Whether remote resources may be fetched, `once` meaning the user chose "Load
+    /// images" for this message. `never` holds even then.
+    pub fn allows_fetch(&self, once: bool) -> bool {
+        !self.blocked || (once && self.policy == RemoteContentPolicy::Ask)
+    }
 }
 
 /// Everything the message view shows.
@@ -271,5 +304,31 @@ impl KnownContacts for StoreContacts<'_> {
                 Vec::new()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod remote_content_tests {
+    use super::*;
+
+    #[test]
+    fn the_policy_decides_and_never_beats_the_sender_list() {
+        use RemoteContentPolicy::{Always, Ask, Never};
+        let ask = RemoteContent::decide(Ask, true, 2, false);
+        assert!(ask.blocked);
+        assert!(!ask.allows_fetch(false));
+        assert!(ask.allows_fetch(true), "Load images");
+        assert_eq!(ask.trackers_removed, 2);
+        let listed = RemoteContent::decide(Ask, true, 0, true);
+        assert!(!listed.blocked);
+        assert!(listed.allows_fetch(false));
+        let never = RemoteContent::decide(Never, true, 0, true);
+        assert!(never.blocked, "the sender list doesn't override never");
+        assert!(!never.allows_fetch(true));
+        let always = RemoteContent::decide(Always, true, 0, false);
+        assert!(!always.blocked);
+        assert!(always.allows_fetch(false));
+        let nothing_remote = RemoteContent::decide(Ask, false, 0, false);
+        assert!(!nothing_remote.blocked);
     }
 }

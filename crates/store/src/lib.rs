@@ -36,7 +36,8 @@
 //!   ([`OutboxEnvelope`]); v5 adds account secrets ([`WriteTx::set_account_secret`]);
 //!   v6 adds agents' sign-in keys ([`WriteTx::set_agent_secret`]); v7 adds draft
 //!   names (the two-word tab title); v8 makes Gmail's All Mail fetch every
-//!   message's labels again once.
+//!   message's labels again once; v11 adds the senders allowed to load remote content
+//!   ([`WriteTx::allow_remote_content`], [`Queries::remote_content_allowed`]).
 //!   Migrations only ever add files; opening an older database backs it up first (see
 //!   [`MigrationReport`]).
 //! - **Message lists** (threads off): [`Queries::message_list_keys`] pages through the

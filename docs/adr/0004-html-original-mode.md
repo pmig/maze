@@ -1,6 +1,6 @@
 # ADR-004: HTML original mode
 
-- **Status:** Accepted (working decision, may be revised by M0 spikes)
+- **Status:** Superseded by [ADR-020](0020-servo-for-original-html.md)
 - **Date:** 2026-10-22
 
 ## Context

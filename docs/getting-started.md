@@ -51,6 +51,11 @@ mise start              # starts Maze
 script/bundle-mac       # optional: dist/mac-<arch>/Maze.app, .dmg and .app.tar.zst
 ```
 
+`mise start` and `script/bundle-mac` include the original HTML engine (Servo, the
+`original-html` feature); a plain `cargo build` leaves it out. Servo's build scripts need
+Python 3.11 or newer (`mise install` provides it; `uv` works too), its first build takes
+about three minutes longer, and it downloads a prebuilt SpiderMonkey library once.
+
 A build from source is a **dev** build: it uses its own data directory
 (`mazemail-dev`), its own keychain item and the bundle ID `dev.mazemail.maze-dev`, so it
 never touches the store of an installed Maze.
@@ -289,6 +294,39 @@ sync button in the title bar, next to **+** (New Message), press `cmd-shift-t`
 command palette. The icon turns while a sync runs. When sync has a problem (offline, the
 account needs you to sign in again, an error), the button shows a warning dot and its
 tooltip says why, like the status bar at the bottom.
+
+### Reading mail: reader and original
+
+HTML mail can be shown two ways, and the **Reader / Original** buttons in the message
+header (or `cmd-alt-o`) switch the message you're looking at:
+
+- **Reader** shows the text of the message in your theme: fast, quiet, the same font
+  and colors for every sender, and good for most mail. Layout tables, columns and
+  backgrounds are simplified.
+- **Original** shows the message as its sender designed it (newsletters, receipts,
+  Outlook tables), laid out by Maze's built-in engine. It shows the sanitized
+  message: no scripts, forms or embedded frames, and nothing is loaded from the
+  network unless you allow remote images (below). Links work as in the reader (see
+  [Links in a message](#links-in-a-message)), with the same target preview. Select text and
+  `cmd-c` copies it.
+
+The message pane next to the list uses the reader by default; a message you open in a
+tab of its own (double-click, `enter` or `cmd-o`) shows the original. Change the
+defaults with `reader.default_mode` (the pane) and `reader.tab_mode` (tabs) in
+`settings.json`: `"reader"` or `"original"`. Plain-text mail always uses the reader.
+A build without the `original-html` feature (a plain `cargo build`) shows the reader
+and says so; Linux builds don't include the engine yet.
+
+**Remote images.** Pictures that are attached to a message (inline images) always
+show. Images a message loads from the web can tell the sender that, when and from which
+IP address you opened it, so `reader.remote_content` decides: `"ask"` (the default)
+blocks them and shows a slim banner with how many were blocked and how many tracking
+pixels Maze removed; **Load images** loads them for this message, **Always for this
+sender** remembers the sender (in the encrypted database) and loads them from then on.
+`"never"` blocks them without asking, even for remembered senders; `"always"` loads
+them. Each account can override it (`"accounts": { "work": { "remote_content":
+"never" } }`). Maze downloads the images itself, never the engine, and known tracking
+pixels are dropped either way.
 
 ## Import mail
 
@@ -659,6 +697,7 @@ Maze uses Thunderbird's shortcuts and fills the gaps with Zed's. These are bound
 | Open / close all threads             | `*` / `\`                   |
 | Select the whole thread              | `cmd-shift-a`               |
 | Open the message in a tab            | `enter`, `cmd-o`, double-click |
+| Reader / original HTML               | `cmd-alt-o`                 |
 | New message                          | `cmd-n`                     |
 | Sync all accounts now                | `cmd-shift-t`, `F5` (or the title bar's sync button) |
 | Reply / reply all / forward          | `cmd-r` / `cmd-shift-r` / `cmd-l` |

@@ -6,32 +6,168 @@
 //!
 //! Hovering a link shows its target at the bottom left; a click opens it after the
 //! checks of [`crate::links`] (normalized, web and `mailto:` only, deceptive links ask).
+//! HTML bodies have two modes (ADR-020): **Reader** (gpui-kit's `TextView`, theme
+//! colors) and **Original** (the sanitized HTML laid out by the embedded engine,
+//! [`html_view::OriginalView`]). The default depends on where the view is
+//! ([`BodyModes`], settings `reader.default_mode` and `reader.tab_mode`): the pane next
+//! to the list uses reader mode, a message tab the original. The Reader/Original
+//! buttons and `cmd-alt-o` ([`ToggleOriginalHtml`]) switch the shown message.
+//! Plain-text mail never uses the engine; a build without it stays in reader mode and
+//! says so.
 
 use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    App, ClipboardItem, Context, FocusHandle, Focusable, HighlightStyle, InteractiveElement,
-    InteractiveText, IntoElement, MouseButton, MouseMoveEvent, ParentElement, Pixels, Point,
-    Render, SharedString, StatefulInteractiveElement as _, Styled, StyledText, UnderlineStyle,
-    Window, div, prelude::FluentBuilder as _, px,
+    App, AppContext as _, ClipboardItem, Context, Entity, FocusHandle, Focusable, Global,
+    HighlightStyle, Hsla, InteractiveElement, InteractiveText, IntoElement, MouseButton,
+    MouseMoveEvent, ParentElement, Pixels, Point, Render, Rgba, SharedString,
+    StatefulInteractiveElement as _, Styled, StyledText, Subscription, UnderlineStyle, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, Sizable as _, StyledExt as _,
-    button::Button,
-    h_flex,
+    ActiveTheme as _, Icon, Selectable as _, Sizable as _, StyledExt as _,
+    button::{Button, ButtonVariants as _},
+    h_flex, input,
     menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
     text::TextView,
     v_flex,
 };
-use mazemail_types::Address;
+use html_view::{DocumentOptions, Fetch, OriginalView, OriginalViewEvent, PageColors, PartSource};
+use mazemail_types::{Address, MessageId};
 use time::UtcOffset;
 use ui::assets::IconName;
 
-use crate::actions::{Archive, Forward, Reply, ReplyAll};
+use crate::actions::{Archive, Forward, Reply, ReplyAll, ToggleOriginalHtml};
 use crate::format::{DateFormatter, format_size, format_thousands, initials};
 use crate::links::{HoveredLink, LinkPreview, TextViewLinkProbe, detect_links, open_link};
-use crate::source::{BodyLink, MessageBody, MessageDocument, SenderClient, Verdict, Verification};
+use crate::source::{
+    BodyLink, MailSource, MessageBody, MessageDocument, OriginalHtml, SenderClient, Verdict,
+    Verification,
+};
+
+/// Where a message view is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewPlace {
+    /// The message pane next to the list.
+    Pane,
+    /// A message tab of its own.
+    Tab,
+}
+
+/// How an HTML body is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodyMode {
+    /// gpui-kit's `TextView`: sanitized, simplified, in theme colors.
+    Reader,
+    /// The sanitized HTML laid out by the embedded engine, as designed.
+    Original,
+}
+
+impl BodyMode {
+    fn toggled(self) -> Self {
+        match self {
+            Self::Reader => Self::Original,
+            Self::Original => Self::Reader,
+        }
+    }
+}
+
+/// The default mode per place, from the settings (a global; [`set_body_modes`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BodyModes {
+    /// `reader.default_mode`: the message pane next to the list.
+    pub pane: BodyMode,
+    /// `reader.tab_mode`: a message tab.
+    pub tab: BodyMode,
+}
+
+impl Default for BodyModes {
+    fn default() -> Self {
+        Self::from_settings(&settings::ReaderSettings::default())
+    }
+}
+
+impl Global for BodyModes {}
+
+impl BodyModes {
+    /// The modes the `reader` settings ask for. `plain_text` isn't a mode of its own
+    /// yet and shows the reader.
+    pub fn from_settings(reader: &settings::ReaderSettings) -> Self {
+        let mode = |mode: settings::ReaderMode| match mode {
+            settings::ReaderMode::Original => BodyMode::Original,
+            settings::ReaderMode::Reader | settings::ReaderMode::PlainText => BodyMode::Reader,
+        };
+        Self {
+            pane: mode(reader.default_mode),
+            tab: mode(reader.tab_mode),
+        }
+    }
+
+    /// The default for `place`.
+    pub fn for_place(self, place: ViewPlace) -> BodyMode {
+        match place {
+            ViewPlace::Pane => self.pane,
+            ViewPlace::Tab => self.tab,
+        }
+    }
+}
+
+/// Applies new default modes (after a settings change); views the user switched keep
+/// their mode.
+pub fn set_body_modes(modes: BodyModes, cx: &mut App) {
+    if cx.try_global::<BodyModes>() != Some(&modes) {
+        cx.set_global(modes);
+        cx.refresh_windows();
+    }
+}
+
+/// The parts of one message, for the engine.
+struct MessageParts {
+    source: Option<Arc<dyn MailSource>>,
+    message: MessageId,
+    /// "Load images" was chosen for this message.
+    once: bool,
+}
+
+impl PartSource for MessageParts {
+    fn inline_part(&self, content_id: &str) -> Option<Fetch> {
+        let (source, message) = (self.source.clone()?, self.message);
+        let content_id = content_id.to_owned();
+        Some(Box::new(move || source.inline_part(message, &content_id)))
+    }
+
+    fn remote(&self, url: &str) -> Option<Fetch> {
+        let (source, message, once) = (self.source.clone()?, self.message, self.once);
+        let url = url.to_owned();
+        Some(Box::new(move || {
+            source.remote_resource(message, &url, once)
+        }))
+    }
+}
+
+/// What the original view was last given: a new message, new HTML or "Load images"
+/// shows it again.
+type OriginalKey = (MessageId, OriginalHtml, bool);
+
+/// The view's original view: one per message view, reused for the next message.
+struct Original {
+    view: Entity<OriginalView>,
+    key: Option<OriginalKey>,
+    _events: Subscription,
+}
+
+/// A CSS color for the engine.
+fn css_color(color: Hsla) -> String {
+    let rgba = Rgba::from(color);
+    let byte = |v: f32| (v.clamp(0., 1.) * 255.).round() as u8;
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        byte(rgba.r),
+        byte(rgba.g),
+        byte(rgba.b)
+    )
+}
 
 /// Builds a context menu (see [`MessageView::set_context_menu`]).
 pub type MenuBuilder = Rc<dyn Fn(PopupMenu, &mut Window, &mut Context<'_, PopupMenu>) -> PopupMenu>;
@@ -51,6 +187,24 @@ pub struct MessageView {
     probe: TextViewLinkProbe,
     /// Where the pointer was when the body was last probed for a link.
     probed_at: Option<Point<Pixels>>,
+    place: ViewPlace,
+    source: Option<Arc<dyn MailSource>>,
+    /// The mode picked for the shown message (else the default for the place).
+    mode_override: Option<BodyMode>,
+    original: Option<Original>,
+    /// "Load images" was chosen for the shown message.
+    load_once: bool,
+    /// Remote images of the shown message's HTML, counted once.
+    remote_count: std::cell::RefCell<Option<(Arc<str>, usize)>>,
+}
+
+/// The remote content banner's numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteBanner {
+    /// Remote images blocked.
+    pub blocked: usize,
+    /// Tracking pixels the sanitizer removed.
+    pub trackers: usize,
 }
 
 impl std::fmt::Debug for MessageView {
@@ -60,8 +214,14 @@ impl std::fmt::Debug for MessageView {
 }
 
 impl MessageView {
-    /// An empty message view.
-    pub fn new(offset: UtcOffset, cx: &mut Context<'_, Self>) -> Self {
+    /// An empty message view at `place`. `source` serves inline images to the
+    /// original mode.
+    pub fn new(
+        source: Option<Arc<dyn MailSource>>,
+        offset: UtcOffset,
+        place: ViewPlace,
+        cx: &mut Context<'_, Self>,
+    ) -> Self {
         Self {
             focus: cx.focus_handle(),
             offset,
@@ -72,6 +232,257 @@ impl MessageView {
             hovered: None,
             probe: TextViewLinkProbe::default(),
             probed_at: None,
+            place,
+            source,
+            mode_override: None,
+            original: None,
+            load_once: false,
+            remote_count: std::cell::RefCell::default(),
+        }
+    }
+
+    /// Where the view is.
+    pub fn place(&self) -> ViewPlace {
+        self.place
+    }
+
+    /// The mode asked for: picked for this message, else the default for the place.
+    pub fn requested_mode(&self, cx: &App) -> BodyMode {
+        self.mode_override.unwrap_or_else(|| {
+            cx.try_global::<BodyModes>()
+                .copied()
+                .unwrap_or_default()
+                .for_place(self.place)
+        })
+    }
+
+    /// Whether the shown message can be shown in the original mode (it has HTML).
+    pub fn has_original(&self) -> bool {
+        self.document
+            .as_ref()
+            .is_some_and(|doc| doc.original.is_some())
+    }
+
+    /// The mode the body is drawn in: the original only for HTML mail, and only in a
+    /// build with the engine.
+    pub fn shown_mode(&self, cx: &App) -> BodyMode {
+        let failed = self
+            .original
+            .as_ref()
+            .is_some_and(|original| original.view.read(cx).failed());
+        if self.has_original()
+            && OriginalView::AVAILABLE
+            && !failed
+            && self.requested_mode(cx) == BodyMode::Original
+        {
+            BodyMode::Original
+        } else {
+            BodyMode::Reader
+        }
+    }
+
+    /// Shows the message in `mode`.
+    pub fn set_mode(&mut self, mode: BodyMode, cx: &mut Context<'_, Self>) {
+        self.mode_override = Some(mode);
+        cx.notify();
+    }
+
+    /// `cmd-alt-o`: switches between reader and original (HTML mail only).
+    pub fn toggle_mode(&mut self, cx: &mut Context<'_, Self>) {
+        if self.has_original() {
+            let mode = self.requested_mode(cx).toggled();
+            self.set_mode(mode, cx);
+        }
+    }
+
+    /// Whether "Load images" was chosen for the shown message.
+    pub fn remote_loaded_once(&self) -> bool {
+        self.load_once
+    }
+
+    /// The original view, once a message has been drawn in that mode.
+    pub fn original_view(&self) -> Option<&Entity<OriginalView>> {
+        self.original.as_ref().map(|original| &original.view)
+    }
+
+    /// The original view, created on first use and reused for every message; shows
+    /// `doc` unless it does already.
+    fn ensure_original(
+        &mut self,
+        doc: &MessageDocument,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<Entity<OriginalView>> {
+        let html = doc.original.as_ref()?;
+        if self.original.is_none() {
+            let view = cx.new(OriginalView::new);
+            let events = cx.subscribe_in(&view, window, Self::on_original_event);
+            self.original = Some(Original {
+                view,
+                key: None,
+                _events: events,
+            });
+        }
+        let original = self.original.as_mut()?;
+        let key = (doc.message, html.clone(), self.load_once);
+        if original.key.as_ref() != Some(&key) {
+            let theme = cx.theme();
+            let options = DocumentOptions {
+                remote_allowed: html.remote_allowed || self.load_once,
+                colors: Some(PageColors {
+                    dark: theme.mode.is_dark(),
+                    background: css_color(theme.background),
+                    foreground: css_color(theme.foreground),
+                    link: css_color(theme.link),
+                }),
+            };
+            let parts = Rc::new(MessageParts {
+                source: self.source.clone(),
+                message: doc.message,
+                once: self.load_once,
+            });
+            original.view.update(cx, |view, cx| {
+                view.show(html.html.expose(), &options, parts, cx);
+            });
+            original.key = Some(key);
+        }
+        Some(original.view.clone())
+    }
+
+    /// "Load images": this message, this time.
+    pub fn load_remote_once(&mut self, cx: &mut Context<'_, Self>) {
+        self.load_once = true;
+        cx.notify();
+    }
+
+    /// "Always for this sender": kept by the source; the message is read again.
+    pub fn allow_remote_for_sender(&mut self, cx: &mut Context<'_, Self>) {
+        let (Some(source), Some(doc)) = (self.source.clone(), self.document.as_ref()) else {
+            return;
+        };
+        let (message, sender) = (doc.message, doc.from.expose().email.clone());
+        if let Err(error) = source.allow_remote_content(&sender) {
+            tracing::warn!(%error, "keeping the remote content exception failed");
+            return;
+        }
+        match source.message_document(message) {
+            Ok(doc) => self.show(Some(doc), cx),
+            Err(error) => tracing::warn!(%error, "reading the message again failed"),
+        }
+    }
+
+    /// Whether the remote content banner shows: original mode, the message has remote
+    /// images, they are blocked, and the policy is "ask".
+    pub fn remote_banner(&self, cx: &App) -> Option<RemoteBanner> {
+        let doc = self.document.as_ref()?;
+        let html = doc.original.as_ref()?;
+        if self.requested_mode(cx) != BodyMode::Original
+            || html.remote_allowed
+            || !html.remote_ask
+            || self.load_once
+        {
+            return None;
+        }
+        let blocked = {
+            let mut cache = self.remote_count.borrow_mut();
+            match &*cache {
+                Some((counted, count)) if Arc::ptr_eq(counted, html.html.expose()) => *count,
+                _ => {
+                    let count = html_view::document::remote_count(html.html.expose());
+                    *cache = Some((html.html.expose().clone(), count));
+                    count
+                }
+            }
+        };
+        (blocked > 0).then_some(RemoteBanner {
+            blocked,
+            trackers: html.trackers_removed,
+        })
+    }
+
+    fn render_remote_banner(
+        &self,
+        banner: RemoteBanner,
+        cx: &mut Context<'_, Self>,
+    ) -> impl IntoElement {
+        let theme = cx.theme();
+        let mut detail = format!(
+            "{} blocked",
+            if banner.blocked == 1 {
+                "1 image".to_owned()
+            } else {
+                format!("{} images", banner.blocked)
+            }
+        );
+        if banner.trackers > 0 {
+            detail.push_str(&format!(
+                ", {} tracker{} removed",
+                banner.trackers,
+                if banner.trackers == 1 { "" } else { "s" }
+            ));
+        }
+        h_flex()
+            .id("remote-banner")
+            .debug_selector(|| "remote-banner".to_owned())
+            .flex_none()
+            .gap_2()
+            .px_4()
+            .py_1()
+            .border_b_1()
+            .border_color(theme.border)
+            .bg(theme.muted)
+            .text_xs()
+            .child(Icon::new(IconName::ShieldCheck).xsmall())
+            .child(div().flex_1().min_w_0().truncate().child(format!(
+                "Remote images are blocked to protect your privacy ({detail})."
+            )))
+            .child(
+                div().debug_selector(|| "load-images".to_owned()).child(
+                    Button::new("load-images")
+                        .xsmall()
+                        .outline()
+                        .label("Load images")
+                        .on_click(cx.listener(|this, _, _, cx| this.load_remote_once(cx))),
+                ),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "always-for-sender".to_owned())
+                    .child(
+                        Button::new("always-for-sender")
+                            .xsmall()
+                            .ghost()
+                            .label("Always for this sender")
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.allow_remote_for_sender(cx)),
+                            ),
+                    ),
+            )
+    }
+
+    /// What the original reports: its first frame, the link under the pointer, and
+    /// clicks on links, which go through the same checks as the reader's.
+    fn on_original_event(
+        &mut self,
+        _: &Entity<OriginalView>,
+        event: &OriginalViewEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match event {
+            // The original replaces the reader shown while it loaded.
+            OriginalViewEvent::Ready => cx.notify(),
+            OriginalViewEvent::Hover(href) => self.hover_link(href.as_deref(), cx),
+            // The reader's link policy: normalized, web and `mailto:` only, deceptive
+            // links ask first.
+            OriginalViewEvent::OpenLink(url) => {
+                let links = self
+                    .document
+                    .as_ref()
+                    .map(|doc| doc.links.expose().clone())
+                    .unwrap_or_default();
+                open_link(url.as_str(), &links, window, cx);
+            }
         }
     }
 
@@ -81,8 +492,14 @@ impl MessageView {
         self.context_menu = Some(builder);
     }
 
-    /// Shows a message, or the empty state.
+    /// Shows a message, or the empty state. Another message starts in the default
+    /// mode again.
     pub fn show(&mut self, document: Option<MessageDocument>, cx: &mut Context<'_, Self>) {
+        let message = document.as_ref().map(|doc| doc.message);
+        if self.document.as_ref().map(|doc| doc.message) != message {
+            self.mode_override = None;
+            self.load_once = false;
+        }
         self.document = document;
         self.error = None;
         self.selection = None;
@@ -332,8 +749,35 @@ impl MessageView {
                         action("archive", "Archive", IconName::Archive).on_click(
                             |_, window, cx| window.dispatch_action(Box::new(Archive), cx),
                         ),
-                    ),
+                    )
+                    .when(doc.original.is_some(), |row| {
+                        row.child(div().flex_1()).child(self.render_mode_toggle(cx))
+                    }),
             )
+    }
+
+    /// The Reader/Original switch of an HTML message.
+    fn render_mode_toggle(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let mode = self.requested_mode(cx);
+        let button = |id: &'static str, label: &'static str, target: BodyMode| {
+            div().debug_selector(move || id.to_owned()).child(
+                Button::new(id)
+                    .xsmall()
+                    .ghost()
+                    .label(label)
+                    .selected(mode == target)
+                    .tooltip(match target {
+                        BodyMode::Reader => "Reader mode: simplified, in your theme (⌥⌘O)",
+                        BodyMode::Original => "Original: as the sender designed it (⌥⌘O)",
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_mode(target, cx))),
+            )
+        };
+        h_flex()
+            .id("body-mode")
+            .gap_0p5()
+            .child(button("mode-reader", "Reader", BodyMode::Reader))
+            .child(button("mode-original", "Original", BodyMode::Original))
     }
 
     /// "· via Thunderbird 128.3" after the sender's address, with the header it was
@@ -562,7 +1006,7 @@ impl Focusable for MessageView {
 }
 
 impl Render for MessageView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let theme = cx.theme();
         let root = v_flex()
             .id("message-view")
@@ -570,6 +1014,7 @@ impl Render for MessageView {
             .size_full()
             .key_context("MessageView")
             .track_focus(&self.focus)
+            .on_action(cx.listener(|this, _: &ToggleOriginalHtml, _, cx| this.toggle_mode(cx)))
             // Clicking into the message gives it focus, so n/p/f/b keep working.
             .on_mouse_down(
                 MouseButton::Left,
@@ -581,11 +1026,70 @@ impl Render for MessageView {
         };
         let sender = doc.from.expose().email.clone();
         let builder = self.context_menu.clone();
+        let original = match self.shown_mode(cx) {
+            BodyMode::Original => self.ensure_original(&doc, window, cx),
+            BodyMode::Reader => None,
+        };
+        // Asked for the original, but this build has no engine or it failed to start.
+        let note = (original.is_none()
+            && doc.original.is_some()
+            && self.requested_mode(cx) == BodyMode::Original)
+            .then_some(if OriginalView::AVAILABLE {
+                "The original view couldn't start, so the message is shown in reader mode."
+            } else {
+                "This build doesn't include the original view, so the message is shown in reader mode."
+            });
+        let muted = cx.theme().muted_foreground;
+        let banner = original.is_some().then(|| self.remote_banner(cx)).flatten();
+        let banner = banner.map(|banner| self.render_remote_banner(banner, cx).into_any_element());
+        let body = match original.clone() {
+            Some(view) if view.read(cx).is_ready() => div()
+                .id("message-body")
+                .debug_selector(|| "message-body".to_owned())
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .child(view)
+                .when_some(self.hovered.clone(), |this, link| {
+                    this.child(LinkPreview::new(link))
+                })
+                .into_any_element(),
+            // While the original loads, the reader shows underneath; the engine paints
+            // over it once its first frame is there.
+            Some(view) => div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(self.render_body(&doc, cx))
+                .child(div().absolute().inset_0().child(view))
+                .into_any_element(),
+            None => self.render_body(&doc, cx).into_any_element(),
+        };
         root.child(self.render_header(&doc, cx))
             .when(!doc.attachments.is_empty(), |this| {
                 this.child(Self::render_attachments(&doc, cx))
             })
-            .child(self.render_body(&doc, cx))
+            .when_some(note, |this, note| {
+                this.child(
+                    div()
+                        .flex_none()
+                        .px_4()
+                        .py_1()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(note),
+                )
+            })
+            .children(banner)
+            .when_some(original, |this, view| {
+                // Copy (⌘C, Edit > Copy) copies the selection in the original.
+                this.on_action(move |_: &input::Copy, _, cx| {
+                    view.update(cx, |view, cx| view.copy(cx));
+                })
+            })
+            .child(body)
             .context_menu(move |menu, window, cx| {
                 let menu = match &builder {
                     Some(builder) => builder(menu, window, cx),
@@ -609,7 +1113,7 @@ impl Render for MessageView {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{AppContext as _, Entity, Modifiers, TestAppContext, VisualTestContext, point};
+    use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, point};
     use mazemail_types::{MessageId, Sensitive, ThreadId};
     use time::macros::datetime;
 
@@ -632,6 +1136,7 @@ mod tests {
             verification: Verification::Unavailable,
             client: Sensitive::new(None),
             links: Sensitive::new(links),
+            original: None,
         }
     }
 
@@ -643,7 +1148,8 @@ mod tests {
             ui::init(cx);
             crate::init(cx);
         });
-        let (view, cx) = cx.add_window_view(|_, cx| MessageView::new(UtcOffset::UTC, cx));
+        let (view, cx) =
+            cx.add_window_view(|_, cx| MessageView::new(None, UtcOffset::UTC, ViewPlace::Pane, cx));
         view.update(cx, |view, cx| view.show(Some(doc), cx));
         cx.run_until_parked();
         (view, cx)
@@ -789,7 +1295,8 @@ mod tests {
             .update(|cx| {
                 gpui_kit::open_window(gpui::WindowOptions::default(), cx, |_, cx| {
                     cx.new(|cx| Host {
-                        view: cx.new(|cx| MessageView::new(UtcOffset::UTC, cx)),
+                        view: cx
+                            .new(|cx| MessageView::new(None, UtcOffset::UTC, ViewPlace::Pane, cx)),
                         composed: seen,
                     })
                 })
@@ -895,7 +1402,7 @@ mod tests {
         let mouse_ups = Rc::new(std::cell::Cell::new(0));
         let ups = mouse_ups.clone();
         let (host, cx) = cx.add_window_view(|_, cx| Host {
-            view: cx.new(|cx| MessageView::new(UtcOffset::UTC, cx)),
+            view: cx.new(|cx| MessageView::new(None, UtcOffset::UTC, ViewPlace::Pane, cx)),
             mouse_ups: ups,
         });
         let view = host.read_with(cx, |host, _| host.view.clone());

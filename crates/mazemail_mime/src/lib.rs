@@ -44,7 +44,7 @@ pub mod thread;
 pub use client::{MailClient, detect_client};
 pub use lang::{Lang, detect_language};
 pub use parse::{
-    AttachmentMeta, Disposition, MessageHeaders, ParseError, ParsedMessage, SNIPPET_CHARS,
-    TextBody, parse, parse_headers_only,
+    AttachmentMeta, Disposition, InlinePart, MessageHeaders, ParseError, ParsedMessage,
+    SNIPPET_CHARS, TextBody, inline_part, parse, parse_headers_only,
 };
 pub use reader::ReaderDoc;
