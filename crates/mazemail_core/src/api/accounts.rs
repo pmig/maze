@@ -139,6 +139,7 @@ pub(crate) async fn add(
                 },
                 email,
                 display_name: args.name,
+                tenant: args.tenant,
             })
             .await
         }

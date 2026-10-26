@@ -30,11 +30,11 @@ use mazemail_types::{
 use time::{Duration, OffsetDateTime};
 
 use crate::source::{
-    AccountEntry, AccountKind, AttachmentInfo, BodyLink, Direction, FolderEntry, FolderKey,
-    FolderTree, ListSort, MailSource, MessageBody, MessageDocument, MessageKeys, MessageRow,
-    OriginalHtml, SenderClient, SortBy, SourceError, SourceStatus, SyncState, ThreadFilter,
-    ThreadKeys, ThreadPredicate, ThreadRow, ThreadScope, ThreadTree, TreeNode, Verdict,
-    Verification,
+    AccountActivity, AccountEntry, AccountKind, AttachmentInfo, BodyLink, Direction, FolderEntry,
+    FolderKey, FolderTree, ListSort, MailSource, MessageBody, MessageDocument, MessageKeys,
+    MessageRow, OriginalHtml, SenderClient, SortBy, SourceError, SourceStatus, StorageUsage,
+    SyncState, ThreadFilter, ThreadKeys, ThreadPredicate, ThreadRow, ThreadScope, ThreadTree,
+    TreeNode, Verdict, Verification,
 };
 
 /// Where the "view online" link of invoices goes, and its text.
@@ -395,6 +395,12 @@ pub struct FakeMailSource {
     sync_requests: AtomicUsize,
     /// The status [`FakeMailSource::set_status`] set; up to date by default.
     status: RwLock<Option<SourceStatus>>,
+    /// The disk usage [`FakeMailSource::set_storage_usage`] set; unknown by default.
+    storage: RwLock<Option<StorageUsage>>,
+    /// What [`FakeMailSource::set_sync_activity`] set; nothing by default.
+    activity: RwLock<Vec<AccountActivity>>,
+    /// The accounts "Retry now" asked to sync, in order.
+    account_syncs: Mutex<Vec<AccountId>>,
     /// Senders allowed to load remote content ("Always for this sender").
     remote_senders: Mutex<Vec<String>>,
 }
@@ -449,6 +455,9 @@ impl FakeMailSource {
             message_key_cache: Mutex::new(HashMap::new()),
             sync_requests: AtomicUsize::new(0),
             status: RwLock::new(None),
+            storage: RwLock::new(None),
+            activity: RwLock::new(Vec::new()),
+            account_syncs: Mutex::new(Vec::new()),
             remote_senders: Mutex::new(Vec::new()),
         }
     }
@@ -462,6 +471,27 @@ impl FakeMailSource {
     /// "Up to date".
     pub fn set_status(&self, status: SourceStatus) {
         *self.status.write().unwrap_or_else(PoisonError::into_inner) = Some(status);
+    }
+
+    /// Makes [`MailSource::storage_usage`] report `usage` (`None`: not measured yet).
+    pub fn set_storage_usage(&self, usage: Option<StorageUsage>) {
+        *self.storage.write().unwrap_or_else(PoisonError::into_inner) = usage;
+    }
+
+    /// Makes [`MailSource::sync_activity`] report `activity`.
+    pub fn set_sync_activity(&self, activity: Vec<AccountActivity>) {
+        *self
+            .activity
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = activity;
+    }
+
+    /// The accounts [`MailSource::sync_account_now`] was called for, in order.
+    pub fn account_sync_requests(&self) -> Vec<AccountId> {
+        self.account_syncs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Senders allowed with "Always for this sender".
@@ -1694,6 +1724,28 @@ impl MailSource for FakeMailSource {
                 outbox: 0,
                 online: true,
             })
+    }
+
+    fn sync_activity(&self) -> Vec<AccountActivity> {
+        self.activity
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn sync_account_now(&self, account: AccountId) -> Result<(), SourceError> {
+        self.account_syncs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(account);
+        Ok(())
+    }
+
+    fn storage_usage(&self) -> Option<StorageUsage> {
+        self.storage
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     fn sync_now(&self) -> Result<(), SourceError> {

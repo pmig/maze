@@ -248,7 +248,7 @@ impl OAuthClient {
                 http_status = status.as_u16(),
                 "token endpoint returned an error"
             );
-            return Err(classify(self.provider.kind(), details));
+            return Err(classify(&self.provider, details));
         }
         if !status.is_success() {
             return Err(AuthError::Http {
@@ -428,7 +428,7 @@ async fn complete(
     }
     if let Some(error) = params.error {
         let details = OAuthErrorDetails::new(error, params.error_description, Vec::new());
-        return Err(classify(client.provider.kind(), details));
+        return Err(classify(&client.provider, details));
     }
     let code = params.code.ok_or_else(|| {
         AuthError::InvalidResponse("the redirect has neither a code nor an error".to_owned())

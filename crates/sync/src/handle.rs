@@ -8,6 +8,7 @@ use store::{BodyState, OpId, Store};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
+use crate::activity::{ActivityTracker, SyncActivity};
 use crate::actor::Actor;
 use crate::config::AccountSyncConfig;
 use crate::connect::SessionFactory;
@@ -103,11 +104,13 @@ pub fn spawn_account(config: AccountSyncConfig, deps: SyncDeps) -> AccountHandle
         spawn_coalescer(account, events_tx.clone(), config.timing.coalesce_window);
     let (commands_tx, commands_rx) = mpsc::unbounded_channel();
     let (status_tx, status_rx) = watch::channel(SyncStatus::Connecting);
+    let activity = Arc::new(ActivityTracker::default());
     let shared = Arc::new(Shared {
         config,
         store: deps.store,
         ingest: deps.ingest,
         events: sink,
+        activity: Arc::clone(&activity),
     });
     let actor = Actor::new(shared, deps.sessions, commands_rx, status_tx);
     let task = tokio::spawn(async move {
@@ -120,6 +123,7 @@ pub fn spawn_account(config: AccountSyncConfig, deps: SyncDeps) -> AccountHandle
         commands: commands_tx,
         events: events_tx,
         status: status_rx,
+        activity,
         task: Arc::new(Mutex::new(Some(task))),
     }
 }
@@ -132,6 +136,7 @@ pub struct AccountHandle {
     commands: mpsc::UnboundedSender<SyncCommand>,
     events: broadcast::Sender<Arc<SyncEventBatch>>,
     status: watch::Receiver<SyncStatus>,
+    activity: Arc<ActivityTracker>,
     task: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
@@ -150,6 +155,13 @@ impl AccountHandle {
     /// The current status.
     pub fn status(&self) -> SyncStatus {
         self.status.borrow().clone()
+    }
+
+    /// What the engine is doing right now: folder passes with their progress, op
+    /// replay, the body queue, the last finished round. A cheap snapshot; take one
+    /// whenever it is shown.
+    pub fn activity(&self) -> SyncActivity {
+        self.activity.snapshot()
     }
 
     /// A receiver that sees every status change.

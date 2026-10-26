@@ -497,6 +497,7 @@ impl CliCommand {
                     email: Sensitive::new(args.email),
                     name: args.name,
                     oauth: args.oauth,
+                    tenant: args.tenant,
                     host: args.host,
                     port: args.port,
                     security: args.security,
@@ -1093,5 +1094,67 @@ mod account_tests {
         )
         .unwrap_err();
         assert!(error.0.contains("oauth"), "{error}");
+    }
+
+    #[test]
+    fn a_microsoft_sign_in_takes_a_tenant() {
+        let env = Env::default();
+        let invocation = invoke(
+            &[
+                "account",
+                "add",
+                "dana@contoso.com",
+                "--oauth",
+                "microsoft",
+                "--tenant",
+                "Contoso.com",
+            ],
+            &env,
+        )
+        .unwrap();
+        assert_eq!(invocation.args["tenant"], "contoso.com");
+        super::super::Command::from_wire("account.add", invocation.args)
+            .unwrap()
+            .unwrap();
+        // Not a tenant, or without --oauth: refused before anything is sent.
+        for args in [
+            &[
+                "mazemail",
+                "account",
+                "add",
+                "a@b.c",
+                "--oauth",
+                "microsoft",
+                "--tenant",
+                "x y",
+            ][..],
+            &[
+                "mazemail",
+                "account",
+                "add",
+                "a@b.c",
+                "--tenant",
+                "contoso.com",
+            ][..],
+        ] {
+            assert!(
+                cli_command().try_get_matches_from(args).is_err(),
+                "{args:?}"
+            );
+        }
+        // The server checks too.
+        let error = super::super::Command::from_wire(
+            "account.add",
+            json!({ "email": "a@b.c", "oauth": "google", "tenant": "contoso.com" }),
+        )
+        .unwrap_err();
+        assert!(error.0.contains("tenant"), "{error}");
+        assert!(
+            super::super::Command::from_wire(
+                "account.add",
+                json!({ "email": "a@b.c", "oauth": "microsoft", "tenant": "not/valid" }),
+            )
+            .is_err()
+        );
     }
 }

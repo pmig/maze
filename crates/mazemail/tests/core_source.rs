@@ -721,3 +721,166 @@ fn quick_move_moves_threads_and_messages_undoably() {
     drop(t.source);
     t.runtime.block_on(t.core.shutdown()).unwrap();
 }
+
+#[test]
+fn the_status_bar_shows_how_much_disk_maze_uses() {
+    use mazemail::source::storage_usage;
+
+    let t = seeded();
+    // The core measures in the background, right after it opened.
+    let usage = t.runtime.block_on(async {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                if let Some(usage) = t.source.storage_usage() {
+                    return usage;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap()
+    });
+    assert!(usage.database > 0, "{usage:?}");
+    assert_eq!(usage.mail_store(), usage.database + usage.blobs);
+    assert!(usage.total() >= usage.mail_store() + usage.search_index);
+
+    let core = t.core.storage_usage().unwrap();
+    let home = core.data_dir.parent().unwrap().to_owned();
+    let shown = storage_usage(&core, Some(&home));
+    assert_eq!(shown.data_dir.as_ref(), "~/data");
+    assert_eq!(shown.total(), core.total());
+    let elsewhere = storage_usage(&core, Some(std::path::Path::new("/nowhere")));
+    assert_eq!(
+        elsewhere.data_dir.as_ref(),
+        core.data_dir.display().to_string()
+    );
+}
+
+#[test]
+fn sync_activity_maps_the_cores_snapshot() {
+    use mail_ui::source::{AccountKind as UiKind, ActivityState, FolderStep};
+    use mazemail::source::account_activity;
+    use mazemail_core::{
+        AccountActivity, AccountKind, FolderPhase, FolderProgress, SyncState, SyncStatus,
+    };
+
+    let at = time::macros::datetime!(2026-10-22 10:00 UTC);
+    let core = AccountActivity {
+        account: AccountId(4),
+        name: "Work".into(),
+        kind: AccountKind::Gmail,
+        sync: Some(SyncStatus {
+            account: AccountId(4),
+            state: SyncState::Syncing {
+                folder: None,
+                done: 1,
+                total: Some(3),
+            },
+            detail: None,
+        }),
+        folders: vec![
+            FolderProgress {
+                folder: FolderId(9),
+                name: "All Mail".into(),
+                phase: FolderPhase::ReadingLabels,
+                done: 0,
+                total: None,
+            },
+            FolderProgress {
+                folder: FolderId(10),
+                name: "INBOX".into(),
+                phase: FolderPhase::FetchingHeaders,
+                done: 1_200,
+                total: Some(5_400),
+            },
+            FolderProgress {
+                folder: FolderId(11),
+                name: "Sent".into(),
+                phase: FolderPhase::Waiting,
+                done: 0,
+                total: None,
+            },
+        ],
+        replaying_ops: true,
+        bodies_queued: 12,
+        last_synced: Some(at),
+        pending_ops: 3,
+        stuck_ops: 1,
+        oldest_op: Some(at),
+        outbox: 2,
+    };
+    let ui = account_activity(&core);
+    assert_eq!(ui.account, AccountId(4));
+    assert_eq!(ui.name.as_ref(), "Work");
+    assert_eq!(ui.kind, UiKind::Gmail);
+    assert_eq!(ui.state, ActivityState::Syncing);
+    assert_eq!(
+        ui.folders.iter().map(|f| f.step).collect::<Vec<_>>(),
+        vec![
+            FolderStep::ReadingLabels,
+            FolderStep::FetchingHeaders,
+            FolderStep::Waiting
+        ]
+    );
+    assert_eq!(ui.folders[1].name.as_ref(), "INBOX");
+    assert_eq!(
+        (ui.folders[1].done, ui.folders[1].total),
+        (1_200, Some(5_400))
+    );
+    assert!(ui.replaying_ops);
+    assert_eq!(
+        (ui.bodies_queued, ui.pending_ops, ui.stuck_ops, ui.outbox),
+        (12, 3, 1, 2)
+    );
+    assert_eq!((ui.last_synced, ui.oldest_op), (Some(at), Some(at)));
+
+    let with = |state: SyncState, detail: Option<&str>| {
+        account_activity(&AccountActivity {
+            sync: Some(SyncStatus {
+                account: AccountId(4),
+                state,
+                detail: detail.map(str::to_owned),
+            }),
+            ..core.clone()
+        })
+        .state
+    };
+    assert_eq!(
+        with(
+            SyncState::Offline,
+            Some("Offline: connection refused. Maze will try again in 30 seconds.")
+        ),
+        ActivityState::Offline {
+            reason: "Offline: connection refused. Maze will try again in 30 seconds.".into()
+        }
+    );
+    assert_eq!(
+        with(
+            SyncState::Error {
+                message: "folder sync: NO".into()
+            },
+            None
+        ),
+        ActivityState::Error {
+            message: "folder sync: NO".into()
+        }
+    );
+    assert!(matches!(
+        with(SyncState::AuthRequired, Some("Sign-in required: expired")),
+        ActivityState::SignInRequired { .. }
+    ));
+    assert_eq!(with(SyncState::Idle, None), ActivityState::Idle);
+    assert_eq!(
+        account_activity(&AccountActivity {
+            sync: None,
+            ..core.clone()
+        })
+        .state,
+        ActivityState::NotSynced
+    );
+
+    // A core without synced accounts has no activity; Retry is only queued.
+    let t = seeded();
+    assert!(t.source.sync_activity().is_empty());
+    t.source.sync_account_now(AccountId(1)).unwrap();
+}

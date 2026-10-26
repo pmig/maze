@@ -120,7 +120,14 @@
       "client_secret": null
     },
     "microsoft": {
-      "client_id": null
+      "client_id": null,
+      // Which Microsoft Entra directory "Sign in with Microsoft" uses: "common" (work,
+      // school and personal accounts), "organizations" (work and school accounts only),
+      // "consumers" (personal accounts only), your tenant ID (a GUID) or a verified
+      // domain of your organization ("contoso.com"). An app registration for "this
+      // organization only" (single-tenant) needs the tenant ID or domain. Accounts keep
+      // the tenant they signed in with; this applies to new sign-ins.
+      "tenant": "common"
     }
   },
 

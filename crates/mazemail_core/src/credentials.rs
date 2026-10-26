@@ -76,7 +76,15 @@ fn secrets_error(err: &SecretStoreError) -> CredentialError {
 }
 
 fn token_error(err: &AuthError) -> CredentialError {
-    if err.requires_reauth() || matches!(err, AuthError::MissingClientId { .. }) {
+    // Retrying doesn't fix a missing client ID or a wrong tenant either.
+    if err.requires_reauth()
+        || matches!(
+            err,
+            AuthError::MissingClientId { .. }
+                | AuthError::SingleTenantApp
+                | AuthError::UnknownTenant { .. }
+        )
+    {
         CredentialError::needs_sign_in(err.to_string())
     } else {
         CredentialError::temporary(err.to_string())

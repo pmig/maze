@@ -23,6 +23,7 @@ use imap::{FlagChange, GmailLabel, HeaderFetch, QresyncArgs, UidSet};
 use mazemail_types::{Flags, FolderId, FolderRole, MessageId};
 use store::{FolderSyncState, NewLocation, Queries};
 
+use crate::activity::FolderPhase;
 use crate::connect::Conn;
 use crate::error::{Result, SyncError};
 use crate::events::{Delta, FolderCounts, SyncEvent};
@@ -92,6 +93,8 @@ pub(crate) async fn sync_folder(
         known_uids: None,
     })
     .filter(|q| q.uidvalidity != 0);
+    let activity = &shared.activity;
+    activity.phase(folder_id, FolderPhase::Checking, 0, None);
     let info = conn.select(&remote, qresync).await?;
     let mut report = PassReport::default();
 
@@ -146,6 +149,12 @@ pub(crate) async fn sync_folder(
         .into_iter()
         .collect();
     let start = stored.uidnext.unwrap_or(1);
+    let flags_phase = if apply_gmail_labels {
+        FolderPhase::ReadingLabels
+    } else {
+        FolderPhase::ReadingFlags
+    };
+    activity.phase(folder_id, flags_phase, 0, None);
     let mut changes: Vec<FlagChange> = Vec::new();
     let mut vanished: BTreeSet<u32> = BTreeSet::new();
     let mut server_uids: Option<Vec<u32>> = None;
@@ -256,6 +265,10 @@ pub(crate) async fn sync_folder(
     let cutoff = shared.config.body_cutoff(shared.now());
     let mut max_seen = start.saturating_sub(1);
     let mut yielded = false;
+    let new_total = new_uids.len() as u64;
+    if new_total > 0 {
+        activity.phase(folder_id, FolderPhase::FetchingHeaders, 0, Some(new_total));
+    }
 
     for (index, chunk) in new_uids
         .chunks(shared.config.header_batch.max(1))
@@ -298,6 +311,12 @@ pub(crate) async fn sync_folder(
         )
         .await?;
         std::mem::take(&mut delta).emit(&shared.events);
+        activity.phase(
+            folder_id,
+            FolderPhase::FetchingHeaders,
+            report.fetched as u64,
+            Some(new_total),
+        );
     }
 
     if !yielded {

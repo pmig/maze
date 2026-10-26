@@ -34,6 +34,7 @@ pub mod quick_move;
 pub mod selection;
 pub mod settings_editor;
 pub mod source;
+pub mod sync_activity;
 pub mod thread_list;
 pub mod ui_state;
 pub mod window;

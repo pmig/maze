@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use clap::{ArgGroup, Args, ValueEnum};
-use mazemail_types::{AccountId, FolderId, PublicId as _, Sensitive};
+use mazemail_types::{AccountId, FolderId, MicrosoftTenant, PublicId as _, Sensitive};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -777,6 +777,12 @@ pub struct AccountAddArgs {
     /// Sign in with Google or Microsoft in the browser instead of a password.
     #[serde(default)]
     pub oauth: Option<OAuthProvider>,
+    /// The Microsoft tenant to sign in with: `common`, `organizations`, `consumers`, a
+    /// tenant ID or a domain (default: the `auth.microsoft.tenant` setting). Only with
+    /// `oauth: microsoft`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub tenant: Option<MicrosoftTenant>,
     /// IMAP host (default: detected from the address).
     #[serde(default)]
     pub host: Option<String>,
@@ -817,6 +823,10 @@ pub struct AccountAddCliArgs {
     /// Sign in with Google or Microsoft in the browser (no password).
     #[arg(long, value_enum, conflicts_with_all = ["password_stdin", "host", "port", "security", "username", "smtp_host", "smtp_port", "smtp_security"])]
     pub oauth: Option<OAuthProvider>,
+    /// With `--oauth microsoft`: the organization's tenant ID or domain, or `common`,
+    /// `organizations`, `consumers` (default: the `auth.microsoft.tenant` setting).
+    #[arg(long, value_name = "TENANT", requires = "oauth")]
+    pub tenant: Option<MicrosoftTenant>,
     /// IMAP host (default: detected from the address).
     #[arg(long)]
     pub host: Option<String>,

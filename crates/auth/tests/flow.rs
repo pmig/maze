@@ -340,6 +340,25 @@ async fn admin_consent_in_the_redirect() {
 }
 
 #[tokio::test]
+async fn a_single_tenant_app_through_common_says_to_set_the_tenant() {
+    let fake = Fake::start(Consent::Error(
+        "invalid_request",
+        "AADSTS50194: Application 'entra-app'(Maze) is not configured as a multi-tenant \
+         application. Usage of the /common endpoint is not supported for such applications.",
+    ))
+    .await;
+    let client = fake.client(ProviderKind::Microsoft, ClientCredentials::new("entra-app"));
+    let (browser, page) = FakeBrowser::new();
+    let err = client
+        .authorize(&browser, &AuthorizeOptions::new())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AuthError::SingleTenantApp), "{err:?}");
+    assert!(err.to_string().contains("auth.microsoft.tenant"), "{err}");
+    assert!(page.await.unwrap().contains("auth.microsoft.tenant"));
+}
+
+#[tokio::test]
 async fn admin_consent_at_the_token_endpoint() {
     let fake = Fake::start(Consent::Grant).await;
     fake.token_exchange(

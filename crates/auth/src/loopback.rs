@@ -204,6 +204,13 @@ fn failure_reason(error: &AuthError) -> &'static str {
             "Your organization's administrator has to approve Maze first."
         }
         AuthError::InvalidClient { .. } => "The provider rejected Maze's OAuth client settings.",
+        AuthError::SingleTenantApp => {
+            "The app registration only allows its own organization: set auth.microsoft.tenant \
+             in Maze's settings to your tenant ID or domain."
+        }
+        AuthError::UnknownTenant { .. } => {
+            "Microsoft doesn't know the organization (tenant) Maze asked for."
+        }
         _ => "Something went wrong while signing in.",
     }
 }

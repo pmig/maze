@@ -623,7 +623,10 @@ static REGISTRY: &[CommandSpec] = &[
                The password is read from the terminal without echo, or from stdin with \
                --password-stdin; it is never a command-line argument. With --oauth google or \
                --oauth microsoft, Maze opens the browser for the sign-in instead (Google needs \
-               auth.google.client_id in settings.json). Host, port and security are detected \
+               auth.google.client_id in settings.json). Microsoft sign-ins use the \
+               auth.microsoft.tenant setting (default common); --tenant overrides it for this \
+               account, e.g. with your organization's tenant ID or domain when its app \
+               registration only allows its own accounts. Host, port and security are detected \
                for well-known providers; so is the SMTP server for sending (override it with \
                --smtp-host, --smtp-port and --smtp-security; it logs in like IMAP). Needs a \
                writer token, and you approve every account in Maze.",
@@ -642,6 +645,10 @@ static REGISTRY: &[CommandSpec] = &[
             ex(
                 "mazemail account add bob@gmail.com --oauth google",
                 "Sign in with Google in the browser",
+            ),
+            ex(
+                "mazemail account add dana@contoso.com --oauth microsoft --tenant contoso.com",
+                "Sign in with Microsoft, for one organization (tenant)",
             ),
         ],
         args_schema: schema::<AccountAddArgs>,

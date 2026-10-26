@@ -1083,7 +1083,7 @@ mazemail account list --json | jq -r '.[] | select(.state == "auth_required") | 
 
 Add an IMAP, Gmail or Microsoft account.
 
-Maze connects, logs in and lists the folders before it saves anything, then keeps the password (or the sign-in) in its encrypted storage and starts syncing. The password is read from the terminal without echo, or from stdin with --password-stdin; it is never a command-line argument. With --oauth google or --oauth microsoft, Maze opens the browser for the sign-in instead (Google needs auth.google.client_id in settings.json). Host, port and security are detected for well-known providers; so is the SMTP server for sending (override it with --smtp-host, --smtp-port and --smtp-security; it logs in like IMAP). Needs a writer token, and you approve every account in Maze.
+Maze connects, logs in and lists the folders before it saves anything, then keeps the password (or the sign-in) in its encrypted storage and starts syncing. The password is read from the terminal without echo, or from stdin with --password-stdin; it is never a command-line argument. With --oauth google or --oauth microsoft, Maze opens the browser for the sign-in instead (Google needs auth.google.client_id in settings.json). Microsoft sign-ins use the auth.microsoft.tenant setting (default common); --tenant overrides it for this account, e.g. with your organization's tenant ID or domain when its app registration only allows its own accounts. Host, port and security are detected for well-known providers; so is the SMTP server for sending (override it with --smtp-host, --smtp-port and --smtp-security; it logs in like IMAP). Needs a writer token, and you approve every account in Maze.
 
 Permission: `admin`
 
@@ -1096,6 +1096,7 @@ mazemail account add [OPTIONS] <EMAIL>
 | `<EMAIL>` | The account's address. |
 | `--name <NAME>` | The name in the folder pane (default: the address). |
 | `--oauth <OAUTH>` | Sign in with Google or Microsoft in the browser (no password). One of `google`, `microsoft`. |
+| `--tenant <TENANT>` | With `--oauth microsoft`: the organization's tenant ID or domain, or `common`, `organizations`, `consumers` (default: the `auth.microsoft.tenant` setting). |
 | `--host <HOST>` | IMAP host (default: detected from the address). |
 | `--port <PORT>` | IMAP port (default: 993 for TLS, 143 otherwise). |
 | `--security <SECURITY>` | Transport security. One of `tls`, `starttls`, `none`. |
@@ -1129,6 +1130,8 @@ mazemail account add alice@example.org --host imap.example.org
 printf '%s\n' "$PASSWORD" | mazemail account add alice@example.org --password-stdin
 # Sign in with Google in the browser
 mazemail account add bob@gmail.com --oauth google
+# Sign in with Microsoft, for one organization (tenant)
+mazemail account add dana@contoso.com --oauth microsoft --tenant contoso.com
 ```
 
 ### `mazemail account remove`

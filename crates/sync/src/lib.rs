@@ -26,6 +26,9 @@
 //!   is nothing to do.
 //! - **Pending ops**: the store's queue is replayed in order and translated to IMAP or
 //!   Gmail semantics. The payload format is [`ops::OpPayload`] (documented there).
+//! - **Activity**: [`AccountHandle::activity`] snapshots what the engine is doing
+//!   (folder passes with their step and header progress, op replay, the body queue,
+//!   the last finished round) from in-memory state the actor keeps; no events.
 //! - **Events**: [`SyncEventBatch`]es on a broadcast channel, coalesced per ~16 ms,
 //!   with folder, message and count changes, body arrivals, op progress and the
 //!   [`SyncStatus`] (with human text).
@@ -54,6 +57,7 @@
 
 #![warn(missing_docs)]
 
+mod activity;
 mod actor;
 mod backoff;
 mod bodies;
@@ -70,6 +74,7 @@ mod pass;
 mod replay;
 mod shared;
 
+pub use activity::{FolderActivity, FolderPhase, SyncActivity};
 pub use config::{AccountSyncConfig, Clock, OfflinePolicy, SyncTiming};
 pub use connect::{
     BoxSession, CredentialError, CredentialProvider, ImapSessionFactory, SessionFactory,

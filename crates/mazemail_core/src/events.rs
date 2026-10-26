@@ -7,7 +7,8 @@
 //! one frame at 60 Hz) after the first one arrives, merges them into one
 //! [`CoreEventBatch`] and broadcasts it. A burst of sync writes therefore costs the UI
 //! one re-render per frame, and an idle core sends nothing (no timers run while there
-//! are no events).
+//! are no events, except the [disk usage meter](crate::storage), which speaks only
+//! when the usage changed).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -43,6 +44,8 @@ pub(crate) enum CoreEvent {
     /// Lazily computed data of a message changed (for example its sender verification),
     /// without a store change.
     MessageUpdated(MessageId),
+    /// Maze's disk usage was measured and changed (see [`crate::storage`]).
+    Storage,
 }
 
 /// Unread and total counts of a folder, sent along with folder changes.
@@ -92,6 +95,8 @@ pub struct CoreEventBatch {
     /// Settings changed: the settings file, or identities, tags, rules and saved
     /// searches in the store.
     pub settings: bool,
+    /// Maze's disk usage changed ([`CoreHandle::storage_usage`](crate::CoreHandle::storage_usage)).
+    pub storage: bool,
     /// Events were lost; reload everything that is on screen.
     pub reload: bool,
 }
@@ -117,6 +122,7 @@ struct Accumulator {
     outbox: bool,
     proposals: bool,
     settings: bool,
+    storage: bool,
     reload: bool,
 }
 
@@ -150,6 +156,7 @@ impl Accumulator {
             CoreEvent::MessageUpdated(message) => {
                 self.messages.insert(message);
             }
+            CoreEvent::Storage => self.storage = true,
         }
     }
 
@@ -179,6 +186,7 @@ impl Accumulator {
             outbox: self.outbox,
             proposals: self.proposals,
             settings: self.settings,
+            storage: self.storage,
             reload: self.reload,
         }
     }

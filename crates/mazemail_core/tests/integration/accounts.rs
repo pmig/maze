@@ -58,7 +58,9 @@ impl SessionFactory for FakeSessions {
                 Ok(Box::new(self.server.connect()))
             }
             ImapAuth::XOAuth2 { user, access_token }
-                if user == "carol@gmail.com" && access_token.expose() == "access-1" =>
+                if (user == "carol@gmail.com" && access_token.expose() == "access-1")
+                    || (user == "dana@contoso.com"
+                        && access_token.expose().starts_with("access-")) =>
             {
                 Ok(Box::new(self.server.connect()))
             }
@@ -288,6 +290,59 @@ async fn adding_validates_saves_the_password_and_syncs() {
     s.core.shutdown().await.unwrap();
 }
 
+/// "Sync activity": each synced account with its state, the last round, and the work
+/// that waits (pending ops).
+#[tokio::test(flavor = "multi_thread")]
+async fn sync_activity_lists_accounts_with_their_work() {
+    let server = FakeServer::new();
+    server.deliver("INBOX", mail(1, OLD));
+    let s = open(&server).await;
+    let mut events = s.core.events();
+    let info = s.core.add_imap_account(input(PASSWORD)).await.unwrap();
+    wait_for_state(&mut events, &SyncState::Idle).await;
+    wait_for("the first round", || {
+        s.core
+            .sync_activity()
+            .unwrap()
+            .first()
+            .is_some_and(|a| a.last_synced.is_some())
+    })
+    .await;
+    let activity = s.core.sync_activity().unwrap();
+    assert_eq!(activity.len(), 1);
+    let work = &activity[0];
+    assert_eq!(work.account, info.id);
+    assert_eq!(work.name, "Work");
+    assert_eq!(work.kind, AccountKind::Imap);
+    assert_eq!(work.sync.as_ref().map(|s| &s.state), Some(&SyncState::Idle));
+    assert!(work.folders.is_empty(), "{work:?}");
+    assert_eq!((work.pending_ops, work.stuck_ops, work.outbox), (0, 0, 0));
+
+    // An account whose sync doesn't run, with a change waiting for the server.
+    let idle = s
+        .core
+        .store()
+        .write(|w| {
+            let id = w.create_account(&store::NewAccount {
+                kind: AccountKind::Imap,
+                name: "Paused".to_owned(),
+                config_json: r#"{"host":"imap.example.net","auth":"gssapi"}"#.to_owned(),
+                ordinal: 1,
+            })?;
+            w.enqueue_op(id, "flags", "{}", "user")?;
+            Ok(id)
+        })
+        .await
+        .unwrap();
+    let activity = s.core.sync_activity().unwrap();
+    let paused = activity.iter().find(|a| a.account == idle).unwrap();
+    assert_eq!(paused.sync, None);
+    assert_eq!(paused.pending_ops, 1);
+    assert!(paused.oldest_op.is_some());
+    assert_eq!(paused.last_synced, None);
+    s.core.shutdown().await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unreachable_server_is_reported() {
     let server = FakeServer::new();
@@ -499,6 +554,7 @@ async fn google_sign_in_needs_a_client_id() {
             provider: ProviderKind::Google,
             email: "carol@gmail.com".into(),
             display_name: None,
+            tenant: None,
         })
         .await
         .unwrap_err();
@@ -599,6 +655,7 @@ async fn oauth_sign_in_adds_a_gmail_account() {
             provider: ProviderKind::Google,
             email: "carol@gmail.com".into(),
             display_name: Some("Carol".into()),
+            tenant: None,
         })
         .await
         .unwrap();
@@ -624,6 +681,135 @@ async fn oauth_sign_in_adds_a_gmail_account() {
             .unwrap()
             .first()
             .is_some_and(|all| all.total == 1)
+    })
+    .await;
+    core.shutdown().await.unwrap();
+}
+
+/// A Microsoft account signs in with the tenant asked for, keeps it in its config, and
+/// refreshes its token there after a restart, even though the registry's default
+/// tenant (`auth.microsoft.tenant`) is `common`.
+#[tokio::test(flavor = "multi_thread")]
+async fn microsoft_accounts_refresh_with_the_tenant_they_signed_in_with() {
+    use auth::{ClientCredentials, MicrosoftTenant, Provider, ProviderRegistry};
+    use wiremock::matchers::{method, path, path_regex};
+    use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+    let provider = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/contoso.com/oauth2/v2.0/authorize"))
+        .respond_with(|request: &Request| {
+            let q: std::collections::HashMap<String, String> =
+                request.url.query_pairs().into_owned().collect();
+            let location = format!("{}?code=the-code&state={}", q["redirect_uri"], q["state"]);
+            ResponseTemplate::new(302).insert_header("Location", location.as_str())
+        })
+        .mount(&provider)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/contoso.com/oauth2/v2.0/token"))
+        .respond_with(|request: &Request| {
+            let form: std::collections::HashMap<String, String> =
+                url::form_urlencoded::parse(&request.body)
+                    .into_owned()
+                    .collect();
+            let n = if form["grant_type"] == "refresh_token" {
+                assert_eq!(form["refresh_token"], "refresh-1");
+                2
+            } else {
+                1
+            };
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": format!("access-{n}"),
+                "refresh_token": format!("refresh-{n}"),
+                "expires_in": 3600,
+                "token_type": "Bearer",
+            }))
+        })
+        .mount(&provider)
+        .await;
+    // Anything else (the `common` endpoints) fails the sign-in.
+    Mock::given(path_regex("^/common/"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "error": "invalid_request",
+            "error_description": "AADSTS50194: not a multi-tenant application",
+        })))
+        .expect(0)
+        .mount(&provider)
+        .await;
+    // The registry's default tenant stays `common`, like the default setting.
+    let registry = || {
+        let mut registry = ProviderRegistry::new();
+        registry.set_provider(
+            Provider::builtin(ProviderKind::Microsoft)
+                .with_authority(&provider.uri())
+                .unwrap()
+                .with_credentials(ClientCredentials::new("entra-app")),
+        );
+        assert_eq!(
+            registry.microsoft_tenant(),
+            Some(&MicrosoftTenant::common())
+        );
+        registry
+    };
+
+    let server = FakeServer::new();
+    server.deliver("INBOX", mail(1, OLD));
+    let dir = tempfile::tempdir().unwrap();
+    let keys = Arc::new(MemoryKeyStore::new());
+    let secrets = Arc::new(MemorySecretStore::new());
+    let engine = || {
+        SyncEngineConfig::new(secrets.clone())
+            .with_connector(Arc::new(FakeConnector {
+                server: server.clone(),
+                reachable: true,
+            }))
+            .with_browser(Arc::new(ConsentingBrowser))
+            .with_providers(registry())
+            .with_timing(timing())
+    };
+    let core = CoreHandle::open(common::config(dir.path(), &keys).with_sync_engine(engine()))
+        .await
+        .unwrap();
+    let info = core
+        .add_oauth_account(AddOAuthAccount {
+            provider: ProviderKind::Microsoft,
+            email: "dana@contoso.com".into(),
+            display_name: None,
+            tenant: Some(MicrosoftTenant::parse("Contoso.com").unwrap()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(info.kind, AccountKind::M365);
+    let account = core.accounts().unwrap().pop().unwrap();
+    let config = mazemail_core::AccountConfig::parse(&account.config_json).unwrap();
+    assert_eq!(config.oauth_tenant.as_deref(), Some("contoso.com"));
+    core.shutdown().await.unwrap();
+
+    // After a restart the access token is gone: the actor refreshes at contoso.com.
+    let core = CoreHandle::open(common::config(dir.path(), &keys).with_sync_engine(engine()))
+        .await
+        .unwrap();
+    let refreshed = async {
+        loop {
+            let requests = provider.received_requests().await.unwrap_or_default();
+            if requests.iter().any(|r| {
+                r.url.path() == "/contoso.com/oauth2/v2.0/token"
+                    && String::from_utf8_lossy(&r.body).contains("grant_type=refresh_token")
+            }) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(10), refreshed)
+        .await
+        .expect("a refresh at the account's tenant");
+    wait_for("the rotated refresh token", || {
+        secrets
+            .load(&SecretKey::new(info.uuid, SecretKind::OAuthRefresh))
+            .unwrap()
+            .is_some_and(|token| token.expose() == "refresh-2")
     })
     .await;
     core.shutdown().await.unwrap();
@@ -692,6 +878,7 @@ async fn the_local_api_adds_lists_syncs_and_removes_accounts() {
             email: Sensitive::new("alice@example.org".into()),
             name: Some("Work".into()),
             oauth: None,
+            tenant: None,
             host: Some("imap.example.org".into()),
             port: None,
             security: None,

@@ -325,9 +325,12 @@ impl SyncEngine {
         let Some(AccountAuth::OAuth(provider)) = config.auth() else {
             return Err("this account doesn't sign in with OAuth".to_owned());
         };
+        // Refreshes go to the tenant the account signed in with, whatever
+        // `auth.microsoft.tenant` says now.
+        let tenant = (provider == auth::ProviderKind::Microsoft).then(|| config.microsoft_tenant());
         let manager = self
             .registry(&self.settings.borrow().settings)
-            .client(provider)
+            .client_for_tenant(provider, tenant.as_ref())
             .map(|client| {
                 Arc::new(OAuthTokenManager::new(
                     client,
@@ -346,6 +349,11 @@ impl SyncEngine {
             .providers
             .clone()
             .unwrap_or_else(|| registry_from_settings(settings))
+    }
+
+    /// What the actor of `account` is doing, if it runs.
+    pub(crate) fn activity(&self, account: AccountId) -> Option<sync::SyncActivity> {
+        self.handle(account).map(|handle| handle.activity())
     }
 
     /// The last status of `account`, if it is synced.

@@ -67,6 +67,20 @@ pub fn format_size(bytes: u64) -> SharedString {
     .into()
 }
 
+/// Disk usage for the status bar: `2.4 GB` from 1 GB, whole megabytes below (`412 MB`),
+/// kilobytes below 1 MB.
+pub fn format_disk(bytes: u64) -> SharedString {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * KB;
+    const GB: u64 = 1024 * MB;
+    match bytes {
+        0..MB => format!("{} KB", bytes.div_ceil(KB)),
+        MB..GB => format!("{} MB", (bytes as f64 / MB as f64).round() as u64),
+        _ => format!("{:.1} GB", bytes as f64 / GB as f64),
+    }
+    .into()
+}
+
 /// `1,000,000`.
 pub fn format_thousands(n: u64) -> SharedString {
     let digits = n.to_string();
@@ -127,6 +141,19 @@ mod tests {
         assert_eq!(format_thousands(1_000_000).as_ref(), "1,000,000");
         assert_eq!(format_thousands(999).as_ref(), "999");
         assert_eq!(format_thousands(4_200).as_ref(), "4,200");
+    }
+
+    #[test]
+    fn disk_usage_in_mb_and_gb() {
+        const MB: u64 = 1024 * 1024;
+        assert_eq!(format_disk(0).as_ref(), "0 KB");
+        assert_eq!(format_disk(300 * 1024).as_ref(), "300 KB");
+        assert_eq!(format_disk(MB).as_ref(), "1 MB");
+        assert_eq!(format_disk(412 * MB + MB / 3).as_ref(), "412 MB");
+        assert_eq!(format_disk(1023 * MB).as_ref(), "1023 MB");
+        assert_eq!(format_disk(1024 * MB).as_ref(), "1.0 GB");
+        assert_eq!(format_disk(2_576_980_378).as_ref(), "2.4 GB");
+        assert_eq!(format_disk(150 * 1024 * MB).as_ref(), "150.0 GB");
     }
 
     #[test]

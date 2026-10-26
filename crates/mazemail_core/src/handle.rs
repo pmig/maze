@@ -44,6 +44,7 @@ use crate::outgoing::{CoreRoutes, OutboxWake};
 use crate::row_cache::{RowCache, RowCacheStats};
 use crate::runtime::RuntimeHolder;
 use crate::secrets::{LegacyMoveReport, StoreSecretStore};
+use crate::storage::{RefreshPolicy, StorageMeter, StorageUsage};
 use crate::sync_bridge::{FetchPriority, SyncBridge, SyncStatusSink};
 use crate::sync_engine::{AccountSecretsLocation, SyncEngine};
 use crate::sync_ingest::CoreIngest;
@@ -103,6 +104,8 @@ struct Inner {
     /// The outbox sender, with a sync engine (it has the credentials).
     outbox: Option<smtp::Outbox>,
     outbox_wake: Arc<OutboxWake>,
+    /// The last disk usage measurement.
+    storage: Arc<StorageMeter>,
     closed: AtomicBool,
 }
 
@@ -303,6 +306,13 @@ impl CoreHandle {
     /// Batched change events (PLAN §4.2), at most one batch per event window.
     pub fn events(&self) -> broadcast::Receiver<CoreEventBatch> {
         self.inner.events_out.subscribe()
+    }
+
+    /// How much disk space Maze's data directory takes, from the last background
+    /// measurement (see [`crate::storage`]); `None` until the first one finished. Never
+    /// touches the disk. [`CoreEventBatch::storage`] says when it changed.
+    pub fn storage_usage(&self) -> Option<StorageUsage> {
+        self.inner.storage.get()
     }
 
     /// The current settings and their diagnostics.
@@ -1232,6 +1242,7 @@ pub(crate) async fn finish(
     let indexer = IndexerTask::spawn(index.clone(), indexer, events_in.clone())?;
     let rows = Arc::new(RowCache::new(config.row_cache_capacity));
     let text = Arc::new(TextCache::default());
+    let storage = Arc::new(StorageMeter::default());
 
     let handle = runtime.handle();
     let tasks = vec![
@@ -1249,6 +1260,13 @@ pub(crate) async fn finish(
             events_in.clone(),
         )),
         handle.spawn(forward_settings(settings.clone(), events_in.clone())),
+        handle.spawn(crate::storage::run_meter(
+            Arc::clone(&storage),
+            config.data_dir.clone(),
+            events_out.subscribe(),
+            events_in.clone(),
+            RefreshPolicy::default(),
+        )),
     ];
 
     let verifier = OnceLock::new();
@@ -1311,6 +1329,7 @@ pub(crate) async fn finish(
             app_version: config.app_version.clone(),
             outbox,
             outbox_wake,
+            storage,
             closed: AtomicBool::new(false),
         }),
     };

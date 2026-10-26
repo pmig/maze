@@ -37,8 +37,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use auth::{
-    AccountSecrets, AuthorizeOptions, ClientCredentials, OAuthTokenManager, ProviderKind,
-    ProviderRegistry, Uuid,
+    AccountSecrets, AuthorizeOptions, ClientCredentials, MicrosoftTenant, OAuthTokenManager,
+    ProviderKind, ProviderRegistry, Uuid,
 };
 use imap::ImapAuth;
 use mazemail_types::{AccountId, Sensitive};
@@ -170,6 +170,11 @@ pub struct AccountConfig {
     /// The OAuth provider for `oauth2`; detected from host and address if missing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oauth_provider: Option<ProviderKind>,
+    /// The Microsoft tenant the account signed in with (`auth.microsoft.tenant` at
+    /// the time); token refreshes use it. Missing (accounts of earlier versions):
+    /// `common`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_tenant: Option<String>,
     /// How to recognize the provider's trusted `Authentication-Results`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_profile: Option<ProviderProfile>,
@@ -213,6 +218,19 @@ impl AccountConfig {
                 .or_else(|| ProviderKind::detect(self.email.as_deref(), Some(&self.host)))
                 .map(AccountAuth::OAuth),
             _ => None,
+        }
+    }
+
+    /// The Microsoft tenant for token refreshes: the stored one, `common` if there is
+    /// none or it isn't valid.
+    pub fn microsoft_tenant(&self) -> MicrosoftTenant {
+        match self.oauth_tenant.as_deref().map(MicrosoftTenant::parse) {
+            Some(Ok(tenant)) => tenant,
+            Some(Err(err)) => {
+                tracing::warn!(%err, "an account's stored Microsoft tenant; using common");
+                MicrosoftTenant::common()
+            }
+            None => MicrosoftTenant::common(),
         }
     }
 
@@ -379,12 +397,16 @@ pub struct AddOAuthAccount {
     pub email: String,
     /// The name in the folder pane; the address if `None`.
     pub display_name: Option<String>,
+    /// Microsoft: the tenant to sign in with; `None` uses `auth.microsoft.tenant`.
+    /// Ignored for Google.
+    pub tenant: Option<MicrosoftTenant>,
 }
 
 impl std::fmt::Debug for AddOAuthAccount {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AddOAuthAccount")
             .field("provider", &self.provider)
+            .field("tenant", &self.tenant)
             .finish_non_exhaustive()
     }
 }
@@ -452,6 +474,7 @@ fn account_error(kind: AccountErrorKind, message: impl Into<String>) -> Error {
 /// The provider registry from the settings (`auth.google.*`, `auth.microsoft.*`).
 pub(crate) fn registry_from_settings(settings: &settings::Settings) -> ProviderRegistry {
     let mut registry = ProviderRegistry::new();
+    registry.set_microsoft_tenant(&settings.auth.microsoft.tenant);
     registry.set_credentials(
         ProviderKind::Google,
         ClientCredentials::from_settings(
@@ -753,6 +776,7 @@ impl CoreHandle {
             username,
             auth: "password".to_owned(),
             oauth_provider: None,
+            oauth_tenant: None,
             provider_profile: provider_profile(kind),
             extra: serde_json::Map::new(),
         };
@@ -872,8 +896,16 @@ impl CoreHandle {
                 missing_client_message(provider),
             ));
         }
+        // New sign-ins use the tenant asked for, else the setting's; the account keeps it.
+        let tenant = (provider == ProviderKind::Microsoft).then(|| {
+            input
+                .tenant
+                .clone()
+                .or_else(|| registry.microsoft_tenant().cloned())
+                .unwrap_or_default()
+        });
         let client = registry
-            .client(provider)
+            .client_for_tenant(provider, tenant.as_ref())
             .map_err(|err| account_error(AccountErrorKind::OAuthNotConfigured, err.to_string()))?;
         let tokens = client
             .authorize(
@@ -903,6 +935,7 @@ impl CoreHandle {
             username: email.clone(),
             auth: "oauth2".to_owned(),
             oauth_provider: Some(provider),
+            oauth_tenant: tenant.as_ref().map(ToString::to_string),
             provider_profile: provider_profile(kind),
             extra: serde_json::Map::new(),
         };
@@ -926,7 +959,7 @@ impl CoreHandle {
             ));
         }
         engine.start(&account, Some(manager));
-        tracing::info!(account = %account.id, %provider, "account added");
+        tracing::info!(account = %account.id, %provider, ?tenant, "account added");
         self.info_of(&account)
     }
 
@@ -1056,6 +1089,7 @@ mod tests {
             username: "alice".into(),
             auth: "password".into(),
             oauth_provider: None,
+            oauth_tenant: None,
             provider_profile: provider_profile(AccountKind::Gmail),
             extra: serde_json::Map::new(),
         };
@@ -1085,6 +1119,48 @@ mod tests {
                 .unwrap()
                 .auth(),
             None
+        );
+    }
+
+    #[test]
+    fn the_microsoft_tenant_is_kept_and_defaults_to_common() {
+        // Accounts of earlier versions have none: `common`, as they signed in with.
+        let old = AccountConfig::parse(
+            r#"{"email":"a@contoso.com","host":"outlook.office365.com","auth":"oauth2","oauth_provider":"microsoft"}"#,
+        )
+        .unwrap();
+        assert_eq!(old.oauth_tenant, None);
+        assert!(old.microsoft_tenant().is_common());
+        assert!(!old.to_json().contains("oauth_tenant"), "nothing added");
+
+        let mut config = old;
+        config.oauth_tenant = Some("contoso.com".into());
+        let json = config.to_json();
+        assert!(json.contains(r#""oauth_tenant":"contoso.com""#), "{json}");
+        let parsed = AccountConfig::parse(&json).unwrap();
+        assert_eq!(parsed, config);
+        assert_eq!(parsed.microsoft_tenant().as_str(), "contoso.com");
+
+        // A broken value doesn't make the account unusable.
+        config.oauth_tenant = Some("not a tenant".into());
+        assert!(config.microsoft_tenant().is_common());
+    }
+
+    #[test]
+    fn the_tenant_setting_reaches_the_registry() {
+        let mut settings = settings::default_settings();
+        assert_eq!(
+            registry_from_settings(&settings).microsoft_tenant(),
+            Some(&MicrosoftTenant::common())
+        );
+        settings.auth.microsoft.tenant = MicrosoftTenant::parse("contoso.com").unwrap();
+        let registry = registry_from_settings(&settings);
+        assert_eq!(
+            registry
+                .get(ProviderKind::Microsoft)
+                .authorization_endpoint()
+                .as_str(),
+            "https://login.microsoftonline.com/contoso.com/oauth2/v2.0/authorize"
         );
     }
 

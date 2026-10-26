@@ -736,6 +736,139 @@ pub struct SourceStatus {
     pub online: bool,
 }
 
+/// The step a folder's sync is at, in "Sync activity".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FolderStep {
+    /// Queued behind other work.
+    Waiting,
+    /// Comparing the folder with what is stored.
+    Checking,
+    /// Reading flag changes and deletions.
+    ReadingFlags,
+    /// Re-reading Gmail labels (All Mail).
+    ReadingLabels,
+    /// Fetching the headers of new messages.
+    FetchingHeaders,
+}
+
+/// A folder an account's sync is working on, or will next.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderProgress {
+    /// The folder's path ("Archive/2025").
+    pub name: SharedString,
+    /// What it is doing.
+    pub step: FolderStep,
+    /// Work done in this step (headers fetched).
+    pub done: u64,
+    /// Work in this step, if known.
+    pub total: Option<u64>,
+}
+
+/// An account's sync state in "Sync activity".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActivityState {
+    /// The account isn't synced (no sync engine, an unsupported login).
+    NotSynced,
+    /// Opening the first connection.
+    Connecting,
+    /// Folders are being synced.
+    Syncing,
+    /// Up to date.
+    Idle,
+    /// The server can't be reached; Maze retries.
+    Offline {
+        /// Why, with the next retry.
+        reason: SharedString,
+    },
+    /// The account needs a new sign-in or password.
+    SignInRequired {
+        /// Why.
+        reason: SharedString,
+    },
+    /// Sync failed.
+    Error {
+        /// What failed.
+        message: SharedString,
+    },
+}
+
+impl ActivityState {
+    /// Whether "Retry now" can help (offline, an error).
+    pub fn can_retry(&self) -> bool {
+        matches!(self, Self::Offline { .. } | Self::Error { .. })
+    }
+
+    /// The reason or message to show, for the states that have one.
+    pub fn problem(&self) -> Option<&SharedString> {
+        match self {
+            Self::Offline { reason } | Self::SignInRequired { reason } => Some(reason),
+            Self::Error { message } => Some(message),
+            _ => None,
+        }
+    }
+}
+
+/// What one account's sync is doing and what waits: the status bar's "Sync activity".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountActivity {
+    /// The account.
+    pub account: AccountId,
+    /// Its name in the folder pane.
+    pub name: SharedString,
+    /// Its kind (for the icon).
+    pub kind: AccountKind,
+    /// The sync state.
+    pub state: ActivityState,
+    /// Folders being synced first, then waiting ones.
+    pub folders: Vec<FolderProgress>,
+    /// Changes are being sent to the server right now.
+    pub replaying_ops: bool,
+    /// Messages waiting to be downloaded for offline reading.
+    pub bodies_queued: u64,
+    /// When the last full sync finished (since Maze started).
+    pub last_synced: Option<OffsetDateTime>,
+    /// Changes (moves, flags, uploads) waiting to be sent to the server.
+    pub pending_ops: u64,
+    /// Of those, the ones that failed too often.
+    pub stuck_ops: u64,
+    /// When the oldest waiting change was made.
+    pub oldest_op: Option<OffsetDateTime>,
+    /// Messages in the outbox waiting to be sent.
+    pub outbox: u64,
+}
+
+/// How much disk space Maze's data takes, by area, in bytes: the status bar's size
+/// and its tooltip.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StorageUsage {
+    /// The data directory, as shown to people (`~` for the home directory).
+    pub data_dir: SharedString,
+    /// The mail database and the send log.
+    pub database: u64,
+    /// The encrypted message blobs.
+    pub blobs: u64,
+    /// The search index.
+    pub search_index: u64,
+    /// Caches and staging files.
+    pub caches: u64,
+    /// Database copies taken before migrations.
+    pub backups: u64,
+    /// Everything else (logs, downloaded updates).
+    pub other: u64,
+}
+
+impl StorageUsage {
+    /// All areas together.
+    pub fn total(&self) -> u64 {
+        self.database + self.blobs + self.search_index + self.caches + self.backups + self.other
+    }
+
+    /// The mail store: database and message blobs.
+    pub fn mail_store(&self) -> u64 {
+        self.database + self.blobs
+    }
+}
+
 /// What changed in the data behind the window, from the backend's change events.
 /// [`MailWindow::apply_changes`](crate::MailWindow::apply_changes) re-reads only what
 /// is affected.
@@ -753,7 +886,8 @@ pub struct DataChanges {
     /// Messages whose data changed (body arrived, sender verified): re-show the
     /// message if it is one of them.
     pub messages_updated: Vec<MessageId>,
-    /// The sync or connection status changed: re-render the status bar.
+    /// The sync or connection status, or the disk usage, changed: re-render the status
+    /// bar.
     pub status: bool,
     /// Changes were lost (or the backend just became available): reload everything.
     pub everything: bool,
@@ -1048,6 +1182,24 @@ pub trait MailSource: Send + Sync + 'static {
 
     /// Connection, sync and outbox state.
     fn status(&self) -> SourceStatus;
+
+    /// How much disk space Maze uses, from the backend's last measurement; `None`
+    /// until it is known. Must be cheap: it is read on every render.
+    fn storage_usage(&self) -> Option<StorageUsage> {
+        None
+    }
+
+    /// What each account's sync is doing right now, for "Sync activity". Cheap enough
+    /// to call a few times a second while it is shown.
+    fn sync_activity(&self) -> Vec<AccountActivity> {
+        Vec::new()
+    }
+
+    /// Synchronizes one account now ("Retry now" in "Sync activity"). The default
+    /// syncs every account.
+    fn sync_account_now(&self, _account: AccountId) -> Result<(), SourceError> {
+        self.sync_now()
+    }
 
     /// Synchronizes every account now (the title bar's sync button, "Mail: Sync Now").
     /// Only queues the request: progress shows in [`MailSource::status`].

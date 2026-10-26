@@ -5,7 +5,7 @@ use std::io;
 
 use mazemail_types::Sensitive;
 
-use crate::ProviderKind;
+use crate::{Provider, ProviderKind};
 
 /// What the user sees when a Microsoft 365 organization blocks Maze until an
 /// administrator approves it (CONCEPT §6). Shown for [`AuthError::AdminConsentRequired`].
@@ -106,6 +106,24 @@ pub enum AuthError {
     AdminConsentRequired {
         /// The `AADSTS` code that triggered this, if known.
         code: Option<u32>,
+    },
+
+    /// The Microsoft app registration only allows accounts of its own organization
+    /// (single-tenant), but Maze signed in through a multi-tenant endpoint such as
+    /// `common` (`AADSTS50194`).
+    #[error(
+        "This app registration only allows its own organization. Set `auth.microsoft.tenant` \
+         to your tenant ID or domain, or register the app for any organization."
+    )]
+    SingleTenantApp,
+
+    /// Microsoft doesn't know the tenant in the endpoints (`AADSTS90002`,
+    /// `AADSTS900023`, `AADSTS900021`): a typo in `auth.microsoft.tenant`, or a deleted
+    /// directory.
+    #[error("Microsoft doesn't know the tenant {tenant}")]
+    UnknownTenant {
+        /// The tenant Maze asked for.
+        tenant: String,
     },
 
     /// The user declined consent or cancelled at the provider (`access_denied`,
@@ -246,8 +264,24 @@ const ADMIN_CONSENT_CODES: &[u32] = &[
 /// `AADSTS` codes for "the user declined".
 const DECLINED_CODES: &[u32] = &[65004];
 
-/// Maps an OAuth error response to an [`AuthError`].
-pub(crate) fn classify(provider: ProviderKind, details: OAuthErrorDetails) -> AuthError {
+/// `AADSTS50194`: a single-tenant app was used through a multi-tenant endpoint.
+const SINGLE_TENANT_CODES: &[u32] = &[50194];
+
+/// `AADSTS` codes for a tenant Microsoft doesn't know (not found, invalid name).
+const UNKNOWN_TENANT_CODES: &[u32] = &[90002, 900023, 900021];
+
+/// Maps an OAuth error response from `provider` to an [`AuthError`].
+pub(crate) fn classify(provider: &Provider, details: OAuthErrorDetails) -> AuthError {
+    if details.has_code(SINGLE_TENANT_CODES) {
+        return AuthError::SingleTenantApp;
+    }
+    if details.has_code(UNKNOWN_TENANT_CODES) {
+        let tenant = provider
+            .tenant()
+            .map_or_else(|| "in the sign-in address".to_owned(), ToString::to_string);
+        return AuthError::UnknownTenant { tenant };
+    }
+    let provider = provider.kind();
     if details.has_code(ADMIN_CONSENT_CODES) {
         let code = details
             .error_codes
@@ -296,6 +330,10 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    fn classify(kind: ProviderKind, details: OAuthErrorDetails) -> AuthError {
+        super::classify(&Provider::builtin(kind), details)
+    }
 
     fn details(error: &str, description: Option<&str>, codes: &[u32]) -> OAuthErrorDetails {
         OAuthErrorDetails::new(
@@ -379,6 +417,41 @@ mod tests {
             classify(ms, details("server_error", None, &[])),
             AuthError::Provider { .. }
         ));
+    }
+
+    #[test]
+    fn tenant_errors_say_what_to_change() {
+        let err = classify(
+            ProviderKind::Microsoft,
+            details(
+                "invalid_request",
+                Some(
+                    "AADSTS50194: Application 'x'(Maze) is not configured as a multi-tenant application.",
+                ),
+                &[],
+            ),
+        );
+        assert!(matches!(err, AuthError::SingleTenantApp), "{err:?}");
+        assert_eq!(
+            err.to_string(),
+            "This app registration only allows its own organization. Set \
+             `auth.microsoft.tenant` to your tenant ID or domain, or register the app for \
+             any organization."
+        );
+        assert!(!err.requires_reauth() && !err.is_transient());
+
+        let contoso = mazemail_types::MicrosoftTenant::parse("contso.com").unwrap();
+        for code in [90002, 900023] {
+            let err = super::classify(
+                &Provider::microsoft(&contoso),
+                details("invalid_request", None, &[code]),
+            );
+            assert_eq!(
+                err.to_string(),
+                "Microsoft doesn't know the tenant contso.com",
+                "AADSTS{code}"
+            );
+        }
     }
 
     #[test]

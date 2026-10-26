@@ -52,7 +52,6 @@ use crate::actions::*;
 use crate::chrome::{AgentColumn, MailStatusBar, SpacesBar, SyncButton};
 use crate::command_palette::{CommandPalette, Dismissed};
 use crate::folder_pane::{FolderPane, FolderPaneEvent};
-use crate::format::format_thousands;
 use crate::layout::{self, AgentPlacement, LayoutConfig, LayoutPrefs};
 use crate::links::MailTo;
 use crate::mail_view::{MAIL_KIND, MailView, MailViewContext, MailViewEvent, SerializedFolder};
@@ -230,6 +229,8 @@ pub struct MailWindow {
     /// Set for a moment after "Sync Now", so the sync icon turns at once, before the
     /// sync engine reports progress.
     sync_requested: Option<Task<()>>,
+    /// "Sync activity" is open; the task re-renders it while it is.
+    sync_activity: Option<Task<()>>,
     item_subscriptions: HashMap<EntityId, Subscription>,
     _subscriptions: Vec<Subscription>,
 }
@@ -335,6 +336,7 @@ impl MailWindow {
             settings_file: options.settings_file.clone(),
             save_task: None,
             sync_requested: None,
+            sync_activity: None,
             item_subscriptions: HashMap::new(),
             _subscriptions: subscriptions,
         };
@@ -1425,6 +1427,33 @@ impl MailWindow {
         cx.notify();
     }
 
+    /// Opens or closes "Sync activity"; while it is open the window re-renders every
+    /// [`ACTIVITY_REFRESH`](crate::sync_activity::ACTIVITY_REFRESH), so the popover
+    /// follows the sync.
+    pub fn set_sync_activity_open(&mut self, open: bool, cx: &mut Context<'_, Self>) {
+        if open == self.sync_activity.is_some() {
+            return;
+        }
+        self.sync_activity = open.then(|| {
+            cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(crate::sync_activity::ACTIVITY_REFRESH)
+                        .await;
+                    if this.update(cx, |_, cx| cx.notify()).is_err() {
+                        return;
+                    }
+                }
+            })
+        });
+        cx.notify();
+    }
+
+    /// Whether "Sync activity" is open.
+    pub fn is_sync_activity_open(&self) -> bool {
+        self.sync_activity.is_some()
+    }
+
     /// Whether "Sync Now" was just asked for (the icon turns until the sync shows up).
     pub fn is_sync_requested(&self) -> bool {
         self.sync_requested.is_some()
@@ -1735,22 +1764,9 @@ impl Render for MailWindow {
         let list = self
             .active_mail_view(cx)
             .map(|view| view.read(cx).thread_list().clone());
-        let (summary, has_rows): (SharedString, bool) = match &list {
-            Some(list) => {
-                let list = list.read(cx);
-                let len = list.key_count();
-                let noun = if list.threaded() {
-                    "threads"
-                } else {
-                    "messages"
-                };
-                (
-                    format!("{} {noun}", format_thousands(len as u64)).into(),
-                    len > 0,
-                )
-            }
-            None => (SharedString::default(), false),
-        };
+        let has_rows = list
+            .as_ref()
+            .is_some_and(|list| list.read(cx).key_count() > 0);
         let context = self.agent_context(cx).map(|(_, subject)| subject);
 
         let center = div().flex_1().min_w_0().h_full().child(self.panes.clone());
@@ -1815,7 +1831,19 @@ impl Render for MailWindow {
                     .child(center)
                     .child(agent),
             )
-            .child(MailStatusBar::new(status, summary))
+            .child({
+                let window_view = cx.weak_entity();
+                MailStatusBar::new(status, self.source.storage_usage()).sync_activity(
+                    Arc::clone(&self.source),
+                    self.sync_activity.is_some(),
+                    Rc::new(move |open: &bool, _: &mut Window, cx: &mut App| {
+                        let open = *open;
+                        window_view
+                            .update(cx, |this, cx| this.set_sync_activity_open(open, cx))
+                            .ok();
+                    }),
+                )
+            })
             .children(self.palette.clone())
             .children(self.quick_move.clone())
             .child(
@@ -2670,6 +2698,178 @@ mod tests {
                 .collect()
         });
         assert!(labels.iter().any(|label| label == "Mail: Sync Now"));
+    }
+
+    /// The status bar shows how much disk Maze uses (once it is known) instead of the
+    /// thread count, with the breakdown in a tooltip.
+    #[gpui::test]
+    fn the_status_bar_shows_the_disk_usage(cx: &mut TestAppContext) {
+        use crate::source::StorageUsage;
+
+        cx.update(|cx| {
+            ui::init(cx);
+            crate::init(cx);
+        });
+        let fake = Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
+        let source: Arc<dyn MailSource> = fake.clone();
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            MailWindow::new(source, &MailWindowOptions::default(), window, cx)
+        });
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("status-storage").is_none(),
+            "nothing until the first measurement"
+        );
+
+        const MB: u64 = 1024 * 1024;
+        let usage = StorageUsage {
+            data_dir: "~/Library/Application Support/mazemail".into(),
+            database: 300 * MB,
+            blobs: 2_000 * MB,
+            search_index: 150 * MB,
+            caches: 0,
+            backups: 0,
+            other: 2 * MB,
+        };
+        fake.set_storage_usage(Some(usage.clone()));
+        view.update_in(cx, |w, window, cx| {
+            w.apply_changes(
+                &DataChanges {
+                    status: true,
+                    ..DataChanges::default()
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        let item = cx.debug_bounds("status-storage").expect("the disk usage");
+        let window_width = cx.update(|window, _| window.viewport_size().width);
+        assert!(item.left() > window_width / 2., "bottom right");
+        assert_eq!(crate::format::format_disk(usage.total()).as_ref(), "2.4 GB");
+        assert_eq!(
+            crate::chrome::storage_lines(&usage),
+            vec![
+                SharedString::from("Maze uses 2.4 GB of disk space"),
+                "Mail store: 2.2 GB (database 300 MB, messages 2.0 GB)".into(),
+                "Search index: 150 MB".into(),
+                "Logs and updates: 2 MB".into(),
+                "~/Library/Application Support/mazemail".into(),
+            ]
+        );
+
+        // Hovering shows the breakdown.
+        assert!(cx.debug_bounds("status-storage-tooltip").is_none());
+        cx.simulate_mouse_move(item.center(), None, gpui::Modifiers::none());
+        cx.executor().advance_clock(Duration::from_secs(2));
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("status-storage-tooltip").is_some(),
+            "the tooltip with the breakdown"
+        );
+    }
+
+    /// Clicking the status bar's sync item opens "Sync activity": every account with
+    /// its folders and progress; an account with an error offers "Retry now", which
+    /// syncs that account. Escape closes it.
+    #[gpui::test]
+    fn the_sync_item_opens_sync_activity(cx: &mut TestAppContext) {
+        use crate::source::{
+            AccountActivity, AccountKind, ActivityState, FolderProgress, FolderStep,
+        };
+        use mazemail_types::AccountId;
+
+        cx.update(|cx| {
+            ui::init(cx);
+            crate::init(cx);
+        });
+        let fake = Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
+        let account = |id: i64, name: &str, state: ActivityState| AccountActivity {
+            account: AccountId(id),
+            name: name.into(),
+            kind: AccountKind::Imap,
+            state,
+            folders: Vec::new(),
+            replaying_ops: false,
+            bodies_queued: 0,
+            last_synced: None,
+            pending_ops: 0,
+            stuck_ops: 0,
+            oldest_op: None,
+            outbox: 0,
+        };
+        fake.set_sync_activity(vec![
+            AccountActivity {
+                folders: vec![FolderProgress {
+                    name: "INBOX".into(),
+                    step: FolderStep::FetchingHeaders,
+                    done: 1_200,
+                    total: Some(5_400),
+                }],
+                pending_ops: 2,
+                ..account(1, "Work", ActivityState::Syncing)
+            },
+            account(
+                2,
+                "Home",
+                ActivityState::Error {
+                    message: "folder sync: the server said NO".into(),
+                },
+            ),
+        ]);
+        let source: Arc<dyn MailSource> = fake.clone();
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            MailWindow::new(source, &MailWindowOptions::default(), window, cx)
+        });
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("sync-activity").is_none());
+
+        let item = cx.debug_bounds("status-sync").expect("the sync item");
+        cx.simulate_click(item.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert!(view.read_with(cx, |w, _| w.is_sync_activity_open()));
+        let panel = cx.debug_bounds("sync-activity").expect("the popover");
+        assert!(
+            panel.bottom() <= item.top() + px(2.),
+            "above the status bar"
+        );
+        assert!(cx.debug_bounds("sync-activity-account-1").is_some());
+        assert!(cx.debug_bounds("sync-activity-account-2").is_some());
+        assert!(
+            cx.debug_bounds("sync-activity-retry-1").is_none(),
+            "nothing to retry while it syncs"
+        );
+
+        // It follows the sync while it is open.
+        fake.set_sync_activity(vec![account(3, "Later", ActivityState::Idle)]);
+        cx.executor()
+            .advance_clock(crate::sync_activity::ACTIVITY_REFRESH * 2);
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("sync-activity-account-3").is_some());
+        assert!(cx.debug_bounds("sync-activity-account-1").is_none());
+
+        fake.set_sync_activity(vec![account(
+            2,
+            "Home",
+            ActivityState::Offline {
+                reason: "connection refused".into(),
+            },
+        )]);
+        cx.executor()
+            .advance_clock(crate::sync_activity::ACTIVITY_REFRESH * 2);
+        cx.run_until_parked();
+        let retry = cx.debug_bounds("sync-activity-retry-2").expect("Retry now");
+        cx.simulate_click(retry.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert_eq!(fake.account_sync_requests(), vec![AccountId(2)]);
+        assert_eq!(fake.sync_requests(), 0, "only that account");
+
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("sync-activity").is_none(), "closed");
+        assert!(!view.read_with(cx, |w, _| w.is_sync_activity_open()));
     }
 
     /// The title bar's "+" and `cmd-n` ask the app for a new draft; Reply, Reply All and

@@ -24,6 +24,8 @@
 //! | Commands | [`apply`](CoreHandle::apply), [`undo`](CoreHandle::undo) |
 //! | Compose  | [`identities`](CoreHandle::identities), [`new_draft`](CoreHandle::new_draft), [`reply_draft`](CoreHandle::reply_draft), [`forward_draft`](CoreHandle::forward_draft), [`create_draft`](CoreHandle::create_draft)/[`update_draft`](CoreHandle::update_draft)/[`delete_draft`](CoreHandle::delete_draft), [`send_draft`](CoreHandle::send_draft) (see [`compose`], [`outgoing`]) |
 //! | Events   | [`events`](CoreHandle::events), [`settings_watch`](CoreHandle::settings_watch) |
+//! | Sync     | [`accounts_with_status`](CoreHandle::accounts_with_status), [`sync_activity`](CoreHandle::sync_activity) (what each account's sync is doing, see [`activity`]) |
+//! | Disk     | [`storage_usage`](CoreHandle::storage_usage) (cached, measured in the background, see [`storage`]) |
 //! | Settings | [`settings`](CoreHandle::settings), [`set_favorite_folder`](CoreHandle::set_favorite_folder) (writes `settings.json`) |
 //! | Index    | [`index_sink`](CoreHandle::index_sink), [`reindex_all`](CoreHandle::reindex_all), [`check_index`](CoreHandle::check_index) |
 //!
@@ -60,6 +62,7 @@ mod row_cache;
 mod runtime;
 
 pub mod accounts;
+pub mod activity;
 pub mod agents;
 pub mod api;
 pub mod api_handler;
@@ -79,6 +82,7 @@ pub mod ops;
 pub mod outgoing;
 pub mod reader_text;
 pub mod secrets;
+pub mod storage;
 pub mod sync_bridge;
 pub mod sync_engine;
 pub mod sync_ingest;
@@ -89,6 +93,7 @@ pub use accounts::{
     AccountAuth, AccountConfig, AccountErrorKind, AccountInfo, AddImapAccount, AddOAuthAccount,
     ConnectionTest, ImapSecurity, ImapServer, ServerSuggestion, suggest_imap_server,
 };
+pub use activity::{AccountActivity, FolderPhase, FolderProgress};
 pub use agents::{ProposalItemSummary, ProposalSummary};
 pub use api_handler::{Authorization, CommandAuthorizer, DenyAgents};
 pub use commands::{CommandOutcome, CommandReceipt, MailCommand, Origin};
@@ -109,6 +114,7 @@ pub use message::{AuthStatus, Body, MessageView, RENDERER_VERSION, RemoteContent
 pub use outgoing::{SmtpServerSettings, SmtpSuggestion, smtp_default_port, suggest_smtp_server};
 pub use row_cache::{DEFAULT_ROW_CACHE_CAPACITY, RowCacheStats};
 pub use secrets::{LegacyMoveReport, StoreSecretStore, move_legacy_secrets};
+pub use storage::StorageUsage;
 pub use sync_bridge::{
     FetchPriority, NoSync, RefreshScope, SyncBridge, SyncState, SyncStatus, SyncStatusSink,
 };
