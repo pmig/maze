@@ -1,6 +1,6 @@
-# Security contact for Maze (mazemail). Details: https://github.com/pmig/mazemail/blob/main/SECURITY.md
+# Security contact for Maze (mazemail). Details: https://github.com/pmig/maze/blob/main/SECURITY.md
 Contact: mailto:philip@pmig.at
 Expires: 2027-10-23T00:00:00.000Z
 Preferred-Languages: en
 Canonical: https://mazemail.dev/.well-known/security.txt
-Policy: https://github.com/pmig/mazemail/blob/main/SECURITY.md
+Policy: https://github.com/pmig/maze/blob/main/SECURITY.md

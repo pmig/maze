@@ -16,7 +16,7 @@ alongside it.
 
 1. Download `Maze-<version>-macos-aarch64.dmg` (Apple Silicon) or
    `Maze-<version>-macos-x86_64.dmg` (Intel) from
-   [GitHub Releases](https://github.com/pmig/mazemail/releases).
+   [GitHub Releases](https://github.com/pmig/maze/releases).
 2. Open the `.dmg` and drag **Maze** onto **Applications**.
 3. Start Maze from Applications or Spotlight.
 
@@ -50,7 +50,7 @@ every message in the [reader](#reading-mail-reader-and-original).
 ### From source
 
 ```sh
-git clone https://github.com/pmig/mazemail && cd mazemail
+git clone https://github.com/pmig/maze && cd maze
 mise install            # the pinned Rust toolchain and the test tools
 mise start              # starts Maze
 script/bundle-mac       # optional: dist/mac-<arch>/Maze.app, .dmg and .app.tar.zst
@@ -789,5 +789,5 @@ arrive.
 ## Getting help
 
 - `mazemail --help` and `mazemail help <command>` for the CLI
-- [GitHub issues](https://github.com/pmig/mazemail/issues) for bugs and questions
+- [GitHub issues](https://github.com/pmig/maze/issues) for bugs and questions
 - Security problems privately to philip@pmig.at, see [SECURITY.md](../SECURITY.md)
