@@ -73,6 +73,10 @@
       "s": "mail::ToggleStar",
       "a": "mail::Archive",
       "shift-m": "mail::MoveToFolder",
+      // Not Thunderbird's (it only has cmd-r / cmd-shift-r): reply with one key, as in
+      // Gmail; reply all is shift-r because `a` archives.
+      "r": "mail::Reply",
+      "shift-r": "mail::ReplyAll",
       "cmd-z": "mail::Undo",
       "cmd-shift-a": "mail::SelectThread",
       // The message in a tab of its own (a double-click on the row does the same).

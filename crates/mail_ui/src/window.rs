@@ -2479,6 +2479,30 @@ mod tests {
                 ComposeRequest::Forward { message: shown },
             ]
         );
+
+        // In the list, `r` replies and `shift-r` replies to all, without cmd.
+        requests.borrow_mut().clear();
+        let list = view
+            .read_with(cx, |w, cx| w.thread_list(cx))
+            .expect("a mail view")
+            .read_with(cx, |list, cx| list.focus_handle(cx));
+        cx.update(|window, cx| window.focus(&list, cx));
+        cx.run_until_parked();
+        cx.simulate_keystrokes("r shift-r");
+        cx.run_until_parked();
+        assert_eq!(
+            *requests.borrow(),
+            vec![
+                ComposeRequest::Reply {
+                    message: shown,
+                    all: false
+                },
+                ComposeRequest::Reply {
+                    message: shown,
+                    all: true
+                },
+            ]
+        );
     }
 
     #[gpui::test]
