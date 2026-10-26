@@ -17,6 +17,14 @@ ignore = [
   { id = "RUSTSEC-2026-0370", reason = "zvariant: GPUI Linux (zbus), unmaintained only" },
   { id = "RUSTSEC-2026-0371", reason = "zbus_names: GPUI Linux (zbus), unmaintained only" },
   { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: GPUI Linux (zbus), unmaintained only" },
+  # Unmaintained (not vulnerable) crates that only reach us through Servo 0.7, the
+  # original HTML engine (ADR-020). Re-check when Servo is updated.
+  { id = "RUSTSEC-2025-0141", reason = "bincode 1: via Servo's WebRender, unmaintained only" },
+  { id = "RUSTSEC-2025-0075", reason = "unic-char-range: via Servo (urlpattern), unmaintained only" },
+  { id = "RUSTSEC-2025-0080", reason = "unic-common: via Servo (urlpattern), unmaintained only" },
+  { id = "RUSTSEC-2025-0081", reason = "unic-char-property: via Servo (urlpattern), unmaintained only" },
+  { id = "RUSTSEC-2025-0098", reason = "unic-ucd-version: via Servo (urlpattern), unmaintained only" },
+  { id = "RUSTSEC-2025-0100", reason = "unic-ucd-ident: via Servo (urlpattern), unmaintained only" },
 ]
 
 [licenses]

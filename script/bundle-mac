@@ -15,6 +15,9 @@
 # Environment:
 #   RELEASE_CHANNEL_FILE   file holding dev|preview|stable
 #                          (default: crates/mazemail/RELEASE_CHANNEL; missing means dev)
+#   MAZEMAIL_FEATURES      cargo features of the build (default: original-html, the
+#                          Servo engine of ADR-020; needs Python >= 3.11 or uv on PATH
+#                          for Servo's build scripts)
 #   MAZEMAIL_BUILD_VERSION, MAZEMAIL_BUILD_CHANNEL
 #                          test-only overrides of version.txt and the channel file, for
 #                          the end-to-end update test (cargo xtask update-e2e); the
@@ -86,7 +89,8 @@ case $channel in
 esac
 
 if [ -z "$binary" ]; then
-  cargo build --release --locked --target "$target" --package mazemail
+  cargo build --release --locked --target "$target" --package mazemail \
+    --features "${MAZEMAIL_FEATURES-original-html}"
   binary="target/$target/release/mazemail"
 fi
 if [ ! -x "$binary" ]; then

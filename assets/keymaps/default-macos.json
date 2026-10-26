@@ -33,6 +33,8 @@
       // single-key and cmd-shift bindings.
       "cmd-alt-t": "view::ToggleTableView",
       "cmd-alt-g": "view::ToggleThreads",
+      // The shown message as the sender designed it, or in reader mode.
+      "cmd-alt-o": "view::ToggleOriginalHtml",
       "cmd-r": "mail::Reply",
       "cmd-shift-r": "mail::ReplyAll",
       "cmd-l": "mail::Forward",

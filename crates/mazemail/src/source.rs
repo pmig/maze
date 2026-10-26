@@ -14,8 +14,10 @@
 //!   offers is the core's ([`ListOrder`]); global search results sort with
 //!   [`CoreHandle::sort_threads`] and [`CoreHandle::sort_messages`].
 //! - **Messages**: [`CoreHandle::message`], with the reader document rendered as escaped
-//!   Markdown ([`reader_text::display_markdown`]) that the view draws natively; remote
-//!   content is never loaded.
+//!   Markdown ([`reader_text::display_markdown`]) that the view draws natively, and the
+//!   sanitized HTML for the original mode (ADR-020) with the phishing checks' flagged
+//!   link domains. Inline images come from [`CoreHandle::inline_part`]; remote content
+//!   is never loaded.
 //! - **Changes**: flags, archive and move go through [`CoreHandle::apply`] with
 //!   [`Origin::User`] (undoable), applied before the call returns, so the list shows
 //!   the new state at once. Favorite folders go through
@@ -33,7 +35,7 @@
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::{Mutex, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
 use gpui::SharedString;
@@ -41,8 +43,8 @@ use mail_ui::DataChanges;
 use mail_ui::source::{
     AccountEntry, AccountKind, AttachmentInfo, BodyLink, Deception, FolderEntry, FolderKey,
     FolderTree, ListSort, MailSource, MessageBody, MessageDocument, MessageKeys, MessageRow,
-    SenderClient, SortBy, SourceError, SourceStatus, SyncState, ThreadFilter, ThreadKeys,
-    ThreadRow, ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
+    OriginalHtml, Part, SenderClient, SortBy, SourceError, SourceStatus, SyncState, ThreadFilter,
+    ThreadKeys, ThreadRow, ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
 };
 use mazemail_core::correspondents::display;
 use mazemail_core::{
@@ -530,6 +532,15 @@ fn document(view: &MessageView) -> MessageDocument {
                 })
                 .unwrap_or_default(),
         ),
+        original: view.rendered().and_then(|rendered| {
+            let sanitized = rendered.sanitized_html.as_ref()?;
+            Some(OriginalHtml {
+                html: Sensitive::new(Arc::from(sanitized.html.as_str())),
+                remote_allowed: !view.remote_content.blocked,
+                remote_ask: view.remote_content.policy == settings::RemoteContentPolicy::Ask,
+                trackers_removed: view.remote_content.trackers_removed,
+            })
+        }),
     }
 }
 
@@ -875,6 +886,47 @@ impl MailSource for CoreMailSource {
         let view = wait(&core, async move { runner.message(message).await })?
             .map_err(|_| SourceError::MessageNotFound(message))?;
         Ok(document(&view))
+    }
+
+    fn inline_part(&self, message: MessageId, content_id: &str) -> Option<Part> {
+        let core = self.ready().ok()?;
+        let runner = core.clone();
+        let content_id = content_id.to_owned();
+        let part = wait(&core, async move {
+            runner.inline_part(message, content_id).await
+        })
+        .ok()?
+        .ok()??;
+        Some(Part {
+            content_type: part.content_type,
+            bytes: part.bytes,
+        })
+    }
+
+    fn remote_resource(&self, message: MessageId, url: &str, once: bool) -> Option<Part> {
+        let core = self.ready().ok()?;
+        let runner = core.clone();
+        let url = url.to_owned();
+        let image = wait(&core, async move {
+            runner.remote_resource(message, url, once).await
+        })
+        .ok()?
+        .ok()??;
+        Some(Part {
+            content_type: image.content_type,
+            bytes: image.bytes,
+        })
+    }
+
+    fn allow_remote_content(&self, sender: &str) -> Result<(), SourceError> {
+        let core = self.ready()?;
+        let runner = core.clone();
+        let sender = sender.to_owned();
+        wait(
+            &core,
+            async move { runner.allow_remote_content(sender).await },
+        )?
+        .map_err(unavailable)
     }
 
     fn set_flags(

@@ -13,7 +13,7 @@ to the index below.
 | [001](0001-license.md)                       | License                        | Accepted (working decision) |
 | [002](0002-ui-stack.md)                      | UI stack                       | Accepted (working decision) |
 | [003](0003-imap-library.md)                  | IMAP library                   | Accepted (working decision) |
-| [004](0004-html-original-mode.md)            | HTML original mode             | Accepted (working decision) |
+| [004](0004-html-original-mode.md)            | HTML original mode             | Superseded by ADR-020       |
 | [005](0005-storage.md)                       | Storage                        | Accepted (working decision) |
 | [006](0006-agent-interface.md)               | Agent interface                | Accepted (working decision) |
 | [007](0007-gmail-sync.md)                    | Gmail sync                     | Accepted (working decision) |
@@ -29,3 +29,4 @@ to the index below.
 | [017](0017-account-secrets-in-the-vault.md)  | Account secrets in the vault   | Accepted                    |
 | [018](0018-workspace-panes.md)               | Workspace panes, tabs, splits  | Accepted                    |
 | [019](0019-imap-only.md)                     | IMAP only, no Local Folders    | Accepted                    |
+| [020](0020-servo-for-original-html.md)       | Servo for original HTML        | Accepted                    |

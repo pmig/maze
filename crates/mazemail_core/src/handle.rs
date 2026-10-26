@@ -51,6 +51,8 @@ use crate::thread_list::{ListQuery, TextCache, ThreadListSnapshot, all_keys, ord
 use crate::thread_tree::{self, TreeNode};
 use crate::{Error, Result};
 
+pub(crate) mod message_resources;
+
 /// Name of the index directory inside `mail/`.
 const INDEX_DIR: &str = "index";
 
@@ -1519,12 +1521,17 @@ fn build_view(inner: &Inner, id: MessageId) -> Result<(MessageView, bool, bool)>
     });
     let sanitized = rendered.as_ref().and_then(|r| r.sanitized_html.as_ref());
     let has_remote_resources = sanitized.is_some_and(|s| s.has_remote_resources);
-    let remote_content = RemoteContent {
+    let sender_allowed = has_remote_resources
+        && detail
+            .from
+            .as_ref()
+            .is_some_and(|from| reader.remote_content_allowed(&from.email).unwrap_or(false));
+    let remote_content = RemoteContent::decide(
         policy,
         has_remote_resources,
-        trackers_removed: sanitized.map_or(0, |s| s.trackers_removed),
-        blocked: has_remote_resources && policy != settings::RemoteContentPolicy::Always,
-    };
+        sanitized.map_or(0, |s| s.trackers_removed),
+        sender_allowed,
+    );
 
     let flags = detail.effective_flags();
     let view = MessageView {

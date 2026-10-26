@@ -28,8 +28,9 @@ use time::UtcOffset;
 use ui::assets::IconName;
 use ui::panes::{Item, ItemEvent, SerializedItem};
 
+use crate::actions::ToggleOriginalHtml;
 use crate::layout::{self, LayoutConfig, LayoutPrefs, MessagePlacement};
-use crate::message_view::MessageView;
+use crate::message_view::{MessageView, ViewPlace};
 use crate::source::{DataChanges, FolderKey, MailSource, ThreadScope};
 use crate::thread_list::{
     ItemId, ListMode, TABLE_LIST_WIDTH, ThreadList, ThreadListEvent, message_menu,
@@ -150,7 +151,14 @@ impl MailView {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Self {
-        let message_view = cx.new(|cx| MessageView::new(context.local_offset, cx));
+        let message_view = cx.new(|cx| {
+            MessageView::new(
+                Some(context.source.clone()),
+                context.local_offset,
+                ViewPlace::Pane,
+                cx,
+            )
+        });
         let thread_list = cx.new(|cx| {
             ThreadList::new(
                 context.source.clone(),
@@ -427,6 +435,11 @@ impl Render for MailView {
             .relative()
             .size_full()
             .on_drag_move(cx.listener(Self::on_list_drag))
+            // From the list: switch the message next to it.
+            .on_action(cx.listener(|this, _: &ToggleOriginalHtml, _, cx| {
+                this.message_view
+                    .update(cx, |view, cx| view.toggle_mode(cx));
+            }))
             .child(body)
             .child(
                 canvas(

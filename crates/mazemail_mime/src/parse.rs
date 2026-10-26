@@ -293,6 +293,41 @@ pub fn parse_headers_only(raw: &[u8]) -> Result<MessageHeaders, ParseError> {
     Ok(extract_headers(&message))
 }
 
+/// An inline part, decoded (a `cid:` image of an HTML body).
+#[derive(Clone, PartialEq, Eq)]
+pub struct InlinePart {
+    /// MIME type, lowercase (`image/png`).
+    pub content_type: String,
+    /// The decoded content.
+    pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for InlinePart {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InlinePart")
+            .field("content_type", &self.content_type)
+            .field("bytes", &self.bytes.len())
+            .finish()
+    }
+}
+
+/// The part of a raw message whose Content-ID is `content_id` (with or without angle
+/// brackets), decoded. `None` if there is none or the message can't be parsed.
+pub fn inline_part(raw: &[u8], content_id: &str) -> Option<InlinePart> {
+    let wanted = clean_id(content_id)?;
+    let message = MessageParser::default().parse(raw)?;
+    let part = message.parts.iter().find(|part| {
+        part.content_id()
+            .and_then(clean_id)
+            .is_some_and(|id| id.eq_ignore_ascii_case(wanted))
+    })?;
+    let meta = attachment_meta(part, String::new());
+    Some(InlinePart {
+        content_type: meta.content_type,
+        bytes: part.contents().to_vec(),
+    })
+}
+
 fn body_parts<'m>(
     message: &'m mail_parser::Message<'m>,
     ids: &'m [u32],
@@ -648,6 +683,21 @@ fn attachment_meta(part: &MessagePart<'_>, part_path: String) -> AttachmentMeta 
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn finds_inline_parts_by_content_id() {
+        let raw = b"From: a@example.com\r\nMIME-Version: 1.0\r\n\
+            Content-Type: multipart/related; boundary=b\r\n\r\n\
+            --b\r\nContent-Type: text/html\r\n\r\n<img src=\"cid:logo@x\">\r\n\
+            --b\r\nContent-Type: image/PNG\r\nContent-ID: <logo@x>\r\n\
+            Content-Transfer-Encoding: base64\r\n\r\naGVsbG8=\r\n--b--\r\n";
+        let part = inline_part(raw, "logo@x").unwrap();
+        assert_eq!(part.content_type, "image/png");
+        assert_eq!(part.bytes, b"hello");
+        assert_eq!(inline_part(raw, "<logo@x>").unwrap().bytes, b"hello");
+        assert!(inline_part(raw, "other@x").is_none());
+        assert!(inline_part(raw, "").is_none());
+    }
 
     #[test]
     fn rejects_input_without_headers() {

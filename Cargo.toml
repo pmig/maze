@@ -18,6 +18,7 @@ agent_ui = { path = "crates/agent_ui" }
 auth = { path = "crates/auth" }
 auto_update_ui = { path = "crates/auto_update_ui" }
 composer = { path = "crates/composer" }
+html_view = { path = "crates/html_view" }
 import = { path = "crates/import" }
 ingest = { path = "crates/ingest" }
 local_api = { path = "crates/local_api" }
@@ -60,11 +61,14 @@ chacha20poly1305 = { version = "0.11", default-features = false, features = ["al
 bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+dpi = "0.1"
+euclid = "0.22"
 dbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
 ed25519-dalek = "3"
 getrandom = "0.4"
 hex = "0.4"
 hkdf = "0.13"
+http = "1"
 idna = "1.1"
 jsonc-parser = { version = "0.34", features = ["cst", "serde"] }
 keyring-core = "1"
@@ -81,12 +85,14 @@ rayon = "1.12"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2", "system-proxy"] }
 rpassword = "7"
 rustix = { version = "1", default-features = false, features = ["std", "process"] }
-rusqlite = { version = "0.40", default-features = false, features = ["array", "backup", "bundled-sqlcipher", "cache", "functions"] }
-rusqlite_migration = "2.6"
+rusqlite = { version = "0.38", default-features = false, features = ["array", "backup", "bundled-sqlcipher", "cache", "functions"] }
+rusqlite_migration = "2.4"
 ruzstd = "0.9"
 schemars = "1"
 security-framework = { version = "3", features = ["OSX_10_15"] }
 semver = { version = "1", features = ["serde"] }
+# The original HTML engine (ADR-020): no JIT, no multiprocess, no devtools, no web APIs.
+servo = { version = "0.7", default-features = false, features = ["baked-in-resources"] }
 html5ever = "0.40.1"
 linkify = "0.11.0"
 mail-parser = { version = "0.11.9", features = ["full_encoding"] }
@@ -181,3 +187,9 @@ strip = true
 inherits = "release"
 strip = false
 debug = true
+
+[patch.crates-io]
+# GPUI's font-kit fork wants freetype-sys 0.20 on Linux, Servo 0.7 wants 0.23, and
+# only one crate may link `freetype`. The vendored copy differs from crates.io's
+# zed-font-kit 0.14.1-zed only in that requirement (third_party/zed-font-kit/README.maze.md).
+zed-font-kit = { path = "third_party/zed-font-kit" }

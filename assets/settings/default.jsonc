@@ -67,8 +67,14 @@
 
   // The message view.
   "reader": {
-    // "reader" (sanitized reader mode) or "plain_text".
+    // How HTML mail is shown in the message pane: "reader" (sanitized reader mode,
+    // theme colors), "original" (laid out as the sender designed it, by the built-in
+    // engine; no scripts, nothing loaded from the network) or "plain_text".
+    // Plain-text mail always uses the reader. Switch per message with the
+    // Reader/Original buttons or cmd-alt-o.
     "default_mode": "reader",
+    // The same for a message opened in a tab of its own (double-click, enter, cmd-o).
+    "tab_mode": "original",
     // Remote content (images, fonts, tracking pixels): "ask" (blocked, with a banner
     // to allow it), "never" or "always". Can be overridden per account.
     "remote_content": "ask"

@@ -15,5 +15,6 @@ mod open;
 mod ops;
 mod perf;
 mod plaintext;
+mod remote_content;
 mod secrets;
 mod sorting;

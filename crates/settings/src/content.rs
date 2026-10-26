@@ -365,22 +365,38 @@ pub enum BooleanMode {
 }
 
 /// The message view.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ReaderSettings {
-    /// How messages are shown by default.
+    /// How HTML messages are shown in the message pane next to the list.
     pub default_mode: ReaderMode,
+    /// How HTML messages are shown in a tab of their own (double-click, `enter`,
+    /// `cmd-o`).
+    pub tab_mode: ReaderMode,
     /// Remote content policy (can be overridden per account).
     pub remote_content: RemoteContentPolicy,
+}
+
+impl Default for ReaderSettings {
+    fn default() -> Self {
+        Self {
+            default_mode: ReaderMode::Reader,
+            tab_mode: ReaderMode::Original,
+            remote_content: RemoteContentPolicy::default(),
+        }
+    }
 }
 
 /// How a message body is shown.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReaderMode {
-    /// Sanitized HTML in the native reader.
+    /// Sanitized HTML in the native reader (theme colors, fast, no web layout).
     #[default]
     Reader,
+    /// The sanitized HTML laid out by the embedded engine as the sender designed it
+    /// (ADR-020). Plain-text mail is always shown in the reader.
+    Original,
     /// The plain-text part (or text converted from HTML).
     PlainText,
 }

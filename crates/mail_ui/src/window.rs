@@ -2661,6 +2661,7 @@ mod tests {
         assert!(cx.debug_bounds("title-bar-item").is_some());
     }
 
+    mod original_html;
     mod panes;
     mod settings_tab;
 }
