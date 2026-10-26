@@ -11,9 +11,9 @@ An open source, local-first email client written in Rust. Built like
 
 - **Local-first.** Your mail lives on your computer in one store. Opening a folder,
   scrolling through 100,000 messages or searching never waits for the server.
-- **Fast like Zed.** A native GPU-rendered window (GPUI, Zed's UI framework), no browser
+- **Crafted for speed.** A native GPU-rendered window (GPUI, Zed's UI framework), no browser
   engine. A cold start shows the message list in well under a second.
-- **Behaves like Thunderbird.** The same panes, folders, Quick Filter, global search and
+- **Nothing to relearn.** Thunderbird's panes, folders, Quick Filter, global search and
   keyboard shortcuts, so moving over from Thunderbird doesn't mean relearning anything.
 - **Encrypted at rest.** The database, message files and search index are encrypted
   with a key that stays in the macOS keychain (or the Secret Service on Linux). A copy of

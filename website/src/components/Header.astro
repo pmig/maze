@@ -18,9 +18,6 @@ const current = (href: string) => path === href || (href !== "/" && path.startsW
       <Logo size={22} />
       <span class="brand-name">Maze</span>
     </a>
-    <span class="badge badge--dot status" title="Reading, search and triage work. Writing mail doesn't yet.">
-      {SITE.status}
-    </span>
 
     <nav class="nav" aria-label="Main">
       <ul>
@@ -243,12 +240,6 @@ const current = (href: string) => path === href || (href !== "/" && path.startsW
     }
     .actions {
       margin-left: auto;
-    }
-  }
-
-  @media (max-width: 340px) {
-    .status {
-      display: none;
     }
   }
 </style>

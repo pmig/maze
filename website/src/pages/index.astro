@@ -38,11 +38,16 @@ const TERMINAL = [
 <Base>
   <div class="frame">
     <section class="hero" aria-labelledby="hero-title">
-      <p class="hero-badges">
-        {release.version && <a class="badge badge--dot" href={release.page}>{release.version}</a>}
-        <span class="badge">Open source · Rust · {SITE.license}</span>
-      </p>
-      <h1 id="hero-title">Your mail, on your machine. <span>Fast like Zed, familiar like Thunderbird.</span></h1>
+      {
+        release.version && (
+          <p class="hero-badges">
+            <a class="badge badge--dot" href={release.page}>
+              {release.version}
+            </a>
+          </p>
+        )
+      }
+      <h1 id="hero-title">Your mail, on your machine. <span>Crafted for speed and collaboration with humans and AI.</span></h1>
       <p class="hero-lede">
         Maze is a local-first email client written in Rust. It renders on the GPU, keeps your
         whole mailbox encrypted on disk, searches it instantly, and gives your scripts and
@@ -75,7 +80,7 @@ const TERMINAL = [
     </div>
 
     <section class="section" id="thunderbird" aria-labelledby="tb-title">
-      <p class="eyebrow">Feels like Thunderbird</p>
+      <p class="eyebrow">The layout you know</p>
       <h2 class="section-title" id="tb-title">Nothing to relearn.</h2>
       <p class="lede">
         Folder pane, message list, message. Cards or a table. Quick Filter and global search.
@@ -121,7 +126,7 @@ const TERMINAL = [
     </section>
 
     <section class="section" id="fast" aria-labelledby="fast-title">
-      <p class="eyebrow">Fast like Zed</p>
+      <p class="eyebrow">Speed</p>
       <h2 class="section-title" id="fast-title">Native, GPU-rendered, never waiting on a server.</h2>
       <p class="lede">
         Maze is built on GPUI, Zed's UI framework: no browser engine, virtualized lists, and no
