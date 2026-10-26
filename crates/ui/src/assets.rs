@@ -24,6 +24,7 @@ gpui_kit::assets::icon_assets!(
         FilePen,
         Flag,
         Forward,
+        HardDrive,
         KeyRound,
         Layers,
         ListFilter,

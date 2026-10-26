@@ -8,6 +8,7 @@ mod flags;
 mod folder;
 mod ids;
 mod sensitive;
+mod tenant;
 
 pub use address::{Address, AddressListError, AddressParseError};
 pub use flags::Flags;
@@ -17,6 +18,7 @@ pub use ids::{
     ThreadId,
 };
 pub use sensitive::Sensitive;
+pub use tenant::{InvalidTenant, MicrosoftTenant};
 
 /// The product name, used wherever people read it (window titles, dialogs, docs).
 pub const PRODUCT_NAME: &str = "Maze";

@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 jsonc-parser = { workspace = true }
+mazemail_types = { workspace = true }
 notify = { workspace = true }
 notify-debouncer-mini = { workspace = true }
 release_channel = { workspace = true }

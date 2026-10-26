@@ -1,25 +1,30 @@
 //! The window chrome around the mail columns: spaces bar, agent column, status bar and
 //! the title bar's sync button.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
     Animation, AnimationExt as _, App, InteractiveElement as _, IntoElement, ParentElement,
-    RenderOnce, SharedString, Styled, Transformation, Window, div, percentage,
-    prelude::FluentBuilder as _, px,
+    RenderOnce, SharedString, StatefulInteractiveElement as _, Styled, Transformation, Window, div,
+    percentage, prelude::FluentBuilder as _, px,
 };
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, StyledExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     status_bar::StatusBar,
+    tooltip::Tooltip,
     v_flex,
 };
+use mazemail_types::PRODUCT_NAME;
 use ui::assets::IconName;
 use ui::components::StatusItem;
 
 use crate::actions::{OpenSettings, SyncNow, Toggle, ToggleAgentColumn};
-use crate::source::{SourceStatus, SyncState};
+use crate::format::format_disk;
+use crate::source::{MailSource, SourceStatus, StorageUsage, SyncState};
+use crate::sync_activity::{OpenChange, SyncActivityItem};
 
 /// The slim spaces bar on the far left (CONCEPT §8.2): Mail, Address Book, and at
 /// the bottom Extensions and Settings. Mail and Settings (which opens `settings.json`
@@ -228,18 +233,96 @@ impl RenderOnce for AgentColumn {
     }
 }
 
-/// The status bar: sync state, outbox, online state, and the palette hint.
+/// The status bar: sync state, outbox, online state, Maze's disk usage and the palette
+/// hint.
 #[derive(IntoElement)]
 pub(crate) struct MailStatusBar {
     status: SourceStatus,
-    summary: SharedString,
+    storage: Option<StorageUsage>,
+    /// "Sync activity" behind the sync item: the source, whether it is open, and who
+    /// to tell when that changes.
+    activity: Option<(Arc<dyn MailSource>, bool, OpenChange)>,
 }
 
 impl MailStatusBar {
-    /// A status bar for the source status and a summary of the open list.
-    pub(crate) fn new(status: SourceStatus, summary: SharedString) -> Self {
-        Self { status, summary }
+    /// A status bar for the source status and the disk usage (nothing shows for it
+    /// until it is known).
+    pub(crate) fn new(status: SourceStatus, storage: Option<StorageUsage>) -> Self {
+        Self {
+            status,
+            storage,
+            activity: None,
+        }
     }
+
+    /// Clicking the sync item opens "Sync activity" (see [`crate::sync_activity`]).
+    pub(crate) fn sync_activity(
+        mut self,
+        source: Arc<dyn MailSource>,
+        open: bool,
+        on_open_change: OpenChange,
+    ) -> Self {
+        self.activity = Some((source, open, on_open_change));
+        self
+    }
+}
+
+/// The disk usage item's tooltip: the total, then what it is made of, then where.
+pub(crate) fn storage_lines(usage: &StorageUsage) -> Vec<SharedString> {
+    let mut lines: Vec<SharedString> = vec![
+        format!(
+            "{PRODUCT_NAME} uses {} of disk space",
+            format_disk(usage.total())
+        )
+        .into(),
+        format!(
+            "Mail store: {} (database {}, messages {})",
+            format_disk(usage.mail_store()),
+            format_disk(usage.database),
+            format_disk(usage.blobs)
+        )
+        .into(),
+        format!("Search index: {}", format_disk(usage.search_index)).into(),
+    ];
+    for (label, bytes) in [
+        ("Caches", usage.caches),
+        ("Backups before updates", usage.backups),
+        ("Logs and updates", usage.other),
+    ] {
+        if bytes > 0 {
+            lines.push(format!("{label}: {}", format_disk(bytes)).into());
+        }
+    }
+    lines.push(usage.data_dir.clone());
+    lines
+}
+
+/// The status bar's disk usage, with the breakdown in the tooltip.
+fn storage_item(usage: &StorageUsage) -> impl IntoElement + use<> {
+    let lines = storage_lines(usage);
+    h_flex()
+        .id("status-storage")
+        .debug_selector(|| "status-storage".to_owned())
+        .gap_1()
+        .items_center()
+        .child(Icon::new(IconName::HardDrive).size_3())
+        .child(format_disk(usage.total()))
+        .tooltip(move |window, cx| {
+            let lines = lines.clone();
+            Tooltip::element(move |_, cx| {
+                let muted = cx.theme().muted_foreground;
+                v_flex()
+                    .debug_selector(|| "status-storage-tooltip".to_owned())
+                    .py_1()
+                    .gap_0p5()
+                    .children(lines.iter().enumerate().map(|(ix, line)| {
+                        div()
+                            .when(ix > 0, |this| this.text_color(muted))
+                            .child(line.clone())
+                    }))
+            })
+            .build(window, cx)
+        })
 }
 
 impl RenderOnce for MailStatusBar {
@@ -260,8 +343,16 @@ impl RenderOnce for MailStatusBar {
         } else {
             theme.muted_foreground
         });
+        let sync_item = match self.activity {
+            Some((source, open, on_open_change)) => {
+                SyncActivityItem::new(source, sync, open, on_open_change).into_any_element()
+            }
+            None => StatusItem::new("status-sync", sync)
+                .icon(IconName::RefreshCw)
+                .into_any_element(),
+        };
         StatusBar::new()
-            .left(StatusItem::new("status-sync", sync).icon(IconName::RefreshCw))
+            .left(sync_item)
             .left(
                 StatusItem::new(
                     "status-outbox",
@@ -280,7 +371,13 @@ impl RenderOnce for MailStatusBar {
                     }),
             )
             .left(StatusItem::new("status-agent", "AI off").icon(IconName::Bot))
-            .right(StatusItem::new("status-summary", self.summary))
+            .when_some(self.storage.as_ref(), |bar, usage| {
+                bar.right(
+                    div()
+                        .text_color(theme.muted_foreground)
+                        .child(storage_item(usage)),
+                )
+            })
             .right(
                 Button::new("status-palette")
                     .ghost()

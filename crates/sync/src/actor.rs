@@ -284,6 +284,7 @@ impl Actor {
         loop {
             self.dispatch();
             self.publish_status();
+            self.publish_activity();
             if self.stopping {
                 break;
             }
@@ -1186,11 +1187,49 @@ impl Actor {
             self.on_round_finished();
         }
         if status != self.published {
+            if status == SyncStatus::Idle {
+                self.shared.activity.synced(self.shared.now());
+            }
             tracing::debug!(status = %status, "sync status");
             self.published = status.clone();
             self.status_tx.send_replace(status.clone());
             self.shared.events.emit(SyncEvent::Status(status));
         }
+    }
+
+    /// Tells the activity tracker which passes run and wait.
+    fn publish_activity(&self) {
+        let running: Vec<FolderId> = self
+            .running
+            .values()
+            .filter_map(|r| match r.job {
+                Job::Pass { folder, .. } => Some(folder),
+                _ => None,
+            })
+            .collect();
+        let mut queued: Vec<&Queued> = self
+            .queue
+            .iter()
+            .filter(|q| matches!(q.job, Job::Pass { .. }))
+            .collect();
+        queued.sort_by_key(|q| (std::cmp::Reverse(q.priority), q.seq));
+        let waiting = queued
+            .into_iter()
+            .filter_map(|q| match q.job {
+                Job::Pass { folder, .. } => Some(folder),
+                _ => None,
+            })
+            .collect();
+        let replaying = self
+            .running
+            .values()
+            .any(|r| matches!(r.job, Job::ReplayOps));
+        self.shared.activity.jobs(
+            running,
+            waiting,
+            replaying,
+            self.background.len() + self.background_running,
+        );
     }
 
     /// After a round: start polling and the body backfill (once).

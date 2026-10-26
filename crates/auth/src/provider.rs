@@ -5,7 +5,7 @@ use std::fmt;
 use std::net::IpAddr;
 use std::str::FromStr;
 
-use mazemail_types::Sensitive;
+use mazemail_types::{MicrosoftTenant, Sensitive};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -213,6 +213,10 @@ impl fmt::Debug for ClientCredentials {
 }
 
 /// One OAuth provider: endpoints, scopes, PKCE and the configured client.
+///
+/// Microsoft's endpoints name a tenant (`https://login.microsoftonline.com/<tenant>/…`,
+/// see [`MicrosoftTenant`]); [`Provider::with_tenant`] switches it. Endpoints set
+/// with [`Provider::with_endpoints`] are taken as they are.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Provider {
     kind: ProviderKind,
@@ -221,6 +225,29 @@ pub struct Provider {
     scopes: Vec<String>,
     use_pkce: bool,
     credentials: Option<ClientCredentials>,
+    /// Microsoft: the login authority and tenant the endpoints were built from;
+    /// `None` for fixed endpoints.
+    tenancy: Option<Tenancy>,
+}
+
+/// Where Microsoft's tenant endpoints live.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Tenancy {
+    /// `https://login.microsoftonline.com` (a test server in tests).
+    authority: Url,
+    tenant: MicrosoftTenant,
+}
+
+impl Tenancy {
+    /// `<authority>/<tenant>/oauth2/v2.0/{authorize,token}`.
+    fn endpoints(&self) -> Result<(Url, Url), AuthError> {
+        let base = self.authority.as_str().trim_end_matches('/');
+        let tenant = self.tenant.as_str();
+        Ok((
+            parse_endpoint(&format!("{base}/{tenant}/oauth2/v2.0/authorize"))?,
+            parse_endpoint(&format!("{base}/{tenant}/oauth2/v2.0/token"))?,
+        ))
+    }
 }
 
 impl Provider {
@@ -228,10 +255,13 @@ impl Provider {
     pub const GOOGLE_AUTHORIZATION_ENDPOINT: &str = "https://accounts.google.com/o/oauth2/auth";
     /// Google's token endpoint.
     pub const GOOGLE_TOKEN_ENDPOINT: &str = "https://www.googleapis.com/oauth2/v3/token";
-    /// Microsoft's authorization endpoint for personal and work accounts.
+    /// Microsoft's login authority; the endpoints are below it, per tenant.
+    pub const MICROSOFT_AUTHORITY: &str = "https://login.microsoftonline.com";
+    /// Microsoft's authorization endpoint for personal and work accounts (tenant
+    /// `common`).
     pub const MICROSOFT_AUTHORIZATION_ENDPOINT: &str =
         "https://login.microsoftonline.com/common/oauth2/v2.0/authorize";
-    /// Microsoft's token endpoint for personal and work accounts.
+    /// Microsoft's token endpoint for personal and work accounts (tenant `common`).
     pub const MICROSOFT_TOKEN_ENDPOINT: &str =
         "https://login.microsoftonline.com/common/oauth2/v2.0/token";
 
@@ -260,7 +290,51 @@ impl Provider {
             scopes: scopes.iter().map(|&s| s.to_owned()).collect(),
             use_pkce: true,
             credentials: None,
+            tenancy: (kind == ProviderKind::Microsoft).then(|| Tenancy {
+                authority: builtin_url(Self::MICROSOFT_AUTHORITY),
+                tenant: MicrosoftTenant::common(),
+            }),
         }
+    }
+
+    /// Microsoft with the endpoints of `tenant`, without client credentials.
+    pub fn microsoft(tenant: &MicrosoftTenant) -> Self {
+        Self::builtin(ProviderKind::Microsoft).with_tenant(tenant)
+    }
+
+    /// Uses `tenant`'s endpoints (Microsoft). No change for Google and for endpoints
+    /// set with [`Provider::with_endpoints`].
+    #[must_use]
+    pub fn with_tenant(mut self, tenant: &MicrosoftTenant) -> Self {
+        if let Some(tenancy) = &mut self.tenancy {
+            tenancy.tenant = tenant.clone();
+            // The authority was accepted before and the tenant is a valid path
+            // segment, so this doesn't fail; keep the old endpoints if it did.
+            if let Ok((authorization, token)) = tenancy.endpoints() {
+                self.authorization_endpoint = authorization;
+                self.token_endpoint = token;
+            }
+        }
+        self
+    }
+
+    /// Moves Microsoft's tenant endpoints below another login authority (a test
+    /// server; sovereign clouds). HTTPS, or HTTP on a loopback host.
+    pub fn with_authority(mut self, authority: &str) -> Result<Self, AuthError> {
+        let authority = parse_endpoint(authority)?;
+        if let Some(tenancy) = &mut self.tenancy {
+            tenancy.authority = authority;
+            let (authorization, token) = tenancy.endpoints()?;
+            self.authorization_endpoint = authorization;
+            self.token_endpoint = token;
+        }
+        Ok(self)
+    }
+
+    /// The Microsoft tenant the endpoints are for; `None` for Google and fixed
+    /// endpoints.
+    pub fn tenant(&self) -> Option<&MicrosoftTenant> {
+        self.tenancy.as_ref().map(|t| &t.tenant)
     }
 
     /// Replaces the endpoints, e.g. with a test server or a single-tenant Microsoft
@@ -273,6 +347,7 @@ impl Provider {
     ) -> Result<Self, AuthError> {
         self.authorization_endpoint = parse_endpoint(authorization_endpoint)?;
         self.token_endpoint = parse_endpoint(token_endpoint)?;
+        self.tenancy = None;
         Ok(self)
     }
 
@@ -392,6 +467,17 @@ impl ProviderRegistry {
         self.slot(kind).credentials = credentials;
     }
 
+    /// Uses `tenant` for Microsoft sign-ins (`auth.microsoft.tenant`).
+    pub fn set_microsoft_tenant(&mut self, tenant: &MicrosoftTenant) {
+        self.microsoft = self.microsoft.clone().with_tenant(tenant);
+    }
+
+    /// The tenant of Microsoft sign-ins; `None` when the Microsoft provider has fixed
+    /// endpoints.
+    pub fn microsoft_tenant(&self) -> Option<&MicrosoftTenant> {
+        self.microsoft.tenant()
+    }
+
     /// Replaces a provider wholesale (custom endpoints, tests).
     pub fn set_provider(&mut self, provider: Provider) {
         let kind = provider.kind;
@@ -416,6 +502,21 @@ impl ProviderRegistry {
     /// client ID is configured.
     pub fn client(&self, kind: ProviderKind) -> Result<OAuthClient, AuthError> {
         OAuthClient::new(self.get(kind).clone())
+    }
+
+    /// Like [`ProviderRegistry::client`], for Microsoft with `tenant`'s endpoints (an
+    /// account keeps the tenant it signed in with). `None`, or Google: the
+    /// registry's.
+    pub fn client_for_tenant(
+        &self,
+        kind: ProviderKind,
+        tenant: Option<&MicrosoftTenant>,
+    ) -> Result<OAuthClient, AuthError> {
+        let provider = self.get(kind).clone();
+        OAuthClient::new(match tenant {
+            Some(tenant) => provider.with_tenant(tenant),
+            None => provider,
+        })
     }
 
     fn slot(&mut self, kind: ProviderKind) -> &mut Provider {
@@ -472,6 +573,105 @@ mod tests {
                 "https://outlook.office.com/SMTP.Send",
                 "offline_access"
             ]
+        );
+    }
+
+    #[test]
+    fn microsoft_endpoints_follow_the_tenant() {
+        for (tenant, expected) in [
+            ("common", "common"),
+            ("organizations", "organizations"),
+            ("consumers", "consumers"),
+            ("contoso.com", "contoso.com"),
+            (
+                "72f988bf-86f1-41af-91ab-2d7cd011db47",
+                "72f988bf-86f1-41af-91ab-2d7cd011db47",
+            ),
+        ] {
+            let tenant = MicrosoftTenant::parse(tenant).unwrap();
+            let provider = Provider::microsoft(&tenant);
+            assert_eq!(
+                provider.authorization_endpoint().as_str(),
+                format!("https://login.microsoftonline.com/{expected}/oauth2/v2.0/authorize")
+            );
+            assert_eq!(
+                provider.token_endpoint().as_str(),
+                format!("https://login.microsoftonline.com/{expected}/oauth2/v2.0/token")
+            );
+            assert_eq!(provider.tenant(), Some(&tenant));
+        }
+        assert_eq!(
+            Provider::builtin(ProviderKind::Microsoft).tenant(),
+            Some(&MicrosoftTenant::common())
+        );
+        // Google has no tenants.
+        let contoso = MicrosoftTenant::parse("contoso.com").unwrap();
+        let google = Provider::builtin(ProviderKind::Google).with_tenant(&contoso);
+        assert_eq!(google, Provider::builtin(ProviderKind::Google));
+        assert_eq!(google.tenant(), None);
+    }
+
+    #[test]
+    fn a_test_authority_keeps_the_tenant_path() {
+        let contoso = MicrosoftTenant::parse("contoso.com").unwrap();
+        let provider = Provider::microsoft(&contoso)
+            .with_authority("http://127.0.0.1:9/")
+            .unwrap();
+        assert_eq!(
+            provider.token_endpoint().as_str(),
+            "http://127.0.0.1:9/contoso.com/oauth2/v2.0/token"
+        );
+        let common = provider.with_tenant(&MicrosoftTenant::common());
+        assert_eq!(
+            common.authorization_endpoint().as_str(),
+            "http://127.0.0.1:9/common/oauth2/v2.0/authorize"
+        );
+        assert!(matches!(
+            Provider::builtin(ProviderKind::Microsoft).with_authority("http://example.org"),
+            Err(AuthError::InvalidEndpoint { .. })
+        ));
+        // Fixed endpoints stay as they are.
+        let fixed = Provider::builtin(ProviderKind::Microsoft)
+            .with_endpoints("http://127.0.0.1:9/authorize", "http://127.0.0.1:9/token")
+            .unwrap();
+        assert_eq!(fixed.tenant(), None);
+        assert_eq!(
+            fixed.with_tenant(&contoso).token_endpoint().as_str(),
+            "http://127.0.0.1:9/token"
+        );
+    }
+
+    #[test]
+    fn the_registry_uses_the_tenant_of_the_account() {
+        let contoso = MicrosoftTenant::parse("contoso.com").unwrap();
+        let mut registry = ProviderRegistry::new()
+            .with_credentials(ProviderKind::Microsoft, ClientCredentials::new("app"));
+        assert_eq!(
+            registry.microsoft_tenant(),
+            Some(&MicrosoftTenant::common())
+        );
+        registry.set_microsoft_tenant(&contoso);
+        assert_eq!(registry.microsoft_tenant(), Some(&contoso));
+        assert!(
+            registry
+                .get(ProviderKind::Microsoft)
+                .credentials()
+                .is_some(),
+            "the client stays"
+        );
+        let client = registry
+            .client_for_tenant(ProviderKind::Microsoft, Some(&MicrosoftTenant::common()))
+            .unwrap();
+        assert_eq!(
+            client.provider().token_endpoint().as_str(),
+            "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+        );
+        let client = registry
+            .client_for_tenant(ProviderKind::Microsoft, None)
+            .unwrap();
+        assert_eq!(
+            client.provider().token_endpoint().as_str(),
+            "https://login.microsoftonline.com/contoso.com/oauth2/v2.0/token"
         );
     }
 

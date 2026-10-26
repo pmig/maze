@@ -35,22 +35,26 @@
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
 use gpui::SharedString;
 use mail_ui::DataChanges;
 use mail_ui::source::{
-    AccountEntry, AccountKind, AttachmentInfo, BodyLink, Deception, FolderEntry, FolderKey,
-    FolderTree, ListSort, MailSource, MessageBody, MessageDocument, MessageKeys, MessageRow,
-    OriginalHtml, Part, SenderClient, SortBy, SourceError, SourceStatus, SyncState, ThreadFilter,
-    ThreadKeys, ThreadRow, ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
+    AccountActivity, AccountEntry, AccountKind, ActivityState, AttachmentInfo, BodyLink, Deception,
+    FolderEntry, FolderKey, FolderProgress, FolderStep, FolderTree, ListSort, MailSource,
+    MessageBody, MessageDocument, MessageKeys, MessageRow, OriginalHtml, Part, SenderClient,
+    SortBy, SourceError, SourceStatus, StorageUsage, SyncState, ThreadFilter, ThreadKeys,
+    ThreadRow, ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
 };
 use mazemail_core::correspondents::display;
 use mazemail_core::{
-    AccountInfo, AuthStatus, Body, CoreEventBatch, CoreHandle, FolderNode, FolderNodeKind,
-    ListOrder, ListQuery, ListScope, MailCommand, MessageListRow, MessageView, Origin, QuickFilter,
-    RefreshScope, SearchOpts, SearchSort, SortField, SyncState as CoreSyncState, reader_text,
+    AccountActivity as CoreAccountActivity, AccountInfo, AuthStatus, Body, CoreEventBatch,
+    CoreHandle, FolderNode, FolderNodeKind, FolderPhase, ListOrder, ListQuery, ListScope,
+    MailCommand, MessageListRow, MessageView, Origin, QuickFilter, RefreshScope, SearchOpts,
+    SearchSort, SortField, StorageUsage as CoreStorageUsage, SyncState as CoreSyncState,
+    reader_text,
 };
 use mazemail_types::{AccountId, Address, Flags, FolderId, MessageId, Sensitive, TagId, ThreadId};
 use security::phishing::WarningKind;
@@ -207,7 +211,9 @@ impl CoreMailSource {
             threads: !batch.threads_changed.is_empty() || !batch.removed.is_empty(),
             threads_updated: batch.threads_updated.clone(),
             messages_updated: batch.messages_changed.clone(),
-            status: !batch.sync_status.is_empty() || !batch.accounts_changed.is_empty(),
+            status: !batch.sync_status.is_empty()
+                || !batch.accounts_changed.is_empty()
+                || batch.storage,
             everything: batch.reload,
         }
     }
@@ -588,6 +594,81 @@ fn verification(auth: &AuthStatus) -> Verification {
             dmarc: report.dmarc.result.label().into(),
             explanation: report.explanation.clone().into(),
         },
+    }
+}
+
+/// The status bar's disk usage from the core's, with the data directory under `home`
+/// shown as `~/…`.
+pub fn storage_usage(usage: &CoreStorageUsage, home: Option<&Path>) -> StorageUsage {
+    let dir = &usage.data_dir;
+    let data_dir = match home.and_then(|home| dir.strip_prefix(home).ok()) {
+        Some(rest) if !rest.as_os_str().is_empty() => format!("~/{}", rest.display()),
+        _ => dir.display().to_string(),
+    };
+    StorageUsage {
+        data_dir: data_dir.into(),
+        database: usage.database,
+        blobs: usage.blobs,
+        search_index: usage.search_index,
+        caches: usage.caches,
+        backups: usage.backups,
+        other: usage.other,
+    }
+}
+
+/// One account of "Sync activity" from the core's.
+pub fn account_activity(activity: &CoreAccountActivity) -> AccountActivity {
+    let detail = |fallback: String| -> SharedString {
+        activity
+            .sync
+            .as_ref()
+            .and_then(|s| s.detail.clone())
+            .unwrap_or(fallback)
+            .into()
+    };
+    let state = match activity.sync.as_ref().map(|s| &s.state) {
+        None => ActivityState::NotSynced,
+        Some(CoreSyncState::Connecting) => ActivityState::Connecting,
+        Some(CoreSyncState::Syncing { .. }) => ActivityState::Syncing,
+        Some(CoreSyncState::Idle) => ActivityState::Idle,
+        Some(CoreSyncState::Offline) => ActivityState::Offline {
+            reason: detail("Offline".to_owned()),
+        },
+        Some(CoreSyncState::AuthRequired) => ActivityState::SignInRequired {
+            reason: detail("Sign-in required".to_owned()),
+        },
+        Some(CoreSyncState::Error { message }) => ActivityState::Error {
+            message: detail(message.clone()),
+        },
+    };
+    AccountActivity {
+        account: activity.account,
+        name: activity.name.clone().into(),
+        kind: account_kind(activity.kind),
+        state,
+        folders: activity
+            .folders
+            .iter()
+            .map(|folder| FolderProgress {
+                name: folder.name.clone().into(),
+                step: match folder.phase {
+                    FolderPhase::Waiting => FolderStep::Waiting,
+                    FolderPhase::ReadingFlags => FolderStep::ReadingFlags,
+                    FolderPhase::ReadingLabels => FolderStep::ReadingLabels,
+                    FolderPhase::FetchingHeaders => FolderStep::FetchingHeaders,
+                    _ => FolderStep::Checking,
+                },
+                done: folder.done,
+                total: folder.total,
+            })
+            .collect(),
+        replaying_ops: activity.replaying_ops,
+        bodies_queued: activity.bodies_queued as u64,
+        last_synced: activity.last_synced,
+        pending_ops: activity.pending_ops as u64,
+        stuck_ops: activity.stuck_ops as u64,
+        oldest_op: activity.oldest_op,
+        outbox: activity.outbox as u64,
     }
 }
 
@@ -1050,6 +1131,30 @@ impl MailSource for CoreMailSource {
             .and_then(|core| core.accounts_with_status().ok())
             .unwrap_or_default();
         status_of(&accounts)
+    }
+
+    fn sync_activity(&self) -> Vec<AccountActivity> {
+        let Some(core) = self.core() else {
+            return Vec::new();
+        };
+        match core.sync_activity() {
+            Ok(accounts) => accounts.iter().map(account_activity).collect(),
+            Err(error) => {
+                tracing::warn!(%error, "reading the sync activity");
+                Vec::new()
+            }
+        }
+    }
+
+    fn sync_account_now(&self, account: AccountId) -> Result<(), SourceError> {
+        self.ready()?
+            .request_refresh(RefreshScope::Account(account));
+        Ok(())
+    }
+
+    fn storage_usage(&self) -> Option<StorageUsage> {
+        let usage = self.core()?.storage_usage()?;
+        Some(storage_usage(&usage, std::env::home_dir().as_deref()))
     }
 
     fn sync_now(&self) -> Result<(), SourceError> {

@@ -11150,6 +11150,7 @@ name = "settings"
 version = "0.0.0"
 dependencies = [
  "jsonc-parser",
+ "mazemail_types",
  "notify",
  "notify-debouncer-mini",
  "pretty_assertions",

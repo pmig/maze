@@ -8,7 +8,9 @@
 //! "Server settings…" opens host, port, security and user name of both to override
 //! them (SMTP logs in like IMAP). When the address belongs
 //! to Google or Microsoft (by domain, or by the host for Microsoft 365), the matching
-//! sign-in button is highlighted.
+//! sign-in button is highlighted. For Microsoft, the organization (tenant) field shows
+//! (also under "Server settings…"), filled in from `auth.microsoft.tenant`; the account
+//! keeps the tenant it signs in with.
 //!
 //! Adding runs in the core ([`CoreHandle::add_imap_account`],
 //! [`CoreHandle::add_oauth_account`]), which connects and lists the folders before it
@@ -31,7 +33,7 @@ use mazemail_core::{
     AddImapAccount, AddOAuthAccount, ConnectionTest, CoreHandle, ImapSecurity, ImapServer,
     ProviderKind, SmtpServerSettings, smtp_default_port, suggest_imap_server, suggest_smtp_server,
 };
-use mazemail_types::{PRODUCT_NAME, Sensitive};
+use mazemail_types::{MicrosoftTenant, PRODUCT_NAME, Sensitive};
 use ui::kit::component::{
     ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
@@ -51,6 +53,8 @@ struct Form {
     username: Entity<InputState>,
     smtp_host: Entity<InputState>,
     smtp_port: Entity<InputState>,
+    /// The Microsoft tenant, prefilled from `auth.microsoft.tenant`.
+    tenant: Entity<InputState>,
     /// `None`: as detected.
     security: Option<ImapSecurity>,
     /// `None`: as detected.
@@ -164,6 +168,7 @@ pub(crate) fn show(core: CoreHandle, cx: &mut App) {
             let placeholder = placeholder.to_owned();
             cx.new(|cx| InputState::new(window, cx).placeholder(placeholder))
         };
+        let tenant = core.settings().settings.auth.microsoft.tenant.to_string();
         let form = Form {
             core,
             email: input("name@example.com", window, cx),
@@ -178,6 +183,11 @@ pub(crate) fn show(core: CoreHandle, cx: &mut App) {
             username: input("User name (default: the address)", window, cx),
             smtp_host: input("SMTP server (detected)", window, cx),
             smtp_port: input("Port", window, cx),
+            tenant: cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder("common")
+                    .default_value(tenant)
+            }),
             security: None,
             smtp_security: None,
             advanced: false,
@@ -341,6 +351,22 @@ fn open(state: Shared, window: &mut Window, cx: &mut App) {
                                 .child(hint),
                         )
                     })
+                    .when(
+                        advanced || plan.oauth == Some(ProviderKind::Microsoft),
+                        |this| {
+                            this.child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme.muted_foreground)
+                                            .child(TENANT_HINT),
+                                    )
+                                    .child(Input::new(&form.tenant)),
+                            )
+                        },
+                    )
                     .child(
                         h_flex().child(
                             Button::new("advanced")
@@ -601,17 +627,50 @@ pub(crate) fn connection_ok(host: &str, test: ConnectionTest) -> String {
     format!("Connected to {host}{gmail}: the login works, {folders}.")
 }
 
+/// What the tenant field says above it.
+const TENANT_HINT: &str = "Sign in with Microsoft: organization (tenant). Your tenant ID or \
+domain (contoso.com) if your organization's app registration is for its own accounts only; \
+\"common\" for any work, school or personal account.";
+
+/// The tenant field's value: blank means `common`.
+pub(crate) fn parse_tenant(text: &str) -> Result<MicrosoftTenant, String> {
+    if text.trim().is_empty() {
+        return Ok(MicrosoftTenant::common());
+    }
+    MicrosoftTenant::parse(text).map_err(|err| format!("{}.", capitalize(&err.to_string())))
+}
+
+fn capitalize(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
 fn add_with_oauth(state: &Shared, provider: ProviderKind, window: &mut Window, cx: &mut App) {
     let (core, input) = {
         let form = state.borrow();
         let email = value(&form.email, cx);
         let name = value(&form.name, cx);
+        let tenant = match provider {
+            ProviderKind::Microsoft => match parse_tenant(&value(&form.tenant, cx)) {
+                Ok(tenant) => Some(tenant),
+                Err(error) => {
+                    drop(form);
+                    set_status(state, None, Some(error.into()), window);
+                    return;
+                }
+            },
+            ProviderKind::Google => None,
+        };
         (
             form.core.clone(),
             AddOAuthAccount {
                 provider,
                 email,
                 display_name: (!name.is_empty()).then_some(name),
+                tenant,
             },
         )
     };
@@ -631,6 +690,20 @@ fn add_with_oauth(state: &Shared, provider: ProviderKind, window: &mut Window, c
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tenant_field_is_checked() {
+        assert!(parse_tenant("").unwrap().is_common());
+        assert_eq!(
+            parse_tenant(" Contoso.com ").unwrap().as_str(),
+            "contoso.com"
+        );
+        let error = parse_tenant("contoso").unwrap_err();
+        assert!(
+            error.starts_with("\"contoso\" is not a Microsoft tenant"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn the_server_is_detected_and_can_be_overridden() {

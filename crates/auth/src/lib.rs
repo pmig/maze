@@ -55,6 +55,7 @@ mod token;
 pub use browser::{BrowserOpener, SystemBrowser};
 pub use client::{AuthorizationRequest, AuthorizeOptions, DEFAULT_AUTHORIZE_TIMEOUT, OAuthClient};
 pub use error::{ADMIN_CONSENT_EXPLANATION, AuthError, OAuthErrorDetails, ReauthReason};
+pub use mazemail_types::{InvalidTenant, MicrosoftTenant};
 pub use provider::{
     ClientCredentials, ParseProviderKindError, Provider, ProviderKind, ProviderRegistry,
 };

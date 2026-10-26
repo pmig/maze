@@ -274,6 +274,47 @@ Then sign-in fails with a message to forward to your IT department: an administr
 has to grant admin consent for Maze in Microsoft Entra ID under *Enterprise
 applications*, or assign you to it. Sign in again once they have.
 
+#### One organization only: the tenant
+
+The *Supported account types* of the app registration decide who can sign in with it:
+
+- **Multi-tenant** (*Accounts in any organizational directory and personal Microsoft
+  accounts*, as in step 2): any work, school or personal account. Maze's default tenant,
+  `common`, works.
+- **Single-tenant** (*Accounts in this organizational directory only*): only accounts
+  of the organization that registered the app. That's how an organization keeps its
+  registration to itself. Sign-in through `common` fails with `AADSTS50194`, and Maze
+  says: "This app registration only allows its own organization. Set
+  `auth.microsoft.tenant` to your tenant ID or domain, or register the app for any
+  organization."
+
+For a single-tenant registration, set `auth.microsoft.tenant` to the organization's
+**Directory (tenant) ID** (on the app's overview page, next to the client ID) or one of
+its verified domains:
+
+```jsonc
+{
+  "auth": {
+    "microsoft": {
+      "client_id": "00000000-0000-0000-0000-000000000000",
+      "tenant": "contoso.com"
+    }
+  }
+}
+```
+
+`auth.microsoft.tenant` accepts `common` (the default), `organizations` (work and school
+accounts of any organization), `consumers` (personal accounts only), a tenant ID or a
+domain; anything else is reported as a settings error and `common` is used. **Add
+Account** shows the tenant under its fields when the address belongs to Microsoft (or
+under **Server settings…**), filled in from the setting, so one account can use another
+tenant; on the command line, `mazemail account add … --oauth microsoft --tenant
+contoso.com` does the same. A tenant Microsoft doesn't know fails with "Microsoft
+doesn't know the tenant contoso.com".
+
+Each account keeps the tenant it signed in with and renews its sign-in there, so
+changing `auth.microsoft.tenant` later only affects new sign-ins.
+
 ## Import mail
 
 Maze keeps all mail in your server accounts: it speaks IMAP (including Gmail and
@@ -543,6 +584,33 @@ sync button in the title bar, next to **+** (New Message), press `cmd-shift-t`
 command palette. The icon turns while a sync runs. When sync has a problem (offline, the
 account needs you to sign in again, an error), the button shows a warning dot and its
 tooltip says why, like the status bar at the bottom.
+
+To see exactly what is syncing, click the sync status at the bottom left of the status
+bar ("Up to date", "Syncing…", "Offline"). **Sync activity** opens above it, with one
+section per account:
+
+- the state: connecting, syncing, up to date, offline, sign-in required or an error,
+  with the reason. For offline accounts and errors, **Retry now** syncs that account
+  right away;
+- the folders being synced and what each one is doing, with progress where Maze knows
+  it ("INBOX — fetching headers 1,200 / 5,400", "All Mail — re-reading labels"), then the
+  folders waiting their turn;
+- when the account last finished syncing ("Last synced 2 min ago", counted since Maze
+  started);
+- the work that waits: changes you made (moves, flags, uploads) that haven't reached the
+  server yet, with the age of the oldest and those that failed too often, messages in
+  the outbox, and messages being downloaded for offline reading.
+
+It updates live while it is open; click outside it or press `escape` to close it.
+
+### Disk space
+
+The bottom right of the status bar shows how much disk space Maze uses, like "2.4 GB".
+Hover over it for the breakdown: the encrypted mail store (database and messages), the
+search index, caches, database backups taken before updates, logs and downloaded
+updates, and where the data directory is. Maze measures it in the background: when it
+starts, every few minutes, and soon after mail arrives, is imported or deleted (at most
+every 30 seconds). Nothing shows until the first measurement is done.
 
 ## Writing mail
 

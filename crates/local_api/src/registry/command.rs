@@ -6,8 +6,8 @@ use serde_json::Value;
 use super::args::{
     AccountAddArgs, AccountListArgs, AccountRemoveArgs, ArchiveArgs, AttachmentSaveArgs,
     ContactsArgs, DraftEditArgs, DraftNewArgs, ExportArgs, FlagArgs, FoldersArgs, IdentitiesArgs,
-    ImportArgs, MoveArgs, ProposeArgs, ReadArgs, RuleAddArgs, SearchArgs, SendArgs, ShowArgs,
-    SyncArgs, TagArgs, TagsArgs,
+    ImportArgs, MoveArgs, OAuthProvider, ProposeArgs, ReadArgs, RuleAddArgs, SearchArgs, SendArgs,
+    ShowArgs, SyncArgs, TagArgs, TagsArgs,
 };
 
 /// Arguments that don't match a command's schema.
@@ -147,6 +147,13 @@ impl Command {
             }
             Self::Import(args) if !args.path.is_absolute() => {
                 Err(ArgsError("path: must be an absolute path".into()))
+            }
+            Self::AccountAdd(args)
+                if args.tenant.is_some() && args.oauth != Some(OAuthProvider::Microsoft) =>
+            {
+                Err(ArgsError(
+                    "tenant: only for a Microsoft sign-in (oauth: microsoft)".into(),
+                ))
             }
             Self::AccountAdd(args) if args.oauth.is_some() && args.password.is_some() => Err(
                 ArgsError("password: a browser sign-in (oauth) takes no password".into()),

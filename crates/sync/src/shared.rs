@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use mazemail_types::AccountId;
 use store::{Reader, Store, WriteTx};
 
+use crate::activity::ActivityTracker;
 use crate::config::AccountSyncConfig;
 use crate::error::{Result, SyncError};
 use crate::events::EventSink;
@@ -17,6 +18,8 @@ pub(crate) struct Shared {
     pub(crate) store: Store,
     pub(crate) ingest: Arc<dyn MessageIngest>,
     pub(crate) events: EventSink,
+    /// What the engine is doing, for [`crate::AccountHandle::activity`].
+    pub(crate) activity: Arc<ActivityTracker>,
 }
 
 impl Shared {

@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 
+use mazemail_types::MicrosoftTenant;
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -770,6 +771,13 @@ pub struct MicrosoftAuthSettings {
     /// The application (client) ID. `null`: "Sign in with Microsoft" is unavailable
     /// until Maze's own registration is configured.
     pub client_id: Option<String>,
+    /// The directory new sign-ins use: "common" (work, school and personal
+    /// accounts), "organizations" (work and school accounts), "consumers" (personal
+    /// accounts), a tenant ID (a GUID) or a verified domain ("contoso.com"). A
+    /// single-tenant app registration needs its tenant ID or domain. Accounts keep
+    /// the tenant they signed in with.
+    #[schemars(with = "String")]
+    pub tenant: MicrosoftTenant,
 }
 
 /// Notifications for new mail.
@@ -906,6 +914,35 @@ mod tests {
         assert_eq!(
             settings.auth.microsoft.client_id.as_deref(),
             Some("entra-app")
+        );
+        assert!(settings.auth.microsoft.tenant.is_common(), "the default");
+    }
+
+    #[test]
+    fn the_microsoft_tenant_is_validated() {
+        let loaded = crate::parse_settings(Some(
+            r#"{ "auth": { "microsoft": { "tenant": "Contoso.com" } } }"#,
+        ));
+        assert!(loaded.diagnostics.is_empty(), "{:?}", loaded.diagnostics);
+        assert_eq!(
+            loaded.settings.auth.microsoft.tenant.as_str(),
+            "contoso.com"
+        );
+
+        let loaded = crate::parse_settings(Some(
+            r#"{ "auth": { "microsoft": { "tenant": "https://login.microsoftonline.com/x" } } }"#,
+        ));
+        assert_eq!(loaded.diagnostics.len(), 1, "{:?}", loaded.diagnostics);
+        let diagnostic = &loaded.diagnostics[0];
+        assert_eq!(diagnostic.kind, crate::DiagnosticKind::InvalidValue);
+        assert_eq!(diagnostic.path, "auth.microsoft.tenant");
+        assert!(
+            diagnostic.message.contains("not a Microsoft tenant"),
+            "{diagnostic}"
+        );
+        assert!(
+            loaded.settings.auth.microsoft.tenant.is_common(),
+            "the default"
         );
     }
 
