@@ -248,8 +248,13 @@ and `\` closes them, `cmd-shift-a` selects a whole thread. The threads button (o
 `cmd-alt-g`) turns threads off and lists every message on its own.
 
 `shift-down` / `shift-up` (or shift-click) select several rows, cmd-click adds or
-removes one, `cmd-a` selects them all. Archive, Quick Move, toggle read and star then
-act on every selected row at once, and the message pane says how many are selected.
+removes one, `cmd-a` selects them all. Archive, Delete, Quick Move, toggle read and
+star then act on every selected row at once, and the message pane says how many are
+selected.
+
+**Delete** (`backspace` or `delete`, also in the right-click menu) moves the selection to
+the account's Trash; `cmd-z` brings it back. On Gmail that removes every label. In a
+Trash folder, deleting removes the mail from the server for good, so Maze asks first.
 
 **Quick Move** (`shift-m`), like Thunderbird's Quick Folder Move: a small picker lists
 the folders of the selected mail's account (`Archives / 2026`). Type part of a folder's
@@ -691,6 +696,7 @@ Maze uses Thunderbird's shortcuts and fills the gaps with Zed's. These are bound
 | Star                                 | `s`                         |
 | Archive                              | `a`                         |
 | Move to a folder (Quick Move)        | `shift-m`                   |
+| Delete (move to Trash)               | `backspace`, `delete`       |
 | Undo the last archive, move or flag  | `cmd-z`                     |
 | Select several rows / all rows       | `shift-down` / `shift-up`, `cmd-a` |
 | Open / close a thread                | `right` / `left`            |

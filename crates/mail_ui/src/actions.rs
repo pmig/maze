@@ -94,6 +94,9 @@ actions!(
         ToggleStar,
         /// Archive the selected threads (`a`).
         Archive,
+        /// Move the selected threads to Trash; in Trash, delete them for good after
+        /// asking (`backspace`, `delete`).
+        Delete,
         /// Move the selected threads to a folder picked by typing part of its name
         /// (`shift-m`, Quick Move).
         MoveToFolder,

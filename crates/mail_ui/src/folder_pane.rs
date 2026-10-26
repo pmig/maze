@@ -483,6 +483,17 @@ impl FolderPane {
         })
     }
 
+    /// The special-use role of a folder (Trash, Inbox, …), if it has one.
+    pub fn role_of(&self, key: &FolderKey) -> Option<FolderRole> {
+        match key {
+            FolderKey::Unified(role) => Some(*role),
+            _ => self.nodes.values().find_map(|node| match node {
+                Node::Folder { key: k, role, .. } if k == key => *role,
+                _ => None,
+            }),
+        }
+    }
+
     /// Whether `key` is shown under Favorites.
     pub fn is_favorite(&self, key: &FolderKey) -> bool {
         self.favorites.contains(key)

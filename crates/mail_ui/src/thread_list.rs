@@ -87,7 +87,7 @@ use time::UtcOffset;
 use ui::assets::IconName;
 
 use crate::actions::{
-    Archive, Forward, MoveToFolder, OpenMessage, Reply, ReplyAll, SelectThread, ToggleRead,
+    Archive, Delete, Forward, MoveToFolder, OpenMessage, Reply, ReplyAll, SelectThread, ToggleRead,
     ToggleStar,
 };
 use crate::format::{DateFormatter, format_size, format_thousands};
@@ -1454,6 +1454,27 @@ impl ThreadList {
         }
     }
 
+    /// `backspace` / `delete`: moves the selected rows to Trash (in Trash: deletes them
+    /// for good; the window asks first) and selects the next row.
+    pub fn delete_selected(&mut self, cx: &mut Context<'_, Self>) {
+        let items = self.command_items();
+        if items.is_empty() {
+            return;
+        }
+        let batch = self.batch(&items);
+        let result = self.remove(
+            &items,
+            |source| match &batch {
+                Batch::Threads(ids) => source.delete(ids),
+                Batch::Messages(ids) => source.delete_messages(ids),
+            },
+            cx,
+        );
+        if let Err(error) = result {
+            tracing::warn!(%error, "deleting failed");
+        }
+    }
+
     /// Undoes the last archive, move, read or star change and shows the list again.
     pub fn undo(&mut self, cx: &mut Context<'_, Self>) {
         match self.source.undo() {
@@ -2394,6 +2415,7 @@ impl ThreadList {
                 entry("Star", Box::new(ToggleStar))
             },
             entry("Archive", Box::new(Archive)),
+            entry("Delete", Box::new(Delete)),
             entry("Move to Folder…", Box::new(MoveToFolder)),
             None,
             entry("Select Thread", Box::new(SelectThread)),
@@ -3707,8 +3729,9 @@ mod tests {
                 ]
             );
             assert_eq!(items[4], Some(("Mark as Read".into(), "mail::ToggleRead")));
+            assert_eq!(items[7], Some(("Delete".into(), "mail::Delete")));
             assert_eq!(
-                items[7],
+                items[8],
                 Some(("Move to Folder…".into(), "mail::MoveToFolder"))
             );
             list.toggle_read(cx);
