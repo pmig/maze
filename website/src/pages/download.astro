@@ -30,8 +30,9 @@ const file = (os: string, arch: string, ext: string) =>
             <>The first release is on its way; until then, the links lead to GitHub Releases. </>
           )
         }
-        Maze is pre-alpha: reading, search and triage work, writing mail doesn't yet. Keep your mail
-        on the server.
+        Maze is pre-alpha: reading, writing, search, triage and agents work, but expect rough
+        edges. Maze keeps all mail in your IMAP accounts, so another mail client keeps working
+        alongside.
       </p>
     </section>
 
@@ -60,7 +61,8 @@ const file = (os: string, arch: string, ext: string) =>
         </div>
         <p class="muted">
           A tarball for x86_64 and aarch64 is built with every release. Linux gets less testing
-          than macOS for now, and packaging (desktop integration, Flatpak) is coming.
+          than macOS for now and shows mail in the reader view only (the original HTML engine is
+          in the macOS builds); packaging (Flatpak) is coming.
         </p>
         <div class="buttons">
           <a class="button" href={release.linux.x86_64}><Icon name="download" /> x86_64</a>
@@ -113,9 +115,10 @@ cargo run --release</code></pre>
         <h2>Requirements</h2>
         <ul>
           <li>macOS 13 Ventura or later, on Apple Silicon or Intel.</li>
-          <li>Linux: x86_64 or aarch64, with a running Secret Service (GNOME Keyring or KWallet), which holds Maze's storage key.</li>
+          <li>Linux: x86_64 or aarch64, with a running Secret Service (GNOME Keyring or KWallet), which holds Maze's storage key, and bubblewrap (<code>bwrap</code>) if you use agents.</li>
           <li>An IMAP account (Gmail, Microsoft 365, iCloud, Fastmail and others are detected), or mail to import.</li>
           <li>Gmail works with an app password; “Sign in with Google” and “Sign in with Microsoft” need your own OAuth client ID for now (<a href="/docs/getting-started/#gmail-and-google-workspace">Gmail</a>, <a href="/docs/getting-started/#microsoft-365-and-outlookcom">Microsoft</a>).</li>
+          <li>Agents (optional): an account with the agent's provider (Claude, ChatGPT, Google, Cursor and others). Maze downloads the agent and the Node runtime it needs itself (<a href="/docs/agents/">Agents</a>).</li>
         </ul>
       </div>
 

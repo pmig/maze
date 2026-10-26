@@ -8,7 +8,7 @@ import { glob } from "astro/loaders";
 const docs = defineCollection({
   loader: glob({
     base: "../docs",
-    pattern: ["getting-started.md", "cli.md", "AGENTS-cli.md", "security.md"],
+    pattern: ["getting-started.md", "agents.md", "cli.md", "AGENTS-cli.md", "security.md"],
     generateId: ({ entry }) => entry.replace(/\.md$/, "").toLowerCase(),
   }),
 });

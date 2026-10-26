@@ -147,9 +147,11 @@ Only one Maze (app or headless) can open a data directory at a time.
 `--smtp-security` for the server Maze sends through), `account remove` and `sync` work.
 Writing and sending mail works in the app; the CLI commands for it (`draft new`,
 `draft edit`, `send`) and `rule add` and `attachment save` fail with "not available in
-this version" (exit code 1). Proposals (from `propose` and from a triage token's
-`archive`, `move`, `tag`, `flag` and `read`) are stored, but the review view in Maze
-that accepts or rejects them isn't there yet, so nothing changes for now.
+this version" (exit code 1), and so does a `propose` batch with an `unsubscribe` item.
+Proposals (from `propose` and from a triage token's `archive`, `move`, `tag`, `flag`
+and `read`) show at the top of Maze's agent column (`cmd-?`), where you accept or
+reject each item; nothing changes until you accept. See
+[agents.md](agents.md#proposals).
 
 ## Agents
 
@@ -157,5 +159,6 @@ Agents you run yourself (Claude Code, Codex and others in a terminal) use the CL
 you do: give them a token, preferably `read-only` or `triage`, with a short lifetime and
 a `--label`, and point them at [AGENTS-cli.md](AGENTS-cli.md) (or the output of
 `mazemail help agents`). Agents that Maze starts itself, in its agent column and inside
-a sandbox, will get a token for their session automatically; that part is planned, see
-[security.md](security.md#agents).
+a sandbox, get a token for their session automatically (`MAZEMAIL_SESSION`), limited to
+the accounts you share with agents and revoked when the session ends; see
+[agents.md](agents.md) and [security.md](security.md#agents).

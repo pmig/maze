@@ -17,6 +17,7 @@ import { repoFile } from "../data/site";
 /** Repository-relative Markdown files that have a page on the site. */
 export const DOC_PAGES: Record<string, string> = {
   "docs/getting-started.md": "/docs/getting-started/",
+  "docs/agents.md": "/docs/agents/",
   "docs/cli.md": "/docs/cli/",
   "docs/AGENTS-cli.md": "/docs/agents-cli/",
   "docs/security.md": "/docs/security/",

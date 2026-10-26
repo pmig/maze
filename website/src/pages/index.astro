@@ -15,6 +15,7 @@ const SHORTCUTS: [string[], string][] = [
   [["a"], "archive"],
   [["shift", "m"], "move to folder"],
   [["s"], "star"],
+  [["r"], "reply"],
   [["m"], "toggle read"],
   [["cmd", "shift", "k"], "Quick Filter"],
   [["cmd", "k"], "search everything"],
@@ -50,8 +51,9 @@ const TERMINAL = [
       <h1 id="hero-title">The agentic email client. <span>Crafted for speed and collaboration with humans and AI.</span></h1>
       <p class="hero-lede">
         Maze is a local-first email client written in Rust. It renders on the GPU, keeps your
-        whole mailbox encrypted on disk, searches it instantly, and gives your scripts and
-        agents scoped access through the <code>mazemail</code> command line.
+        whole mailbox encrypted on disk, searches it instantly, runs AI agents in a sandbox
+        next to your mail when you turn them on, and gives your scripts scoped access through
+        the <code>mazemail</code> command line.
       </p>
       <div class="hero-cta">
         <a class="button button--primary" href={release.mac.aarch64}>
@@ -65,7 +67,7 @@ const TERMINAL = [
       </div>
       <p class="hero-note">
         Apple Silicon · <a href={release.mac.x86_64}>Intel</a> · {SITE.macosMinimum} or later · updates itself.
-        Reading, search and triage work today; writing mail is next.
+        Pre-alpha: it reads, writes and runs agents; expect rough edges.
       </p>
     </section>
 
@@ -75,7 +77,7 @@ const TERMINAL = [
         dark={heroShotDark}
         priority
         alt="The Maze main window with demo mail: a folder pane with unified folders and accounts, a message list, an open message with DKIM, SPF and DMARC badges, and the agent column, which says AI is off."
-        caption="Demo mailbox. On the right, the agent column, where Claude Code, Codex, Cursor or pi can help once you turn AI on."
+        caption="Demo mailbox. On the right, the agent column, where Claude Code, Codex, Gemini CLI, Cursor or pi help once you turn AI on."
       />
     </div>
 
@@ -126,12 +128,50 @@ const TERMINAL = [
       </div>
     </section>
 
+    <section class="section" id="write" aria-labelledby="write-title">
+      <p class="eyebrow">Writing mail</p>
+      <h2 class="section-title" id="write-title">Write in tabs, next to your mail.</h2>
+      <p class="lede">
+        New messages, replies and forwards open in tabs, with panes and splits like Zed's: keep
+        the Inbox on one side and a draft on the other. Maze opens your tabs and splits again
+        after a restart.
+      </p>
+
+      <div class="grid-3">
+        <article class="card">
+          <h3>Markdown in, normal mail out</h3>
+          <p>
+            Write in Markdown; Maze sends it as plain text and HTML. Each draft gets a two-word
+            name like <code>brave-otter</code> and is saved encrypted as you type. Replies pick
+            the identity the message was sent to.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Sent once, filed in Sent</h3>
+          <p>
+            SMTP with your password or Google and Microsoft sign-in. Offline, a message waits in
+            the outbox; Maze records what the server accepted, so even a crash never sends a
+            message twice. A copy lands in your Sent folder.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Tabs and splits</h3>
+          <p>
+            Mail views, single messages and drafts each get a tab. Drag a tab to the edge of a
+            pane to split it, or press <kbd>cmd</kbd> <kbd>\</kbd>. <kbd>cmd</kbd> <kbd>b</kbd>
+            hides the folder pane.
+          </p>
+          <p><a href="/docs/getting-started/#writing-mail">Writing mail <span aria-hidden="true">→</span></a></p>
+        </article>
+      </div>
+    </section>
+
     <section class="section" id="fast" aria-labelledby="fast-title">
       <p class="eyebrow">Speed</p>
       <h2 class="section-title" id="fast-title">Native, GPU-rendered, never waiting on a server.</h2>
       <p class="lede">
-        Maze is built on GPUI, Zed's UI framework: no browser engine, virtualized lists, and no
-        work on the UI thread. Opening a folder, scrolling a hundred thousand threads or
+        Maze is built on GPUI, Zed's UI framework: no web view for the UI, virtualized lists,
+        and no work on the UI thread. Opening a folder, scrolling a hundred thousand threads or
         searching all of them reads from the local store.
       </p>
       <dl class="stats">
@@ -187,16 +227,53 @@ const TERMINAL = [
           <h3>No telemetry</h3>
           <p>
             No analytics, no accounts, no cloud. The updater fetches a signed manifest with a
-            plain GET and sends nothing about you. Tracking pixels stay blocked.
+            plain GET and sends nothing about you. Tracking pixels stay blocked. Agents are off
+            until you turn them on; then they reach their model provider.
           </p>
         </li>
       </ul>
     </section>
 
-    <section class="section split split--terminal" id="agents" aria-labelledby="agents-title">
+    <section class="section" id="agents" aria-labelledby="agents-title">
+      <p class="eyebrow">Agents in Maze</p>
+      <h2 class="section-title" id="agents-title">Your agent, next to your mail. Off until you say so.</h2>
+      <p class="lede">
+        The agent column runs Claude Code, Codex, Gemini CLI, Cursor, pi or your own agent over
+        the Agent Client Protocol, with the selected thread as context. AI is off for every
+        account until you share one with agents.
+      </p>
+
+      <div class="grid-3">
+        <article class="card">
+          <h3>Sign in, pick a model</h3>
+          <p>
+            Maze installs the agent and keeps it up to date. Sign in or paste a key right in the
+            column, then pick the mode, model and thinking effort the agent offers.
+          </p>
+        </article>
+        <article class="card">
+          <h3>In a sandbox</h3>
+          <p>
+            Every agent runs in an operating system sandbox (Seatbelt on macOS, bubblewrap on
+            Linux). It can't read Maze's store or your home folder and reaches mail only through
+            the <code>mazemail</code> CLI, with a token for the accounts you shared.
+          </p>
+        </article>
+        <article class="card">
+          <h3>Agents propose, you decide</h3>
+          <p>
+            By default, an agent's archive, move, tag and flag requests become proposals at the
+            top of the column. Accept or reject each one with <kbd>y</kbd> and <kbd>n</kbd>, or all at once.
+          </p>
+          <p><a href="/docs/agents/">Agents in Maze <span aria-hidden="true">→</span></a></p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section split split--terminal" id="cli" aria-labelledby="cli-title">
       <div>
-        <p class="eyebrow">Built for agents</p>
-        <h2 class="section-title" id="agents-title">Scoped, approved access. No token, no mail.</h2>
+        <p class="eyebrow">Built for scripts</p>
+        <h2 class="section-title" id="cli-title">Scoped, approved access. No token, no mail.</h2>
         <p class="lede">
           The <code>mazemail</code> CLI is the same program as the app. It never opens your store:
           it asks the running Maze over a private socket, and every request needs a token you
@@ -205,15 +282,10 @@ const TERMINAL = [
         <ul class="checks">
           <li><strong>Profiles:</strong> read-only, triage or writer, limited to accounts and folders, with a lifetime.</li>
           <li><strong>Approvals:</strong> Maze shows which program asks before it gets a token, an import or an export.</li>
-          <li><strong>Proposals:</strong> a triage token's archive, move and tag become proposals instead of changes.</li>
+          <li><strong>Proposals:</strong> a triage token's archive, move and tag become proposals you review in Maze.</li>
           <li><strong>Headless:</strong> <code>mazemail --headless</code> runs Maze without a window, for scripts and servers.</li>
           <li><strong>JSON everywhere:</strong> stable ids and output shapes, documented for agents.</li>
         </ul>
-        <p class="planned-note">
-          <span class="badge badge--planned">planned</span>
-          Reviewing proposals in Maze, and agents in Maze's own column (Claude Code, Codex, Cursor,
-          pi) over ACP, each in a sandbox.
-        </p>
         <p class="more"><a href="/docs/cli/">The mazemail CLI <span aria-hidden="true">→</span></a></p>
       </div>
       <Terminal title="mazemail" lines={TERMINAL} />
@@ -246,10 +318,11 @@ const TERMINAL = [
 
     <section class="section" id="status" aria-labelledby="status-title">
       <p class="eyebrow">Status</p>
-      <h2 class="section-title" id="status-title">Pre-alpha: a reader today, a full client soon.</h2>
+      <h2 class="section-title" id="status-title">Pre-alpha: a full client, still rough at the edges.</h2>
       <p class="lede">
-        Maze is usable for reading, searching and triaging, but it isn't a daily driver yet.
-        Keep your mail on the server.
+        Maze reads, writes, searches and triages mail and runs agents next to it, but it isn't a
+        daily driver yet. It keeps all mail in your IMAP accounts, so another mail client keeps
+        working alongside.
       </p>
       <div class="status-grid">
         <div>
@@ -258,8 +331,11 @@ const TERMINAL = [
             <li>IMAP, Gmail and Microsoft 365 accounts with live sync</li>
             <li>Thunderbird import, mbox and Maildir upload to IMAP</li>
             <li>Encrypted store and Gmail-style search</li>
-            <li>Reader view with DKIM, SPF and DMARC results</li>
-            <li>Archive, move, tag, flag, mark read, with undo</li>
+            <li>Reader and original HTML view, with DKIM, SPF and DMARC results</li>
+            <li>Archive, move, delete, tag, flag, mark read, with undo</li>
+            <li>Compose, reply and forward in tabs, SMTP sending with an outbox</li>
+            <li>Tabs and splits, restored after a restart</li>
+            <li>Agents in a sandbox, with proposal review</li>
             <li>The CLI and headless mode with scoped tokens</li>
             <li>Background updates with rollback</li>
           </ul>
@@ -267,11 +343,12 @@ const TERMINAL = [
         <div>
           <h3 class="status-h">Next</h3>
           <ul class="next">
-            <li>Composer, SMTP sending and the outbox</li>
-            <li>Identities and From-address switching</li>
+            <li>Drafts on the server, send later and undo send</li>
+            <li>Address autocomplete and spell check</li>
             <li>Filter rules, including imported Thunderbird filters</li>
-            <li>The agent column and proposal review</li>
+            <li>Notifications for new mail</li>
             <li>Settings window and recovery key</li>
+            <li>Linux packaging, and the original HTML view on Linux</li>
           </ul>
           <p class="more"><a href="/roadmap/">The full roadmap <span aria-hidden="true">→</span></a></p>
         </div>
@@ -505,16 +582,6 @@ const TERMINAL = [
     flex-wrap: wrap;
     align-items: center;
     gap: 0.5rem 0.75rem;
-  }
-
-  .planned-note {
-    margin-top: 1.25rem;
-    font-size: 0.875rem;
-    color: var(--muted);
-  }
-
-  .planned-note .badge {
-    margin-right: 0.35rem;
   }
 
   .checks {
