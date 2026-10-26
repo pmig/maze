@@ -60,7 +60,7 @@ later:
 - `assets/settings/default.jsonc`: every new setting, with a comment.
 - The website (`website/`): the home page, roadmap and docs pages that describe the
   area; nothing there may still call a shipped feature "planned" or "next". Build it and
-  check the links (`cd website && pnpm run build && pnpm run check:links`).
+  check the links (`mise run website:check`).
 - A decision that changes the architecture or the product gets an ADR (`docs/adr/`).
 
 ## Git

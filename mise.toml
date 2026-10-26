@@ -3,6 +3,9 @@ rust = { version = "1.99.1", components = "rustfmt,clippy,rust-src", profile = "
 "cargo:cargo-nextest" = "latest"
 "cargo:cargo-deny" = "latest"
 "cargo:cargo-insta" = "latest"
+# The website (Astro); pnpm matches `packageManager` in website/package.json.
+node = "24"
+pnpm = "12.15.0"
 
 [tasks.start]
 description = "Build and start Maze (dev build: fast incremental rebuilds)"
@@ -29,3 +32,33 @@ run = "cargo deny check"
 [tasks.ci]
 description = "Everything CI runs"
 depends = ["lint", "test", "deny"]
+
+[tasks."website:install"]
+description = "Install the website's dependencies (Astro, wrangler)"
+dir = "website"
+run = "pnpm install --frozen-lockfile"
+
+[tasks."website:dev"]
+description = "Run the website locally"
+dir = "website"
+depends = ["website:install"]
+run = "pnpm run dev"
+
+[tasks."website:check"]
+description = "Build the website and check its links"
+dir = "website"
+depends = ["website:install"]
+run = ["pnpm run check", "pnpm run build", "pnpm run check:links"]
+
+[tasks."website:deploy"]
+description = "Build and deploy mazemail.dev to Cloudflare (needs `mise run wrangler login`)"
+dir = "website"
+depends = ["website:install"]
+run = "pnpm run deploy"
+
+[tasks.wrangler]
+description = "Cloudflare's wrangler, pinned by the website, e.g. `mise run wrangler login`"
+dir = "website"
+depends = ["website:install"]
+run = "pnpm exec wrangler"
+
