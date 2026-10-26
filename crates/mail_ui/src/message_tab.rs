@@ -17,7 +17,7 @@ use time::UtcOffset;
 use ui::assets::IconName;
 use ui::panes::{Item, ItemEvent, SerializedItem};
 
-use crate::actions::{Archive, Forward, Reply, ReplyAll, ToggleRead, ToggleStar};
+use crate::actions::{Archive, Delete, Forward, Reply, ReplyAll, ToggleRead, ToggleStar};
 use crate::message_view::{MessageView, ViewPlace};
 use crate::source::{MailSource, SourceError};
 
@@ -91,6 +91,7 @@ impl MessageTab {
                         Box::new(ToggleStar),
                     )
                     .menu("Archive", Box::new(Archive))
+                    .menu("Delete", Box::new(Delete))
             }));
         });
         let mut this = Self {
@@ -194,6 +195,14 @@ impl MessageTab {
     /// `a`: archives the message and closes the tab.
     pub fn archive(&mut self, cx: &mut Context<'_, Self>) -> Result<(), SourceError> {
         self.source.archive_messages(&[self.message])?;
+        cx.emit(ItemEvent::Close);
+        Ok(())
+    }
+
+    /// Moves the message to Trash (or deletes it for good when it is in Trash) and
+    /// closes the tab.
+    pub fn delete(&mut self, cx: &mut Context<'_, Self>) -> Result<(), SourceError> {
+        self.source.delete_messages(&[self.message])?;
         cx.emit(ItemEvent::Close);
         Ok(())
     }

@@ -967,6 +967,26 @@ impl MailSource for CoreMailSource {
         )
     }
 
+    fn delete(&self, threads: &[ThreadId]) -> Result<(), SourceError> {
+        self.apply(
+            |ids| MailCommand::Delete {
+                ids,
+                permanent: false,
+            },
+            threads,
+        )
+    }
+
+    fn delete_messages(&self, messages: &[MessageId]) -> Result<(), SourceError> {
+        self.apply_to_messages(
+            MailCommand::Delete {
+                ids: messages.to_vec(),
+                permanent: false,
+            },
+            messages,
+        )
+    }
+
     fn undo(&self) -> Result<bool, SourceError> {
         let core = self.ready()?;
         let runner = core.clone();

@@ -992,6 +992,64 @@ impl MailWindow {
         }
     }
 
+    /// Whether the shown list is a Trash folder (one account's or the unified one):
+    /// deleting there is for good.
+    fn showing_trash(&self, cx: &App) -> bool {
+        let Some(list) = self.thread_list(cx) else {
+            return false;
+        };
+        match list.read(cx).scope() {
+            ThreadScope::Folder(key) => {
+                self.folder_pane.read(cx).role_of(key) == Some(FolderRole::Trash)
+            }
+            ThreadScope::AllFolders => false,
+        }
+    }
+
+    fn delete(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let permanent = self.showing_trash(cx);
+        let run = |this: &mut Self, window: &mut Window, cx: &mut Context<'_, Self>| {
+            if this.active_message_tab(cx).is_some() {
+                this.with_message_tab(window, cx, |tab, cx| tab.delete(cx));
+            } else {
+                this.with_list(cx, |list, cx| list.delete_selected(cx));
+            }
+        };
+        if !permanent {
+            run(self, window, cx);
+            return;
+        }
+        let count = if self.active_message_tab(cx).is_some() {
+            1
+        } else {
+            self.thread_list(cx).map_or(0, |list| {
+                list.update(cx, |list, _| list.command_items().len())
+            })
+        };
+        if count == 0 {
+            return;
+        }
+        let what = if count == 1 {
+            "this message".to_owned()
+        } else {
+            format!("{count} messages")
+        };
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &format!("Delete {what} for good?"),
+            Some("They are removed from the server. This can't be undone."),
+            &["Cancel", "Delete"],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            if answer.await == Ok(1) {
+                this.update_in(cx, |this, window, cx| run(this, window, cx))
+                    .ok();
+            }
+        })
+        .detach();
+    }
+
     fn undo(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         if self.active_message_tab(cx).is_some() {
             let source = self.source.clone();
@@ -1557,6 +1615,7 @@ impl MailWindow {
         .on_action(cx.listener(|this, _: &ToggleRead, window, cx| this.toggle_read(window, cx)))
         .on_action(cx.listener(|this, _: &ToggleStar, window, cx| this.toggle_star(window, cx)))
         .on_action(cx.listener(|this, _: &Archive, window, cx| this.archive(window, cx)))
+        .on_action(cx.listener(|this, _: &Delete, window, cx| this.delete(window, cx)))
         .on_action(cx.listener(|this, _: &Undo, window, cx| this.undo(window, cx)))
         .on_action(cx.listener(|this, _: &MoveToFolder, window, cx| {
             this.open_quick_move(window, cx);
@@ -2030,6 +2089,50 @@ mod tests {
             w.thread_list(cx).unwrap().read(cx).selected_thread()
         });
         assert_eq!(top, first, "the archived thread is back at the top");
+    }
+
+    #[gpui::test]
+    fn backspace_deletes_and_asks_first_in_trash(cx: &mut TestAppContext) {
+        let (view, cx) = open(cx);
+        cx.run_until_parked();
+        let list = view.read_with(cx, |w, cx| w.thread_list(cx).unwrap());
+        let focus = list.read_with(cx, |l, cx| l.focus_handle(cx));
+        cx.update(|window, cx| window.focus(&focus, cx));
+        let rows = |cx: &mut gpui::VisualTestContext| list.read_with(cx, |l, _| l.len());
+        let before = rows(cx);
+        cx.simulate_keystrokes("backspace");
+        cx.run_until_parked();
+        assert_eq!(rows(cx), before - 1, "moved to Trash without asking");
+        cx.simulate_keystrokes("cmd-z");
+        cx.run_until_parked();
+        assert_eq!(rows(cx), before, "undoable");
+
+        // In Trash, deleting is for good: Maze asks, and Cancel keeps the message.
+        list.update(cx, |list, cx| {
+            list.open(
+                ThreadScope::Folder(FolderKey::Unified(FolderRole::Trash)),
+                "Trash".into(),
+                None,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        let in_trash = rows(cx);
+        assert!(in_trash > 0, "the fake has mail in Trash");
+        {
+            cx.update(|window, cx| window.focus(&focus, cx));
+            cx.simulate_keystrokes("delete");
+            cx.run_until_parked();
+            assert!(cx.has_pending_prompt(), "asks before deleting for good");
+            cx.simulate_prompt_answer("Cancel");
+            cx.run_until_parked();
+            assert_eq!(rows(cx), in_trash);
+            cx.simulate_keystrokes("delete");
+            cx.run_until_parked();
+            cx.simulate_prompt_answer("Delete");
+            cx.run_until_parked();
+            assert_eq!(rows(cx), in_trash - 1);
+        }
     }
 
     #[gpui::test]

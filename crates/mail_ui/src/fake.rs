@@ -1613,6 +1613,15 @@ impl MailSource for FakeMailSource {
         Ok(())
     }
 
+    fn delete(&self, threads: &[ThreadId]) -> Result<(), SourceError> {
+        // The fake has no Trash: deleted mail leaves its folder like archived mail.
+        self.archive(threads)
+    }
+
+    fn delete_messages(&self, messages: &[MessageId]) -> Result<(), SourceError> {
+        self.archive_messages(messages)
+    }
+
     fn undo(&self) -> Result<bool, SourceError> {
         let Some(before) = self
             .undo
@@ -1899,6 +1908,12 @@ mod tests {
             }
             fn undo(&self) -> Result<bool, SourceError> {
                 self.0.undo()
+            }
+            fn delete(&self, t: &[ThreadId]) -> Result<(), SourceError> {
+                self.0.delete(t)
+            }
+            fn delete_messages(&self, m: &[MessageId]) -> Result<(), SourceError> {
+                self.0.delete_messages(m)
             }
             fn thread_account(&self, thread: ThreadId) -> Option<AccountId> {
                 self.0.thread_account(thread)

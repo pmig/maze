@@ -78,6 +78,8 @@
       "m": "mail::ToggleRead",
       "s": "mail::ToggleStar",
       "a": "mail::Archive",
+      "backspace": "mail::Delete",
+      "delete": "mail::Delete",
       "shift-m": "mail::MoveToFolder",
       // Not Thunderbird's (it only has cmd-r / cmd-shift-r): reply with one key, as in
       // Gmail; reply all is shift-r because `a` archives.

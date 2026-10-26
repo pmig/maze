@@ -1007,6 +1007,13 @@ pub trait MailSource: Send + Sync + 'static {
     /// Moves single messages to their account's Archives folder.
     fn archive_messages(&self, messages: &[MessageId]) -> Result<(), SourceError>;
 
+    /// Moves threads to their account's Trash. Messages already in Trash are deleted
+    /// for good (not undoable).
+    fn delete(&self, threads: &[ThreadId]) -> Result<(), SourceError>;
+
+    /// Moves single messages to Trash, like [`MailSource::delete`].
+    fn delete_messages(&self, messages: &[MessageId]) -> Result<(), SourceError>;
+
     /// Reverts the last archive, move or flag change. `false` when there was nothing
     /// to undo.
     fn undo(&self) -> Result<bool, SourceError>;
