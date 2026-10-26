@@ -39,18 +39,19 @@ use std::time::Duration;
 use gpui::SharedString;
 use mail_ui::DataChanges;
 use mail_ui::source::{
-    AccountEntry, AccountKind, AttachmentInfo, FolderEntry, FolderKey, FolderTree, ListSort,
-    MailSource, MessageBody, MessageDocument, MessageKeys, MessageRow, SenderClient, SortBy,
-    SourceError, SourceStatus, SyncState, ThreadFilter, ThreadKeys, ThreadRow, ThreadScope,
-    ThreadTree, TreeNode, Verdict, Verification,
+    AccountEntry, AccountKind, AttachmentInfo, BodyLink, Deception, FolderEntry, FolderKey,
+    FolderTree, ListSort, MailSource, MessageBody, MessageDocument, MessageKeys, MessageRow,
+    SenderClient, SortBy, SourceError, SourceStatus, SyncState, ThreadFilter, ThreadKeys,
+    ThreadRow, ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
 };
 use mazemail_core::correspondents::display;
 use mazemail_core::{
     AccountInfo, AuthStatus, Body, CoreEventBatch, CoreHandle, FolderNode, FolderNodeKind,
     ListOrder, ListQuery, ListScope, MailCommand, MessageListRow, MessageView, Origin, QuickFilter,
-    SearchOpts, SearchSort, SortField, SyncState as CoreSyncState, reader_text,
+    RefreshScope, SearchOpts, SearchSort, SortField, SyncState as CoreSyncState, reader_text,
 };
 use mazemail_types::{AccountId, Address, Flags, FolderId, MessageId, Sensitive, TagId, ThreadId};
+use security::phishing::WarningKind;
 use time::OffsetDateTime;
 
 /// How long a UI call waits for the core.
@@ -522,7 +523,42 @@ fn document(view: &MessageView) -> MessageDocument {
                 header: format!("{}: {}", client.header, client.raw).into(),
             })
         })),
+        links: Sensitive::new(
+            view.rendered()
+                .map(|rendered| {
+                    body_links(security::phishing::links_from_reader_doc(&rendered.reader))
+                })
+                .unwrap_or_default(),
+        ),
     }
+}
+
+/// A reader document's links for the link preview and link clicks, each checked for
+/// text that shows another domain than the link opens (the phishing banner's check,
+/// per link).
+fn body_links(links: Vec<security::phishing::Link>) -> Vec<BodyLink> {
+    links
+        .into_iter()
+        .map(|link| {
+            let deception = security::phishing::check_links(std::slice::from_ref(&link))
+                .into_iter()
+                .find_map(|warning| match warning.kind {
+                    WarningKind::LinkTextMismatch {
+                        text_domain,
+                        href_domain,
+                    } => Some(Deception {
+                        shown: security::domain::to_unicode(&text_domain).into(),
+                        opens: security::domain::to_unicode(&href_domain).into(),
+                    }),
+                    _ => None,
+                });
+            BodyLink {
+                text: link.text.into(),
+                href: link.href.into(),
+                deception,
+            }
+        })
+        .collect()
 }
 
 /// The verification row's data from the core's sender verification.
@@ -942,6 +978,11 @@ impl MailSource for CoreMailSource {
             .and_then(|core| core.accounts_with_status().ok())
             .unwrap_or_default();
         status_of(&accounts)
+    }
+
+    fn sync_now(&self) -> Result<(), SourceError> {
+        self.ready()?.request_refresh(RefreshScope::All);
+        Ok(())
     }
 
     fn offers_add_account(&self) -> bool {

@@ -48,13 +48,17 @@ fn mbox() -> String {
             "Clara <clara@example.com>",
             "Invoice 117",
             "0000",
-            "Please find the invoice.",
+            "<p>Please pay the invoice at <a href=\"https://evil.example/pay\">www.paypal.com</a> \
+             or <a href=\"https://billing.example.com/117\">billing.example.com</a>.</p>",
         ),
     ];
     for (n, (id, parent, from, subject, status, body)) in messages.iter().enumerate() {
-        let references = parent
+        let mut references = parent
             .map(|p| format!("In-Reply-To: <{p}@example.com>\nReferences: <{p}@example.com>\n"))
             .unwrap_or_default();
+        if body.starts_with('<') {
+            references.push_str("Content-Type: text/html; charset=utf-8\n");
+        }
         text.push_str(&format!(
             "From - Mon Oct 13 09:0{n}:00 2025\nX-Mozilla-Status: {status}\n\
              Message-ID: <{id}@example.com>\n{references}Date: Mon, 13 Oct 2025 09:0{n}:00 +0000\n\
@@ -213,6 +217,38 @@ fn folders_lists_rows_and_messages() {
         body.expose().contains(r"Sounds good \<b\>to me\</b\>\."),
         "{}",
         body.expose()
+    );
+
+    // The links of a message, each checked for a deceptive text.
+    let invoice = t.source.message(rows[0].id).unwrap();
+    let links: Vec<_> = invoice
+        .links
+        .expose()
+        .iter()
+        .map(|link| {
+            (
+                link.text.to_string(),
+                link.href.to_string(),
+                link.deception
+                    .as_ref()
+                    .map(|d| format!("{} -> {}", d.shown, d.opens)),
+            )
+        })
+        .collect();
+    assert_eq!(
+        links,
+        [
+            (
+                "www.paypal.com".to_owned(),
+                "https://evil.example/pay".to_owned(),
+                Some("paypal.com -> evil.example".to_owned())
+            ),
+            (
+                "billing.example.com".to_owned(),
+                "https://billing.example.com/117".to_owned(),
+                None
+            ),
+        ]
     );
 
     // Quick filter text (subject) and global search (body, through the index).
@@ -378,6 +414,10 @@ fn placeholders_cover_opening_failure_and_no_accounts() {
             )
             .is_err()
     );
+    assert!(
+        opening.sync_now().is_err(),
+        "nothing to sync before the core is open"
+    );
     opening.fail("Maze is already running");
     assert_eq!(
         opening.placeholder().unwrap().as_ref(),
@@ -389,6 +429,8 @@ fn placeholders_cover_opening_failure_and_no_accounts() {
     let core = open_core(&runtime, dir.path());
     opening.attach(core.clone());
     assert_eq!(opening.placeholder().unwrap().as_ref(), NO_ACCOUNTS);
+    // Sync Now is only queued: without accounts it does nothing, and doesn't fail.
+    opening.sync_now().unwrap();
     runtime.block_on(core.shutdown()).unwrap();
 }
 

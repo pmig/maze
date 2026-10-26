@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 gpui = { workspace = true }
+url = { workspace = true }
 gpui-kit = { workspace = true, features = ["tree-sitter"] }
 mazemail_types = { workspace = true }
 settings = { workspace = true }

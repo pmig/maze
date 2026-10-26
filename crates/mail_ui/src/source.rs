@@ -555,6 +555,31 @@ pub struct MessageDocument {
     pub verification: Verification,
     /// The mail client the sender used, if the headers give it away.
     pub client: Sensitive<Option<SenderClient>>,
+    /// The body's links, in reading order: what the link preview shows when one is
+    /// hovered (its target, and a warning for deceptive ones).
+    pub links: Sensitive<Vec<BodyLink>>,
+}
+
+/// A link of a message body: the text the reader sees and where it really goes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BodyLink {
+    /// The visible text (or a linked image's alt text).
+    pub text: SharedString,
+    /// The target (`href`).
+    pub href: SharedString,
+    /// Set when the link is deceptive: its text shows another domain than the one it
+    /// opens (the phishing banner's check).
+    pub deception: Option<Deception>,
+}
+
+/// What a deceptive link shows and where it goes: registrable domains, decoded from
+/// punycode (`paypal.com`, `evil.example`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Deception {
+    /// The domain the link's text shows.
+    pub shown: SharedString,
+    /// The domain the link opens.
+    pub opens: SharedString,
 }
 
 /// The sender's mail client, as the message header shows it.
@@ -975,6 +1000,10 @@ pub trait MailSource: Send + Sync + 'static {
 
     /// Connection, sync and outbox state.
     fn status(&self) -> SourceStatus;
+
+    /// Synchronizes every account now (the title bar's sync button, "Mail: Sync Now").
+    /// Only queues the request: progress shows in [`MailSource::status`].
+    fn sync_now(&self) -> Result<(), SourceError>;
 
     /// Text shown instead of the message list when there is no mail to show at all:
     /// while the backend opens, when it failed, or before any account exists. `None`

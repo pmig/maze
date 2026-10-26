@@ -49,18 +49,21 @@ use ui::panes::{
 };
 
 use crate::actions::*;
-use crate::chrome::{AgentColumn, MailStatusBar, SpacesBar};
+use crate::chrome::{AgentColumn, MailStatusBar, SpacesBar, SyncButton};
 use crate::command_palette::{CommandPalette, Dismissed};
 use crate::folder_pane::{FolderPane, FolderPaneEvent};
 use crate::format::format_thousands;
 use crate::layout::{self, AgentPlacement, LayoutConfig, LayoutPrefs};
+use crate::links::MailTo;
 use crate::mail_view::{MAIL_KIND, MailView, MailViewContext, MailViewEvent, SerializedFolder};
 use crate::message_tab::{MESSAGE_KIND, MessageTab, SerializedMessage};
 use crate::message_view::MessageView;
 use crate::perf::{FrameStats, ScrollBenchmark, resident_memory};
 use crate::quick_move::{MoveTarget, QuickMove, QuickMoveEvent, source_folder};
 use crate::settings_editor::{SETTINGS_KIND, SerializedSettings, SettingsEditor, SettingsFile};
-use crate::source::{DataChanges, Direction, FolderKey, MailSource, SortBy, ThreadScope};
+use crate::source::{
+    DataChanges, Direction, FolderKey, MailSource, SortBy, SyncState, ThreadScope,
+};
 use crate::thread_list::{CARD_HEIGHT, ItemId, ListMode, TABLE_ROW_HEIGHT, ThreadList};
 use crate::ui_state::{ListDefaults, UiStateStore};
 
@@ -104,6 +107,8 @@ const MIN_SIZE: (f32, f32) = (720., 480.);
 const ACCOUNT_CHECK_ROWS: usize = 1_000;
 /// The layout is saved this long after its last change.
 const LAYOUT_SAVE_DELAY: Duration = Duration::from_millis(400);
+/// The sync icon turns at least this long after "Sync Now".
+const SYNC_FEEDBACK: Duration = Duration::from_millis(1_500);
 
 /// Opens the main window. Returns its handle and root view (for
 /// [`MailWindow::apply_changes`]).
@@ -139,10 +144,11 @@ pub fn open_main_window(
 }
 
 /// What the window asks the app to open a draft for: a new message (`cmd-n`, the
-/// title bar's "+"), or Reply, Reply All, Forward on the message of the active tab.
+/// title bar's "+"), Reply, Reply All, Forward on the message of the active tab, or a
+/// message to the addresses of a `mailto:` link clicked in a message.
 /// The app opens the composer in a tab ([`MailWindow::add_item`]) named with
 /// [`MailWindow::new_draft_name`], so this crate doesn't depend on it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ComposeRequest {
     /// A blank message.
     New,
@@ -158,6 +164,8 @@ pub enum ComposeRequest {
         /// The message forwarded.
         message: MessageId,
     },
+    /// A message to the addresses (and subject, body) of a `mailto:` link.
+    MailTo(MailTo),
 }
 
 impl EventEmitter<ComposeRequest> for MailWindow {}
@@ -219,6 +227,9 @@ pub struct MailWindow {
     names: NameRng,
     settings_file: Option<SettingsFile>,
     save_task: Option<Task<()>>,
+    /// Set for a moment after "Sync Now", so the sync icon turns at once, before the
+    /// sync engine reports progress.
+    sync_requested: Option<Task<()>>,
     item_subscriptions: HashMap<EntityId, Subscription>,
     _subscriptions: Vec<Subscription>,
 }
@@ -323,6 +334,7 @@ impl MailWindow {
             names: NameRng::from_entropy(),
             settings_file: options.settings_file.clone(),
             save_task: None,
+            sync_requested: None,
             item_subscriptions: HashMap::new(),
             _subscriptions: subscriptions,
         };
@@ -1330,9 +1342,43 @@ impl MailWindow {
         window.request_animation_frame();
     }
 
+    // ---- sync -----------------------------------------------------------------------
+
+    /// "Sync Now": asks every account to sync, and turns the sync icon for a moment.
+    fn sync_now(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if let Err(error) = self.source.sync_now() {
+            tracing::warn!(%error, "sync now failed");
+            window.push_notification(
+                Notification::error(format!("Mail couldn't be synchronized: {error}"))
+                    .title(PRODUCT_NAME),
+                cx,
+            );
+            return;
+        }
+        let timer = cx.background_executor().timer(SYNC_FEEDBACK);
+        self.sync_requested = Some(cx.spawn(async move |this, cx| {
+            timer.await;
+            this.update(cx, |this, cx| {
+                this.sync_requested = None;
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
+    }
+
+    /// Whether "Sync Now" was just asked for (the icon turns until the sync shows up).
+    pub fn is_sync_requested(&self) -> bool {
+        self.sync_requested.is_some()
+    }
+
     // ---- rendering ------------------------------------------------------------------
 
-    fn render_title_bar(&self, cx: &mut Context<'_, Self>) -> impl IntoElement + use<> {
+    fn render_title_bar(
+        &self,
+        sync: SyncState,
+        cx: &mut Context<'_, Self>,
+    ) -> impl IntoElement + use<> {
         let theme = cx.theme().colors;
         let folders_visible = self.prefs.borrow().folder_pane_visible;
         TitleBar::new()
@@ -1380,6 +1426,7 @@ impl MailWindow {
                                 }),
                         ),
                     )
+                    .child(SyncButton::new(sync, self.sync_requested.is_some()))
                     .child(div().flex_1())
                     .children(self.title_bar_items.iter().cloned())
                     .child(
@@ -1452,6 +1499,10 @@ impl MailWindow {
         }))
         .on_action(cx.listener(|_, _: &NewMessage, _, cx| {
             cx.emit(ComposeRequest::New);
+        }))
+        .on_action(cx.listener(|this, _: &SyncNow, window, cx| this.sync_now(window, cx)))
+        .on_action(cx.listener(|_, action: &ComposeTo, _, cx| {
+            cx.emit(ComposeRequest::MailTo(action.0.clone()));
         }))
         .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
             this.open_settings(false, window, cx);
@@ -1680,8 +1731,9 @@ impl Render for MailWindow {
             .bg(theme.background)
             .text_color(theme.foreground)
             .on_drag_move(cx.listener(Self::on_column_drag));
+        let status = self.source.status();
         self.register_actions(root, cx)
-            .child(self.render_title_bar(cx))
+            .child(self.render_title_bar(status.sync.clone(), cx))
             .child(
                 h_flex()
                     .flex_1()
@@ -1704,7 +1756,7 @@ impl Render for MailWindow {
                     .child(center)
                     .child(agent),
             )
-            .child(MailStatusBar::new(self.source.status(), summary))
+            .child(MailStatusBar::new(status, summary))
             .children(self.palette.clone())
             .children(self.quick_move.clone())
             .child(
@@ -2430,6 +2482,93 @@ mod tests {
         assert_eq!(ran.get(), 1);
     }
 
+    /// The title bar's sync button, `cmd-shift-t` and `F5` sync every account; the
+    /// icon turns while a sync runs and flags problems; the palette has "Mail: Sync Now".
+    #[gpui::test]
+    fn the_sync_button_syncs_and_shows_the_sync_state(cx: &mut TestAppContext) {
+        use crate::source::{SourceStatus, SyncState};
+
+        cx.update(|cx| {
+            ui::init(cx);
+            crate::init(cx);
+        });
+        let fake = Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
+        let source: Arc<dyn MailSource> = fake.clone();
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            MailWindow::new(source, &MailWindowOptions::default(), window, cx)
+        });
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("sync-now-spinning").is_none(), "up to date");
+        assert!(cx.debug_bounds("sync-now-problem").is_none());
+
+        let button = cx.debug_bounds("sync-now").expect("the sync button");
+        let plus = cx.debug_bounds("new-message").expect("the + button");
+        assert!(button.left() >= plus.right(), "right of New Message");
+        cx.simulate_click(button.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert_eq!(fake.sync_requests(), 1);
+        // It turns at once, before the sync engine reports anything.
+        assert!(view.read_with(cx, |w, _| w.is_sync_requested()));
+        assert!(cx.debug_bounds("sync-now-spinning").is_some());
+        cx.executor().advance_clock(SYNC_FEEDBACK);
+        cx.run_until_parked();
+        assert!(!view.read_with(cx, |w, _| w.is_sync_requested()));
+        assert!(cx.debug_bounds("sync-now-spinning").is_none());
+
+        cx.simulate_keystrokes("cmd-shift-t");
+        cx.simulate_keystrokes("f5");
+        assert_eq!(fake.sync_requests(), 3);
+        cx.executor().advance_clock(SYNC_FEEDBACK);
+        cx.run_until_parked();
+
+        // While an account syncs, the icon turns.
+        fake.set_status(SourceStatus {
+            sync: SyncState::Syncing {
+                account: "Work".into(),
+                done: 10,
+                total: 400,
+            },
+            outbox: 0,
+            online: true,
+        });
+        view.update_in(cx, |w, window, cx| {
+            w.apply_changes(
+                &DataChanges {
+                    status: true,
+                    ..DataChanges::default()
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("sync-now-spinning").is_some());
+        assert!(cx.debug_bounds("sync-now-problem").is_none());
+
+        // A problem shows a warning dot, and the icon stands still.
+        fake.set_status(SourceStatus {
+            sync: SyncState::Message {
+                text: "Work: Offline".into(),
+                problem: true,
+            },
+            outbox: 0,
+            online: false,
+        });
+        view.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("sync-now-problem").is_some());
+        assert!(cx.debug_bounds("sync-now-spinning").is_none());
+
+        let labels: Vec<String> = cx.update(|_, cx| {
+            crate::command_palette::palette_entries(cx.all_action_names())
+                .into_iter()
+                .map(|entry| entry.label)
+                .collect()
+        });
+        assert!(labels.iter().any(|label| label == "Mail: Sync Now"));
+    }
+
     /// The title bar's "+" and `cmd-n` ask the app for a new draft; Reply, Reply All and
     /// Forward ask it to compose for the shown message.
     #[gpui::test]
@@ -2440,7 +2579,7 @@ mod tests {
         let seen = requests.clone();
         let _subscription = cx.update(|_, cx| {
             cx.subscribe(&view, move |_, request: &ComposeRequest, _| {
-                seen.borrow_mut().push(*request);
+                seen.borrow_mut().push(request.clone());
             })
         });
         let bounds = cx.debug_bounds("new-message").expect("the + button");

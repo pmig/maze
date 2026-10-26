@@ -24,6 +24,7 @@ pub mod fake;
 pub mod folder_pane;
 pub mod format;
 pub mod layout;
+pub mod links;
 pub mod list_model;
 pub mod mail_view;
 pub mod message_tab;
@@ -51,8 +52,9 @@ pub use window::{
 
 use crate::actions::{
     About, CollapseAllThreads, ExpandAllThreads, Forward, Hide, HideOthers, Minimize, NewMessage,
-    OpenSettings, Quit, Reply, ReplyAll, ReverseSortOrder, ShowAll, Toggle, ToggleAgentColumn,
-    ToggleFolderPane, ToggleMessagePane, ToggleTableView, ToggleThreads, Zoom, sort_action,
+    OpenSettings, Quit, Reply, ReplyAll, ReverseSortOrder, ShowAll, SyncNow, Toggle,
+    ToggleAgentColumn, ToggleFolderPane, ToggleMessagePane, ToggleTableView, ToggleThreads, Zoom,
+    sort_action,
 };
 use crate::source::SortBy;
 
@@ -130,6 +132,7 @@ pub fn app_menus() -> Vec<Menu> {
         ]),
         Menu::new("Message").items([
             MenuItem::action("New Message", NewMessage),
+            MenuItem::action("Sync Now", SyncNow),
             MenuItem::separator(),
             MenuItem::action("Reply", Reply),
             MenuItem::action("Reply All", ReplyAll),

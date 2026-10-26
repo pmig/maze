@@ -25,6 +25,10 @@
       "f8": "workspace::ToggleMessagePane",
       "cmd-k": "search::FocusSearch",
       "cmd-shift-k": "search::QuickFilter",
+      // Thunderbird: F5 gets new messages (Windows, Linux), cmd-shift-t gets them for
+      // all accounts. Both sync every account; the last binding is the one shown.
+      "f5": "mail::SyncNow",
+      "cmd-shift-t": "mail::SyncNow",
       // Not Thunderbird defaults (it has no keys for these); cmd-alt avoids its
       // single-key and cmd-shift bindings.
       "cmd-alt-t": "view::ToggleTableView",
