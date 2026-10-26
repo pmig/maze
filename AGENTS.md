@@ -49,6 +49,20 @@ Crate names follow PLAN §2, except where a bare name would collide: `core` (Rus
 - Mail data on disk is always encrypted (`vault`). Never write message content in
   plaintext outside the documented exceptions (PLAN §4.17).
 
+## Docs and website
+
+Every user-facing change updates the docs and the website in the same branch, not
+later:
+
+- `docs/getting-started.md` (and `docs/cli.md`, `docs/security.md`, `docs/agents.md`
+  where they apply): what the feature does, how to use it, new settings and keyboard
+  shortcuts (the shortcuts table).
+- `assets/settings/default.jsonc`: every new setting, with a comment.
+- The website (`website/`): the home page, roadmap and docs pages that describe the
+  area; nothing there may still call a shipped feature "planned" or "next". Build it and
+  check the links (`cd website && npm run build && npm run check:links`).
+- A decision that changes the architecture or the product gets an ADR (`docs/adr/`).
+
 ## Git
 
 - Branches are worktrees: `git -C <repo> worktree add <name> -b <name>`.
