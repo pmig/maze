@@ -5,7 +5,7 @@ export const SITE = {
   name: "Maze",
   url: "https://mazemail.dev",
   description:
-    "Maze is the agentic email client: local-first, open source and written in Rust, crafted for speed and collaboration with humans and AI: GPU-rendered, encrypted at rest, with scoped access for agents through the mazemail CLI.",
+    "Maze is the agentic email client: local-first, open source and written in Rust, crafted for speed and collaboration with humans and AI: GPU-rendered, encrypted at rest, with sandboxed AI agents next to your mail and scoped access through the mazemail CLI.",
   repo: "https://github.com/pmig/mazemail",
   releases: "https://github.com/pmig/mazemail/releases",
   issues: "https://github.com/pmig/mazemail/issues",
@@ -45,9 +45,9 @@ export const NUMBERS = [
     detail: "Gmail-style queries over the encrypted Tantivy index, 1M-message benchmark. Budget: under 100 ms.",
   },
   {
-    value: "38",
+    value: "~123",
     unit: "MB",
     label: "the whole app, one binary",
-    detail: "Native GPUI, no browser engine. The .dmg download is about 20 MB.",
+    detail: "Stripped macOS release binary with the embedded Servo engine for original HTML mail (ADR-020); about 49 MB without it. The UI itself is native GPUI.",
   },
 ] as const;

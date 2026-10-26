@@ -43,61 +43,76 @@ const STAGES: Stage[] = [
   },
   {
     name: "Sync",
-    state: "progress",
-    summary: "Accounts and live sync are in; sending mail comes with the composer.",
+    state: "done",
+    summary: "Accounts, live sync and sending.",
     done: [
-      "IMAP, Gmail and Microsoft 365 accounts, password or browser sign-in",
+      "IMAP, Gmail and Microsoft 365 accounts, password or browser sign-in, Test Connection",
       "CONDSTORE/QRESYNC delta sync, IDLE and Gmail labels",
+      "SMTP sending, the outbox and the send log, so nothing is sent twice",
     ],
-    todo: ["SMTP sending, the outbox and the send log"],
   },
   {
     name: "Reading UI",
     state: "progress",
-    summary: "The Thunderbird layout, rendered by GPUI.",
+    summary: "The Thunderbird layout, rendered by GPUI, with Zed's tabs and splits.",
     done: [
-      "Folder pane, message list as cards or a table, reader view",
-      "Original HTML view (Servo, no scripts, remote images only when you allow them)",
+      "Folder pane with Favorites and special folders first, message list as cards or a table, reader view",
+      "Original HTML view (Servo, no scripts, remote images only when you allow them; macOS)",
+      "Tabs and splits for mail views, messages and drafts, restored after a restart",
       "Quick Filter, global search, command palette, Thunderbird shortcuts",
-      "Archive, move, tag, flag and mark read, with undo",
-      "DKIM, SPF and DMARC results in the message header",
+      "Sort by any column, multi-select, Quick Move and right-click menus",
+      "Archive, move, delete, tag, flag and mark read, with undo",
+      "DKIM, SPF and DMARC results, the sender's mail client, link previews and safe link opening",
+      "settings.json in a tab, Zed themes",
     ],
-    todo: ["A settings window, showing the recovery key"],
+    todo: [
+      "A settings window, showing the recovery key",
+      "Notifications for new mail",
+      "Find, keyboard scrolling and printing in the original view",
+    ],
   },
   {
     name: "Thunderbird import",
     state: "done",
     summary: "Move over without losing anything, and keep Thunderbird running alongside.",
     done: [
-      "Thunderbird profiles: IMAP accounts, identities, tags, saved searches, address books",
+      "Thunderbird profiles: IMAP accounts, identities, signatures, tags, saved searches, address books",
       "mbox and Maildir import into an IMAP folder, and export back to mbox or Maildir",
       "Filters are imported and kept, disabled, until rules arrive",
     ],
   },
   {
     name: "Writing mail",
-    state: "next",
-    summary: "The second half of an email client.",
+    state: "progress",
+    summary: "The second half of an email client: the basics are in.",
+    done: [
+      "Compose, reply and forward in tabs, written in Markdown, sent as plain text and HTML",
+      "From picks the identity; replies pick the one the message was sent to",
+      "A copy in Sent, a footer and an optional \"Sent with Maze\" line",
+    ],
     todo: [
-      "The composer, drafts, send later and undo send",
-      "Identities with From-address switching and per-identity signatures",
+      "Drafts in the server's Drafts folder, forwarding attachments",
+      "Send later and undo send",
       "Address book autocomplete, spell check, pre-send checks",
+      "Signatures that switch with the identity",
       "Filter rules, including your imported Thunderbird filters",
-      "Maze as the mailto: handler",
+      "Maze as the system's mailto: handler",
     ],
   },
   {
     name: "Agents",
     state: "progress",
-    summary: "Agents propose, you review. The CLI side is there; the in-app side is next.",
+    summary: "Agents propose, you review, in the CLI and in Maze's own agent column.",
     done: [
       "The mazemail CLI with scoped tokens, profiles and approvals",
       "Headless mode, and a generated CLI reference for agents",
+      "The agent column: Claude Code, Codex, Gemini CLI, Cursor, pi and your own agents over ACP",
+      "Sign-in from the column, mode, model and thinking pickers, updates in the background",
+      "Reviewing and applying proposals in Maze",
+      "An agent sandbox that can't read the store or your home folder (Seatbelt on macOS, bubblewrap on Linux)",
     ],
     todo: [
-      "The agent column: Claude Code, Codex, Cursor, pi and other agents over ACP",
-      "Reviewing and applying proposals in Maze",
-      "An agent sandbox that can't read the store or your home folder",
+      "Limiting agents to certain network hosts, and the seccomp filter on Linux",
       "A built-in assistant: summaries, smart replies, inline writing help",
     ],
   },
@@ -108,7 +123,7 @@ const STAGES: Stage[] = [
     todo: [
       "Opt-in crash reports",
       "Storage key rotation",
-      "Linux packaging polish (Flatpak)",
+      "Linux packaging polish (Flatpak), and the original HTML view on Linux",
     ],
   },
   {
@@ -124,18 +139,23 @@ const STAGES: Stage[] = [
 ];
 ---
 
-<Base title="Roadmap" description="What works in Maze today and what comes next: the composer, rules, agents over ACP and search by meaning.">
+<Base title="Roadmap" description="What works in Maze today and what comes next: drafts on the server, send later, rules, notifications, a settings window and search by meaning.">
   <div class="frame">
     <section class="section head">
       <p class="eyebrow">Roadmap</p>
       <h1>Where Maze is going.</h1>
       <p class="lede">
-        Maze is built in milestones. The first goal is a daily driver for reading and triage;
-        then writing mail, then agents. No dates, just order. The detailed plan and the design
-        decisions are on <a href={repoFile("docs/adr/README.md")}>GitHub</a>.
+        Maze is built in milestones. Reading, writing and agents are in; what's left on the way
+        to a daily driver is filling them out: drafts on the server, send later, rules,
+        notifications and a settings window. No dates, just order. The design decisions are on
+        <a href={repoFile("docs/adr/README.md")}>GitHub</a>.
       </p>
       <ul class="legend" aria-label="Legend">
-        {(["done", "progress", "next", "later"] as State[]).map((s) => <li class={`state state--${s}`}>{STATE_LABEL[s]}</li>)}
+        {
+          (["done", "progress", "next", "later"] as State[])
+            .filter((s) => STAGES.some((stage) => stage.state === s))
+            .map((s) => <li class={`state state--${s}`}>{STATE_LABEL[s]}</li>)
+        }
       </ul>
     </section>
 

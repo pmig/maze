@@ -13,14 +13,17 @@ An open source, local-first email client written in Rust. Built like
 
 - **Local-first.** Your mail lives on your computer in one store. Opening a folder,
   scrolling through 100,000 messages or searching never waits for the server.
-- **Crafted for speed.** A native GPU-rendered window (GPUI, Zed's UI framework), no browser
-  engine. A cold start shows the message list in well under a second.
+- **Crafted for speed.** A native GPU-rendered window (GPUI, Zed's UI framework), no web
+  view for the UI. A cold start shows the message list in well under a second.
 - **Nothing to relearn.** Thunderbird's panes, folders, Quick Filter, global search and
   keyboard shortcuts, so moving over from Thunderbird doesn't mean relearning anything.
 - **Encrypted at rest.** The database, message files and search index are encrypted
   with a key that stays in the macOS keychain (or the Secret Service on Linux). A copy of
   your data directory is useless without it.
-- **Agent-ready.** The `mazemail` command line client gives scripts and AI agents scoped,
+- **Agents next to your mail.** Opt-in: the agent column runs Claude Code, Codex,
+  Gemini CLI, Cursor, pi or your own agent over ACP, in an operating system sandbox,
+  and their changes become proposals you accept or reject.
+- **Scriptable.** The `mazemail` command line client gives scripts and agents scoped,
   approved access to your mail: search, read, export, propose changes for you to
   review. No token, no mail.
 
@@ -30,8 +33,9 @@ taken.
 
 ## Status
 
-**Pre-alpha.** Maze is usable for reading, searching and triaging, but it isn't a
-daily driver yet. Expect rough edges, and keep your mail on the server.
+**Pre-alpha.** Maze reads, writes, searches and triages mail and runs agents next to
+it, but it isn't a daily driver yet. Expect rough edges. Maze keeps all mail in your
+IMAP accounts, so another mail client keeps working alongside it.
 
 Works today:
 
@@ -45,28 +49,44 @@ Works today:
   and of mbox files and Maildir directories, uploaded into a folder of an IMAP account
   (Maze is IMAP only: no POP3 and no Local Folders, see
   [ADR-019](docs/adr/0019-imap-only.md))
-- search with Gmail-style operators (`from:`, `has:attachment`, `after:` …)
-- reading mail in a sanitized reader view, with DKIM/SPF/DMARC results
-- archive, move, tag, flag and mark read, with undo
+- search with Gmail-style operators (`from:`, `has:attachment`, `after:` …) and
+  Quick Filter
+- reading mail in a sanitized reader view, or as the sender designed it in the original
+  HTML view (an embedded Servo engine with scripts off and every load going through
+  Maze; macOS builds only), remote images only when you allow them (**Load images**,
+  **Always for this sender**), `cmd-alt-o` to switch
+- DKIM/SPF/DMARC results (SPF and DMARC as the receiving server recorded them), the
+  sender's mail client, and link targets on hover with a warning for deceptive links
+- the folder pane with Favorites and each account's special folders first, the message
+  list as cards or a table sorted by any column, multi-select, Quick Move (`shift-m`)
+  and right-click menus
+- archive, move, delete (`backspace`; in Trash permanently, after asking), tag, flag
+  and mark read, with undo (`cmd-z`), and a sync button (`cmd-shift-t`)
 - tabs and splits like Zed's: mail views, single messages and drafts side by side,
   dragged into splits, restored after a restart, with the agent column staying right
 - writing mail in a tab (Markdown, sent as plain text + HTML), each draft named with
   two random words, replies and forwards, local drafts, sending over SMTP (password or
-  OAuth) with an outbox that never sends twice, a footer from the settings and an
-  optional "Sent with Maze" line
+  OAuth) with an outbox that never sends twice and a copy in Sent, `r` / `shift-r` to
+  reply, a footer from the settings and an optional "Sent with Maze" line
+- AI agents in the agent column, off until you share an account with them: Claude Code,
+  Codex, Gemini CLI, Cursor, pi and custom ACP agents, installed and kept up to date by
+  Maze, signed in from the column, with model, mode and thinking pickers, sandboxed
+  (Seatbelt on macOS, bubblewrap on Linux), their changes reviewed as proposals
 - editing `settings.json` in a tab (`cmd-,`), applied on save, with its problems listed
-  by line
+  by line; Zed themes from `~/.config/mazemail/themes`
 - the `mazemail` CLI and `mazemail --headless` for scripts and agents
 - updates in the background with a "Restart to update" button, and a rollback if a new
   version keeps failing to start
 
 Not there yet:
 
-- drafts on the server, send later, undo send, spell check, signatures per identity
-- the agents column (the panel is visible, but no agent can be connected yet)
+- drafts on the server, forwarding attachments, send later, undo send, address
+  autocomplete, spell check, signatures that switch with the identity
 - filter rules (imported Thunderbird filters are kept, disabled)
+- notifications for new mail
 - a settings window with forms (settings are edited as JSON for now), showing the
   recovery key
+- Linux packaging (Flatpak) and the original HTML view on Linux
 
 ## Install
 
@@ -121,8 +141,9 @@ real (encrypted) store with demo mail that the CLI can talk to.
 3. **Add an account.** Use **Add Account…** in the folder pane, or the CLI with a
    writer token (`mazemail account add you@example.com`, password from the terminal or
    `--password-stdin`; `--oauth google` or `--oauth microsoft` for the browser
-   sign-in). Gmail needs your own Google OAuth client ID (`auth.google.client_id`) for
-   now; see [Getting started](docs/getting-started.md#accounts). Or import your
+   sign-in). Gmail works with an app password; the browser sign-in for Gmail and
+   Microsoft needs your own OAuth client ID for now, see
+   [Getting started](docs/getting-started.md#accounts). Or import your
    Thunderbird profile, which takes its IMAP accounts over, with identities, tags,
    address books and filters:
 
@@ -172,8 +193,11 @@ directories.
   0600), and every request that touches mail needs a token you approved, scoped to a
   profile (read-only, triage or writer), accounts and a lifetime.
 - On purpose in plaintext: what you export, what the CLI prints for an approved token,
-  attachments you open in other apps, notification text, and the Thunderbird profile
-  you imported from.
+  the thread you attach to an agent conversation (while the session runs), and the
+  Thunderbird profile you imported from.
+- Agents that Maze starts run in a sandbox that can't read the store or your home
+  folder; they reach mail only through the CLI, with a token for the accounts you
+  shared.
 - Linux is weaker than macOS: any program running as you can read an unlocked Secret
   Service collection, and with it the key.
 

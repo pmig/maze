@@ -14,7 +14,12 @@ export const DOC_NAV: { group: string; items: DocNavItem[] }[] = [
       {
         id: "getting-started",
         title: "Getting started",
-        description: "Install, first launch, import, accounts, updates and shortcuts.",
+        description: "Install, accounts, import, the window, writing mail, settings, updates and shortcuts.",
+      },
+      {
+        id: "agents",
+        title: "Agents",
+        description: "The agent column: Claude Code, Codex, Gemini CLI, Cursor and pi, sign-in, the sandbox, proposals.",
       },
       {
         id: "security",
