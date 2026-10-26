@@ -4,7 +4,10 @@ An open source, local-first email client written in Rust. Built like
 [Zed](https://zed.dev) (GPU-rendered, fast, small, agent-native) and behaving like
 [Thunderbird](https://www.thunderbird.net) (same layout, same shortcuts).
 
-![Maze with a synthetic mailbox: folders, the message list, a message and the agent column](docs/screenshots/app-real-data.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/app-real-data-dark.png">
+  <img alt="Maze with a demo mailbox: folders, the message list, a message and the agent column" src="docs/screenshots/app-real-data.png">
+</picture>
 
 - **Local-first.** Your mail lives on your computer in one store. Opening a folder,
   scrolling through 100,000 messages or searching never waits for the server.
