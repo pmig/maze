@@ -84,9 +84,8 @@ The site is deployed by `.github/workflows/website.yaml`:
 | `Release artifacts` finished successfully       | rebuild and deploy (new download links)     |
 | Manual (`workflow_dispatch` on `main`)          | rebuild and deploy                          |
 
-To deploy from your machine instead (after `mise run wrangler login`, or
-`pnpm exec wrangler login` in this directory; `mise run website:deploy` does the same
-as the commands below):
+To deploy from your machine instead (in this directory, after `mise run install` and
+`wrangler login`; `mise run deploy` does the same as the command below):
 
 ```sh
 pnpm run deploy     # astro build && wrangler deploy
