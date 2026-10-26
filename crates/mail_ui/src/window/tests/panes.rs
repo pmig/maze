@@ -137,7 +137,7 @@ fn cmd_n_asks_for_a_draft_that_opens_in_the_active_pane(cx: &mut TestAppContext)
     let seen = requests.clone();
     let _subscription = cx.update(|_, cx| {
         cx.subscribe(&view, move |_, request: &ComposeRequest, _| {
-            seen.borrow_mut().push(*request);
+            seen.borrow_mut().push(request.clone());
         })
     });
     // A split first: the draft goes to the active (new, right) pane.

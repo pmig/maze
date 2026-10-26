@@ -3,6 +3,8 @@
 
 use gpui::actions;
 
+use crate::links::MailTo;
+
 actions!(
     maze,
     [
@@ -99,6 +101,9 @@ actions!(
         Undo,
         /// Write a new message (`cmd-n`, the title bar's "+").
         NewMessage,
+        /// Synchronize every account now (`cmd-shift-t` or `F5`, the title bar's sync
+        /// button; Thunderbird's "Get All New Messages").
+        SyncNow,
         /// Reply to the sender (`cmd-r`).
         Reply,
         /// Reply to all (`cmd-shift-r`).
@@ -130,6 +135,12 @@ actions!(
         OpenFolderInNewTab,
     ]
 );
+
+/// Write to the addresses of a `mailto:` link, clicked in a message. The window asks
+/// the app for a draft ([`crate::ComposeRequest::MailTo`]). Not in the palette.
+#[derive(Debug, Clone, PartialEq, Eq, gpui::Action)]
+#[action(namespace = message_view, no_json)]
+pub struct ComposeTo(pub MailTo);
 
 actions!(
     view,

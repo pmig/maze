@@ -20,6 +20,7 @@
 //! ([`FakeMailSource::moved_to`]).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use gpui::SharedString;
@@ -29,11 +30,15 @@ use mazemail_types::{
 use time::{Duration, OffsetDateTime};
 
 use crate::source::{
-    AccountEntry, AccountKind, AttachmentInfo, Direction, FolderEntry, FolderKey, FolderTree,
-    ListSort, MailSource, MessageBody, MessageDocument, MessageKeys, MessageRow, SenderClient,
-    SortBy, SourceError, SourceStatus, SyncState, ThreadFilter, ThreadKeys, ThreadPredicate,
-    ThreadRow, ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
+    AccountEntry, AccountKind, AttachmentInfo, BodyLink, Direction, FolderEntry, FolderKey,
+    FolderTree, ListSort, MailSource, MessageBody, MessageDocument, MessageKeys, MessageRow,
+    SenderClient, SortBy, SourceError, SourceStatus, SyncState, ThreadFilter, ThreadKeys,
+    ThreadPredicate, ThreadRow, ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
 };
+
+/// Where the "view online" link of invoices goes, and its text.
+const INVOICE_URL: &str = "https://billing.example.com/invoices/2026-10/INV-4711?view=full";
+const INVOICE_LINK_TEXT: &str = "billing.example.com";
 
 /// Number of threads in the large folder (Gmail (personal) / Archives).
 pub const LARGE_FOLDER_THREADS: u32 = 1_000_000;
@@ -385,6 +390,10 @@ pub struct FakeMailSource {
     /// Unfiltered key lists, built on first use.
     key_cache: Mutex<HashMap<(ThreadScope, ListSort), ThreadKeys>>,
     message_key_cache: Mutex<HashMap<(ThreadScope, ListSort), MessageKeys>>,
+    /// How often [`MailSource::sync_now`] was called.
+    sync_requests: AtomicUsize,
+    /// The status [`FakeMailSource::set_status`] set; up to date by default.
+    status: RwLock<Option<SourceStatus>>,
 }
 
 impl std::fmt::Debug for FakeMailSource {
@@ -435,7 +444,20 @@ impl FakeMailSource {
             undo: Mutex::new(None),
             key_cache: Mutex::new(HashMap::new()),
             message_key_cache: Mutex::new(HashMap::new()),
+            sync_requests: AtomicUsize::new(0),
+            status: RwLock::new(None),
         }
+    }
+
+    /// How often "Sync Now" was asked for ([`MailSource::sync_now`]).
+    pub fn sync_requests(&self) -> usize {
+        self.sync_requests.load(Ordering::Relaxed)
+    }
+
+    /// Makes [`MailSource::status`] report `status` (syncing, offline, …) instead of
+    /// "Up to date".
+    pub fn set_status(&self, status: SourceStatus) {
+        *self.status.write().unwrap_or_else(PoisonError::into_inner) = Some(status);
     }
 
     /// The key of the 1,000,000-thread folder.
@@ -977,6 +999,9 @@ impl FakeMailSource {
                  <tr><td>Backups</td><td>€ 12.00</td></tr>\
                  <tr><td><b>Total</b></td><td><b>€ 194.40</b></td></tr></table>",
             );
+            html.push_str(&format!(
+                "<p>The invoice is also online: <a href=\"{INVOICE_URL}\">{INVOICE_LINK_TEXT}</a></p>"
+            ));
         }
         html.push_str(&format!("<p>Best,<br>{}</p>", first_name(from)));
         if quote {
@@ -1019,6 +1044,15 @@ impl FakeMailSource {
             Vec::new()
         };
         let body = self.body(row.subject.expose(), h, &from, &to[0], index > 0);
+        let links = if row.subject.expose().contains("Invoice") {
+            vec![BodyLink {
+                text: INVOICE_LINK_TEXT.into(),
+                href: INVOICE_URL.into(),
+                deception: None,
+            }]
+        } else {
+            Vec::new()
+        };
         Ok(MessageDocument {
             thread,
             message: id,
@@ -1040,6 +1074,7 @@ impl FakeMailSource {
                 name: name.into(),
                 header: header.into(),
             })),
+            links: Sensitive::new(links),
         })
     }
 
@@ -1604,11 +1639,20 @@ impl MailSource for FakeMailSource {
     }
 
     fn status(&self) -> SourceStatus {
-        SourceStatus {
-            sync: SyncState::Idle,
-            outbox: 0,
-            online: true,
-        }
+        self.status
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+            .unwrap_or(SourceStatus {
+                sync: SyncState::Idle,
+                outbox: 0,
+                online: true,
+            })
+    }
+
+    fn sync_now(&self) -> Result<(), SourceError> {
+        self.sync_requests.fetch_add(1, Ordering::Relaxed);
+        Ok(())
     }
 }
 
@@ -1846,6 +1890,9 @@ mod tests {
             }
             fn status(&self) -> SourceStatus {
                 self.0.status()
+            }
+            fn sync_now(&self) -> Result<(), SourceError> {
+                self.0.sync_now()
             }
         }
         let slow = Slow(source());

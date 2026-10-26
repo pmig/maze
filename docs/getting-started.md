@@ -257,6 +257,39 @@ Maze remembers them in `ui_state.json` in the data directory, together with your
 Quick Move folders; until you change them, `thread_list.view`, `thread_list.threaded`
 and `thread_list.sort` in `settings.json` apply.
 
+### Links in a message
+
+Hover a link in a message to see where it really goes: like a browser, Maze shows the
+link's target (not its text) in a small box at the bottom left of the message, and hides
+it when the pointer leaves the link.
+
+- A `mailto:` link shows the address it writes to.
+- A long address is shortened in the middle, so the host stays readable
+  (`https://billing.example.com/acc…/invoices/2026-10.pdf`). A user name before the
+  host (`https://www.paypal.com@evil.example/`) is left out: the host you read is the
+  one that opens.
+- When the link's text looks like an address on another domain than the one the link
+  opens (the text says `www.paypal.com`, the link goes to `evil.example`), the box turns
+  red and says so. It's the same check as the phishing warning above the message.
+
+A click (also cmd-click or the middle button) opens web links in your browser, with
+spaces and other characters a browser doesn't take encoded. A `mailto:` link starts a
+new message to its address (with its subject and text, if it has them). Maze opens no
+other kinds of links (`javascript:`, `file:`, `data:`, apps' own schemes) and says so. A
+deceptive link asks first: "This link goes to evil.example, not paypal.com. Open
+anyway?". A link that isn't a valid address shows a message with a **Copy** button
+instead. Links in plain-text mail (`https://…`, `www.…`, `mailto:…`) are underlined and
+work the same way.
+
+### Syncing
+
+Maze syncs your accounts in the background. To sync all of them right away, click the
+sync button in the title bar, next to **+** (New Message), press `cmd-shift-t`
+(Thunderbird's "Get All New Messages"; `F5` works too), or run "Mail: Sync Now" from the
+command palette. The icon turns while a sync runs. When sync has a problem (offline, the
+account needs you to sign in again, an error), the button shows a warning dot and its
+tooltip says why, like the status bar at the bottom.
+
 ## Import mail
 
 Maze keeps all mail in your server accounts: it speaks IMAP (including Gmail and
@@ -627,6 +660,7 @@ Maze uses Thunderbird's shortcuts and fills the gaps with Zed's. These are bound
 | Select the whole thread              | `cmd-shift-a`               |
 | Open the message in a tab            | `enter`, `cmd-o`, double-click |
 | New message                          | `cmd-n`                     |
+| Sync all accounts now                | `cmd-shift-t`, `F5` (or the title bar's sync button) |
 | Reply / reply all / forward          | `cmd-r` / `cmd-shift-r` / `cmd-l` |
 | Reply / reply all (list and reader)  | `r` / `shift-r`             |
 | Send (draft)                         | `cmd-enter`                 |

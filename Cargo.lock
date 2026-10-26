@@ -5194,6 +5194,7 @@ dependencies = [
  "time",
  "tracing",
  "ui",
+ "url",
 ]
 
 [[package]]

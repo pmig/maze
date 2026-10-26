@@ -232,9 +232,10 @@ fn open_window(cx: &mut App) {
     match mail_ui::open_main_window(source, options, cx) {
         Ok(window) => {
             updates::add_button(&window.1, cx);
-            // New Message, and Reply, Reply All, Forward on the message the window shows.
+            // New Message, Reply, Reply All, Forward on the message the window shows, and
+            // mailto: links clicked in it.
             cx.subscribe(&window.1, |_, request: &mail_ui::ComposeRequest, cx| {
-                let request = *request;
+                let request = request.clone();
                 cx.defer(move |cx| compose::respond(request, cx));
             })
             .detach();

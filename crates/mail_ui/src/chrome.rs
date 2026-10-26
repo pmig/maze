@@ -1,7 +1,11 @@
-//! The window chrome around the mail columns: spaces bar, agent column and status bar.
+//! The window chrome around the mail columns: spaces bar, agent column, status bar and
+//! the title bar's sync button.
+
+use std::time::Duration;
 
 use gpui::{
-    App, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, div,
+    Animation, AnimationExt as _, App, InteractiveElement as _, IntoElement, ParentElement,
+    RenderOnce, SharedString, Styled, Transformation, Window, div, percentage,
     prelude::FluentBuilder as _, px,
 };
 use gpui_kit::component::{
@@ -14,7 +18,7 @@ use gpui_kit::component::{
 use ui::assets::IconName;
 use ui::components::StatusItem;
 
-use crate::actions::{OpenSettings, Toggle, ToggleAgentColumn};
+use crate::actions::{OpenSettings, SyncNow, Toggle, ToggleAgentColumn};
 use crate::source::{SourceStatus, SyncState};
 
 /// The slim spaces bar on the far left (CONCEPT §8.2): Mail, Address Book, and at
@@ -284,5 +288,160 @@ impl RenderOnce for MailStatusBar {
                     .label("⌘⇧P commands")
                     .on_click(|_, window, cx| window.dispatch_action(Box::new(Toggle), cx)),
             )
+    }
+}
+
+/// How long the sync icon takes for one turn.
+const SYNC_SPIN: Duration = Duration::from_millis(1_000);
+
+/// The title bar's sync button, next to New Message: syncs every account. The icon
+/// spins while a sync runs (or was just asked for), and a warning dot with the reason
+/// in the tooltip shows a problem (offline, sign-in required, an error), the same state
+/// the status bar shows.
+#[derive(IntoElement)]
+pub(crate) struct SyncButton {
+    sync: SyncState,
+    requested: bool,
+}
+
+impl SyncButton {
+    /// The button for the sync state; `requested` while a sync just asked for hasn't
+    /// shown up in the state yet.
+    pub(crate) fn new(sync: SyncState, requested: bool) -> Self {
+        Self { sync, requested }
+    }
+
+    /// Whether the icon spins, the problem to flag, and the tooltip.
+    fn state(&self) -> (bool, Option<SharedString>, SharedString) {
+        match &self.sync {
+            SyncState::Syncing {
+                account,
+                done,
+                total,
+            } => (
+                true,
+                None,
+                format!("Syncing… ({account}: {done}/{total})").into(),
+            ),
+            SyncState::Message {
+                text,
+                problem: false,
+            } => (true, None, format!("Syncing… ({text})").into()),
+            SyncState::Message {
+                text,
+                problem: true,
+            } => (
+                self.requested,
+                Some(text.clone()),
+                format!("Sync Now — {text}").into(),
+            ),
+            SyncState::NoAccounts => (false, None, "Sync Now — no accounts yet".into()),
+            SyncState::Idle if self.requested => (true, None, "Syncing…".into()),
+            SyncState::Idle => (false, None, "Sync Now".into()),
+        }
+    }
+}
+
+impl RenderOnce for SyncButton {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let (spinning, problem, tooltip) = self.state();
+        let icon = Icon::new(IconName::RefreshCw).xsmall();
+        let icon = if spinning {
+            div()
+                .debug_selector(|| "sync-now-spinning".to_owned())
+                .flex()
+                .child(icon.with_animation(
+                    "sync-now-spin",
+                    Animation::new(SYNC_SPIN).repeat(),
+                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                ))
+                .into_any_element()
+        } else {
+            icon.into_any_element()
+        };
+        div()
+            .debug_selector(|| "sync-now".to_owned())
+            .relative()
+            .flex_none()
+            .child(
+                Button::new("sync-now")
+                    .ghost()
+                    .xsmall()
+                    .size_5()
+                    .accessibility_label("Sync Now")
+                    .child(icon)
+                    .tooltip_with_action(tooltip, &SyncNow, Some("Workspace"))
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(SyncNow), cx)),
+            )
+            .when(problem.is_some(), |this| {
+                this.child(
+                    div()
+                        .debug_selector(|| "sync-now-problem".to_owned())
+                        .absolute()
+                        .top(px(1.))
+                        .right(px(1.))
+                        .size(px(6.))
+                        .rounded_full()
+                        .bg(cx.theme().warning),
+                )
+            })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sync_button_follows_the_sync_state() {
+        let state = |sync: SyncState, requested: bool| SyncButton::new(sync, requested).state();
+        assert_eq!(
+            state(SyncState::Idle, false),
+            (false, None, "Sync Now".into())
+        );
+        assert_eq!(
+            state(SyncState::Idle, true),
+            (true, None, "Syncing…".into())
+        );
+        assert_eq!(
+            state(
+                SyncState::Syncing {
+                    account: "Work".into(),
+                    done: 3,
+                    total: 10
+                },
+                false
+            ),
+            (true, None, "Syncing… (Work: 3/10)".into())
+        );
+        assert_eq!(
+            state(
+                SyncState::Message {
+                    text: "Connecting…".into(),
+                    problem: false
+                },
+                false
+            ),
+            (true, None, "Syncing… (Connecting…)".into())
+        );
+        let offline = "Work: Offline. Maze will try again in 30 seconds.";
+        assert_eq!(
+            state(
+                SyncState::Message {
+                    text: offline.into(),
+                    problem: true
+                },
+                false
+            ),
+            (
+                false,
+                Some(offline.into()),
+                format!("Sync Now — {offline}").into()
+            )
+        );
+        assert_eq!(
+            state(SyncState::NoAccounts, false),
+            (false, None, "Sync Now — no accounts yet".into())
+        );
     }
 }

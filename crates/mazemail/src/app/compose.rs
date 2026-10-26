@@ -26,6 +26,7 @@ use composer::{
 };
 use gpui::{App, AppContext as _, Entity};
 use mail_ui::ComposeRequest;
+use mail_ui::links::MailTo;
 use mazemail_core::{CoreHandle, ReplyKind, SendResult};
 use mazemail_types::{Address, DraftId, IdentityId, PRODUCT_NAME};
 use ui::assets::IconName;
@@ -160,6 +161,9 @@ pub(crate) fn respond(request: ComposeRequest, cx: &mut App) {
                     core.reply_draft(message, kind).await
                 }
                 ComposeRequest::Forward { message } => core.forward_draft(message).await,
+                ComposeRequest::MailTo(mailto) => {
+                    core.new_draft().map(|draft| mail_to(draft, mailto))
+                }
             }
         })
     };
@@ -171,6 +175,26 @@ pub(crate) fn respond(request: ComposeRequest, cx: &mut App) {
         });
     })
     .detach();
+}
+
+/// A new draft filled from a `mailto:` link: its recipients, subject and body (above
+/// the signature).
+fn mail_to(mut draft: Draft, mailto: MailTo) -> Draft {
+    let addresses = |list: Vec<String>| {
+        list.into_iter()
+            .map(|email| Address::new(None::<String>, email))
+            .collect::<Vec<_>>()
+    };
+    draft.to = addresses(mailto.to);
+    draft.cc = addresses(mailto.cc);
+    draft.bcc = addresses(mailto.bcc);
+    if let Some(subject) = mailto.subject {
+        draft.subject = subject;
+    }
+    if let Some(body) = mailto.body {
+        draft.body_markdown = format!("{body}{}", draft.body_markdown);
+    }
+    draft
 }
 
 fn backend(core: CoreHandle) -> Arc<dyn ComposeBackend> {
@@ -283,5 +307,32 @@ fn notify(message: String, cx: &mut App) {
     });
     if let Err(error) = shown {
         tracing::debug!(%error, "no main window for a compose notification");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mailto_links_fill_a_new_draft() {
+        let draft = Draft {
+            body_markdown: "\n\n-- \nAnna\n".into(),
+            ..Draft::default()
+        };
+        let draft = mail_to(
+            draft,
+            MailTo {
+                to: vec!["help@example.com".into()],
+                cc: vec!["cc@example.com".into()],
+                bcc: Vec::new(),
+                subject: Some("Help".into()),
+                body: Some("Hello".into()),
+            },
+        );
+        assert_eq!(draft.to, [Address::new(None::<String>, "help@example.com")]);
+        assert_eq!(draft.cc, [Address::new(None::<String>, "cc@example.com")]);
+        assert_eq!(draft.subject, "Help");
+        assert_eq!(draft.body_markdown, "Hello\n\n-- \nAnna\n");
     }
 }
