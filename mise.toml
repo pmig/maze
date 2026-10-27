@@ -8,11 +8,18 @@ python = "3.13"
 
 [tasks.start]
 description = "Build and start Maze (dev build with the original HTML engine: fast incremental rebuilds)"
+# The Servo build (`original-html`) gets its own target directory: with the feature on,
+# Cargo resolves features of shared dependencies differently, so building it in
+# `target/` would make every switch between `mise start` and tests, clippy or
+# rust-analyzer (which build without it) recompile GPUI and much of the tree.
 # script/dev-codesign gives the binary a stable signature if a "Maze Development"
 # identity exists, so keychain "Always Allow" survives rebuilds (else it does nothing).
-# The first build with the Servo engine (`original-html`) takes about 3 minutes longer;
-# after that a change rebuilds in about a second more than without it.
-run = 'cargo build --locked -p mazemail --features original-html && script/dev-codesign "${CARGO_TARGET_DIR:-target}/debug/mazemail" && exec "${CARGO_TARGET_DIR:-target}/debug/mazemail"'
+env = { CARGO_TARGET_DIR = "{{config_root}}/target/servo" }
+run = 'cargo build --locked -p mazemail --features original-html && script/dev-codesign "$CARGO_TARGET_DIR/debug/mazemail" && exec "$CARGO_TARGET_DIR/debug/mazemail"'
+
+[tasks."start:lite"]
+description = "Build and start Maze without the original HTML engine (fastest builds; shares target/ with tests)"
+run = 'cargo build --locked -p mazemail && script/dev-codesign target/debug/mazemail && exec target/debug/mazemail'
 
 [tasks.fmt]
 description = "Format all crates"
