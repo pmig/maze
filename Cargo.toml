@@ -183,6 +183,14 @@ lto = "fat"
 codegen-units = 1
 strip = true
 
+# A release build for trying things locally: thin LTO and parallel codegen build in a
+# fraction of the time of `release` (fat LTO, one codegen unit), at a somewhat larger,
+# slightly slower binary. Releases always use `release`.
+[profile.release-fast]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+
 [profile.profiling]
 inherits = "release"
 strip = false
