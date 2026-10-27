@@ -74,11 +74,19 @@ async fn initial_sync_of_several_folders_fetches_newest_first() {
         ]
     );
 
-    // The events announced every INBOX message.
+    // The events announced every INBOX message. They are coalesced, so the last batch
+    // can arrive a moment after the actor went idle: wait for it instead of polling.
     let mut added = BTreeSet::new();
-    while let Ok(batch) = events.try_recv() {
-        if let Some(set) = batch.added.get(&inbox.id) {
-            added.extend(set.iter().copied());
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while added.len() < 5 {
+        match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Ok(batch)) => {
+                if let Some(set) = batch.added.get(&inbox.id) {
+                    added.extend(set.iter().copied());
+                }
+            }
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => {}
+            Ok(Err(_)) | Err(_) => break,
         }
     }
     assert_eq!(added.len(), 5);
