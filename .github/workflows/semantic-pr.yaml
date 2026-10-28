@@ -4,7 +4,9 @@ name: Semantic PR title
 # so the title has to be a conventional commit (PLAN §4.16).
 on:
   pull_request_target:
-    types: [opened, edited, synchronize]
+    # reopened: the release PR is opened with GITHUB_TOKEN, which starts no workflow,
+    # so a maintainer closes and reopens it to run the checks
+    types: [opened, edited, synchronize, reopened]
 
 permissions:
   pull-requests: read

@@ -1,6 +1,7 @@
 name: Release artifacts
 
-# Runs when release-please pushes a tag (PLAN §4.16): builds, signs and notarizes the
+# Started by release-please.yaml on the tag it creates (PLAN §4.16), or by pushing a
+# tag by hand: builds, signs and notarizes the
 # bundles, uploads them to the GitHub Release, and publishes the signed update
 # manifests to the gh-pages branch last, so a client never sees a manifest that
 # points at a missing file.
@@ -13,6 +14,9 @@ name: Release artifacts
 on:
   push:
     tags: ['*']
+  # release-please.yaml runs `gh workflow run release-artifacts.yaml --ref refs/tags/<tag>`,
+  # because its tags (created with the GITHUB_TOKEN) don't trigger the push event.
+  workflow_dispatch:
 
 concurrency:
   group: release-artifacts-${{ github.ref_name }}
@@ -245,9 +249,9 @@ jobs:
       - name: Check out gh-pages
         if: steps.key.outputs.available == 'true'
         env:
-          RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+          GH_PAGES_TOKEN: ${{ github.token }} # this job has contents: write
         run: |
-          auth=$(printf 'x-access-token:%s' "$RELEASE_BOT_TOKEN" | base64 | tr -d '\n')
+          auth=$(printf 'x-access-token:%s' "$GH_PAGES_TOKEN" | base64 | tr -d '\n')
           echo "::add-mask::$auth"
           {
             echo "GIT_CONFIG_COUNT=1"
