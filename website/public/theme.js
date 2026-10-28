@@ -1,9 +1,11 @@
-// mazemail.dev: the only script on the site (progressive enhancement, ~1 KB).
+// mazemail.dev: the site-wide script (progressive enhancement, ~4 KB).
 // 1. Applies a saved theme before first paint (loaded blocking in <head>).
 // 2. Wires the theme toggle. Choosing the theme the system already uses forgets the
 //    choice, so the site follows the system again.
 // 3. Keyboard shortcuts printed in the header: "d" opens Download.
-// Stored in localStorage under "theme"; no cookies.
+// 4. Detects the visitor's operating system: sets data-os="mac|linux|windows" on <html>
+//    and names their computer in [data-device] elements ("device" stays the default).
+// Stored in localStorage under "theme"; no cookies. Nothing is sent anywhere.
 (function () {
   var root = document.documentElement;
   var media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -28,10 +30,30 @@
     button.setAttribute("title", "Switch to " + next + " theme");
   }
 
+  // Phones, tablets (iPads in desktop mode report a Mac, so touch counts) and anything
+  // unrecognised get no data-os and keep the generic word.
+  function os() {
+    var ua = navigator.userAgent || "";
+    var platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
+    if (/android|iphone|ipad|ipod|cros/i.test(ua)) return "";
+    if (/mac/i.test(platform) || /macintosh/i.test(ua)) return navigator.maxTouchPoints > 0 ? "" : "mac";
+    if (/win/i.test(platform) || /windows/i.test(ua)) return "windows";
+    if (/linux|x11/i.test(platform) || /linux|x11/i.test(ua)) return "linux";
+    return "";
+  }
+  var DEVICE = { mac: "Mac", linux: "Linux PC", windows: "Windows PC" };
+  var visitorOs = os();
+  if (visitorOs) root.setAttribute("data-os", visitorOs);
+
   var initial = saved();
   if (initial === "light" || initial === "dark") root.setAttribute("data-theme", initial);
 
   document.addEventListener("DOMContentLoaded", function () {
+    if (visitorOs) {
+      var devices = document.querySelectorAll("[data-device]");
+      for (var i = 0; i < devices.length; i++) devices[i].textContent = DEVICE[visitorOs];
+    }
+
     var button = document.getElementById("theme-toggle");
     if (button) {
       button.hidden = false;

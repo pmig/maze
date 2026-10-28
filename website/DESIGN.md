@@ -80,10 +80,11 @@ Nothing is copied: no assets, logos, copy, or CSS from either site.
   else "planned". The product is "Maze"; `mazemail` appears only as a technical name
   (CLI, domain, repository).
 - **Weight.** No client-side framework. JavaScript is one small file for the theme
-  toggle and keyboard shortcuts, plus `dots.js` (about 15 KB, 5 KB compressed, home
-  page only) for the hero animation: one canvas, paused off screen and in background
-  tabs, a still logo under `prefers-reduced-motion`, hidden below 1000 px. The site
-  works fully without either.
+  toggle, keyboard shortcuts and naming the visitor's computer (copy says "device" and
+  becomes "Mac", "Linux PC" or "Windows PC"; nothing is sent anywhere), plus `dots.js`
+  (about 15 KB, 5 KB compressed, home page only) for the hero animation: one canvas,
+  paused off screen and in background tabs, a still logo under
+  `prefers-reduced-motion`, hidden below 1000 px. The site works fully without either.
 - **Privacy.** No analytics, no cookies, no third-party requests of any kind, enforced
   by the Content Security Policy. The footer says so.
 - **Accessibility.** Semantic landmarks, one `h1` per page, skip link, visible focus,
