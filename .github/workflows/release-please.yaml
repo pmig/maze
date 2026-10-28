@@ -1,8 +1,11 @@
 name: Release Please
 
 # Keeps the release PR (version.txt + CHANGELOG.md) up to date. Merging that PR
-# creates the tag and the GitHub Release, which triggers release-artifacts.yaml.
-# See PLAN §4.16.
+# creates the tag and the GitHub Release, and this workflow then starts
+# release-artifacts.yaml on the tag. See PLAN §4.16.
+#
+# Runs with the built-in GITHUB_TOKEN, no bot token: a tag created with it starts no
+# workflow by itself, so the release build is started explicitly below.
 on:
   push:
     branches: [main, 'v*.*.x', 'v*.*.*-rc.x']
@@ -13,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      actions: write # gh workflow run
       contents: write
       pull-requests: write
     steps:
@@ -20,8 +24,15 @@ jobs:
         with:
           persist-credentials: false
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
         with:
-          # Must be a bot/PAT token, not GITHUB_TOKEN: tags created with GITHUB_TOKEN
-          # don't trigger release-artifacts.yaml.
-          token: ${{ secrets.RELEASE_BOT_TOKEN }}
           target-branch: ${{ github.ref_name }}
+      # A tag created with the GITHUB_TOKEN starts no workflow, so the release build is
+      # started on it here.
+      - name: Start the release build
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: gh workflow run release-artifacts.yaml --ref "refs/tags/$TAG"

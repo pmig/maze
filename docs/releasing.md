@@ -10,7 +10,8 @@ PR (conventional title) ──squash──▶ main ──▶ ci.yaml (lint, test
                                        └──▶ release-please.yaml: opens/updates the release PR
                                             (version.txt + CHANGELOG.md)
 release PR merged ──▶ tag 0.1.0-alpha.1 + GitHub Release (prerelease)
-                  ──▶ release-artifacts.yaml: build, sign, notarize, upload, publish manifests
+                  ──▶ release-please.yaml starts release-artifacts.yaml on the tag:
+                      build, sign, notarize, upload, publish manifests
 ```
 
 Commits that only touch `website/` (`exclude-paths` in `release-please-config.json`)
@@ -37,7 +38,6 @@ don't appear in the changelog and don't trigger a release; the site deploys on i
 
 | Secret                       | What it is                                                                                     | Used by                    |
 | ---------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------- |
-| `RELEASE_BOT_TOKEN`          | A bot token (fine-grained PAT of a bot account, or a GitHub App token) with **Contents: read and write** and **Pull requests: read and write** on `pmig/maze`. Not `GITHUB_TOKEN`: tags created with it don't trigger `release-artifacts.yaml` | release-please, push to `gh-pages` |
 | `UPDATE_SIGNING_KEY`         | The content of `update-key.secret` (see step 2), verbatim                                      | update manifests           |
 | `APPLE_CERTIFICATE_P12`      | base64 of the **Developer ID Application** certificate with its private key, exported as `.p12` | `sign-and-notarize-mac`    |
 | `APPLE_CERTIFICATE_PASSWORD` | the password of that `.p12`                                                                    | `sign-and-notarize-mac`    |
@@ -60,7 +60,6 @@ What happens when secrets are missing:
   **unsigned**, and **no macOS update manifest** is published (the updater rejects
   bundles that aren't signed by our Team ID). The workflow warns but doesn't fail.
 - Without `UPDATE_SIGNING_KEY`, no manifests are published at all.
-- Without `RELEASE_BOT_TOKEN`, release-please can't open the release PR.
 
 ## 2. The update signing key
 
@@ -104,9 +103,15 @@ the work directory; debug builds of the app also take `MAZEMAIL_UPDATE_BASE_URL`
    release. (A `Release-As: 0.1.0-alpha.1` footer in a squashed commit's body works
    too.)
 2. **Read the release PR.** `version.txt` must say `0.1.0-alpha.1`, and `CHANGELOG.md`
-   should read well; edit the PR if needed.
+   should read well; edit the PR if needed. release-please opens it with the built-in
+   `GITHUB_TOKEN`, and a PR opened that way starts no workflows, so the required `CI`
+   and `Semantic PR title` checks don't run on their own: **close and reopen the PR**
+   to start them.
 3. **Merge the release PR.** release-please creates the tag `0.1.0-alpha.1` (no `v`)
-   and a GitHub **prerelease**, which puts it on the `preview` channel.
+   and a GitHub **prerelease**, which puts it on the `preview` channel, then starts
+   `Release artifacts` on the tag (a tag created with `GITHUB_TOKEN` doesn't trigger
+   it by itself). If that step ever fails, start it by hand:
+   `gh workflow run release-artifacts.yaml --ref refs/tags/0.1.0-alpha.1`.
 4. **Watch `Release artifacts`** (`gh run watch`):
    - `Determine channel`: the tag matches `version.txt`, the channel is `preview`, and
      the signing secrets are complete (check its warnings).
