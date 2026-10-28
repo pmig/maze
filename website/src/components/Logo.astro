@@ -1,8 +1,7 @@
 ---
 // The Maze mark for the header, footer and 404 page: the envelope from the app icon
-// (assets/icons/maze.svg) without its tile, framed by an amber border with a graphite
-// line inside it, so the white flap never touches the amber directly. `size` is the
-// height; the mark is 1.411 times as wide.
+// (assets/icons/maze.svg) without its tile, framed by a border in the flap's middle
+// gray. `size` is the height; the mark is 1.411 times as wide.
 interface Props {
   size?: number | undefined;
 }
@@ -15,6 +14,5 @@ const width = Math.round(size * 1.4106);
   <path d="M165.5 476 L197 476 A40.5 40.5 0 0 1 237.5 516.5 A40.5 40.5 0 0 0 278 557 L291.5 557 A40.5 40.5 0 0 1 332 597.5 A40.5 40.5 0 0 0 372.5 638 L651.5 638 A40.5 40.5 0 0 0 692 597.5 A40.5 40.5 0 0 1 732.5 557 L746 557 A40.5 40.5 0 0 0 786.5 516.5 A40.5 40.5 0 0 1 827 476 L858.5 476 L858.5 359 A81 81 0 0 0 777.5 278 L246.5 278 A81 81 0 0 0 165.5 359 Z" fill="#A1A1AA"></path>
   <path d="M165.5 368 L305 368 A40.5 40.5 0 0 1 345.5 408.5 A40.5 40.5 0 0 0 386 449 L399.5 449 A40.5 40.5 0 0 1 440 489.5 A40.5 40.5 0 0 0 480.5 530 L543.5 530 A40.5 40.5 0 0 0 584 489.5 A40.5 40.5 0 0 1 624.5 449 L638 449 A40.5 40.5 0 0 0 678.5 408.5 A40.5 40.5 0 0 1 719 368 L858.5 368 L858.5 359 A81 81 0 0 0 777.5 278 L246.5 278 A81 81 0 0 0 165.5 359 Z" fill="#F4F4F5"></path>
   <circle cx="512" cy="584" r="40.5" fill="#FFB86B"></circle>
-  <rect x="181.5" y="294" width="661" height="436" rx="65" fill="none" stroke="#2E3037" stroke-width="32"></rect>
-  <rect x="145.5" y="258" width="733" height="508" rx="101" fill="none" stroke="#FFB86B" stroke-width="40"></rect>
+  <rect x="145.5" y="258" width="733" height="508" rx="101" fill="none" stroke="#A1A1AA" stroke-width="40"></rect>
 </svg>
