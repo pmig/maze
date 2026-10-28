@@ -57,10 +57,11 @@ Nothing is copied: no assets, logos, copy, or CSS from either site.
 ## Maze's rules
 
 - **Palette.** Graphite: neutral grays and a monochrome accent (near-black `#18181B` in
-  light, near-white `#F4F4F5` in dark) for links, the primary button and focus rings,
-  matching the graphite app icon (`#52555F` → `#141519`). Amber
-  (`#FFB86B`, the dot at the center of the icon's maze) appears only as a tiny marker:
-  the pre-alpha dot, list bullets for "done". Both themes meet WCAG AA for text (most
+  light, near-white `#F4F4F5` in dark) for links, the primary button and focus rings.
+  Amber (`#FFB86B`) is the logo's colour: the app icon is an amber tile (`#FFC888` →
+  `#F5A04A`) with a graphite envelope, and the goal in the fold of its flap shows the
+  amber through. Outside the logo, amber appears only as a tiny marker: the pre-alpha
+  dot, list bullets for "done". Both themes meet WCAG AA for text (most
   pairs AAA).
 - **Themes.** Follow `prefers-color-scheme` by default. A toggle in the header cycles
   system → light → dark and remembers the choice in `localStorage` (not a cookie). A
