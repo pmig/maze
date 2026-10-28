@@ -41,6 +41,12 @@ source-fontconfig-dlopen = ["yeslogic-fontconfig-sys/dlopen"]
 name = "zed_font_kit"
 path = "src/lib.rs"
 
+# Maze: upstream code that is unused on some targets (on Linux, Family::from_handle is
+# only called by a default Source method the fontconfig backend overrides). Cargo hides
+# such warnings for crates.io dependencies, not for this path dependency.
+[lints.rust]
+dead_code = "allow"
+
 [dependencies.bitflags]
 version = "2.4"
 

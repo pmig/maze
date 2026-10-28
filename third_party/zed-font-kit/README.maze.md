@@ -2,9 +2,12 @@
 
 A copy of [`zed-font-kit` 0.14.1-zed](https://crates.io/crates/zed-font-kit/0.14.1-zed)
 (MIT OR Apache-2.0, GPUI's font-kit fork), used through `[patch.crates-io]` in the
-workspace `Cargo.toml`. One change:
+workspace `Cargo.toml`. Two changes, both in `Cargo.toml`:
 
-- `Cargo.toml`: the Linux `freetype-sys` requirement is `0.23` instead of `0.20`.
+- The Linux `freetype-sys` requirement is `0.23` instead of `0.20`.
+- `[lints.rust] dead_code = "allow"`: some upstream code is unused on Linux
+  (`Family::from_handle` and `from_font_handles`), and Cargo shows warnings for a path
+  dependency that it hides for the same crate from crates.io.
 
 Why: the original HTML engine (Servo 0.7, ADR-020) links `freetype-sys` 0.23 on Linux,
 GPUI 0.3.9 (through this crate) 0.20, and Cargo allows only one crate that links the
