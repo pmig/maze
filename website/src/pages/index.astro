@@ -58,17 +58,19 @@ const TERMINAL = [
           the <code>mazemail</code> command line.
         </p>
         <div class="hero-cta">
+          {/* No downloads yet: Maze is built from source for now. Restore with the first release.
           <a class="button button--primary" href={release.mac.aarch64}>
             <Icon name="download" />
             Download for macOS
           </a>
-          <a class="button" href="/docs/getting-started/#from-source">
+          */}
+          <a class="button button--primary" href="/docs/getting-started/#from-source">
             <Icon name="terminal" />
             Build from source
           </a>
         </div>
         <p class="hero-note">
-          Apple Silicon · <a href={release.mac.x86_64}>Intel</a> · {SITE.macosMinimum} or later · updates itself.
+          {/* Apple Silicon · <a href={release.mac.x86_64}>Intel</a> · {SITE.macosMinimum} or later · updates itself. */}
           Pre-alpha: it reads, writes and runs agents; expect rough edges.
         </p>
       </div>
@@ -366,7 +368,10 @@ const TERMINAL = [
       <h2 id="cta-title">Try Maze on your Mac.</h2>
       <p class="muted">Free and open source. No account, no sign-up, nothing to opt out of.</p>
       <div class="hero-cta">
+        {/* No downloads yet. Restore with the first release.
         <a class="button button--primary" href="/download/"><Icon name="download" /> Download</a>
+        */}
+        <a class="button button--primary" href="/docs/getting-started/#from-source"><Icon name="terminal" /> Build from source</a>
         <a class="button" href="/docs/getting-started/">Read the docs</a>
       </div>
     </section>
