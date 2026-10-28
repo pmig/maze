@@ -73,12 +73,17 @@ Nothing is copied: no assets, logos, copy, or CSS from either site.
   12-column-ish grids that collapse to one column below 760 px. Generous outer
   whitespace, dense insides.
 - **Imagery.** Real screenshots of Maze only (from `docs/screenshots/`), framed like a
-  window, served as AVIF/WebP at several widths. No stock art, no illustrations.
+  window, served as AVIF/WebP at several widths. No stock art, no illustrations. The
+  one exception is the dot animation next to the hero text, built from the logo and
+  simple icons for what Maze does (mail, search, speed, encryption, keys, CLI, agents).
 - **Tone.** Short sentences, concrete nouns, no hype. Say what exists; label everything
   else "planned". The product is "Maze"; `mazemail` appears only as a technical name
   (CLI, domain, repository).
 - **Weight.** No client-side framework. JavaScript is one small file for the theme
-  toggle and keyboard shortcuts; the site works fully without it.
+  toggle and keyboard shortcuts, plus `dots.js` (about 15 KB, 5 KB compressed, home
+  page only) for the hero animation: one canvas, paused off screen and in background
+  tabs, a still logo under `prefers-reduced-motion`, hidden below 1000 px. The site
+  works fully without either.
 - **Privacy.** No analytics, no cookies, no third-party requests of any kind, enforced
   by the Content Security Policy. The footer says so.
 - **Accessibility.** Semantic landmarks, one `h1` per page, skip link, visible focus,

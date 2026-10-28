@@ -27,6 +27,8 @@
 # Stable names that may change between deploys: revalidate, but allow a short cache.
 /theme.js
   Cache-Control: public, max-age=3600, must-revalidate
+/dots.js
+  Cache-Control: public, max-age=3600, must-revalidate
 /favicon.svg
   Cache-Control: public, max-age=86400
 /apple-touch-icon.png
