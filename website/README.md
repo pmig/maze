@@ -124,13 +124,13 @@ sites; that's what `wrangler.jsonc` describes: an assets-only Worker named
    the custom domain); the template adds a few read permissions wrangler uses for
    account lookups. Copy the token, and the **Account ID** from the account's overview
    page.
-5. **GitHub.** *Settings → Environments → New environment* `production` (optionally
+5. **GitHub.** *Settings → Environments → New environment* `website` (optionally
    with required reviewers or a `main`-only branch rule), and in it the secrets
    `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`:
 
    ```sh
-   gh secret set CLOUDFLARE_API_TOKEN --env production
-   gh secret set CLOUDFLARE_ACCOUNT_ID --env production
+   gh secret set CLOUDFLARE_API_TOKEN --env website
+   gh secret set CLOUDFLARE_ACCOUNT_ID --env website
    ```
 
 6. **First deploy.** Merge to `main`, or run the workflow by hand (*Actions → Website →
