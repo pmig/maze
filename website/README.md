@@ -9,8 +9,9 @@ The design rules are in [DESIGN.md](DESIGN.md).
   collection with a glob loader), `/changelog/` renders `../CHANGELOG.md` once
   release-please writes it, and the favicon comes from `../assets/icons/maze.svg`. Edit
   those files, not copies.
-- **No client framework, no third parties.** The only script is `public/theme.js`
-  (theme toggle and the `d` shortcut, about 1 KB). Fonts (IBM Plex Sans, Lilex; both
+- **No client framework, no third parties.** Two scripts: `public/theme.js` (theme
+  toggle and the `d` shortcut, about 1 KB) and `public/dots.js` (the hero's dot
+  animation, home page only, about 15 KB). Fonts (IBM Plex Sans, Lilex; both
   SIL OFL 1.1) are configured in `astro.config.mjs` (`fonts`, npm provider) and
   self-hosted under `/_astro/fonts/`. The CSP in `public/_headers` allows nothing but
   the site's own origin.
@@ -28,6 +29,7 @@ website/
 │   ├── _redirects          a few convenience redirects
 │   ├── .well-known/security.txt
 │   ├── og.png              social card (made from scripts/og.html)
+│   ├── dots.js             hero dot animation (home page)
 │   └── theme.js
 ├── scripts/
 │   ├── check-links.mjs     internal link + anchor checker for dist/
