@@ -44,6 +44,7 @@ const current = (href: string) => path === href || (href !== "/" && path.startsW
         <Icon name="moon" class="when-light" />
         <Icon name="sun" class="when-dark" />
       </button>
+      {/* No downloads yet. Restore with the first release.
       <a
         class="button button--primary download"
         href="/download/"
@@ -53,12 +54,13 @@ const current = (href: string) => path === href || (href !== "/" && path.startsW
       >
         Download <kbd aria-hidden="true">D</kbd>
       </a>
+      */}
       <details class="menu">
         <summary class="icon-button" aria-label="Menu">
           <Icon name="menu" />
         </summary>
         <nav class="menu-panel" aria-label="Main (compact)">
-          <a href="/download/">Download</a>
+          {/* <a href="/download/">Download</a> */}
           {NAV.map((item) => <a href={item.href}>{item.label}</a>)}
           <a href={SITE.repo} rel="noopener">GitHub</a>
         </nav>
