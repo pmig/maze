@@ -17,8 +17,9 @@ const SHORTCUTS: [string[], string][] = [
   [["s"], "star"],
   [["r"], "reply"],
   [["m"], "toggle read"],
-  [["cmd", "shift", "k"], "Quick Filter"],
-  [["cmd", "k"], "search everything"],
+  [["cmd", "k"], "go to folder"],
+  [["cmd", "f"], "Quick Filter"],
+  [["cmd", "shift", "f"], "search everything"],
   [["cmd", "shift", "p"], "command palette"],
   [["F8"], "message pane"],
 ];
@@ -116,7 +117,7 @@ const TERMINAL = [
                 <li>
                   <span class="combo">
                     {keys.map((k) => (
-                      <kbd>{k}</kbd>
+                      <kbd>{k === "cmd" ? "⌘/Ctrl" : k}</kbd>
                     ))}
                   </span>
                   <span>{label}</span>

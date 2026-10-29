@@ -18,6 +18,14 @@
   // grow and shrink with it.
   "font_size": 14,
 
+  // Keyboard shortcuts.
+  "keymap": {
+    // The key that shortcuts like cmd-k use: "platform" (Command on macOS, Ctrl on
+    // Linux), "ctrl" or "super" (Command on macOS, the Super key on Linux). Applies
+    // after a restart.
+    "primary_modifier": "platform"
+  },
+
   // Window layout: "four_column" (folders | list | message | agent),
   // "vertical" (four_column without the agent column), "classic" or "wide"
   // (Thunderbird's layouts).

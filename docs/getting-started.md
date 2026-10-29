@@ -454,6 +454,13 @@ so they survive restarts and re-syncs, and you can edit them by hand:
 Maze keeps your comments and formatting when it changes the list. A favorite whose
 folder no longer exists (or whose account was renamed) is hidden, not deleted.
 
+**Go to Folder** (`cmd-k`, or "Mail: Go To Folder" in the command palette) opens any
+folder without the mouse: type part of its name, pick it with the arrow keys and press
+`enter`. It lists the unified folders, then your favorites, then every folder of every
+account as its path ("Work / Archives / 2025"). The folders you opened from it last come
+first. `arc25` finds "Archives / 2025": every word you type must appear in the path, in
+order if not in one piece.
+
 ### The message list
 
 The list shows two-line cards or, a click (or `cmd-alt-t`) away, Thunderbird's table
@@ -573,8 +580,12 @@ work the same way.
 
 ### Searching
 
-- **Quick Filter** (`cmd-shift-k`) filters the current folder as you type.
-- **Search all messages** (`cmd-k`) searches every account.
+- **Quick Filter** (`cmd-f`, or Thunderbird's `cmd-shift-k`) narrows the folder you
+  are looking at as you type, and its buttons show only unread, starred or tagged mail
+  or mail with attachments. The list stays the folder; clear the filter and everything
+  is back.
+- **Search all messages** (`cmd-shift-f` as in Zed, or `cmd-/`) searches every account
+  and folder, message text included, and shows the results as a list of their own.
 
 Both understand free text plus Gmail-style operators, for example
 `from:anna has:attachment after:2026-09-01`, `is:unread tag:todo`,
@@ -837,16 +848,29 @@ On Linux the updater replaces `~/.local/mazemail.app` the same way.
 
 ## Keyboard shortcuts
 
-Maze uses Thunderbird's shortcuts and fills the gaps with Zed's. These are bound today
-(macOS; Linux uses the same keymap for now, so `cmd` is the Super key there):
+Maze uses Thunderbird's shortcuts and fills the gaps with Zed's. The table writes the
+main modifier as `cmd`: that is Command on macOS and Ctrl on Linux. To use Ctrl on a
+Mac or the Super key on Linux, set it in `settings.json` and restart Maze:
+
+```jsonc
+"keymap": {
+  // "platform" (Command on macOS, Ctrl on Linux), "ctrl" or "super"
+  "primary_modifier": "ctrl"
+}
+```
+
+With Ctrl as the main modifier, shortcuts that already use Ctrl next to `cmd` (splitting
+with `cmd-ctrl-<arrow>`) use Ctrl and Super. Tooltips and hints in Maze show the keys
+you chose. These are bound today:
 
 | Action                                      | Key                                                  |
 | ------------------------------------------- | ---------------------------------------------------- |
 | **Window**                                  |                                                      |
 | Command palette                             | `cmd-shift-p`                                        |
 | Settings (`settings.json` in a tab)         | `cmd-,`                                              |
-| Search all messages                         | `cmd-k`                                              |
-| Quick Filter                                | `cmd-shift-k`                                        |
+| Go to Folder                                | `cmd-k`                                              |
+| Search all messages                         | `cmd-shift-f`, `cmd-/`                               |
+| Quick Filter                                | `cmd-f`, `cmd-shift-k`                               |
 | Toggle folder pane                          | `cmd-b` (or the title bar's left button)             |
 | Toggle message pane                         | `F8`                                                 |
 | Toggle agent column                         | `cmd-?`                                              |
@@ -896,8 +920,8 @@ Single-letter shortcuts work when the message list or a message has focus, never
 a text field; they act on the tab that has the focus.
 
 Zed splits and moves between panes with `cmd-k` followed by an arrow key. In Maze
-`cmd-k` is Thunderbird's search, and a two-key shortcut starting with `cmd-k` would make
-search wait a second for the second key, so Maze uses `cmd-ctrl-<arrow>` and
+`cmd-k` is Go to Folder, and a two-key shortcut starting with `cmd-k` would make it
+wait a second for the second key, so Maze uses `cmd-ctrl-<arrow>` and
 `cmd-alt-<arrow>` instead. Maze doesn't read a keymap of your own (`keymap.json`) yet.
 The rest of Thunderbird's keymap (tags `1`–`9`, junk, history) follows as the features
 arrive.

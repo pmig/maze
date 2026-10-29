@@ -87,6 +87,7 @@ use gpui_kit::component::{
 use mazemail_types::{Flags, FolderId, MessageId, ThreadId};
 use time::UtcOffset;
 use ui::assets::IconName;
+use ui::keymap::shortcut_label;
 use ui::theme::{scaled, ui_scale};
 
 use crate::actions::{
@@ -676,7 +677,7 @@ impl ThreadList {
         });
         let quick_filter = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Quick filter…  ⌘⇧K")
+                .placeholder(format!("Quick filter…  {}", shortcut_label("cmd-f", cx)))
                 .clean_on_escape()
         });
         let subscriptions = vec![
@@ -2000,10 +2001,15 @@ impl ThreadList {
         }
     }
 
-    /// Focuses the Quick Filter (`cmd-shift-k`).
+    /// Focuses the Quick Filter (`cmd-f`, `cmd-shift-k`).
     pub fn focus_quick_filter(&self, window: &mut Window, cx: &mut App) {
         let handle = self.quick_filter.focus_handle(cx);
         window.focus(&handle, cx);
+    }
+
+    /// Whether the Quick Filter has the keyboard focus.
+    pub fn quick_filter_focused(&self, window: &Window, cx: &App) -> bool {
+        self.quick_filter.focus_handle(cx).is_focused(window)
     }
 
     fn toggle_flag_filter(

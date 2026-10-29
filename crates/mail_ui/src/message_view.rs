@@ -37,6 +37,7 @@ use html_view::{DocumentOptions, Fetch, OriginalView, OriginalViewEvent, PageCol
 use mazemail_types::{Address, MessageId};
 use time::UtcOffset;
 use ui::assets::IconName;
+use ui::keymap::shortcut_label;
 use ui::theme::scaled;
 
 use crate::actions::{Archive, Forward, Reply, ReplyAll, ToggleOriginalHtml};
@@ -768,8 +769,14 @@ impl MessageView {
                     .label(label)
                     .selected(mode == target)
                     .tooltip(match target {
-                        BodyMode::Reader => "Reader mode: simplified, in your theme (⌥⌘O)",
-                        BodyMode::Original => "Original: as the sender designed it (⌥⌘O)",
+                        BodyMode::Reader => format!(
+                            "Reader mode: simplified, in your theme ({})",
+                            shortcut_label("cmd-alt-o", cx)
+                        ),
+                        BodyMode::Original => format!(
+                            "Original: as the sender designed it ({})",
+                            shortcut_label("cmd-alt-o", cx)
+                        ),
                     })
                     .on_click(cx.listener(move |this, _, _, cx| this.set_mode(target, cx))),
             )

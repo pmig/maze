@@ -43,6 +43,7 @@ use gpui_kit::component::{
 use mazemail_types::{FolderRole, MessageId, PRODUCT_NAME, ThreadId};
 use time::UtcOffset;
 use ui::assets::IconName;
+use ui::keymap::shortcut_label;
 use ui::names::NameRng;
 use ui::panes::{
     EmptyState, ItemHandle, ItemKind, Pane, PaneGroup, PaneGroupEvent, Restore, SerializedItem,
@@ -53,6 +54,7 @@ use crate::actions::*;
 use crate::chrome::{AgentColumn, MailStatusBar, SpacesBar, SyncButton};
 use crate::command_palette::{CommandPalette, Dismissed};
 use crate::folder_pane::{FolderPane, FolderPaneEvent};
+use crate::go_to_folder::{GoToFolderEvent, GoToFolderPicker, RECENT_DESTINATIONS};
 use crate::layout::{self, AgentPlacement, LayoutConfig, LayoutPrefs};
 use crate::links::MailTo;
 use crate::mail_view::{MAIL_KIND, MailView, MailViewContext, MailViewEvent, SerializedFolder};
@@ -217,6 +219,10 @@ pub struct MailWindow {
     quick_move: Option<Entity<QuickMove>>,
     quick_move_owner: Option<MoveOwner>,
     quick_move_return_focus: Option<FocusHandle>,
+    go_to: Option<Entity<GoToFolderPicker>>,
+    go_to_return_focus: Option<FocusHandle>,
+    /// Folders opened from Go to Folder, newest first (this session).
+    go_to_recent: Vec<FolderKey>,
     ui_state: UiStateStore,
     stats: Rc<RefCell<FrameStats>>,
     pending_benchmark: Option<ScrollBenchmark>,
@@ -293,17 +299,19 @@ impl MailWindow {
                 .text_sm()
                 .text_color(theme.muted_foreground)
                 .child("No open tabs")
-                .child(
-                    div()
-                        .text_xs()
-                        .child("Pick a folder, or press ⌘N to write a message."),
-                )
+                .child(div().text_xs().child(format!(
+                    "Pick a folder, or press {} to write a message.",
+                    shortcut_label("cmd-n", cx)
+                )))
                 .into_any_element()
         });
         let panes = cx.new(|cx| PaneGroup::new(Some(empty_state), window, cx));
         let search = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Search all messages…  ⌘K")
+                .placeholder(format!(
+                    "Search all messages…  {}",
+                    shortcut_label("cmd-shift-f", cx)
+                ))
                 .clean_on_escape()
         });
         let subscriptions = vec![
@@ -326,6 +334,9 @@ impl MailWindow {
             quick_move: None,
             quick_move_owner: None,
             quick_move_return_focus: None,
+            go_to: None,
+            go_to_return_focus: None,
+            go_to_recent: Vec::new(),
             ui_state: options.ui_state.clone(),
             stats: Rc::new(RefCell::new(FrameStats::new(options.process_start))),
             pending_benchmark: options.benchmark,
@@ -533,6 +544,11 @@ impl MailWindow {
     /// The Quick Move picker, while it is open.
     pub fn quick_move(&self) -> Option<&Entity<QuickMove>> {
         self.quick_move.as_ref()
+    }
+
+    /// The Go to Folder picker, while it is open.
+    pub fn go_to_folder(&self) -> Option<&Entity<GoToFolderPicker>> {
+        self.go_to.as_ref()
     }
 
     /// Adds a view to the right of the title bar, before the search field (the
@@ -1231,6 +1247,72 @@ impl MailWindow {
         cx.notify();
     }
 
+    /// `cmd-k`: opens Go to Folder over every folder, or closes it. Run from the
+    /// palette, it takes the palette's place.
+    fn toggle_go_to_folder(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.go_to.is_some() {
+            self.close_go_to_folder(window, cx);
+            return;
+        }
+        self.go_to_return_focus = match self.palette.take() {
+            Some(_) => self.palette_return_focus.take(),
+            None => window.focused(cx),
+        };
+        let tree = self.source.folder_tree();
+        let recent = self.go_to_recent.clone();
+        let picker = cx.new(|cx| GoToFolderPicker::new(&tree, recent, window, cx));
+        let focus = picker.focus_handle(cx);
+        self._subscriptions
+            .push(cx.subscribe_in(&picker, window, Self::on_go_to_folder_event));
+        self.go_to = Some(picker);
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    fn on_go_to_folder_event(
+        &mut self,
+        _: &Entity<GoToFolderPicker>,
+        event: &GoToFolderEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let GoToFolderEvent::Confirmed(destination) = event else {
+            self.close_go_to_folder(window, cx);
+            return;
+        };
+        self.go_to.take();
+        self.go_to_return_focus = None;
+        self.go_to_recent.retain(|key| key != &destination.key);
+        self.go_to_recent.insert(0, destination.key.clone());
+        self.go_to_recent.truncate(RECENT_DESTINATIONS);
+        self.search
+            .update(cx, |search, cx| search.set_value("", window, cx));
+        let title = folder_title(self.folder_pane.read(cx), &destination.key)
+            .unwrap_or_else(|| destination.name.clone());
+        let view = self.open_folder(
+            ThreadScope::Folder(destination.key.clone()),
+            title,
+            None,
+            false,
+            window,
+            cx,
+        );
+        self.sync_folder_selection(cx);
+        MailView::focus_list(&view, window, cx);
+        cx.notify();
+    }
+
+    fn close_go_to_folder(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.go_to.take().is_none() {
+            return;
+        }
+        match self.go_to_return_focus.take() {
+            Some(focus) => window.focus(&focus, cx),
+            None => self.focus_active_item(window, cx),
+        }
+        cx.notify();
+    }
+
     /// `mail::ToggleFavoriteFolder`: adds the folder of the active mail view to the
     /// favorites or removes it, as the folder pane's context menu does.
     fn toggle_favorite_folder(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
@@ -1650,6 +1732,9 @@ impl MailWindow {
         .on_action(cx.listener(|this, _: &MoveToFolder, window, cx| {
             this.open_quick_move(window, cx);
         }))
+        .on_action(cx.listener(|this, _: &GoToFolder, window, cx| {
+            this.toggle_go_to_folder(window, cx);
+        }))
         .on_action(cx.listener(|this, _: &ToggleFavoriteFolder, window, cx| {
             this.toggle_favorite_folder(window, cx);
         }))
@@ -1847,6 +1932,7 @@ impl Render for MailWindow {
             })
             .children(self.palette.clone())
             .children(self.quick_move.clone())
+            .children(self.go_to.clone())
             .child(
                 canvas(
                     |_, _, _| {},
@@ -2274,6 +2360,110 @@ mod tests {
         cx.run_until_parked();
         assert_eq!(fake.moved_to(MoveItem::Thread(next)), Some(next_trash));
         assert!(offered(cx).is_none());
+    }
+
+    #[gpui::test]
+    fn cmd_k_opens_a_picked_folder(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            ui::init(cx);
+            crate::init(cx);
+        });
+        let source: Arc<dyn MailSource> =
+            Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            MailWindow::new(source, &MailWindowOptions::default(), window, cx)
+        });
+        cx.run_until_parked();
+        let offered = |cx: &mut VisualTestContext| {
+            view.read_with(cx, |w, cx| {
+                w.go_to_folder().map(|picker| {
+                    picker
+                        .read(cx)
+                        .matches()
+                        .map(|d| d.key.clone())
+                        .collect::<Vec<_>>()
+                })
+            })
+        };
+        let scope = |cx: &mut VisualTestContext| {
+            view.read_with(cx, |w, cx| {
+                w.active_mail_view(cx).map(|v| v.read(cx).scope(cx))
+            })
+        };
+        let trash = FolderKey::Unified(FolderRole::Trash);
+
+        cx.simulate_keystrokes("cmd-k");
+        let all = offered(cx).expect("the picker is open");
+        assert_eq!(
+            all[0],
+            FolderKey::Unified(FolderRole::Inbox),
+            "unified folders first"
+        );
+        assert!(all.iter().any(|key| matches!(key, FolderKey::Folder(_))));
+        cx.simulate_input("trash");
+        assert_eq!(offered(cx).unwrap()[0], trash);
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert!(offered(cx).is_none(), "the picker closed");
+        assert_eq!(scope(cx), Some(ThreadScope::Folder(trash.clone())));
+
+        // The folder opened last comes first; escape closes without opening anything.
+        cx.simulate_keystrokes("cmd-k");
+        assert_eq!(offered(cx).unwrap()[0], trash);
+        cx.simulate_keystrokes("escape");
+        assert!(offered(cx).is_none());
+        // `cmd-k` again closes it too.
+        cx.simulate_keystrokes("cmd-k cmd-k");
+        assert!(offered(cx).is_none());
+
+        // From the palette: the picker takes its place and gets the keys.
+        cx.simulate_keystrokes("cmd-shift-p");
+        cx.simulate_input("go to folder");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert!(!view.read_with(cx, |w, _| w.is_palette_open()));
+        assert!(offered(cx).is_some());
+        cx.simulate_input("inbox");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert_eq!(
+            scope(cx),
+            Some(ThreadScope::Folder(FolderKey::Unified(FolderRole::Inbox)))
+        );
+    }
+
+    #[gpui::test]
+    fn search_and_quick_filter_have_their_own_keys(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            ui::init(cx);
+            crate::init(cx);
+        });
+        let source: Arc<dyn MailSource> =
+            Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            MailWindow::new(source, &MailWindowOptions::default(), window, cx)
+        });
+        cx.run_until_parked();
+        let search_focused = |cx: &mut VisualTestContext| {
+            view.update_in(cx, |w, window, cx| {
+                w.search.focus_handle(cx).is_focused(window)
+            })
+        };
+        for keys in ["cmd-shift-f", "cmd-/"] {
+            view.update_in(cx, |w, window, cx| w.focus_active_item(window, cx));
+            assert!(!search_focused(cx));
+            cx.simulate_keystrokes(keys);
+            assert!(search_focused(cx), "{keys} focuses the search");
+        }
+        view.update_in(cx, |w, window, cx| w.focus_active_item(window, cx));
+        cx.simulate_keystrokes("cmd-f");
+        let filter_focused = view.update_in(cx, |w, window, cx| {
+            w.thread_list(cx)
+                .unwrap()
+                .read(cx)
+                .quick_filter_focused(window, cx)
+        });
+        assert!(filter_focused, "cmd-f focuses the Quick Filter");
     }
 
     #[gpui::test]

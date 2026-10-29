@@ -117,24 +117,37 @@ fn term_score(path: &str, name: &str, term: &str) -> Option<u32> {
 /// given order. Otherwise only folders matching every term are listed, best first (see
 /// [`term_score`]), ties broken by recency and then by the given order.
 pub fn rank(choices: &[FolderChoice], query: &str, recent: &[FolderId]) -> Vec<usize> {
-    let recency = |choice: &FolderChoice| {
-        recent
-            .iter()
-            .position(|id| *id == choice.id)
-            .unwrap_or(usize::MAX)
-    };
+    rank_paths(
+        choices.iter().map(|choice| choice.path.as_ref()),
+        query,
+        |ix| {
+            recent
+                .iter()
+                .position(|id| *id == choices[ix].id)
+                .unwrap_or(usize::MAX)
+        },
+    )
+}
+
+/// [`rank`] over folder paths ("Archives / 2025"): the indexes of the paths that match
+/// `query`, best first. `recency(ix)` is the place of path `ix` among the recent
+/// targets (`usize::MAX` if it isn't one); it breaks ties.
+pub fn rank_paths<'a>(
+    paths: impl Iterator<Item = &'a str>,
+    query: &str,
+    recency: impl Fn(usize) -> usize,
+) -> Vec<usize> {
     let terms: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
-    let mut ranked: Vec<(u32, usize, usize)> = choices
-        .iter()
+    let mut ranked: Vec<(u32, usize, usize)> = paths
         .enumerate()
-        .filter_map(|(ix, choice)| {
-            let path = choice.path.to_lowercase();
+        .filter_map(|(ix, path)| {
+            let path = path.to_lowercase();
             let name = path.rsplit(" / ").next().unwrap_or(&path);
             let mut score = 0;
             for term in &terms {
                 score += term_score(&path, name, term)?;
             }
-            Some((score, recency(choice), ix))
+            Some((score, recency(ix), ix))
         })
         .collect();
     ranked.sort_unstable();

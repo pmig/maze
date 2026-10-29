@@ -24,6 +24,7 @@ use gpui_kit::component::{
 };
 
 use crate::assets::IconName;
+use crate::keymap::shortcut_label;
 use crate::panes::item::{ItemEvent, ItemHandle};
 use crate::panes::tree::SplitDirection;
 use crate::theme::scaled;
@@ -529,7 +530,7 @@ impl Pane {
             .ghost()
             .xsmall()
             .icon(Icon::new(IconName::Close))
-            .tooltip("Close Tab (⌘W)")
+            .tooltip(format!("Close Tab ({})", shortcut_label("cmd-w", cx)))
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 cx.stop_propagation();
                 this.close_item(item_id, window, cx);

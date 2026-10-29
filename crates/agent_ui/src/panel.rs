@@ -33,6 +33,7 @@ use mazemail_types::ThreadId;
 use settings::Settings;
 use ui::assets::IconName;
 use ui::gpui_tokio::Tokio;
+use ui::keymap::shortcut_label;
 use ui::theme::scaled;
 
 use self::sign_in::SignInState;
@@ -918,7 +919,7 @@ impl AgentPanel {
                             .ghost()
                             .xsmall()
                             .icon(Icon::new(IconName::Plus))
-                            .tooltip("New thread (⌘N)")
+                            .tooltip(format!("New thread ({})", shortcut_label("cmd-n", cx)))
                             .dropdown_menu(move |menu: PopupMenu, _, _| {
                                 let mut menu = menu.label("New Thread");
                                 for (id, name) in &ready {
@@ -958,7 +959,10 @@ impl AgentPanel {
                     .ghost()
                     .xsmall()
                     .icon(Icon::new(IconName::PanelRightClose))
-                    .tooltip("Collapse agent column (⌘?)")
+                    .tooltip(format!(
+                        "Collapse agent column ({})",
+                        shortcut_label("cmd-?", cx)
+                    ))
                     .on_click(|_, window, cx| {
                         match cx.build_action("workspace::ToggleAgentColumn", None) {
                             Ok(action) => window.dispatch_action(action, cx),
@@ -1361,7 +1365,10 @@ impl AgentPanel {
                         Button::new("agent-accept-all")
                             .primary()
                             .xsmall()
-                            .label("Accept all ⌘⇧↵")
+                            .label(format!(
+                                "Accept all {}",
+                                shortcut_label("cmd-shift-enter", cx)
+                            ))
                             .on_click(
                                 cx.listener(|this, _: &ClickEvent, _, cx| {
                                     this.decide_all(true, cx)

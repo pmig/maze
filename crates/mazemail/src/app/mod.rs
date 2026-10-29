@@ -32,6 +32,7 @@ mod add_account;
 mod agents;
 mod approval;
 mod compose;
+mod keyboard;
 mod legacy_local;
 mod lost_key;
 mod new_mail;
@@ -139,6 +140,7 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
         ui::init(cx);
         theme::apply_from_file(&theme_paths, cx);
         reading::apply_from_file(&theme_paths, cx);
+        keyboard::apply_from_file(&theme_paths, cx);
         mail_ui::init(cx);
         composer::init(cx);
         auto_update_ui::init(cx);
@@ -216,6 +218,7 @@ fn run_demo(window_options: MailWindowOptions) {
         if let Err(error) = ui::gpui_tokio::init(cx) {
             tracing::error!(%error, "could not start the Tokio runtime");
         }
+        keyboard::apply_platform(cx);
         mail_ui::init(cx);
         if let Err(error) = mail_ui::open_main_window(source, window_options, cx) {
             tracing::error!(%error, "could not open the main window");
