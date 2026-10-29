@@ -31,3 +31,4 @@ to the index below.
 | [019](0019-imap-only.md)                     | IMAP only, no Local Folders    | Accepted                    |
 | [020](0020-servo-for-original-html.md)       | Servo for original HTML        | Accepted                    |
 | [021](0021-system-notifications.md)          | System notifications           | Accepted                    |
+| [022](0022-go-to-folder-and-search-keys.md) | Go to Folder, search keys, Ctrl | Accepted                   |

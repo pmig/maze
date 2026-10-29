@@ -54,6 +54,7 @@ use mazemail_types::compose::{Draft, DraftAttachment, SENT_WITH_MAZE};
 use mazemail_types::{Address, DraftId, IdentityId};
 
 use ui::assets::IconName;
+use ui::keymap::shortcut_label;
 use ui::names::NameRng;
 use ui::panes::{Item, ItemEvent, SerializedItem};
 use ui::theme::scaled;
@@ -970,7 +971,10 @@ impl Render for Composer {
                                     .ghost()
                                     .xsmall()
                                     .label("Cc Bcc")
-                                    .tooltip("Show Cc and Bcc (⌘⇧C)")
+                                    .tooltip(format!(
+                                        "Show Cc and Bcc ({})",
+                                        shortcut_label("cmd-shift-c", cx)
+                                    ))
                                     .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                                         this.toggle_cc(window, cx);
                                     })),
@@ -1027,7 +1031,10 @@ impl Render for Composer {
                         Button::new("attach")
                             .small()
                             .label("Attach…")
-                            .tooltip("Attach files (⌘⇧A)")
+                            .tooltip(format!(
+                                "Attach files ({})",
+                                shortcut_label("cmd-shift-a", cx)
+                            ))
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.attach(window, cx);
                             })),
@@ -1046,7 +1053,7 @@ impl Render for Composer {
                             .primary()
                             .small()
                             .label(if self.sending { "Sending…" } else { "Send" })
-                            .tooltip("Send (⌘↩)")
+                            .tooltip(format!("Send ({})", shortcut_label("cmd-enter", cx)))
                             .disabled(self.sending || no_identity)
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.send(window, cx);

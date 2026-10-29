@@ -17,14 +17,27 @@
     }
   },
   {
+    // Thunderbird's key for the Quick Filter. A section of its own before the next
+    // one, so menus and the palette show `cmd-f`.
+    "context": "Workspace",
+    "bindings": {
+      "cmd-shift-k": "search::QuickFilter"
+    }
+  },
+  {
     "context": "Workspace",
     "bindings": {
       "cmd-shift-p": "command_palette::Toggle",
       "cmd-b": "workspace::ToggleFolderPane",
       "cmd-?": "workspace::ToggleAgentColumn",
       "f8": "workspace::ToggleMessagePane",
-      "cmd-k": "search::FocusSearch",
-      "cmd-shift-k": "search::QuickFilter",
+      // Jump to any folder by name, like Quick Move (`shift-m`) for opening.
+      "cmd-k": "mail::GoToFolder",
+      // The Quick Filter narrows the open folder; search covers every account and
+      // folder, on Zed's project search key and `cmd-/`.
+      "cmd-f": "search::QuickFilter",
+      "cmd-shift-f": "search::FocusSearch",
+      "cmd-/": "search::FocusSearch",
       // Thunderbird: F5 gets new messages (Windows, Linux), cmd-shift-t gets them for
       // all accounts. Both sync every account; the last binding is the one shown.
       "f5": "mail::SyncNow",
@@ -39,8 +52,8 @@
       "cmd-shift-r": "mail::ReplyAll",
       "cmd-l": "mail::Forward",
       // Tabs and splits (Zed's keys, ADR-018). Zed's `cmd-k <arrow>` chords would make
-      // Thunderbird's `cmd-k` (search) wait a second for a second key, so splitting in
-      // a direction is `cmd-ctrl-<arrow>` and moving between panes `cmd-alt-<arrow>`.
+      // `cmd-k` (Go to Folder) wait a second for a second key, so splitting in a
+      // direction is `cmd-ctrl-<arrow>` and moving between panes `cmd-alt-<arrow>`.
       "cmd-w": "pane::CloseActiveItem",
       "ctrl-tab": "pane::ActivateNextItem",
       "ctrl-shift-tab": "pane::ActivatePreviousItem",

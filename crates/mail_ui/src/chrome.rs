@@ -20,6 +20,7 @@ use gpui_kit::component::{
 use mazemail_types::PRODUCT_NAME;
 use ui::assets::IconName;
 use ui::components::StatusItem;
+use ui::keymap::shortcut_label;
 use ui::theme::scaled;
 
 use crate::actions::{OpenSettings, SyncNow, Toggle, ToggleAgentColumn};
@@ -383,7 +384,7 @@ impl RenderOnce for MailStatusBar {
                 Button::new("status-palette")
                     .ghost()
                     .xsmall()
-                    .label("⌘⇧P commands")
+                    .label(format!("{} commands", shortcut_label("cmd-shift-p", cx)))
                     .on_click(|_, window, cx| window.dispatch_action(Box::new(Toggle), cx)),
             )
     }

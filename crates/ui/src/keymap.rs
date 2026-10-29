@@ -18,16 +18,204 @@
 //! Loading is forgiving: a binding that names an unknown action or an invalid
 //! keystroke is reported in [`LoadedKeymap::errors`] and skipped, and the rest of the
 //! keymap still loads.
+//!
+//! # The primary modifier
+//!
+//! Keymaps write the main modifier as `cmd`. [`set_primary_modifier`] decides which key
+//! that is when bindings are built ([`translate_keystrokes`]): the Command / Super key
+//! ([`PrimaryModifier::Super`], the default and what the file says), or Ctrl
+//! ([`PrimaryModifier::Ctrl`], the usual choice on Linux). Maze picks it from the
+//! `keymap.primary_modifier` setting before it binds the default keymap.
+//! [`shortcut_label`] writes a shortcut for people with the same choice, as macOS
+//! symbols (`⌘⇧F`) or as text elsewhere (`Ctrl+Shift+F`).
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::rc::Rc;
 
-use gpui::{Action, App, KeyBinding, KeyBindingContextPredicate, NoAction, SharedString};
+use gpui::{Action, App, Global, KeyBinding, KeyBindingContextPredicate, NoAction, SharedString};
 use serde::Deserialize;
 
 /// Maze's default macOS keymap (Thunderbird bindings plus Zed's, CONCEPT §12).
 pub const DEFAULT_MACOS_KEYMAP: &str = include_str!("../../../assets/keymaps/default-macos.json");
+
+/// Which key a keymap's `cmd` stands for.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum PrimaryModifier {
+    /// Command on macOS, the Super (Windows) key elsewhere: the keymap as written.
+    #[default]
+    Super,
+    /// Ctrl.
+    Ctrl,
+}
+
+impl PrimaryModifier {
+    /// The platform's convention: Command on macOS, Ctrl elsewhere.
+    pub const fn for_platform() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::Super
+        } else {
+            Self::Ctrl
+        }
+    }
+}
+
+/// The primary modifier bindings are built with.
+struct ActivePrimaryModifier(PrimaryModifier);
+
+impl Global for ActivePrimaryModifier {}
+
+/// Sets which key `cmd` stands for in keymaps bound from now on, and in
+/// [`shortcut_label`]. Bindings made before keep their keys, so call this before
+/// binding the default keymap.
+pub fn set_primary_modifier(modifier: PrimaryModifier, cx: &mut App) {
+    cx.set_global(ActivePrimaryModifier(modifier));
+}
+
+/// The primary modifier in use ([`PrimaryModifier::Super`] unless set).
+pub fn primary_modifier(cx: &App) -> PrimaryModifier {
+    cx.try_global::<ActivePrimaryModifier>()
+        .map(|active| active.0)
+        .unwrap_or_default()
+}
+
+const MODIFIERS: &[&str] = &[
+    "cmd",
+    "super",
+    "win",
+    "ctrl",
+    "control",
+    "alt",
+    "option",
+    "shift",
+    "fn",
+    "secondary",
+];
+
+/// Splits one keystroke (`cmd-shift-f`) into its modifiers and its key. The key may
+/// itself be `-` (`cmd--`).
+fn split_keystroke(stroke: &str) -> (Vec<&str>, &str) {
+    let mut modifiers = Vec::new();
+    let mut rest = stroke;
+    while let Some((head, tail)) = rest.split_once('-')
+        && !tail.is_empty()
+        && MODIFIERS.iter().any(|m| m.eq_ignore_ascii_case(head))
+    {
+        modifiers.push(head);
+        rest = tail;
+    }
+    (modifiers, rest)
+}
+
+/// `keystrokes` (space-separated) with `cmd` turned into `modifier`. With
+/// [`PrimaryModifier::Ctrl`], a keystroke that has both `cmd` and `ctrl`
+/// (`cmd-ctrl-left`) keeps two modifiers: `cmd` becomes Ctrl and `ctrl` becomes Super.
+pub fn translate_keystrokes(keystrokes: &str, modifier: PrimaryModifier) -> String {
+    if modifier == PrimaryModifier::Super {
+        return keystrokes.to_owned();
+    }
+    keystrokes
+        .split_whitespace()
+        .map(|stroke| {
+            let (modifiers, key) = split_keystroke(stroke);
+            let is = |m: &str, name: &str| m.eq_ignore_ascii_case(name);
+            if !modifiers.iter().any(|m| is(m, "cmd")) {
+                return stroke.to_owned();
+            }
+            let both = modifiers.iter().any(|m| is(m, "ctrl") || is(m, "control"));
+            let mut out: Vec<&str> = modifiers
+                .iter()
+                .map(|m| {
+                    if is(m, "cmd") {
+                        "ctrl"
+                    } else if both && (is(m, "ctrl") || is(m, "control")) {
+                        "super"
+                    } else {
+                        m
+                    }
+                })
+                .collect();
+            out.push(key);
+            out.join("-")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A shortcut from a keymap (`cmd-shift-f`) as people read it, with the primary
+/// modifier in use: `⌘⇧F` on macOS, `Ctrl+Shift+F` elsewhere.
+pub fn shortcut_label(keystrokes: &str, cx: &App) -> String {
+    format_shortcut(
+        &translate_keystrokes(keystrokes, primary_modifier(cx)),
+        cfg!(target_os = "macos"),
+    )
+}
+
+/// [`shortcut_label`] for already translated keystrokes, as macOS symbols or as text.
+fn format_shortcut(keystrokes: &str, symbols: bool) -> String {
+    keystrokes
+        .split_whitespace()
+        .map(|stroke| {
+            let (modifiers, key) = split_keystroke(stroke);
+            let has = |names: &[&str]| {
+                modifiers
+                    .iter()
+                    .any(|m| names.iter().any(|n| m.eq_ignore_ascii_case(n)))
+            };
+            // macOS order: ⌃⌥⇧⌘.
+            let order: [(&[&str], &str, &str); 4] = [
+                (&["ctrl", "control"], "⌃", "Ctrl"),
+                (&["alt", "option"], "⌥", "Alt"),
+                (&["shift"], "⇧", "Shift"),
+                (&["cmd", "super", "win"], "⌘", "Super"),
+            ];
+            let names: Vec<&str> = order
+                .iter()
+                .filter(|(names, _, _)| has(names))
+                .map(|(_, symbol, text)| if symbols { *symbol } else { *text })
+                .collect();
+            let key = key_label(key, symbols);
+            if symbols {
+                format!("{}{key}", names.concat())
+            } else {
+                names
+                    .into_iter()
+                    .chain(std::iter::once(key.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("+")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A key's name for people.
+fn key_label(key: &str, symbols: bool) -> String {
+    let named = match key {
+        "enter" => Some(("↩", "Enter")),
+        "escape" => Some(("⎋", "Esc")),
+        "backspace" => Some(("⌫", "Backspace")),
+        "delete" => Some(("⌦", "Delete")),
+        "tab" => Some(("⇥", "Tab")),
+        "space" => Some(("␣", "Space")),
+        "left" => Some(("←", "Left")),
+        "right" => Some(("→", "Right")),
+        "up" => Some(("↑", "Up")),
+        "down" => Some(("↓", "Down")),
+        _ => None,
+    };
+    match named {
+        Some((symbol, text)) => (if symbols { symbol } else { text }).to_owned(),
+        None if key.chars().count() == 1 => key.to_uppercase(),
+        None => {
+            let mut chars = key.chars();
+            chars
+                .next()
+                .map(|first| first.to_uppercase().chain(chars).collect())
+                .unwrap_or_default()
+        }
+    }
+}
 
 /// A keymap file that couldn't be read at all.
 #[derive(Debug, thiserror::Error)]
@@ -143,9 +331,11 @@ impl KeymapFile {
         Ok(serde_json::from_str(&strip_jsonc(source))?)
     }
 
-    /// Builds GPUI key bindings. Actions must be registered (any `actions!` type
-    /// linked into the binary is) before this runs.
+    /// Builds GPUI key bindings, with `cmd` as the [primary modifier](primary_modifier)
+    /// in use. Actions must be registered (any `actions!` type linked into the binary
+    /// is) before this runs.
     pub fn load(&self, cx: &App) -> LoadedKeymap {
+        let modifier = primary_modifier(cx);
         let mut loaded = LoadedKeymap::default();
         for section in &self.0 {
             let predicate = match section.context.as_deref().map(str::trim) {
@@ -169,9 +359,10 @@ impl KeymapFile {
             };
 
             for (keystrokes, action) in &section.bindings {
+                let translated = translate_keystrokes(keystrokes, modifier);
                 let result = build_action(action, cx).and_then(|(action, input)| {
                     KeyBinding::load(
-                        keystrokes,
+                        &translated,
                         action,
                         predicate.clone(),
                         section.use_key_equivalents,
@@ -467,5 +658,78 @@ mod tests {
             view.read_with(cx, |v, _| v.log.clone()),
             ["archive", "toggle", "toggle"]
         );
+    }
+
+    #[test]
+    fn cmd_becomes_the_primary_modifier() {
+        use PrimaryModifier::{Ctrl, Super};
+        assert_eq!(translate_keystrokes("cmd-shift-f", Super), "cmd-shift-f");
+        assert_eq!(translate_keystrokes("cmd-shift-f", Ctrl), "ctrl-shift-f");
+        assert_eq!(translate_keystrokes("a cmd-b n", Ctrl), "a ctrl-b n");
+        // Keys that are themselves `-` or punctuation stay.
+        assert_eq!(translate_keystrokes("cmd--", Ctrl), "ctrl--");
+        assert_eq!(translate_keystrokes("cmd-\\", Ctrl), "ctrl-\\");
+        // Plain ctrl bindings stay; cmd and ctrl together stay two modifiers.
+        assert_eq!(translate_keystrokes("ctrl-tab", Ctrl), "ctrl-tab");
+        assert_eq!(
+            translate_keystrokes("cmd-ctrl-left", Ctrl),
+            "ctrl-super-left"
+        );
+    }
+
+    #[test]
+    fn shortcuts_read_as_symbols_or_text() {
+        assert_eq!(format_shortcut("cmd-shift-f", true), "⇧⌘F");
+        assert_eq!(format_shortcut("ctrl-shift-f", false), "Ctrl+Shift+F");
+        assert_eq!(format_shortcut("ctrl-super-left", false), "Ctrl+Super+Left");
+        assert_eq!(format_shortcut("cmd-enter", true), "⌘↩");
+        assert_eq!(format_shortcut("cmd-,", false), "Super+,");
+        assert_eq!(format_shortcut("f8", false), "F8");
+    }
+
+    #[test]
+    fn the_default_keymap_has_no_clashes_with_either_modifier() {
+        let file = KeymapFile::parse(DEFAULT_MACOS_KEYMAP).unwrap();
+        for modifier in [PrimaryModifier::Super, PrimaryModifier::Ctrl] {
+            let mut seen: BTreeMap<(String, String), String> = BTreeMap::new();
+            for section in &file.0 {
+                let context = section.context.clone().unwrap_or_default();
+                for (keys, action) in &section.bindings {
+                    let Some(name) = action.name() else { continue };
+                    let translated = translate_keystrokes(keys, modifier);
+                    if let Some(other) =
+                        seen.insert((context.clone(), translated.clone()), name.to_owned())
+                        && other != name
+                    {
+                        panic!("{modifier:?}: {translated} in {context:?} is {other} and {name}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn ctrl_as_the_primary_modifier_binds_ctrl(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            set_primary_modifier(PrimaryModifier::Ctrl, cx);
+            let errors = bind_keymap(
+                r#"[{ "context": "Workspace", "bindings": { "cmd-b": "test_keymap::TogglePane" } }]"#,
+                cx,
+            )
+            .unwrap();
+            assert!(errors.is_empty(), "{errors:?}");
+            assert!(shortcut_label("cmd-b", cx).ends_with('B'));
+        });
+        let (view, cx) = cx.add_window_view(|_, cx| Harness {
+            outer_focus: cx.focus_handle(),
+            inner_focus: cx.focus_handle(),
+            log: Vec::new(),
+        });
+        cx.update(|window, cx| {
+            let focus = view.read(cx).outer_focus.clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("cmd-b ctrl-b");
+        assert_eq!(view.read_with(cx, |v, _| v.log.clone()), ["toggle"]);
     }
 }

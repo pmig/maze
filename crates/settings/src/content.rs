@@ -22,6 +22,8 @@ pub struct Settings {
     /// with it. Applied between 10 and 32.
     #[schemars(range(min = 10, max = 32))]
     pub font_size: u32,
+    /// Keyboard shortcuts.
+    pub keymap: KeymapSettings,
     /// Window layout.
     pub layout: Layout,
     /// Below this window width (px) the message moves under the list (Classic layout).
@@ -70,6 +72,7 @@ impl Default for Settings {
         Self {
             theme: ThemeSettings::default(),
             font_size: 14,
+            keymap: KeymapSettings::default(),
             layout: Layout::default(),
             narrow_layout_below_px: 1000,
             agent_panel: AgentPanelSettings::default(),
@@ -157,6 +160,27 @@ impl Default for ThemeSettings {
             dark: "One Dark".to_owned(),
         }
     }
+}
+
+/// Keyboard shortcuts.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct KeymapSettings {
+    /// The key shortcuts written with `cmd` use. Applies after a restart.
+    pub primary_modifier: PrimaryModifier,
+}
+
+/// The key shortcuts written with `cmd` use.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PrimaryModifier {
+    /// The platform's convention: Command on macOS, Ctrl on Linux.
+    #[default]
+    Platform,
+    /// Ctrl on every platform.
+    Ctrl,
+    /// Command on macOS, the Super (Windows) key on Linux.
+    Super,
 }
 
 /// Light or dark appearance.

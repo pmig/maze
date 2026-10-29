@@ -23,6 +23,7 @@ pub mod command_palette;
 pub mod fake;
 pub mod folder_pane;
 pub mod format;
+pub mod go_to_folder;
 pub mod layout;
 pub mod links;
 pub mod list_model;

@@ -41,6 +41,7 @@ use gpui_kit::component::{
 use serde::{Deserialize, Serialize};
 use settings::{DEFAULT_SETTINGS, Diagnostic, DiagnosticKind};
 use ui::assets::IconName;
+use ui::keymap::shortcut_label;
 use ui::panes::{Item, ItemEvent, SerializedItem};
 use ui::theme::scaled;
 
@@ -469,10 +470,11 @@ impl SettingsEditor {
                     .border_color(colors.border)
                     .text_sm()
                     .text_color(colors.muted_foreground)
-                    .child(
+                    .child(format!(
                         "Maze's default settings, read-only. Copy what you want to change \
-                         into your settings (⌘,).",
-                    )
+                         into your settings ({}).",
+                        shortcut_label("cmd-,", cx)
+                    ))
                     .into_any_element(),
             );
         }

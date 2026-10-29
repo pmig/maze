@@ -62,9 +62,9 @@ actions!(
 actions!(
     search,
     [
-        /// Focus the global search field (`cmd-k`).
+        /// Focus the search field that searches all messages (`cmd-shift-f`, `cmd-/`).
         FocusSearch,
-        /// Focus the Quick Filter of the message list (`cmd-shift-k`).
+        /// Focus the Quick Filter of the message list (`cmd-f`, `cmd-shift-k`).
         QuickFilter,
     ]
 );
@@ -136,6 +136,9 @@ actions!(
         OpenMessage,
         /// Open the selected folder in a new tab (the folder pane's menu).
         OpenFolderInNewTab,
+        /// Pick a folder of any account by typing part of its name and open it
+        /// (`cmd-k`).
+        GoToFolder,
     ]
 );
 
