@@ -436,7 +436,9 @@ top; **Remove from Favorites** (on the folder or on its favorite) takes it out a
 **Mail: Toggle Favorite Folder** in the command palette does the same for the open
 folder. Favorites are sorted like the accounts and their folders; with more than one
 account they are grouped under the account's name. A favorite opens its folder, with
-the same unread count.
+the same unread count. Maze checks favorites for new mail every 30 seconds (other
+folders every 2 minutes, the Inbox at once) and shows a
+[notification](#notifications) for new mail in them, except in Sent.
 
 Favorites are saved in `settings.json` as the account's label and the folder's path,
 so they survive restarts and re-syncs, and you can edit them by hand:
@@ -620,7 +622,8 @@ It updates live while it is open; click outside it or press `escape` to close it
 
 ### Notifications
 
-When new mail arrives in an Inbox, Maze shows a system notification with the sender and
+When new mail arrives in an Inbox or in one of your [favorite folders](#the-folder-pane)
+(except Sent), Maze shows a system notification with the sender and
 the subject (with several accounts, also the account it arrived in). Click it and Maze
 comes to the front with the message open in a tab. When more than three messages
 arrive at once, one notification says how many and who sent them ("5 new messages,
@@ -633,7 +636,8 @@ From Bob, Carol and Dave"); a click brings Maze to the front.
 - **Linux** uses your desktop's notification service (GNOME, KDE, mako, dunst and
   others), with Maze's icon.
 
-Only mail that just arrived counts: unread, in an Inbox, from someone else, and
+Only mail that just arrived counts: unread, in an Inbox or a favorite other than Sent,
+from someone else, and
 received by your server since Maze started syncing that account. The first sync of a
 new account, mail that arrived while Maze wasn't running and mail moved back into the
 Inbox stay quiet. Mail that arrives while your computer sleeps shows up once it wakes.

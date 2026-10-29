@@ -67,7 +67,8 @@
     "modes": ["favorite", "unified"],
     // Folders shown under Favorites, by account label and folder path, e.g.
     // { "account": "work", "folder": "Customers/Acme" }. "Add to Favorites" and
-    // "Remove from Favorites" (right-click a folder) edit this list.
+    // "Remove from Favorites" (right-click a folder) edit this list. Favorites are
+    // checked for new mail every 30 seconds and notify like the Inbox (except Sent).
     "favorites": []
   },
 
@@ -194,8 +195,9 @@
   // "background" (download and install, then offer a restart) or "notify_only".
   "auto_update_install": "background",
 
-  // System notifications for new mail in an Inbox (Notification Center on macOS, the
-  // desktop's notification service on Linux). A click opens the message.
+  // System notifications for new mail in an Inbox or a favorite folder other than Sent
+  // (Notification Center on macOS, the desktop's notification service on Linux). A
+  // click opens the message.
   "notifications": {
     "enabled": true,
     // What a notification shows: "sender_and_subject", "sender_only" or "none" (only

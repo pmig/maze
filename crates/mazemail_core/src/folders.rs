@@ -14,6 +14,9 @@
 //!
 //! Sections without children are left out. The UI decides which sections to show
 //! (setting `folder_pane.modes`).
+//!
+//! The sync engine checks favorites as often as the open folder, and new mail in them
+//! is notified (except in Sent); [`favorite_folders`] finds their ids.
 
 use std::collections::{HashMap, HashSet};
 
@@ -157,6 +160,30 @@ pub fn folder_path(folders: &[Folder], folder: FolderId) -> Option<String> {
     }
     names.reverse();
     Some(names.join(&PATH_SEPARATOR.to_string()))
+}
+
+/// The folders of `account` that `favorites` name, among the account's `folders`.
+pub(crate) fn favorite_folders(
+    account: &Account,
+    folders: &[Folder],
+    favorites: &[FavoriteFolder],
+) -> Vec<FolderId> {
+    let paths: FavoritePaths<'_> = favorites
+        .iter()
+        .filter(|f| f.account == account.name)
+        .map(|f| f.folder.as_str())
+        .collect();
+    if paths.is_empty() {
+        return Vec::new();
+    }
+    let mut ids: Vec<FolderId> = folders
+        .iter()
+        .filter(|f| f.account == account.id)
+        .filter(|f| folder_path(folders, f.id).is_some_and(|path| paths.contains(path.as_str())))
+        .map(|f| f.id)
+        .collect();
+    ids.sort();
+    ids
 }
 
 /// The favorites of one account, by folder path.

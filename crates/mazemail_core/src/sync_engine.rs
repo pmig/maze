@@ -15,7 +15,9 @@
 //!   New messages, flag changes and bodies need nothing extra: the engine writes them
 //!   to the store, whose change sets become event batches (thread list refreshes).
 //!   The same forwarder picks newly arrived mail out of the actor's batches
-//!   ([`crate::new_mail`]) and broadcasts it for notifications.
+//!   ([`crate::new_mail`]) and broadcasts it for notifications, and keeps the actor's
+//!   watched folders on the account's favorites (`folder_pane.favorites`), which are
+//!   then checked as often as the open folder.
 //! - **Requests.** [`SyncBridge::fetch_body`] sends an interactive body fetch to the
 //!   message's account, [`SyncBridge::refresh`] a "sync now", and
 //!   [`SyncBridge::ops_queued`] a replay nudge.
@@ -28,7 +30,7 @@
 //! - **Shutdown.** [`CoreHandle::shutdown`](crate::CoreHandle::shutdown) stops every
 //!   actor (each finishes its batch and logs out) before the store closes.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
@@ -37,7 +39,7 @@ use auth::{
     AccountSecrets, BrowserOpener, OAuthTokenManager, ProviderRegistry, SecretStore, SystemBrowser,
 };
 use imap::{ImapAuth, ImapConfig};
-use mazemail_types::{AccountId, MessageId};
+use mazemail_types::{AccountId, FolderId, MessageId};
 use settings::LoadedSettings;
 use store::{Account, OpId, Queries as _, Store};
 use sync::{
@@ -50,6 +52,7 @@ use tokio::task::JoinHandle;
 use crate::accounts::{AccountAuth, AccountConfig, ImapServer, registry_from_settings};
 use crate::credentials::{AccountCredentials, Method};
 use crate::events::CoreEvent;
+use crate::folders;
 use crate::new_mail::{self, NewMailBatch, NewMailFilter, unix_now};
 use crate::sync_bridge::{FetchPriority, RefreshScope, SyncBridge, SyncState, SyncStatus};
 use crate::sync_ingest::CoreIngest;
@@ -488,6 +491,8 @@ impl SyncEngine {
                 statuses: Arc::clone(&self.statuses),
                 store: self.store.clone(),
                 new_mail: self.new_mail.clone(),
+                settings: self.settings.clone(),
+                handle: handle.clone(),
             },
         ));
         actors.insert(account.id, Running { handle, forwarder });
@@ -572,10 +577,14 @@ struct Forward {
     statuses: Arc<Mutex<HashMap<AccountId, SyncStatus>>>,
     store: Store,
     new_mail: broadcast::Sender<NewMailBatch>,
+    settings: watch::Receiver<Arc<LoadedSettings>>,
+    /// The actor, told which folders to watch.
+    handle: AccountHandle,
 }
 
-/// Forwards an actor's status into the core's events, logs alerts and stuck ops, and
-/// broadcasts newly arrived mail.
+/// Forwards an actor's status into the core's events, logs alerts and stuck ops,
+/// broadcasts newly arrived mail and has the actor watch the account's favorites
+/// (again after a settings or folder change).
 async fn forward_status(
     account: AccountId,
     mut status: watch::Receiver<sync::SyncStatus>,
@@ -587,8 +596,27 @@ async fn forward_status(
         statuses,
         store,
         new_mail,
+        mut settings,
+        handle,
     } = forward;
     let mut filter = NewMailFilter::new(account, unix_now());
+    let mut favorites = BTreeSet::new();
+    let watch_favorites = |favorites: &mut BTreeSet<FolderId>, settings: &LoadedSettings| {
+        let found = match favorite_folders(&store, account, settings) {
+            Ok(found) => found,
+            Err(err) => {
+                tracing::warn!(%err, %account, "looking up the favorite folders");
+                return;
+            }
+        };
+        if found != *favorites {
+            tracing::debug!(%account, folders = found.len(), "watching the favorite folders");
+            let _ = handle.watch_folders(found.iter().copied().collect());
+            *favorites = found;
+        }
+    };
+    watch_favorites(&mut favorites, &settings.borrow_and_update());
+    let mut settings_open = true;
     let report = |current: &sync::SyncStatus| -> bool {
         let Some(status) = core_status(account, current) else {
             return true;
@@ -612,8 +640,20 @@ async fn forward_status(
                     return;
                 }
             }
+            changed = settings.changed(), if settings_open => {
+                if changed.is_err() {
+                    settings_open = false;
+                    continue;
+                }
+                let current = Arc::clone(&settings.borrow_and_update());
+                watch_favorites(&mut favorites, &current);
+            }
             batch = batches.recv(), if batches_open => match batch {
                 Ok(batch) => {
+                    if !batch.folders_changed.is_empty() || !batch.folders_removed.is_empty() {
+                        let current = Arc::clone(&settings.borrow());
+                        watch_favorites(&mut favorites, &current);
+                    }
                     for alert in &batch.alerts {
                         // Server alerts are the server's text, not mail content.
                         tracing::warn!(%account, alert = %alert, "IMAP server alert");
@@ -624,7 +664,7 @@ async fn forward_status(
                         }
                     }
                     if !batch.added.is_empty() {
-                        report_new_mail(&store, &mut filter, &batch, &new_mail);
+                        report_new_mail(&store, &mut filter, &batch, &favorites, &new_mail);
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
@@ -636,16 +676,35 @@ async fn forward_status(
     }
 }
 
+/// The ids of `account`'s favorite folders.
+fn favorite_folders(
+    store: &Store,
+    account: AccountId,
+    settings: &LoadedSettings,
+) -> store::Result<BTreeSet<FolderId>> {
+    let reader = store.reader()?;
+    let Some(account) = reader.account(account)? else {
+        return Ok(BTreeSet::new());
+    };
+    let folders = reader.folders(Some(account.id))?;
+    Ok(
+        folders::favorite_folders(&account, &folders, &settings.settings.folder_pane.favorites)
+            .into_iter()
+            .collect(),
+    )
+}
+
 /// Picks the new mail out of `batch` and broadcasts it, if there is any.
 fn report_new_mail(
     store: &Store,
     filter: &mut NewMailFilter,
     batch: &sync::SyncEventBatch,
+    favorites: &BTreeSet<FolderId>,
     out: &broadcast::Sender<NewMailBatch>,
 ) {
     let found = store
         .reader()
-        .and_then(|reader| filter.select(&reader, batch));
+        .and_then(|reader| filter.select(&reader, batch, favorites));
     match found {
         Ok(found) if found.is_empty() => {}
         Ok(found) => {

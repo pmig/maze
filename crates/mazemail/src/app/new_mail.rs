@@ -1,6 +1,7 @@
 //! System notifications for new mail (the `notifications` settings, ADR-021).
 //!
-//! The core reports newly arrived mail ([`CoreHandle::new_mail`]); what arrives within
+//! The core reports newly arrived mail in Inboxes and in favorite folders other than
+//! Sent ([`CoreHandle::new_mail`]); what arrives within
 //! [`GATHER`] becomes notifications through the [`notifications`] crate: one per
 //! message (sender, subject and, with several accounts, the account), or a single
 //! "5 new messages" when more than [`MAX_SINGLE`] arrive together.

@@ -532,6 +532,54 @@ async fn only_mail_that_just_arrived_in_the_inbox_is_new() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn favorites_are_watched_and_notify_except_sent() {
+    let server = FakeServer::new();
+    server.add_folder("Customers", None);
+    let dir = tempfile::tempdir().unwrap();
+    let settings = dir.path().join("settings.json");
+    std::fs::write(
+        &settings,
+        r#"{ "folder_pane": { "favorites": [
+            { "account": "Work", "folder": "Customers" },
+            { "account": "Work", "folder": "Sent" }
+        ] } }"#,
+    )
+    .unwrap();
+    let keys = Arc::new(MemoryKeyStore::new());
+    let secrets = Arc::new(MemorySecretStore::new());
+    // Favorites are checked every 100 ms here, the other folders never.
+    let engine = SyncEngineConfig::new(secrets.clone())
+        .with_connector(Arc::new(FakeConnector {
+            server: server.clone(),
+            reachable: true,
+        }))
+        .with_timing(SyncTiming {
+            open_folder_poll: Duration::from_millis(100),
+            ..timing()
+        });
+    let core = CoreHandle::open(
+        common::config(&dir.path().join("data"), &keys)
+            .with_settings_file(&settings)
+            .with_sync_engine(engine),
+    )
+    .await
+    .unwrap();
+    let mut new_mail = core.new_mail();
+    let mut events = core.events();
+    core.add_imap_account(input(PASSWORD)).await.unwrap();
+    // After the first sync only the fast poll (and IDLE on the Inbox) looks again.
+    wait_for_state(&mut events, &SyncState::Idle).await;
+
+    // New mail in a favorite is found by the fast poll and notified; in Sent it isn't.
+    server.deliver("Sent", fresh(1, "Bob <bob@example.net>"));
+    server.deliver("Customers", fresh(2, "Bob <bob@example.net>"));
+    assert_eq!(next_new_mail(&mut new_mail).await, ["Fresh 2"]);
+    let log = server.command_log();
+    assert!(log.iter().any(|c| c == "STATUS Customers"), "{log:?}");
+    core.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn removing_stops_sync_and_deletes_data_and_secrets() {
     let server = FakeServer::new();
     server.deliver("INBOX", mail(1, OLD));

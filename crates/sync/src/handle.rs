@@ -51,6 +51,9 @@ pub enum SyncCommand {
     },
     /// The folder shown in the UI changed: it is synced first and polled every 30 s.
     OpenFolder(Option<FolderId>),
+    /// Folders to check as often as the open folder (every 30 s) instead of with the
+    /// other folders: the user's favorites. Replaces the previous list.
+    WatchFolders(Vec<FolderId>),
     /// Download a message body.
     FetchBody {
         /// The message.
@@ -186,6 +189,11 @@ impl AccountHandle {
     /// [`SyncCommand::OpenFolder`].
     pub fn open_folder(&self, folder: Option<FolderId>) -> Result<()> {
         self.send(SyncCommand::OpenFolder(folder))
+    }
+
+    /// [`SyncCommand::WatchFolders`].
+    pub fn watch_folders(&self, folders: Vec<FolderId>) -> Result<()> {
+        self.send(SyncCommand::WatchFolders(folders))
     }
 
     /// Downloads a body and waits for it ([`SyncCommand::FetchBody`]).
