@@ -20,6 +20,7 @@ use gpui_kit::component::{
 use mazemail_types::PRODUCT_NAME;
 use ui::assets::IconName;
 use ui::components::StatusItem;
+use ui::theme::scaled;
 
 use crate::actions::{OpenSettings, SyncNow, Toggle, ToggleAgentColumn};
 use crate::format::format_disk;
@@ -174,7 +175,7 @@ impl RenderOnce for AgentColumn {
             .child(
                 h_flex()
                     .flex_none()
-                    .h(px(36.))
+                    .h(scaled(36., cx))
                     .px_2()
                     .gap_2()
                     .border_b_1()

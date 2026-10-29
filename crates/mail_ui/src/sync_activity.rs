@@ -23,6 +23,7 @@ use gpui_kit::component::{
 };
 use time::OffsetDateTime;
 use ui::assets::IconName;
+use ui::theme::scaled;
 
 use crate::format::format_thousands;
 use crate::source::{
@@ -98,7 +99,7 @@ fn activity_panel(
     let muted = theme.muted_foreground;
     v_flex()
         .debug_selector(|| "sync-activity".to_owned())
-        .w(gpui::px(380.))
+        .w(scaled(380., cx))
         .gap_3()
         .text_sm()
         .child(div().font_semibold().child("Sync activity"))

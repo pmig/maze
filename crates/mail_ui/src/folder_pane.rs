@@ -20,7 +20,7 @@ use std::sync::Arc;
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, InteractiveElement as _, IntoElement,
     ParentElement, Render, SharedString, Styled, Subscription, WeakEntity, Window, div,
-    prelude::FluentBuilder as _, px,
+    prelude::FluentBuilder as _,
 };
 use gpui_kit::component::{
     ActiveTheme as _, Icon, Sizable as _, StyledExt as _, WindowExt as _,
@@ -35,6 +35,7 @@ use gpui_kit::component::{
 use mazemail_types::{FolderId, FolderRole, PRODUCT_NAME};
 use ui::assets::IconName;
 use ui::components::CountBadge;
+use ui::theme::scaled;
 
 use crate::actions::AddAccount;
 use crate::source::{AccountEntry, AccountKind, FolderEntry, FolderKey, FolderTree, MailSource};
@@ -591,7 +592,7 @@ impl FolderPane {
     ) -> ListItem {
         let theme = cx.theme();
         let item = entry.item();
-        let indent = px(10.) * entry.depth().saturating_sub(1) as f32;
+        let indent = scaled(10., cx) * entry.depth().saturating_sub(1) as f32;
         let chevron = || {
             Icon::new(if entry.is_expanded() {
                 IconName::ChevronDown
@@ -623,7 +624,7 @@ impl FolderPane {
             ),
             Some(Node::NoFavorites) => row.child(
                 div()
-                    .pl(indent + px(4.))
+                    .pl(indent + scaled(4., cx))
                     .text_xs()
                     .text_color(theme.muted_foreground)
                     .truncate()
@@ -662,7 +663,7 @@ impl FolderPane {
                         .child(if entry.is_folder() {
                             chevron().into_any_element()
                         } else {
-                            div().w(px(12.)).flex_none().into_any_element()
+                            div().w(scaled(12., cx)).flex_none().into_any_element()
                         })
                         .child(
                             Icon::new(role_icon(*role))

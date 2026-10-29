@@ -1,5 +1,6 @@
 //! The `theme` setting: light or dark (or the system's), and the theme for each, from
-//! the bundled themes and `<config>/themes/*.json` (Zed's format).
+//! the bundled themes and `<config>/themes/*.json` (Zed's format). The `font_size`
+//! setting goes with it, as the base size of the theme.
 //!
 //! Applied from the settings file when the app starts, before the first window, and
 //! then whenever the core's settings change (a save in the settings tab, an edit in
@@ -10,7 +11,7 @@ use std::path::PathBuf;
 use gpui::App;
 use mazemail_core::CoreHandle;
 use settings::{Paths, Settings, ThemeMode};
-use ui::theme::{Appearance, ThemeChoice, apply_choice};
+use ui::theme::{Appearance, ThemeChoice, apply_choice, clamp_font_size};
 
 /// The theme choice the settings describe.
 pub(crate) fn choice(settings: &Settings, themes_dir: Option<PathBuf>) -> ThemeChoice {
@@ -23,6 +24,7 @@ pub(crate) fn choice(settings: &Settings, themes_dir: Option<PathBuf>) -> ThemeC
         light: settings.theme.light.clone(),
         dark: settings.theme.dark.clone(),
         themes_dir,
+        font_size: clamp_font_size(settings.font_size as f32),
     }
 }
 

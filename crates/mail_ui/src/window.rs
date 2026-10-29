@@ -47,6 +47,7 @@ use ui::names::NameRng;
 use ui::panes::{
     EmptyState, ItemHandle, ItemKind, Pane, PaneGroup, PaneGroupEvent, Restore, SerializedItem,
 };
+use ui::theme::scaled;
 
 use crate::actions::*;
 use crate::chrome::{AgentColumn, MailStatusBar, SpacesBar, SyncButton};
@@ -63,7 +64,7 @@ use crate::settings_editor::{SETTINGS_KIND, SerializedSettings, SettingsEditor, 
 use crate::source::{
     DataChanges, Direction, FolderKey, MailSource, SortBy, SyncState, ThreadScope,
 };
-use crate::thread_list::{CARD_HEIGHT, ItemId, ListMode, TABLE_ROW_HEIGHT, ThreadList};
+use crate::thread_list::{ItemId, ListMode, ThreadList, card_height, table_row_height};
 use crate::ui_state::{ListDefaults, UiStateStore};
 
 /// How the main window starts.
@@ -1347,11 +1348,11 @@ impl MailWindow {
         if bench.frame > config.frames {
             let (cpu, intervals) = self.stats.borrow_mut().stop_recording();
             let rss_mb = resident_memory().map(|bytes| bytes as f64 / (1024. * 1024.));
-            let row_height = if config.table {
-                TABLE_ROW_HEIGHT
+            let row_height = f32::from(if config.table {
+                table_row_height(cx)
             } else {
-                CARD_HEIGHT
-            };
+                card_height(cx)
+            });
             tracing::info!(
                 target: "mazemail::perf",
                 frames = config.frames,
@@ -1517,7 +1518,7 @@ impl MailWindow {
                     .child(div().flex_1())
                     .children(self.title_bar_items.iter().cloned())
                     .child(
-                        div().w(px(280.)).child(
+                        div().w(scaled(280., cx)).child(
                             Input::new(&self.search).small().cleanable(true).prefix(
                                 Icon::new(IconName::Search)
                                     .xsmall()

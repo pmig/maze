@@ -26,10 +26,11 @@ use gpui_kit::component::{
 use crate::assets::IconName;
 use crate::panes::item::{ItemEvent, ItemHandle};
 use crate::panes::tree::SplitDirection;
+use crate::theme::scaled;
 
-/// Height of a tab bar.
+/// Height of a tab bar at the default font size ([`crate::theme::scaled`]).
 pub const TAB_BAR_HEIGHT: f32 = 32.;
-/// Tabs don't get wider than this; longer titles are cut.
+/// Tabs don't get wider than this (at the default font size); longer titles are cut.
 const MAX_TAB_WIDTH: f32 = 220.;
 /// Share of a pane's smaller side that counts as an edge for splitting drops.
 const DROP_EDGE: f32 = 0.25;
@@ -73,8 +74,8 @@ impl Render for DraggedTab {
         h_flex()
             .gap_1p5()
             .px_3()
-            .h(px(TAB_BAR_HEIGHT - 4.))
-            .max_w(px(MAX_TAB_WIDTH))
+            .h(scaled(TAB_BAR_HEIGHT - 4., cx))
+            .max_w(scaled(MAX_TAB_WIDTH, cx))
             .rounded_md()
             .border_1()
             .border_color(theme.drag_border)
@@ -536,7 +537,7 @@ impl Pane {
         let indicator = if dirty && !hovered {
             div()
                 .debug_selector(move || format!("tab-dirty-{ix}"))
-                .size(px(18.))
+                .size(scaled(18., cx))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -545,7 +546,7 @@ impl Pane {
         } else if hovered || active {
             div().child(close).into_any_element()
         } else {
-            div().size(px(18.)).into_any_element()
+            div().size(scaled(18., cx)).into_any_element()
         };
         h_flex()
             .id(("pane-tab", item_id.as_u64()))
@@ -553,7 +554,7 @@ impl Pane {
             .relative()
             .h_full()
             .flex_none()
-            .max_w(px(MAX_TAB_WIDTH))
+            .max_w(scaled(MAX_TAB_WIDTH, cx))
             .pl_3()
             .pr_1()
             .gap_1p5()
@@ -633,7 +634,7 @@ impl Pane {
             .collect();
         h_flex()
             .id("pane-tab-bar")
-            .h(px(TAB_BAR_HEIGHT))
+            .h(scaled(TAB_BAR_HEIGHT, cx))
             .w_full()
             .flex_none()
             .bg(theme.tab_bar)
@@ -654,7 +655,7 @@ impl Pane {
                     .id("pane-tab-bar-end")
                     .h_full()
                     .flex_1()
-                    .min_w(px(24.))
+                    .min_w(scaled(24., cx))
                     .drag_over::<DraggedTab>(|style, _, _, cx| style.bg(cx.theme().drop_target))
                     .on_drop(cx.listener(move |this, tab: &DraggedTab, _, cx| {
                         this.drop_tab(tab, DropTarget::Tab(count), cx);

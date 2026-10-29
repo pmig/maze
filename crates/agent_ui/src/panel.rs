@@ -33,6 +33,7 @@ use mazemail_types::ThreadId;
 use settings::Settings;
 use ui::assets::IconName;
 use ui::gpui_tokio::Tokio;
+use ui::theme::scaled;
 
 use self::sign_in::SignInState;
 use crate::launcher::{Launcher, SystemLauncher};
@@ -862,7 +863,7 @@ impl AgentPanel {
         let panel = cx.entity().downgrade();
         h_flex()
             .flex_none()
-            .h(px(32.))
+            .h(scaled(32., cx))
             .pl_2()
             .pr_1()
             .gap_1()
@@ -1100,7 +1101,7 @@ impl AgentPanel {
                     .filter(|t| *t > 0)
                     .map(|t| (*done as f32 / t as f32 * 100.).min(100.));
                 v_flex()
-                    .w(px(90.))
+                    .w(scaled(90., cx))
                     .gap_0p5()
                     .child(
                         div()

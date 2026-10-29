@@ -19,6 +19,8 @@ use gpui_kit::component::{
     kbd::Kbd,
 };
 
+use ui::theme::scaled;
+
 use crate::actions::{PALETTE_NAMESPACES, humanize_action_name};
 
 /// Emitted when the palette should close.
@@ -159,8 +161,8 @@ impl Render for CommandPalette {
             })
             .child(
                 div()
-                    .w(px(560.))
-                    .h(px(380.))
+                    .w(scaled(560., cx))
+                    .h(scaled(380., cx))
                     .occlude()
                     .rounded_lg()
                     .border_1()
@@ -172,7 +174,7 @@ impl Render for CommandPalette {
                         Command::new(&self.state)
                             .bordered(false)
                             .placeholder("Run a command…")
-                            .max_h(px(330.))
+                            .max_h(scaled(330., cx))
                             .items(self.items.iter().cloned())
                             .on_confirm(move |_, _, cx| {
                                 this.update(cx, |_, cx| cx.emit(Dismissed)).ok();

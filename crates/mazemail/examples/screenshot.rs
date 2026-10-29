@@ -9,7 +9,8 @@
 //! (`MAZEMAIL_INSECURE_DEV_KEYSTORE`'s store, as `seed-demo` creates it), shows it
 //! through `CoreMailSource` in GPUI's headless app context with the Metal headless
 //! renderer (no window on screen, no screen-recording permission), and captures it at
-//! 2x scale. `MAZEMAIL_SCREENSHOT_DARK=1` uses the dark theme. The message list uses
+//! 2x scale. `MAZEMAIL_SCREENSHOT_DARK=1` uses the dark theme and
+//! `MAZEMAIL_SCREENSHOT_FONT_SIZE=18` another `font_size`. The message list uses
 //! the data directory's `ui_state.json` (per-folder view, threads, columns), as the
 //! app does. Maze must not be running on the same data directory.
 
@@ -75,6 +76,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ThemeMode::Light
     };
     cx.update(|cx| Theme::change(mode, None, cx));
+    if let Some(font_size) = std::env::var("MAZEMAIL_SCREENSHOT_FONT_SIZE")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+    {
+        cx.update(|cx| {
+            ui::theme::apply_choice(
+                ui::theme::ThemeChoice {
+                    appearance: match mode {
+                        ThemeMode::Dark => ui::theme::Appearance::Dark,
+                        ThemeMode::Light => ui::theme::Appearance::Light,
+                    },
+                    light: "One Light".to_owned(),
+                    dark: "One Dark".to_owned(),
+                    themes_dir: None,
+                    font_size,
+                },
+                cx,
+            );
+        });
+    }
     for _ in 0..4 {
         cx.advance_clock(Duration::from_millis(250));
         cx.run_until_parked();
