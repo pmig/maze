@@ -56,6 +56,7 @@ use mazemail_types::{Address, DraftId, IdentityId};
 use ui::assets::IconName;
 use ui::names::NameRng;
 use ui::panes::{Item, ItemEvent, SerializedItem};
+use ui::theme::scaled;
 
 use crate::actions::{Attach, Close, OpenInNewWindow, SaveDraft, Send, ToggleCcBcc};
 use crate::backend::{ComposeBackend, IdentityChoice, SendOutcome};
@@ -849,7 +850,8 @@ impl Composer {
         h_flex()
             .gap_2()
             .items_center()
-            .child(div().w(px(56.)).flex_none().text_sm().child(label))
+            // 56 px at the default font size, growing with the label text.
+            .child(div().w(gpui::rems(4.)).flex_none().text_sm().child(label))
             .child(div().flex_1().min_w_0().child(field))
     }
 
@@ -1000,7 +1002,7 @@ impl Render for Composer {
                         .id("footer-preview")
                         .debug_selector(|| "footer-preview".to_owned())
                         .flex_none()
-                        .max_h(px(120.))
+                        .max_h(scaled(120., cx))
                         .overflow_y_scroll()
                         .gap_1()
                         .px_3()

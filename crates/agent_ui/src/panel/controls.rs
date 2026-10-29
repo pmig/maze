@@ -150,8 +150,11 @@ impl AgentPanel {
                     .dropdown_caret(true)
                     .disabled(!enabled)
                     .tooltip(tooltip)
-                    .dropdown_menu(move |menu: PopupMenu, _, _| {
-                        let mut menu = menu.label(name.clone()).max_h(px(320.)).scrollable(true);
+                    .dropdown_menu(move |menu: PopupMenu, _, cx| {
+                        let mut menu = menu
+                            .label(name.clone())
+                            .max_h(scaled(320., cx))
+                            .scrollable(true);
                         let mut group: Option<&String> = None;
                         for choice in &choices {
                             if choice.group.is_some() && choice.group.as_ref() != group {

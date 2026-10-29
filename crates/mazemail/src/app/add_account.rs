@@ -321,7 +321,7 @@ fn open(state: Shared, window: &mut Window, cx: &mut App) {
 
         dialog
             .title("Add Account")
-            .width(gpui::px(520.))
+            .width(ui::theme::scaled(520., cx))
             .child(
                 v_flex()
                     .gap_2()

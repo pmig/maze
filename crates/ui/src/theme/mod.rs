@@ -16,13 +16,18 @@
 //! [`apply_choice`] applies the `theme` setting: the light and dark theme by name,
 //! looked up in the bundled family and in Zed theme files (`*.json`) in the user's
 //! `themes/` directory, like Zed's `~/.config/zed/themes`.
+//!
+//! The `font_size` setting is part of the choice: it becomes gpui-kit's base font size,
+//! which is the window's rem size, so every rem-based size (text, padding, gaps) follows
+//! it. Lengths that GPUI only takes in pixels, such as list row heights, are written at
+//! [`DEFAULT_FONT_SIZE`] and go through [`scaled`].
 
 pub mod zed;
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use gpui::{App, Global, Rgba, SharedString, Subscription, Window, WindowAppearance};
+use gpui::{App, Global, Pixels, Rgba, SharedString, Subscription, Window, WindowAppearance};
 use gpui_kit::component::highlighter::HighlightThemeStyle;
 use gpui_kit::component::{Theme, ThemeConfig, ThemeConfigColors, ThemeMode};
 use serde_json::{Map, Value};
@@ -32,9 +37,16 @@ use self::zed::{AppearanceContent, ThemeContent, ThemeFamilyContent};
 /// The bundled default theme family (Zed's One Dark / One Light).
 pub const DEFAULT_THEME_FAMILY: &str = include_str!("../../../../assets/themes/one.json");
 
-/// Base font size of the UI in pixels. gpui-kit defaults to 16 px; a mail client needs
-/// Thunderbird's density.
-const UI_FONT_SIZE: f32 = 14.;
+/// Default base font size of the UI in pixels (the `font_size` setting). gpui-kit
+/// defaults to 16 px; a mail client needs Thunderbird's density.
+pub const DEFAULT_FONT_SIZE: f32 = 14.;
+/// The smallest `font_size` Maze applies.
+pub const MIN_FONT_SIZE: f32 = 10.;
+/// The largest `font_size` Maze applies.
+pub const MAX_FONT_SIZE: f32 = 32.;
+/// Monospace text (code, the `settings.json` tab) relative to the base size: gpui-kit's
+/// 13 px next to Maze's 14 px.
+const MONO_FONT_RATIO: f32 = 13. / 14.;
 /// Corner radius of controls, close to Zed's.
 const UI_RADIUS: usize = 4;
 const UI_RADIUS_LG: usize = 6;
@@ -265,8 +277,9 @@ pub fn highlight_style(theme: &ThemeContent) -> Option<HighlightThemeStyle> {
     })
 }
 
-/// Maps one Zed theme onto a gpui-kit theme configuration.
-pub fn theme_config(theme: &ThemeContent) -> ThemeConfig {
+/// Maps one Zed theme onto a gpui-kit theme configuration with a base font size in
+/// pixels.
+pub fn theme_config(theme: &ThemeContent, font_size: f32) -> ThemeConfig {
     let mut colors = Map::new();
     for (kit_key, source) in COLOR_MAP {
         if let Some(value) = resolve(theme, *source) {
@@ -289,7 +302,8 @@ pub fn theme_config(theme: &ThemeContent) -> ThemeConfig {
             AppearanceContent::Light => ThemeMode::Light,
             AppearanceContent::Dark => ThemeMode::Dark,
         },
-        font_size: Some(UI_FONT_SIZE),
+        font_size: Some(font_size),
+        mono_font_size: Some(font_size * MONO_FONT_RATIO),
         radius: Some(UI_RADIUS),
         radius_lg: Some(UI_RADIUS_LG),
         shadow: Some(false),
@@ -329,8 +343,8 @@ impl ThemePair {
         };
         Ok(Self {
             family: SharedString::from(family.name.clone()),
-            light: Rc::new(theme_config(light)),
-            dark: Rc::new(theme_config(dark)),
+            light: Rc::new(theme_config(light, DEFAULT_FONT_SIZE)),
+            dark: Rc::new(theme_config(dark, DEFAULT_FONT_SIZE)),
         })
     }
 }
@@ -352,8 +366,9 @@ pub enum Appearance {
     Dark,
 }
 
-/// The `theme` setting: the appearance and the theme used in each mode, by name.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The `theme` and `font_size` settings: the appearance, the theme used in each mode
+/// by name, and the base font size.
+#[derive(Debug, Clone, PartialEq)]
 pub struct ThemeChoice {
     /// System, light or dark.
     pub appearance: Appearance,
@@ -363,6 +378,30 @@ pub struct ThemeChoice {
     pub dark: String,
     /// Where user themes live (`<config>/themes`), if anywhere.
     pub themes_dir: Option<PathBuf>,
+    /// The base font size in pixels, within [`MIN_FONT_SIZE`] and [`MAX_FONT_SIZE`]
+    /// (see [`clamp_font_size`]).
+    pub font_size: f32,
+}
+
+/// A `font_size` setting brought into the range Maze applies.
+pub fn clamp_font_size(font_size: f32) -> f32 {
+    if font_size.is_finite() {
+        font_size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
+    } else {
+        DEFAULT_FONT_SIZE
+    }
+}
+
+/// How much larger the UI is than at [`DEFAULT_FONT_SIZE`]: 1 at the default.
+pub fn ui_scale(cx: &App) -> f32 {
+    Theme::global(cx).font_size / gpui::px(DEFAULT_FONT_SIZE)
+}
+
+/// A length designed at [`DEFAULT_FONT_SIZE`] (a row height, an avatar, a dialog) at
+/// the current font size, rounded to whole pixels so rows and borders stay sharp.
+/// Exactly `design` at the default size.
+pub fn scaled(design: f32, cx: &App) -> Pixels {
+    gpui::px((design * ui_scale(cx)).round())
 }
 
 /// The applied [`ThemeChoice`]: re-applying the same one does nothing, and a forced
@@ -410,6 +449,7 @@ pub fn available_themes(themes_dir: Option<&Path>) -> Vec<ThemeContent> {
 
 /// The light and dark theme a choice names, falling back to the bundled One Light /
 /// One Dark (with a warning) for names that don't exist. Names compare ignoring case.
+/// The font size is clamped to the range Maze applies.
 pub fn resolve_choice(choice: &ThemeChoice, themes: &[ThemeContent]) -> Option<ThemePair> {
     let find = |name: &str, appearance: AppearanceContent, fallback: &str| {
         let by_name = |n: &str| {
@@ -424,10 +464,11 @@ pub fn resolve_choice(choice: &ThemeChoice, themes: &[ThemeContent]) -> Option<T
     };
     let light = find(&choice.light, AppearanceContent::Light, "One Light")?;
     let dark = find(&choice.dark, AppearanceContent::Dark, "One Dark")?;
+    let font_size = clamp_font_size(choice.font_size);
     Some(ThemePair {
         family: SharedString::from(format!("{} / {}", light.name, dark.name)),
-        light: Rc::new(theme_config(light)),
-        dark: Rc::new(theme_config(dark)),
+        light: Rc::new(theme_config(light, font_size)),
+        dark: Rc::new(theme_config(dark, font_size)),
     })
 }
 
@@ -552,7 +593,10 @@ mod tests {
     #[test]
     fn maps_one_dark_onto_gpui_kit() {
         let family = family();
-        let dark = theme_config(family.theme(AppearanceContent::Dark).unwrap());
+        let dark = theme_config(
+            family.theme(AppearanceContent::Dark).unwrap(),
+            DEFAULT_FONT_SIZE,
+        );
         assert_eq!(dark.mode, ThemeMode::Dark);
         assert_eq!(dark.name.as_ref(), "One Dark");
         assert_eq!(dark.colors.background.as_deref(), Some("#282c33ff"));
@@ -562,7 +606,10 @@ mod tests {
         assert_eq!(dark.colors.selection.as_deref(), Some("#74ade83d"));
         assert_eq!(dark.colors.caret.as_deref(), Some("#74ade8ff"));
 
-        let light = theme_config(family.theme(AppearanceContent::Light).unwrap());
+        let light = theme_config(
+            family.theme(AppearanceContent::Light).unwrap(),
+            DEFAULT_FONT_SIZE,
+        );
         assert_eq!(light.mode, ThemeMode::Light);
         assert_eq!(light.colors.background.as_deref(), Some("#fafafaff"));
     }
@@ -616,7 +663,9 @@ mod tests {
             assert_eq!(active_family(cx).as_deref(), Some("One"));
             let theme = Theme::global(cx);
             assert!(theme.theme_name().starts_with("One"));
-            assert_eq!(theme.font_size, gpui::px(UI_FONT_SIZE));
+            assert_eq!(theme.font_size, gpui::px(DEFAULT_FONT_SIZE));
+            assert_eq!(ui_scale(cx), 1.);
+            assert_eq!(scaled(26., cx), gpui::px(26.));
             // Code editors (the settings tab) use the theme's editor colors.
             let family = family();
             let mode = theme.mode;
@@ -638,7 +687,47 @@ mod tests {
             light: light.into(),
             dark: dark.into(),
             themes_dir: dir.map(Path::to_path_buf),
+            font_size: DEFAULT_FONT_SIZE,
         }
+    }
+
+    #[gpui::test]
+    fn font_size_scales_rem_and_layout_lengths(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            apply_choice(
+                ThemeChoice {
+                    font_size: 21.,
+                    ..choice("One Light", "One Dark", None)
+                },
+                cx,
+            );
+            assert_eq!(Theme::global(cx).font_size, gpui::px(21.));
+            assert_eq!(ui_scale(cx), 1.5);
+            assert_eq!(scaled(26., cx), gpui::px(39.));
+            // Rounded to whole pixels.
+            assert_eq!(scaled(7., cx), gpui::px(11.));
+        });
+    }
+
+    #[test]
+    fn font_size_is_clamped_and_scales_mono() {
+        assert_eq!(clamp_font_size(16.), 16.);
+        assert_eq!(clamp_font_size(2.), MIN_FONT_SIZE);
+        assert_eq!(clamp_font_size(200.), MAX_FONT_SIZE);
+        assert_eq!(clamp_font_size(f32::NAN), DEFAULT_FONT_SIZE);
+
+        let themes = available_themes(None);
+        let pair = resolve_choice(
+            &ThemeChoice {
+                font_size: 100.,
+                ..choice("One Light", "One Dark", None)
+            },
+            &themes,
+        )
+        .unwrap();
+        assert_eq!(pair.light.font_size, Some(MAX_FONT_SIZE));
+        assert_eq!(pair.dark.mono_font_size, Some(MAX_FONT_SIZE * 13. / 14.));
     }
 
     #[test]
@@ -713,7 +802,7 @@ mod tests {
         assert!(style.syntax.string.is_some());
         assert!(style.syntax.property.is_some(), "JSON keys are properties");
         assert!(style.syntax.comment.is_some());
-        assert!(theme_config(dark).highlight.is_some());
+        assert!(theme_config(dark, DEFAULT_FONT_SIZE).highlight.is_some());
 
         // Odd values are tolerated: oblique, off-scale weights, broken colors.
         let theme: ThemeContent = serde_json::from_value(serde_json::json!({

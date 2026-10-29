@@ -25,7 +25,9 @@
 //! Cards are a GPUI `uniform_list` of 26 px slots: a card takes two (its two lines), a
 //! message of an expanded thread one, as a compact indented line with tree guides. The
 //! table is gpui-kit's `DataTable` with 24 px rows; the reply tree lives in its Subject
-//! column. Both read the same [`ListModel`].
+//! column. Both read the same [`ListModel`]. These sizes are at the default font size;
+//! rows, indents and the other fixed lengths scale with the `font_size` setting
+//! ([`ui::theme::scaled`]).
 //!
 //! # Selection
 //!
@@ -68,8 +70,8 @@ use std::time::Duration;
 use gpui::{
     Action, AnyElement, App, AppContext as _, ClickEvent, Context, Div, Entity, EventEmitter,
     FocusHandle, Focusable, Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    Render, ScrollStrategy, SharedString, Stateful, StatefulInteractiveElement as _, Styled,
-    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, canvas, div,
+    Pixels, Render, ScrollStrategy, SharedString, Stateful, StatefulInteractiveElement as _,
+    Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, canvas, div,
     prelude::FluentBuilder as _, px, uniform_list,
 };
 use gpui_kit::component::{
@@ -85,6 +87,7 @@ use gpui_kit::component::{
 use mazemail_types::{Flags, FolderId, MessageId, ThreadId};
 use time::UtcOffset;
 use ui::assets::IconName;
+use ui::theme::{scaled, ui_scale};
 
 use crate::actions::{
     Archive, Delete, Forward, MoveToFolder, OpenMessage, Reply, ReplyAll, SelectThread, ToggleRead,
@@ -100,13 +103,15 @@ use crate::source::{
 pub use crate::ui_state::ListMode;
 use crate::ui_state::{ColumnId, ListPrefs, UiStateStore};
 
-/// Height of a two-line card (CONCEPT §8.2, PLAN §4.9).
+/// Height of a two-line card at the default font size (CONCEPT §8.2, PLAN §4.9); see
+/// [`card_height`].
 pub const CARD_HEIGHT: f32 = 52.;
-/// Height of one card slot: a card line, or a message of an expanded thread in cards.
+/// Height of one card slot at the default font size: a card line, or a message of an
+/// expanded thread in cards.
 pub const SLOT_HEIGHT: f32 = CARD_HEIGHT / 2.;
 /// Slots per card.
 const CARD_SLOTS: usize = 2;
-/// Height of a table row.
+/// Height of a table row at the default font size; see [`table_row_height`].
 pub const TABLE_ROW_HEIGHT: f32 = 24.;
 /// Rows fetched beyond the visible range on each side.
 const OVERSCAN: usize = 48;
@@ -117,12 +122,27 @@ const FILTER_DEBOUNCE: Duration = Duration::from_millis(120);
 pub const SYNC_EXPAND_ALL: usize = 20_000;
 /// Reply trees kept while "expand all" fetches them for the visible threads.
 const TREE_CACHE: usize = 4_096;
-/// Indentation per reply level.
+/// Indentation per reply level at the default font size.
 const INDENT: f32 = 12.;
 /// Deeper replies don't indent further.
 const MAX_INDENT_LEVELS: u16 = 12;
 /// The widest the table makes the list column (the layout caps it too).
 const MAX_TABLE_WIDTH: f32 = 720.;
+
+/// Height of one card slot at the current font size.
+fn slot_height(cx: &App) -> Pixels {
+    scaled(SLOT_HEIGHT, cx)
+}
+
+/// Height of a two-line card at the current font size: two whole slots.
+pub fn card_height(cx: &App) -> Pixels {
+    slot_height(cx) * CARD_SLOTS as f32
+}
+
+/// Height of a table row at the current font size.
+pub fn table_row_height(cx: &App) -> Pixels {
+    scaled(TABLE_ROW_HEIGHT, cx)
+}
 /// Selected rows found again by identity after the list changed; a larger selection
 /// (except select all) collapses to its cursor.
 pub const MAX_KEPT_ROWS: usize = 1_000;
@@ -1358,10 +1378,10 @@ impl ThreadList {
     /// Moves by a page of rows.
     pub fn page(&mut self, down: bool, cx: &mut Context<'_, Self>) {
         let row_height = match self.prefs.mode {
-            ListMode::Cards => CARD_HEIGHT,
-            ListMode::Table => TABLE_ROW_HEIGHT,
+            ListMode::Cards => card_height(cx),
+            ListMode::Table => table_row_height(cx),
         };
-        let viewport = f32::from(self.scroll.0.borrow().base_handle.bounds().size.height);
+        let viewport = self.scroll.0.borrow().base_handle.bounds().size.height;
         let rows = ((viewport / row_height).floor() as isize).max(1);
         self.step(if down { rows } else { -rows }, cx);
     }
@@ -2113,7 +2133,7 @@ impl ThreadList {
         let hovered = self.hovered == Some(ix);
         div()
             .id(slot)
-            .h(px(SLOT_HEIGHT))
+            .h(slot_height(cx))
             .w_full()
             .flex()
             .items_center()
@@ -2202,7 +2222,7 @@ impl ThreadList {
                     .pt_1()
                     .child(
                         div()
-                            .size(px(7.))
+                            .size(scaled(7., cx))
                             .flex_none()
                             .rounded_full()
                             .when(unread, |this| this.bg(theme.primary)),
@@ -2244,7 +2264,7 @@ impl ThreadList {
             h_flex()
                 .w_full()
                 .gap_1p5()
-                .pl(px(13.))
+                .pl(scaled(13., cx))
                 .pb_1()
                 .child(
                     div()
@@ -2326,66 +2346,68 @@ impl ThreadList {
             return frame;
         };
         let unread = row.unread();
-        frame.child(tree_guides(row.kind, 10., theme.border)).child(
-            h_flex()
-                .flex_1()
-                .min_w_0()
-                .gap_1p5()
-                .child(
-                    div()
-                        .size(px(6.))
-                        .flex_none()
-                        .rounded_full()
-                        .when(unread, |this| this.bg(theme.primary)),
-                )
-                .when(row.outgoing, |this| {
-                    this.child(
-                        Icon::new(IconName::ArrowUpRight)
-                            .xsmall()
+        frame
+            .child(tree_guides(row.kind, 10., theme.border, ui_scale(cx)))
+            .child(
+                h_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap_1p5()
+                    .child(
+                        div()
+                            .size(scaled(6., cx))
                             .flex_none()
-                            .text_color(theme.muted_foreground),
+                            .rounded_full()
+                            .when(unread, |this| this.bg(theme.primary)),
                     )
-                })
-                .child(
-                    div()
-                        .min_w_0()
-                        .max_w(px(160.))
-                        .truncate()
-                        .text_xs()
-                        .when(unread, |this| this.font_semibold())
-                        .child(row.correspondents.clone()),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(row.subject.clone()),
-                )
-                .when(row.attachment, |this| {
-                    this.child(
-                        Icon::new(IconName::Paperclip)
-                            .xsmall()
-                            .text_color(theme.muted_foreground),
+                    .when(row.outgoing, |this| {
+                        this.child(
+                            Icon::new(IconName::ArrowUpRight)
+                                .xsmall()
+                                .flex_none()
+                                .text_color(theme.muted_foreground),
+                        )
+                    })
+                    .child(
+                        div()
+                            .min_w_0()
+                            .max_w(scaled(160., cx))
+                            .truncate()
+                            .text_xs()
+                            .when(unread, |this| this.font_semibold())
+                            .child(row.correspondents.clone()),
                     )
-                })
-                .when(row.starred(), |this| {
-                    this.child(
-                        Icon::new(IconName::StarFill)
-                            .xsmall()
-                            .text_color(theme.warning),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(row.subject.clone()),
                     )
-                })
-                .child(
-                    div()
-                        .flex_none()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(row.date.clone()),
-                ),
-        )
+                    .when(row.attachment, |this| {
+                        this.child(
+                            Icon::new(IconName::Paperclip)
+                                .xsmall()
+                                .text_color(theme.muted_foreground),
+                        )
+                    })
+                    .when(row.starred(), |this| {
+                        this.child(
+                            Icon::new(IconName::StarFill)
+                                .xsmall()
+                                .text_color(theme.warning),
+                        )
+                    })
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(row.date.clone()),
+                    ),
+            )
     }
 
     // ---- context menu -----------------------------------------------------------------
@@ -2672,7 +2694,10 @@ pub fn message_menu(
 
 /// The tree guides of a child row (Thunderbird's tree lines) and its left padding;
 /// `left` is where level 0 starts. Thread and message rows get the padding only.
-fn tree_guides(kind: RowKind, left: f32, color: Hsla) -> Div {
+/// `left` and the indent are at the default font size and grow by `scale`
+/// ([`ui::theme::ui_scale`]); the lines stay 1 px.
+fn tree_guides(kind: RowKind, left: f32, color: Hsla, scale: f32) -> Div {
+    let left = (left * scale).round();
     let RowKind::Child {
         depth,
         has_next_sibling,
@@ -2682,20 +2707,21 @@ fn tree_guides(kind: RowKind, left: f32, color: Hsla) -> Div {
     else {
         return div().flex_none().w(px(left));
     };
+    let indent = (INDENT * scale).round();
     let levels = depth.min(MAX_INDENT_LEVELS);
-    let width = left + f32::from(levels + 1) * INDENT + 2.;
+    let width = left + f32::from(levels + 1) * indent + 2.;
     let line = |x: f32| div().absolute().left(px(x)).w(px(1.)).bg(color);
     let mut guides = div().flex_none().relative().h_full().w(px(width));
     for level in 0..levels {
         if lines & (1 << u64::from(level).min(63)) != 0 {
             guides = guides.child(
-                line(left + f32::from(level) * INDENT + INDENT / 2.)
+                line(left + f32::from(level) * indent + indent / 2.)
                     .top_0()
                     .bottom_0(),
             );
         }
     }
-    let x = left + f32::from(levels) * INDENT + INDENT / 2.;
+    let x = left + f32::from(levels) * indent + indent / 2.;
     guides
         .child(
             line(x)
@@ -2708,7 +2734,7 @@ fn tree_guides(kind: RowKind, left: f32, color: Hsla) -> Div {
                 .absolute()
                 .left(px(x))
                 .top(gpui::relative(0.5))
-                .w(px(INDENT / 2. + 1.))
+                .w(px(indent / 2. + 1.))
                 .h(px(1.))
                 .bg(color),
         )
@@ -2758,7 +2784,7 @@ impl Render for ThreadList {
                     .relative()
                     .child(
                         DataTable::new(&self.table)
-                            .with_size(Size::Size(px(TABLE_ROW_HEIGHT)))
+                            .with_size(Size::Size(table_row_height(cx)))
                             .stripe(false)
                             .bordered(false),
                     )
@@ -3053,7 +3079,7 @@ impl TableDelegate for ThreadTable {
                 .flex()
                 .justify_center()
                 .when(unread, |this| {
-                    this.child(div().size(px(6.)).rounded_full().bg(theme.primary))
+                    this.child(div().size(scaled(6., cx)).rounded_full().bg(theme.primary))
                 })
                 .into_any_element(),
             ColumnId::Attachment => cell
@@ -3071,12 +3097,13 @@ impl TableDelegate for ThreadTable {
                 let list = self.list.clone();
                 let lead = match row.kind {
                     RowKind::Child { .. } => {
-                        tree_guides(row.kind, 0., theme.border.opacity(0.9)).into_any_element()
+                        tree_guides(row.kind, 0., theme.border.opacity(0.9), ui_scale(cx))
+                            .into_any_element()
                     }
                     RowKind::Thread { .. } if expandable => h_flex()
                         .id(("twisty", row_ix))
                         .flex_none()
-                        .w(px(16.))
+                        .w(scaled(16., cx))
                         .h_full()
                         .justify_center()
                         .text_color(theme.muted_foreground)
@@ -3094,7 +3121,9 @@ impl TableDelegate for ThreadTable {
                                 .ok();
                         })
                         .into_any_element(),
-                    RowKind::Thread { .. } => div().flex_none().w(px(16.)).into_any_element(),
+                    RowKind::Thread { .. } => {
+                        div().flex_none().w(scaled(16., cx)).into_any_element()
+                    }
                     RowKind::Message => div().into_any_element(),
                 };
                 h_flex()

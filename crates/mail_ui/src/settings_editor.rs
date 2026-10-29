@@ -29,7 +29,7 @@ use gpui::{
     App, AppContext as _, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, ParentElement as _, PromptLevel, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div,
-    prelude::FluentBuilder as _, px, relative,
+    prelude::FluentBuilder as _, relative,
 };
 use gpui_kit::component::{
     ActiveTheme as _, Sizable as _,
@@ -42,6 +42,7 @@ use serde::{Deserialize, Serialize};
 use settings::{DEFAULT_SETTINGS, Diagnostic, DiagnosticKind};
 use ui::assets::IconName;
 use ui::panes::{Item, ItemEvent, SerializedItem};
+use ui::theme::scaled;
 
 use crate::actions::{OpenDefaultSettings, SaveSettings};
 
@@ -534,7 +535,7 @@ impl SettingsEditor {
                 .items_start()
                 .child(
                     div()
-                        .w(px(64.))
+                        .w(scaled(64., cx))
                         .flex_none()
                         .text_color(colors.muted_foreground)
                         .child(line),
@@ -546,7 +547,7 @@ impl SettingsEditor {
                 .id("settings-diagnostics")
                 .debug_selector(|| "settings-diagnostics".to_owned())
                 .flex_none()
-                .max_h(px(160.))
+                .max_h(scaled(160., cx))
                 .overflow_y_scroll()
                 .gap_1()
                 .px_3()

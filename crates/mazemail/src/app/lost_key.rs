@@ -96,7 +96,7 @@ fn open(state: Shared, input: Entity<InputState>, window: &mut Window, cx: &mut 
             .keyboard(false)
             .close_button(false)
             .overlay_closable(false)
-            .width(gpui::px(520.))
+            .width(ui::theme::scaled(520., cx))
             .child(
                 v_flex()
                     .gap_3()

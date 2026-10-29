@@ -333,7 +333,7 @@ impl AgentPanel {
                 this.child(
                     div()
                         .id(("agent-terminal-output", ix))
-                        .max_h(px(280.))
+                        .max_h(scaled(280., cx))
                         .overflow_y_scroll()
                         .px_2()
                         .py_1p5()

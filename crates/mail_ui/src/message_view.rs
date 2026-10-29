@@ -37,6 +37,7 @@ use html_view::{DocumentOptions, Fetch, OriginalView, OriginalViewEvent, PageCol
 use mazemail_types::{Address, MessageId};
 use time::UtcOffset;
 use ui::assets::IconName;
+use ui::theme::scaled;
 
 use crate::actions::{Archive, Forward, Reply, ReplyAll, ToggleOriginalHtml};
 use crate::format::{DateFormatter, format_size, format_thousands, initials};
@@ -646,7 +647,7 @@ impl MessageView {
             .text_xs()
             .child(
                 div()
-                    .w(px(36.))
+                    .w(scaled(36., cx))
                     .flex_none()
                     .text_color(cx.theme().muted_foreground)
                     .child(label),
@@ -686,7 +687,7 @@ impl MessageView {
                     .gap_2()
                     .child(
                         div()
-                            .size(px(32.))
+                            .size(scaled(32., cx))
                             .flex_none()
                             .rounded_full()
                             .bg(theme.primary.opacity(0.2))

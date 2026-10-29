@@ -749,6 +749,20 @@ Zed's format: besides the built-in One Light and One Dark, put Zed theme files
 name one of their themes in `"light"` or `"dark"`. Changes apply as soon as you save,
 also to the settings editor's colors. An unknown name falls back to the built-in theme.
 
+### Font size
+
+`"font_size"` is the base size of Maze's text in pixels, 14 by default:
+
+```jsonc
+"font_size": 16
+```
+
+Everything sized from it grows and shrinks with it: text, spacing, message list rows
+(cards and table), reply indents, tab bars, avatars, the command palette and Quick Move.
+Values from 10 to 32 are applied; smaller or larger ones are brought into that range.
+The change applies as soon as you save. Mail shown in the original HTML view keeps the
+sizes its sender chose.
+
 ## Updates
 
 Maze updates itself like Zed. It checks for a new version every hour and after your

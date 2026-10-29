@@ -24,6 +24,8 @@ use gpui_kit::component::{
 };
 use mazemail_types::{AccountId, FolderId, FolderRole};
 
+use ui::theme::scaled;
+
 use crate::folder_pane::role_icon;
 use crate::source::{AccountEntry, FolderEntry, FolderKey, ThreadScope};
 use crate::thread_list::ItemId;
@@ -270,8 +272,8 @@ impl Render for QuickMove {
             .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| dismiss(cx))
             .child(
                 div()
-                    .w(px(420.))
-                    .h(px(340.))
+                    .w(scaled(420., cx))
+                    .h(scaled(340., cx))
                     .occlude()
                     .rounded_lg()
                     .border_1()
@@ -284,7 +286,7 @@ impl Render for QuickMove {
                             .bordered(false)
                             .filterable(false)
                             .placeholder(format!("Move to a folder in {}…", self.account_name))
-                            .max_h(px(290.))
+                            .max_h(scaled(290., cx))
                             .items(items)
                             .empty(|_, _, cx| {
                                 div()

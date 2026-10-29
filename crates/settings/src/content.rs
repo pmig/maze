@@ -18,6 +18,10 @@ use serde::{Deserialize, Serialize};
 pub struct Settings {
     /// Colors: system, light or dark mode, and the theme for each mode.
     pub theme: ThemeSettings,
+    /// Base font size of the UI in pixels. Text, spacing, list rows and dialogs scale
+    /// with it. Applied between 10 and 32.
+    #[schemars(range(min = 10, max = 32))]
+    pub font_size: u32,
     /// Window layout.
     pub layout: Layout,
     /// Below this window width (px) the message moves under the list (Classic layout).
@@ -65,6 +69,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: ThemeSettings::default(),
+            font_size: 14,
             layout: Layout::default(),
             narrow_layout_below_px: 1000,
             agent_panel: AgentPanelSettings::default(),
