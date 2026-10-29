@@ -477,6 +477,60 @@ async fn new_mail_bodies_and_ops_flow_through_the_engine() {
     s.core.shutdown().await.unwrap();
 }
 
+/// A message from `from` that reached the server just now.
+fn fresh(n: u32, from: &str) -> FakeMessage {
+    FakeMessage::new(format!(
+        "From: {from}\r\nTo: alice@example.org\r\nSubject: Fresh {n}\r\n\
+         Message-ID: <f{n}@example.net>\r\nDate: {OLD}\r\n\
+         Content-Type: text/plain; charset=utf-8\r\n\r\nNews {n}\r\n"
+    ))
+    .internal_date(time::OffsetDateTime::now_utc())
+}
+
+/// The subjects of the next new-mail batch.
+async fn next_new_mail(
+    new_mail: &mut broadcast::Receiver<mazemail_core::NewMailBatch>,
+) -> Vec<String> {
+    let batch = tokio::time::timeout(Duration::from_secs(10), new_mail.recv())
+        .await
+        .expect("a new-mail batch")
+        .unwrap();
+    batch
+        .iter()
+        .map(|m| m.subject.expose().clone().unwrap_or_default())
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn only_mail_that_just_arrived_in_the_inbox_is_new() {
+    let server = FakeServer::new();
+    server.deliver("INBOX", mail(1, OLD));
+    let s = open(&server).await;
+    let mut new_mail = s.core.new_mail();
+    s.core.add_imap_account(input(PASSWORD)).await.unwrap();
+    // The first sync brings old mail: nothing is new.
+    wait_for("the first message", || inbox_count(&s.core) == 1).await;
+
+    // Old mail, read mail and the account's own mail aren't new; the fresh unread
+    // message from someone else is.
+    s.server.deliver("INBOX", mail(2, OLD));
+    s.server.deliver(
+        "INBOX",
+        fresh(3, "Bob <bob@example.net>").flags(Flags::SEEN),
+    );
+    s.server
+        .deliver("INBOX", fresh(4, "Alice <alice@example.org>"));
+    s.server.deliver("INBOX", fresh(5, "Bob <bob@example.net>"));
+    assert_eq!(next_new_mail(&mut new_mail).await, ["Fresh 5"]);
+
+    // Each message is reported once.
+    s.server
+        .deliver("INBOX", fresh(6, "Carol <carol@example.net>"));
+    assert_eq!(next_new_mail(&mut new_mail).await, ["Fresh 6"]);
+    assert!(new_mail.try_recv().is_err());
+    s.core.shutdown().await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn removing_stops_sync_and_deletes_data_and_secrets() {
     let server = FakeServer::new();

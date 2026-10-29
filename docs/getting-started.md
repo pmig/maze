@@ -607,6 +607,36 @@ section per account:
 
 It updates live while it is open; click outside it or press `escape` to close it.
 
+### Notifications
+
+When new mail arrives in an Inbox, Maze shows a system notification with the sender and
+the subject (with several accounts, also the account it arrived in). Click it and Maze
+comes to the front with the message open in a tab. When more than three messages
+arrive at once, one notification says how many and who sent them ("5 new messages,
+From Bob, Carol and Dave"); a click brings Maze to the front.
+
+- **macOS** uses Notification Center. Maze asks for permission before its first
+  notification; change your answer, the banner style and sounds in System Settings →
+  Notifications → Maze. Banners show while Maze is in front, too. Notifications need
+  `Maze.app`, so a development build started with `cargo run` doesn't show any.
+- **Linux** uses your desktop's notification service (GNOME, KDE, mako, dunst and
+  others), with Maze's icon.
+
+Only mail that just arrived counts: unread, in an Inbox, from someone else, and
+received by your server since Maze started syncing that account. The first sync of a
+new account, mail that arrived while Maze wasn't running and mail moved back into the
+Inbox stay quiet. Mail that arrives while your computer sleeps shows up once it wakes.
+
+The `notifications` settings turn them off or show less:
+
+```jsonc
+"notifications": {
+  "enabled": true,
+  // "sender_and_subject", "sender_only" or "none" (only that new mail arrived)
+  "content": "sender_and_subject"
+}
+```
+
 ### Disk space
 
 The bottom right of the status bar shows how much disk space Maze uses, like "2.4 GB".

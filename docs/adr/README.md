@@ -30,3 +30,4 @@ to the index below.
 | [018](0018-workspace-panes.md)               | Workspace panes, tabs, splits  | Accepted                    |
 | [019](0019-imap-only.md)                     | IMAP only, no Local Folders    | Accepted                    |
 | [020](0020-servo-for-original-html.md)       | Servo for original HTML        | Accepted                    |
+| [021](0021-system-notifications.md)          | System notifications           | Accepted                    |

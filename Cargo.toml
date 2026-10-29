@@ -27,6 +27,7 @@ mazemail_types = { path = "crates/mazemail_types" }
 auto_update = { path = "crates/auto_update" }
 mail_ui = { path = "crates/mail_ui" }
 mazemail_mime = { path = "crates/mazemail_mime" }
+notifications = { path = "crates/notifications" }
 release_channel = { path = "crates/release_channel" }
 sandbox = { path = "crates/sandbox" }
 search = { path = "crates/search" }
@@ -78,6 +79,11 @@ libc = "0.2"
 lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "tokio1-rustls", "ring", "rustls-platform-verifier"] }
 mail-auth = { version = "0.13.3", default-features = false, features = ["aws-lc-rs", "arc"] }
 notify = "8"
+# New-mail notifications (ADR-021): the freedesktop D-Bus service on Linux, over zbus
+# on Tokio. On macOS, UNUserNotificationCenter through mac-usernotifications (the
+# notify-rust maintainer's crate behind its `preview-macos-un` backend).
+notify-rust = { version = "4.18.2", default-features = false, features = ["z-with-tokio"] }
+mac-usernotifications = { version = "0.3.1", default-features = false }
 notify-debouncer-mini = "0.7"
 psl = "2.1"
 quick_cache = "0.7"

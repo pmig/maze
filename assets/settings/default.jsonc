@@ -186,11 +186,13 @@
   // "background" (download and install, then offer a restart) or "notify_only".
   "auto_update_install": "background",
 
-  // Notifications for new mail.
+  // System notifications for new mail in an Inbox (Notification Center on macOS, the
+  // desktop's notification service on Linux). A click opens the message.
   "notifications": {
     "enabled": true,
-    // What a notification shows: "sender_and_subject", "sender_only" or "none".
-    // macOS keeps the text of delivered notifications in its own database.
+    // What a notification shows: "sender_and_subject", "sender_only" or "none" (only
+    // that new mail arrived). macOS keeps the text of delivered notifications in its
+    // own database.
     "content": "sender_and_subject",
     // The unread count on the dock icon.
     "dock_badge": true

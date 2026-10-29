@@ -14,6 +14,8 @@
 //!   [`CoreHandle::accounts_with_status`](crate::CoreHandle::accounts_with_status).
 //!   New messages, flag changes and bodies need nothing extra: the engine writes them
 //!   to the store, whose change sets become event batches (thread list refreshes).
+//!   The same forwarder picks newly arrived mail out of the actor's batches
+//!   ([`crate::new_mail`]) and broadcasts it for notifications.
 //! - **Requests.** [`SyncBridge::fetch_body`] sends an interactive body fetch to the
 //!   message's account, [`SyncBridge::refresh`] a "sync now", and
 //!   [`SyncBridge::ops_queued`] a replay nudge.
@@ -42,12 +44,13 @@ use sync::{
     AccountHandle, AccountSyncConfig, BodyPriority, CredentialProvider, ImapSessionFactory,
     SessionFactory, SyncCommand, SyncDeps, SyncScope, SyncTiming,
 };
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 
 use crate::accounts::{AccountAuth, AccountConfig, ImapServer, registry_from_settings};
 use crate::credentials::{AccountCredentials, Method};
 use crate::events::CoreEvent;
+use crate::new_mail::{self, NewMailBatch, NewMailFilter, unix_now};
 use crate::sync_bridge::{FetchPriority, RefreshScope, SyncBridge, SyncState, SyncStatus};
 use crate::sync_ingest::CoreIngest;
 
@@ -222,6 +225,7 @@ pub struct SyncEngine {
     secrets: Arc<dyn SecretStore>,
     settings: watch::Receiver<Arc<LoadedSettings>>,
     events: mpsc::UnboundedSender<CoreEvent>,
+    new_mail: broadcast::Sender<NewMailBatch>,
     runtime: tokio::runtime::Handle,
     actors: Mutex<HashMap<AccountId, Running>>,
     /// One OAuth token manager per account, shared by sync and sending, so a refresh
@@ -288,12 +292,18 @@ impl SyncEngine {
             secrets,
             settings,
             events,
+            new_mail: new_mail::channel(),
             runtime,
             actors: Mutex::new(HashMap::new()),
             tokens: Mutex::new(HashMap::new()),
             statuses: Arc::new(Mutex::new(HashMap::new())),
             watchdog: Mutex::new(None),
         }
+    }
+
+    /// Where newly arrived mail is broadcast ([`CoreHandle::new_mail`](crate::CoreHandle::new_mail)).
+    pub(crate) fn new_mail(&self) -> &broadcast::Sender<NewMailBatch> {
+        &self.new_mail
     }
 
     pub(crate) fn connector(&self) -> &Arc<dyn ImapConnector> {
@@ -473,8 +483,12 @@ impl SyncEngine {
             account.id,
             handle.status_watch(),
             handle.subscribe(),
-            self.events.clone(),
-            Arc::clone(&self.statuses),
+            Forward {
+                events: self.events.clone(),
+                statuses: Arc::clone(&self.statuses),
+                store: self.store.clone(),
+                new_mail: self.new_mail.clone(),
+            },
         ));
         actors.insert(account.id, Running { handle, forwarder });
         tracing::info!(account = %account.id, kind = %account.kind.as_str(), "sync started");
@@ -552,14 +566,29 @@ impl SyncEngine {
     }
 }
 
-/// Forwards an actor's status into the core's events, logs alerts and stuck ops.
+/// Where [`forward_status`] sends what it learns.
+struct Forward {
+    events: mpsc::UnboundedSender<CoreEvent>,
+    statuses: Arc<Mutex<HashMap<AccountId, SyncStatus>>>,
+    store: Store,
+    new_mail: broadcast::Sender<NewMailBatch>,
+}
+
+/// Forwards an actor's status into the core's events, logs alerts and stuck ops, and
+/// broadcasts newly arrived mail.
 async fn forward_status(
     account: AccountId,
     mut status: watch::Receiver<sync::SyncStatus>,
-    mut batches: tokio::sync::broadcast::Receiver<Arc<sync::SyncEventBatch>>,
-    events: mpsc::UnboundedSender<CoreEvent>,
-    statuses: Arc<Mutex<HashMap<AccountId, SyncStatus>>>,
+    mut batches: broadcast::Receiver<Arc<sync::SyncEventBatch>>,
+    forward: Forward,
 ) {
+    let Forward {
+        events,
+        statuses,
+        store,
+        new_mail,
+    } = forward;
+    let mut filter = NewMailFilter::new(account, unix_now());
     let report = |current: &sync::SyncStatus| -> bool {
         let Some(status) = core_status(account, current) else {
             return true;
@@ -594,11 +623,37 @@ async fn forward_status(
                             tracing::warn!(%account, %op, %error, "a pending op is stuck");
                         }
                     }
+                    if !batch.added.is_empty() {
+                        report_new_mail(&store, &mut filter, &batch, &new_mail);
+                    }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => batches_open = false,
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::debug!(%account, skipped, "sync batches skipped; new mail in them isn't notified");
+                }
+                Err(broadcast::error::RecvError::Closed) => batches_open = false,
             },
         }
+    }
+}
+
+/// Picks the new mail out of `batch` and broadcasts it, if there is any.
+fn report_new_mail(
+    store: &Store,
+    filter: &mut NewMailFilter,
+    batch: &sync::SyncEventBatch,
+    out: &broadcast::Sender<NewMailBatch>,
+) {
+    let found = store
+        .reader()
+        .and_then(|reader| filter.select(&reader, batch));
+    match found {
+        Ok(found) if found.is_empty() => {}
+        Ok(found) => {
+            tracing::debug!(account = %batch.account, messages = found.len(), "new mail");
+            // Nobody listening (no window, headless) is fine.
+            let _ = out.send(found.into());
+        }
+        Err(err) => tracing::warn!(%err, account = %batch.account, "looking for new mail"),
     }
 }
 

@@ -17,7 +17,7 @@ L4  mazemail (binary: GUI + CLI)
 L3  mail_ui · composer · agent_ui · auto_update_ui · html_view · ui        (GPUI)
 L2  mazemail_core · local_api · agent · assistant · import · rules
 L1  store · search · imap · smtp · auth · security · sync · auto_update · vault ·
-    sandbox · settings
+    sandbox · settings · notifications
 L0  mazemail_types · mazemail_mime · release_channel           (pure, no IO)
 ```
 
