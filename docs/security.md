@@ -88,6 +88,11 @@ Linux).
 - **Settings, keymaps and themes** in `~/.config/mazemail/`. They hold no mail content
   and no addresses; accounts and identities are in the encrypted database.
 - **Logs**: Maze never logs message content, subjects or addresses.
+- **Notifications**: the sender and subject of new mail, shown by your system. macOS
+  keeps delivered notifications in its own database; Linux notification services may
+  keep a history too. Set `notifications.content` to `"sender_only"` or `"none"` to
+  leave the subject or everything out, or turn notifications off with
+  `notifications.enabled`.
 
 - **Agent session folders** (`sessions/<id>/` in the data directory): the thread you
   attached to a conversation, as Markdown, because the agent has to read it. Only what
@@ -98,9 +103,8 @@ Linux).
   Terminal login scripts (`agents/login/`) hold no keys.
 
 As the features arrive, these join the list: attachments you open in another app (a
-private temporary folder, deleted on quit or after 24 hours), notification text (macOS
-keeps delivered notifications in its own database; the `notifications.content` setting
-controls whether they include the subject) and pages you open in a browser. The
+private temporary folder, deleted on quit or after 24 hours) and pages you open in a
+browser. The
 original HTML view writes nothing (see [HTML mail](#html-mail)). Maze
 doesn't donate mail to Spotlight.
 

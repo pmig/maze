@@ -40,6 +40,7 @@ use crate::message::{
 use crate::message_list::{
     MessageListRow, MessageListSnapshot, all_message_keys, order_message_keys,
 };
+use crate::new_mail::{self, NewMailBatch};
 use crate::outgoing::{CoreRoutes, OutboxWake};
 use crate::row_cache::{RowCache, RowCacheStats};
 use crate::runtime::RuntimeHolder;
@@ -84,6 +85,7 @@ struct Inner {
     indexer: IndexerTask,
     events_out: broadcast::Sender<CoreEventBatch>,
     events_in: mpsc::UnboundedSender<CoreEvent>,
+    new_mail: broadcast::Sender<NewMailBatch>,
     rows: Arc<RowCache>,
     text: Arc<TextCache>,
     settings: watch::Receiver<Arc<LoadedSettings>>,
@@ -306,6 +308,12 @@ impl CoreHandle {
     /// Batched change events (PLAN §4.2), at most one batch per event window.
     pub fn events(&self) -> broadcast::Receiver<CoreEventBatch> {
         self.inner.events_out.subscribe()
+    }
+
+    /// Newly arrived mail, for notifications (see [`crate::new_mail`]): one batch per
+    /// sync batch that brought some. Only with a sync engine.
+    pub fn new_mail(&self) -> broadcast::Receiver<NewMailBatch> {
+        self.inner.new_mail.subscribe()
     }
 
     /// How much disk space Maze's data directory takes, from the last background
@@ -1293,6 +1301,10 @@ pub(crate) async fn finish(
         }
         None => None,
     };
+    // Without an engine nothing syncs, so nothing is ever sent.
+    let new_mail = engine
+        .as_ref()
+        .map_or_else(new_mail::channel, |engine| engine.new_mail().clone());
     let sync: Arc<dyn SyncBridge> = match &engine {
         Some(engine) => Arc::clone(engine) as Arc<dyn SyncBridge>,
         None => Arc::clone(&config.sync),
@@ -1310,6 +1322,7 @@ pub(crate) async fn finish(
             indexer,
             events_out,
             events_in,
+            new_mail,
             rows,
             text,
             settings,

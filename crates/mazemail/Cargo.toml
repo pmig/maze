@@ -34,6 +34,7 @@ local_api = { workspace = true }
 mail_ui = { workspace = true }
 mazemail_core = { workspace = true }
 mazemail_types = { workspace = true }
+notifications = { workspace = true }
 release_channel = { workspace = true }
 security = { workspace = true }
 serde_json = { workspace = true }
