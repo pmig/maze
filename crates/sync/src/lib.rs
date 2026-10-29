@@ -19,8 +19,9 @@
 //!   jumps the queue and fetches only the text parts of messages over 256 KB. The
 //!   Thunderbird body-reuse hook ([`MessageIngest::lookup_reused_body`]) is asked first.
 //! - **Change detection**: IDLE on INBOX (Gmail: All Mail) re-issued every 25 min;
-//!   `STATUS` polling of the other folders every 2 min and of the open folder every
-//!   30 s, with a pass only when UIDNEXT/HIGHESTMODSEQ changed; reconnects with
+//!   `STATUS` polling of the other folders every 2 min and of the open folder and the
+//!   watched ones ([`SyncCommand::WatchFolders`], the favorites) every 30 s, with a
+//!   pass only when UIDNEXT/HIGHESTMODSEQ changed; reconnects with
 //!   exponential backoff and jitter; [`SyncCommand::NetworkChanged`] and
 //!   [`SyncCommand::Wake`] reconnect and run one round. No timer fires while there
 //!   is nothing to do.

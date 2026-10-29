@@ -194,6 +194,8 @@ pub(crate) struct Actor {
     folders_known: bool,
     gmail: bool,
     open_folder: Option<FolderId>,
+    /// Folders polled with the open folder ([`SyncCommand::WatchFolders`]).
+    watched: Vec<FolderId>,
     unresolved: HashSet<FolderId>,
     last_uid_diff: HashMap<FolderId, Instant>,
     round_pending: Option<bool>,
@@ -256,6 +258,7 @@ impl Actor {
             folders_known: false,
             gmail: false,
             open_folder: None,
+            watched: Vec::new(),
             unresolved: HashSet::new(),
             last_uid_diff: HashMap::new(),
             round_pending: None,
@@ -318,11 +321,14 @@ impl Actor {
             }
             SyncCommand::OpenFolder(folder) => {
                 self.open_folder = folder;
-                self.next_open_poll =
-                    folder.map(|_| Instant::now() + self.shared.config.timing.open_folder_poll);
+                self.schedule_open_poll(true);
                 if let Some(target) = folder.and_then(|f| self.mailbox_for(f)) {
                     self.enqueue_pass(target, P_OPEN_FOLDER, PassOptions::default());
                 }
+            }
+            SyncCommand::WatchFolders(folders) => {
+                self.watched = folders;
+                self.schedule_open_poll(false);
             }
             SyncCommand::FetchBody {
                 message,
@@ -440,6 +446,36 @@ impl Actor {
                 ..PassOptions::default()
             };
             self.enqueue_pass(meta.id, priority, opts);
+        }
+    }
+
+    /// The mailboxes polled every 30 s: the open folder and the watched ones, without
+    /// the one IDLE watches while it runs.
+    fn fast_polled(&self) -> Vec<FolderId> {
+        let idle_folder = self
+            .idle_running()
+            .then(|| self.idle_folder().map(|m| m.id))
+            .flatten();
+        let mut folders = Vec::new();
+        for folder in self.open_folder.iter().chain(&self.watched) {
+            if let Some(mailbox) = self.mailbox_for(*folder)
+                && Some(mailbox) != idle_folder
+                && !folders.contains(&mailbox)
+            {
+                folders.push(mailbox);
+            }
+        }
+        folders
+    }
+
+    /// Starts or stops the 30 s poll after the open or watched folders changed.
+    /// `restart` starts a full interval even if a poll is due sooner.
+    fn schedule_open_poll(&mut self, restart: bool) {
+        let wanted = self.open_folder.is_some() || !self.watched.is_empty();
+        if !wanted {
+            self.next_open_poll = None;
+        } else if restart || self.next_open_poll.is_none() {
+            self.next_open_poll = Some(Instant::now() + self.shared.config.timing.open_folder_poll);
         }
     }
 
@@ -766,13 +802,13 @@ impl Actor {
                 let skip_idle = self
                     .idle_running()
                     .then(|| self.idle_folder().map(|m| m.id));
-                let open = self.open_folder.and_then(|f| self.mailbox_for(f));
+                let fast = self.fast_polled();
                 let folders: Vec<FolderId> = self
                     .folders
                     .values()
                     .filter(|m| m.kind == FolderKind::Mailbox)
                     .map(|m| m.id)
-                    .filter(|id| skip_idle.flatten() != Some(*id) && open != Some(*id))
+                    .filter(|id| skip_idle.flatten() != Some(*id) && !fast.contains(id))
                     .collect();
                 if !folders.is_empty() {
                     self.enqueue(Job::Poll { folders }, P_POLL);
@@ -782,13 +818,8 @@ impl Actor {
         if self.next_open_poll.is_some_and(|t| t <= now) {
             self.next_open_poll = Some(now + timing.open_folder_poll);
             if !self.unavailable() {
-                let mut folders = Vec::new();
+                let mut folders = self.fast_polled();
                 let idle_folder = self.idle_folder().map(|m| m.id);
-                if let Some(open) = self.open_folder.and_then(|f| self.mailbox_for(f))
-                    && !(self.idle_running() && idle_folder == Some(open))
-                {
-                    folders.push(open);
-                }
                 // Without IDLE, the Inbox is watched like the open folder.
                 if !self.idle_running()
                     && let Some(inbox) = idle_folder

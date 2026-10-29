@@ -3,7 +3,8 @@
 //! Every account's sync batches go through a [`NewMailFilter`]. A message counts as
 //! new mail when it
 //!
-//! - was added to a folder with the Inbox role (Gmail's INBOX label too),
+//! - was added to a folder with the Inbox role (Gmail's INBOX label too) or to a
+//!   favorite folder (`folder_pane.favorites`) that isn't the Sent folder,
 //! - is unread there,
 //! - wasn't sent from one of the account's identities, and
 //! - reached the server ([`MessageDetail::received`], else its `Date`) after the
@@ -17,7 +18,7 @@
 //! [`CoreHandle::new_mail`](crate::CoreHandle::new_mail) broadcasts the result; the
 //! GUI turns it into system notifications and applies the `notifications` settings.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use mazemail_types::{
@@ -45,7 +46,7 @@ pub struct NewMail {
     pub account: AccountId,
     /// The account's name ("Work").
     pub account_name: String,
-    /// The Inbox it arrived in.
+    /// The folder it arrived in: an Inbox or a favorite.
     pub folder: FolderId,
     /// The sender.
     pub from: Sensitive<Option<Address>>,
@@ -90,11 +91,13 @@ impl NewMailFilter {
         }
     }
 
-    /// The new mail in `batch`, read from `reader`.
+    /// The new mail in `batch`, read from `reader`; `favorites` are the account's
+    /// favorite folders.
     pub(crate) fn select(
         &mut self,
         reader: &impl Queries,
         batch: &SyncEventBatch,
+        favorites: &BTreeSet<FolderId>,
     ) -> store::Result<Vec<NewMail>> {
         let mut found = Vec::new();
         let mut own: Option<HashSet<String>> = None;
@@ -103,10 +106,11 @@ impl NewMailFilter {
             if batch.folders_reset.contains(folder) {
                 continue;
             }
-            let is_inbox = reader
-                .folder(*folder)?
-                .is_some_and(|f| f.role == Some(FolderRole::Inbox));
-            if !is_inbox {
+            let role = match reader.folder(*folder)? {
+                Some(f) => f.role,
+                None => continue,
+            };
+            if !notifies(role, favorites.contains(folder)) {
                 continue;
             }
             for &message in messages {
@@ -168,6 +172,12 @@ impl NewMailFilter {
     }
 }
 
+/// Whether new mail in a folder with `role` is notified: in an Inbox, and in favorites
+/// other than Sent.
+fn notifies(role: Option<FolderRole>, favorite: bool) -> bool {
+    role == Some(FolderRole::Inbox) || (favorite && role != Some(FolderRole::Sent))
+}
+
 /// When a message reached the server: INTERNALDATE, else its `Date` header.
 fn arrival(detail: &MessageDetail) -> UnixTime {
     detail.received.unwrap_or(detail.date)
@@ -180,4 +190,19 @@ fn own_addresses(reader: &impl Queries, account: AccountId) -> store::Result<Has
         .into_iter()
         .map(|identity| identity.input.email.to_lowercase())
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inboxes_and_favorites_but_not_sent_notify() {
+        assert!(notifies(Some(FolderRole::Inbox), false));
+        assert!(notifies(None, true));
+        assert!(notifies(Some(FolderRole::Archive), true));
+        assert!(!notifies(Some(FolderRole::Sent), true));
+        assert!(!notifies(None, false));
+        assert!(!notifies(Some(FolderRole::Archive), false));
+    }
 }

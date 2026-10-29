@@ -359,6 +359,27 @@ async fn status_polling_finds_changes_in_other_folders() {
     handle.shutdown().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn watched_folders_are_polled_with_the_open_folder() {
+    let server = FakeServer::new();
+    server.deliver("Archive", mail(1));
+    let h = Harness::new(server.clone()).await;
+    let mut config = h.config();
+    // Only the 30 s poll is fast here; the poll of the other folders never comes.
+    config.timing.open_folder_poll = std::time::Duration::from_millis(100);
+    let handle = h.spawn(config);
+    wait_idle(&handle).await;
+    handle.watch_folders(vec![h.folder_id("Archive")]).unwrap();
+    server.deliver("Archive", mail(2));
+    wait_for("the watched folder's new mail", || {
+        h.uids("Archive").len() == 2
+    })
+    .await;
+    let log = server.command_log();
+    assert!(log.iter().any(|c| c == "STATUS Archive"), "{log:?}");
+    handle.shutdown().await;
+}
+
 /// The activity snapshot shows the running pass with its header progress, then
 /// nothing running and the time of the finished round.
 #[tokio::test(flavor = "multi_thread")]

@@ -333,7 +333,8 @@ pub struct FolderPaneSettings {
     pub modes: Vec<FolderPaneMode>,
     /// Folders shown under Favorites. Maze adds and removes entries when you use "Add
     /// to Favorites" and "Remove from Favorites"; entries for folders that don't exist
-    /// (any more) are kept but not shown.
+    /// (any more) are kept but not shown. Favorites are checked for new mail every 30
+    /// seconds and notify like the Inbox (except Sent).
     pub favorites: Vec<FavoriteFolder>,
 }
 
