@@ -83,7 +83,12 @@ mod tests {
 
     #[test]
     fn serves_maze_and_kit_icons() {
-        for icon in [IconName::Archive, IconName::ReplyAll, IconName::Inbox, IconName::StarPlus] {
+        for icon in [
+            IconName::Archive,
+            IconName::ReplyAll,
+            IconName::Inbox,
+            IconName::StarPlus,
+        ] {
             let bytes = Assets.load(&icon.path()).unwrap();
             assert!(bytes.is_some(), "{icon:?} is not embedded");
         }
