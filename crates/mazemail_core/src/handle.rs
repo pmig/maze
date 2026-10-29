@@ -1163,6 +1163,7 @@ fn command_weight(command: &MailCommand) -> usize {
         | MailCommand::Move { ids, .. }
         | MailCommand::Copy { ids, .. }
         | MailCommand::Archive { ids }
+        | MailCommand::Junk { ids }
         | MailCommand::Delete { ids, .. } => ids.len().max(1),
         _ => 1,
     }

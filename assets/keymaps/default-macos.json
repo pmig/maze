@@ -91,6 +91,8 @@
       "m": "mail::ToggleRead",
       "s": "mail::ToggleStar",
       "a": "mail::Archive",
+      // Thunderbird's key for marking junk; Maze also moves it to the Junk folder.
+      "j": "mail::ReportJunk",
       "backspace": "mail::Delete",
       "delete": "mail::Delete",
       "shift-m": "mail::MoveToFolder",

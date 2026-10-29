@@ -181,6 +181,7 @@ fn command_permission(command: &MailCommand) -> Option<Permission> {
         | MailCommand::Move { .. }
         | MailCommand::Copy { .. }
         | MailCommand::Archive { .. }
+        | MailCommand::Junk { .. }
         | MailCommand::MarkFolderRead { .. } => Some(Permission::Propose),
         MailCommand::Refresh { .. } => Some(Permission::Read),
         MailCommand::Delete { .. }
@@ -203,6 +204,7 @@ pub(crate) fn proposal_title(command: &MailCommand) -> String {
     }
     match command {
         MailCommand::Archive { ids } => format!("Archive {}", messages(ids.len())),
+        MailCommand::Junk { ids } => format!("Report {} as junk", messages(ids.len())),
         MailCommand::Move { ids, .. } => format!("Move {}", messages(ids.len())),
         MailCommand::Copy { ids, .. } => format!("Copy {}", messages(ids.len())),
         MailCommand::SetTags { ids, .. } => format!("Retag {}", messages(ids.len())),

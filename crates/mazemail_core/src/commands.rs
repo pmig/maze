@@ -18,6 +18,10 @@
 //!   Gmail it removes the `\Inbox` label.
 //! - **Delete** moves to the account's Trash; on messages already in Trash, or with
 //!   `permanent`, it deletes for good (not undoable). On Gmail every label is removed.
+//! - **Junk** (Report Junk) marks the messages `$Junk` (and not `$NotJunk`) on the
+//!   server and moves every copy into the account's Junk folder; on Gmail they move to
+//!   Spam, which removes every label. Without a Junk folder the messages are only
+//!   marked.
 //! - **Folder commands** create, rename (children follow) and delete folders; special
 //!   folders can't be renamed or deleted.
 //!
@@ -25,7 +29,8 @@
 //!
 //! The last undoable command with [`Origin::User`] can be undone with
 //! [`CoreHandle::undo`](crate::CoreHandle::undo) (`cmd-z`): flags and tags are restored
-//! per location, moves, archives and deletes put the copies back where they were. Undo
+//! per location, moves, archives, deletes and junk reports put the copies back where
+//! they were (the server keeps the `$Junk` mark). Undo
 //! is a command of its own: it enqueues the reverse server ops and is audited.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -76,6 +81,8 @@ pub enum MailCommand {
         ids: Vec<MessageId>,
         permanent: bool,
     },
+    /// Report junk: mark `$Junk` and move to the account's Junk folder (Gmail: Spam).
+    Junk { ids: Vec<MessageId> },
     /// Create a folder.
     CreateFolder {
         account: AccountId,
@@ -102,6 +109,7 @@ impl MailCommand {
             Self::Copy { .. } => "copy",
             Self::Archive { .. } => "archive",
             Self::Delete { .. } => "delete",
+            Self::Junk { .. } => "junk",
             Self::CreateFolder { .. } => "create_folder",
             Self::RenameFolder { .. } => "rename_folder",
             Self::DeleteFolder { .. } => "delete_folder",
@@ -228,6 +236,7 @@ pub(crate) fn apply_in_tx(
         MailCommand::Copy { ids, to } => tx.copy_messages(ids, *to)?,
         MailCommand::Archive { ids } => tx.archive(ids)?,
         MailCommand::Delete { ids, permanent } => tx.delete(ids, *permanent)?,
+        MailCommand::Junk { ids } => tx.junk(ids)?,
         MailCommand::CreateFolder {
             account,
             parent,
@@ -427,7 +436,9 @@ impl<'a, 'w> Tx<'a, 'w> {
             | MailCommand::MarkFolderRead { folder } => {
                 detail["folder"] = folder.to_string().into();
             }
-            MailCommand::Archive { .. } | MailCommand::Refresh { .. } => {}
+            MailCommand::Archive { .. }
+            | MailCommand::Junk { .. }
+            | MailCommand::Refresh { .. } => {}
         }
         self.w
             .audit(self.origin, action, Some(&detail.to_string()))?;
@@ -1013,6 +1024,53 @@ impl<'a, 'w> Tx<'a, 'w> {
         for detail in to_purge {
             self.touch(&detail);
             self.w.delete_message(detail.id)?;
+        }
+        self.applied.undo = Some(UndoAction::Locations(undo));
+        Ok(())
+    }
+
+    fn junk(&mut self, ids: &[MessageId]) -> store::Result<()> {
+        let details = self.details(ids)?;
+        let mut undo = Vec::new();
+        let mut groups: BTreeMap<(AccountId, Option<FolderId>), Vec<LocationRef>> = BTreeMap::new();
+        let mut planned: Vec<(MessageDetail, Vec<Location>, FolderId)> = Vec::new();
+        for detail in details {
+            match self.role_folder(detail.account, FolderRole::Junk)? {
+                Some(junk) => {
+                    // Every copy outside Junk moves there; on Gmail that is the move
+                    // from All Mail to Spam, which removes every label.
+                    let sources: Vec<Location> = detail
+                        .locations
+                        .iter()
+                        .filter(|l| l.folder != junk.id)
+                        .cloned()
+                        .collect();
+                    if sources.is_empty() {
+                        continue;
+                    }
+                    groups
+                        .entry((detail.account, Some(junk.id)))
+                        .or_default()
+                        .extend(sources.iter().map(|source| location_ref(&detail, source)));
+                    planned.push((detail, sources, junk.id));
+                }
+                None => {
+                    // No Junk folder: the server still learns that it is junk.
+                    groups.entry((detail.account, None)).or_default().extend(
+                        detail
+                            .locations
+                            .iter()
+                            .map(|location| location_ref(&detail, location)),
+                    );
+                }
+            }
+        }
+        for ((account, to), items) in groups {
+            self.enqueue(account, &OpPayload::Junk { items, to })?;
+        }
+        for (detail, sources, junk) in planned {
+            undo.push((detail.id, detail.locations.clone()));
+            self.relocate(&detail, &sources, junk)?;
         }
         self.applied.undo = Some(UndoAction::Locations(undo));
         Ok(())

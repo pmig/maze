@@ -91,8 +91,8 @@ use ui::keymap::shortcut_label;
 use ui::theme::{scaled, ui_scale};
 
 use crate::actions::{
-    Archive, Delete, Forward, MoveToFolder, OpenMessage, Reply, ReplyAll, SelectThread, ToggleRead,
-    ToggleStar,
+    Archive, Delete, Forward, MoveToFolder, OpenMessage, Reply, ReplyAll, ReportJunk, SelectThread,
+    ToggleRead, ToggleStar,
 };
 use crate::format::{DateFormatter, format_size, format_thousands};
 use crate::list_model::{Expansions, RowPosition, TreeRow, tree_rows};
@@ -1477,6 +1477,26 @@ impl ThreadList {
         }
     }
 
+    /// `j`: reports the selected rows (or thread) as junk and selects the next row.
+    pub fn junk_selected(&mut self, cx: &mut Context<'_, Self>) {
+        let items = self.command_items();
+        if items.is_empty() {
+            return;
+        }
+        let batch = self.batch(&items);
+        let result = self.remove(
+            &items,
+            |source| match &batch {
+                Batch::Threads(ids) => source.junk(ids),
+                Batch::Messages(ids) => source.junk_messages(ids),
+            },
+            cx,
+        );
+        if let Err(error) = result {
+            tracing::warn!(%error, "reporting junk failed");
+        }
+    }
+
     /// `backspace` / `delete`: moves the selected rows to Trash (in Trash: deletes them
     /// for good; the window asks first) and selects the next row.
     pub fn delete_selected(&mut self, cx: &mut Context<'_, Self>) {
@@ -2445,6 +2465,7 @@ impl ThreadList {
                 entry("Star", Box::new(ToggleStar))
             },
             entry("Archive", Box::new(Archive)),
+            entry("Report Junk", Box::new(ReportJunk)),
             entry("Delete", Box::new(Delete)),
             entry("Move to Folder…", Box::new(MoveToFolder)),
             None,
@@ -3766,9 +3787,10 @@ mod tests {
                 ]
             );
             assert_eq!(items[4], Some(("Mark as Read".into(), "mail::ToggleRead")));
-            assert_eq!(items[7], Some(("Delete".into(), "mail::Delete")));
+            assert_eq!(items[7], Some(("Report Junk".into(), "mail::ReportJunk")));
+            assert_eq!(items[8], Some(("Delete".into(), "mail::Delete")));
             assert_eq!(
-                items[8],
+                items[9],
                 Some(("Move to Folder…".into(), "mail::MoveToFolder"))
             );
             list.toggle_read(cx);

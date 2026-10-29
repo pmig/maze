@@ -436,6 +436,48 @@ async fn delete_moves_to_trash_and_deletes_for_good_from_there() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn junk_marks_and_moves_to_the_junk_folder() {
+    let (t, f, a, b) = setup().await;
+    let junk = |t: &TestCore, id: MessageId| {
+        let core = t.core.clone();
+        async move {
+            core.apply(MailCommand::Junk { ids: vec![id] }, Origin::User)
+                .await
+                .unwrap()
+        }
+    };
+
+    // Without a Junk folder the server only learns that it is junk.
+    junk(&t, b).await;
+    assert_eq!(folders_of(&t.core, b), vec![f.inbox]);
+    let (kind, payload) = ops(&t.core, f.work).pop().unwrap();
+    assert_eq!(kind, "junk");
+    assert_eq!(payload["to"], Value::Null);
+
+    let junk_folder = t
+        .core
+        .store()
+        .write(move |w| {
+            let mut new = store::NewFolder::new(f.work, "Junk", "Junk");
+            new.role = Some(mazemail_types::FolderRole::Junk);
+            w.create_folder(&new)
+        })
+        .await
+        .unwrap();
+    let receipt = junk(&t, a).await;
+    assert!(receipt.undoable);
+    assert_eq!(folders_of(&t.core, a), vec![junk_folder]);
+    let (kind, payload) = ops(&t.core, f.work).pop().unwrap();
+    assert_eq!(kind, "junk");
+    assert_eq!(payload["to"], junk_folder.0);
+    assert_eq!(payload["items"][0]["folder"], f.inbox.0);
+
+    // Undo puts it back in the Inbox.
+    t.core.undo().await.unwrap().unwrap();
+    assert_eq!(folders_of(&t.core, a), vec![f.inbox]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn folder_commands_and_mark_folder_read() {
     let (t, f, a, b) = setup().await;
     let created = t

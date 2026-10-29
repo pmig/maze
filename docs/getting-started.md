@@ -484,8 +484,8 @@ messages is starred, unread or has attachments. Sorting a very large folder by a
 but the date takes a moment ("Sorting…"); the selected message stays selected.
 
 Right-click a message (in the list, cards or table, or in the message pane) for a menu
-with Reply, Reply All, Forward, Mark as Read or Unread, Star or Unstar, Archive, Move to
-Folder… and Select Thread, each with its shortcut. Right-clicking a message that isn't
+with Reply, Reply All, Forward, Mark as Read or Unread, Star or Unstar, Archive, Report
+Junk, Delete, Move to Folder… and Select Thread, each with its shortcut. Right-clicking a message that isn't
 selected selects it (without marking it read); right-clicking inside a selection of
 several messages keeps it, and the menu acts on all of them. The message pane's menu
 also copies the sender's address.
@@ -496,9 +496,14 @@ and `\` closes them, `cmd-shift-a` selects a whole thread. The threads button (o
 `cmd-alt-g`) turns threads off and lists every message on its own.
 
 `shift-down` / `shift-up` (or shift-click) select several rows, cmd-click adds or
-removes one, `cmd-a` selects them all. Archive, Delete, Quick Move, toggle read and
-star then act on every selected row at once, and the message pane says how many are
-selected.
+removes one, `cmd-a` selects them all. Archive, Report Junk, Delete, Quick Move,
+toggle read and star then act on every selected row at once, and the message pane says
+how many are selected.
+
+**Report Junk** (`j`, Thunderbird's key, or the **Junk** button next to **Archive** in
+the message header) marks the mail as junk on your server (the `$Junk` keyword spam
+filters learn from) and moves it to the account's Junk folder; on Gmail it goes to
+Spam. An account without a Junk folder only gets the mark. `cmd-z` moves it back.
 
 **Delete** (`backspace` or `delete`, also in the right-click menu) moves the selection to
 the account's Trash; `cmd-z` brings it back. On Gmail that removes every label. In a
@@ -895,6 +900,7 @@ you chose. These are bound today:
 | Toggle read                                 | `m`                                                  |
 | Star                                        | `s`                                                  |
 | Archive                                     | `a`                                                  |
+| Report junk (mark and move to Junk)         | `j`                                                  |
 | Move to a folder (Quick Move)               | `shift-m`                                            |
 | Delete (move to Trash)                      | `backspace`, `delete`                                |
 | Undo the last archive, move, delete or flag | `cmd-z`                                              |

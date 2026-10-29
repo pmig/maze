@@ -32,6 +32,7 @@ gpui_kit::assets::icon_assets!(
         Mail,
         MailOpen,
         Mailbox,
+        OctagonAlert,
         Mails,
         PanelLeft,
         PanelRight,

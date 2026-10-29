@@ -17,7 +17,9 @@ use time::UtcOffset;
 use ui::assets::IconName;
 use ui::panes::{Item, ItemEvent, SerializedItem};
 
-use crate::actions::{Archive, Delete, Forward, Reply, ReplyAll, ToggleRead, ToggleStar};
+use crate::actions::{
+    Archive, Delete, Forward, Reply, ReplyAll, ReportJunk, ToggleRead, ToggleStar,
+};
 use crate::message_view::{MessageView, ViewPlace};
 use crate::source::{MailSource, SourceError};
 
@@ -91,6 +93,7 @@ impl MessageTab {
                         Box::new(ToggleStar),
                     )
                     .menu("Archive", Box::new(Archive))
+                    .menu("Report Junk", Box::new(ReportJunk))
                     .menu("Delete", Box::new(Delete))
             }));
         });
@@ -195,6 +198,13 @@ impl MessageTab {
     /// `a`: archives the message and closes the tab.
     pub fn archive(&mut self, cx: &mut Context<'_, Self>) -> Result<(), SourceError> {
         self.source.archive_messages(&[self.message])?;
+        cx.emit(ItemEvent::Close);
+        Ok(())
+    }
+
+    /// `j`: reports the message as junk and closes the tab.
+    pub fn junk(&mut self, cx: &mut Context<'_, Self>) -> Result<(), SourceError> {
+        self.source.junk_messages(&[self.message])?;
         cx.emit(ItemEvent::Close);
         Ok(())
     }

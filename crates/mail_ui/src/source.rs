@@ -1148,6 +1148,13 @@ pub trait MailSource: Send + Sync + 'static {
     /// Moves single messages to Trash, like [`MailSource::delete`].
     fn delete_messages(&self, messages: &[MessageId]) -> Result<(), SourceError>;
 
+    /// Reports threads as junk: marks them junk on the server and moves them to their
+    /// account's Junk folder (Gmail: Spam).
+    fn junk(&self, threads: &[ThreadId]) -> Result<(), SourceError>;
+
+    /// Reports single messages as junk, like [`MailSource::junk`].
+    fn junk_messages(&self, messages: &[MessageId]) -> Result<(), SourceError>;
+
     /// Reverts the last archive, move or flag change. `false` when there was nothing
     /// to undo.
     fn undo(&self) -> Result<bool, SourceError>;

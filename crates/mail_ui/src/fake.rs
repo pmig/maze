@@ -366,6 +366,8 @@ struct State {
     archived_messages: HashSet<MessageId>,
     /// Where moved threads and messages went.
     moves: HashMap<MoveItem, FolderId>,
+    /// Threads and messages reported as junk.
+    junked: HashSet<MoveItem>,
     /// Unread count changes per folder, relative to the generated counts.
     unread_delta: Vec<i64>,
     /// Favorite folders, by folder index.
@@ -510,6 +512,11 @@ impl FakeMailSource {
     /// The folder a thread or message was moved to, if it was.
     pub fn moved_to(&self, item: MoveItem) -> Option<FolderId> {
         self.read_state().moves.get(&item).copied()
+    }
+
+    /// Whether a thread or message was reported as junk.
+    pub fn is_junk(&self, item: MoveItem) -> bool {
+        self.read_state().junked.contains(&item)
     }
 
     /// The account of a folder index, as the folder tree numbers them.
@@ -1652,6 +1659,23 @@ impl MailSource for FakeMailSource {
         self.archive_messages(messages)
     }
 
+    fn junk(&self, threads: &[ThreadId]) -> Result<(), SourceError> {
+        // The fake has no Junk folder: junk leaves its folder like archived mail.
+        self.archive(threads)?;
+        self.write_state()
+            .junked
+            .extend(threads.iter().map(|t| MoveItem::Thread(*t)));
+        Ok(())
+    }
+
+    fn junk_messages(&self, messages: &[MessageId]) -> Result<(), SourceError> {
+        self.archive_messages(messages)?;
+        self.write_state()
+            .junked
+            .extend(messages.iter().map(|m| MoveItem::Message(*m)));
+        Ok(())
+    }
+
     fn undo(&self) -> Result<bool, SourceError> {
         let Some(before) = self
             .undo
@@ -1966,6 +1990,12 @@ mod tests {
             }
             fn delete_messages(&self, m: &[MessageId]) -> Result<(), SourceError> {
                 self.0.delete_messages(m)
+            }
+            fn junk(&self, t: &[ThreadId]) -> Result<(), SourceError> {
+                self.0.junk(t)
+            }
+            fn junk_messages(&self, m: &[MessageId]) -> Result<(), SourceError> {
+                self.0.junk_messages(m)
             }
             fn thread_account(&self, thread: ThreadId) -> Option<AccountId> {
                 self.0.thread_account(thread)
