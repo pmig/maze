@@ -278,6 +278,7 @@ fn command_ids(command: &MailCommand) -> Vec<MessageId> {
         | MailCommand::Move { ids, .. }
         | MailCommand::Copy { ids, .. }
         | MailCommand::Archive { ids }
+        | MailCommand::Junk { ids }
         | MailCommand::Delete { ids, .. } => ids.clone(),
         _ => Vec::new(),
     }

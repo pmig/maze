@@ -94,6 +94,9 @@ actions!(
         ToggleStar,
         /// Archive the selected threads (`a`).
         Archive,
+        /// Report the selected threads as junk: mark them junk and move them to the
+        /// Junk folder (`j`).
+        ReportJunk,
         /// Move the selected threads to Trash; in Trash, delete them for good after
         /// asking (`backspace`, `delete`).
         Delete,

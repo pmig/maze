@@ -40,7 +40,7 @@ use ui::assets::IconName;
 use ui::keymap::shortcut_label;
 use ui::theme::scaled;
 
-use crate::actions::{Archive, Forward, Reply, ReplyAll, ToggleOriginalHtml};
+use crate::actions::{Archive, Forward, Reply, ReplyAll, ReportJunk, ToggleOriginalHtml};
 use crate::format::{DateFormatter, format_size, format_thousands, initials};
 use crate::links::{HoveredLink, LinkPreview, TextViewLinkProbe, detect_links, open_link};
 use crate::source::{
@@ -750,6 +750,15 @@ impl MessageView {
                     .child(
                         action("archive", "Archive", IconName::Archive).on_click(
                             |_, window, cx| window.dispatch_action(Box::new(Archive), cx),
+                        ),
+                    )
+                    .child(
+                        div().debug_selector(|| "report-junk".to_owned()).child(
+                            action("junk", "Junk", IconName::OctagonAlert)
+                                .tooltip("Report as junk and move to the Junk folder (J)")
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(Box::new(ReportJunk), cx)
+                                }),
                         ),
                     )
                     .when(doc.original.is_some(), |row| {

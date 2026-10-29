@@ -1048,6 +1048,19 @@ impl MailSource for CoreMailSource {
         )
     }
 
+    fn junk(&self, threads: &[ThreadId]) -> Result<(), SourceError> {
+        self.apply(|ids| MailCommand::Junk { ids }, threads)
+    }
+
+    fn junk_messages(&self, messages: &[MessageId]) -> Result<(), SourceError> {
+        self.apply_to_messages(
+            MailCommand::Junk {
+                ids: messages.to_vec(),
+            },
+            messages,
+        )
+    }
+
     fn delete(&self, threads: &[ThreadId]) -> Result<(), SourceError> {
         self.apply(
             |ids| MailCommand::Delete {

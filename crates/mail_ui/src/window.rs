@@ -1011,6 +1011,14 @@ impl MailWindow {
         }
     }
 
+    fn report_junk(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.active_message_tab(cx).is_some() {
+            self.with_message_tab(window, cx, |tab, cx| tab.junk(cx));
+        } else {
+            self.with_list(cx, |list, cx| list.junk_selected(cx));
+        }
+    }
+
     /// Whether the shown list is a Trash folder (one account's or the unified one):
     /// deleting there is for good.
     fn showing_trash(&self, cx: &App) -> bool {
@@ -1727,6 +1735,7 @@ impl MailWindow {
         .on_action(cx.listener(|this, _: &ToggleRead, window, cx| this.toggle_read(window, cx)))
         .on_action(cx.listener(|this, _: &ToggleStar, window, cx| this.toggle_star(window, cx)))
         .on_action(cx.listener(|this, _: &Archive, window, cx| this.archive(window, cx)))
+        .on_action(cx.listener(|this, _: &ReportJunk, window, cx| this.report_junk(window, cx)))
         .on_action(cx.listener(|this, _: &Delete, window, cx| this.delete(window, cx)))
         .on_action(cx.listener(|this, _: &Undo, window, cx| this.undo(window, cx)))
         .on_action(cx.listener(|this, _: &MoveToFolder, window, cx| {
@@ -2464,6 +2473,44 @@ mod tests {
                 .quick_filter_focused(window, cx)
         });
         assert!(filter_focused, "cmd-f focuses the Quick Filter");
+    }
+
+    #[gpui::test]
+    fn j_and_the_junk_button_report_junk(cx: &mut TestAppContext) {
+        use crate::fake::MoveItem;
+
+        cx.update(|cx| {
+            ui::init(cx);
+            crate::init(cx);
+        });
+        let fake = Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
+        let source: Arc<dyn MailSource> = fake.clone();
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            MailWindow::new(source, &MailWindowOptions::default(), window, cx)
+        });
+        cx.run_until_parked();
+        let selected = |cx: &mut VisualTestContext| {
+            view.read_with(cx, |w, cx| {
+                w.thread_list(cx).unwrap().read(cx).selected_thread()
+            })
+        };
+
+        let first = selected(cx).unwrap();
+        cx.simulate_keystrokes("j");
+        cx.run_until_parked();
+        assert!(fake.is_junk(MoveItem::Thread(first)));
+        let second = selected(cx).unwrap();
+        assert_ne!(second, first, "the next thread took its place");
+
+        // The button next to Archive in the message header does the same.
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let button = cx
+            .debug_bounds("report-junk")
+            .expect("the Junk button is drawn");
+        cx.simulate_click(button.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert!(fake.is_junk(MoveItem::Thread(second)));
+        assert!(fake.is_junk(MoveItem::Thread(first)));
     }
 
     #[gpui::test]
