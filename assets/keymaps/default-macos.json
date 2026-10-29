@@ -144,11 +144,14 @@
   },
   {
     // The table's own left/right move between columns; in the message list they open
-    // and close threads, as in Thunderbird.
+    // and close threads, as in Thunderbird. Up and down move like in the cards (and
+    // stop at the first and last row instead of wrapping around).
     "context": "ThreadList > DataTable",
     "bindings": {
       "right": "mail::ExpandThread",
-      "left": "mail::CollapseThread"
+      "left": "mail::CollapseThread",
+      "down": "mail::NextMessage",
+      "up": "mail::PreviousMessage"
     }
   },
   {
