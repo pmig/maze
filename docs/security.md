@@ -94,6 +94,11 @@ Linux).
   leave the subject or everything out, or turn notifications off with
   `notifications.enabled`.
 
+- **Attachments you open** in another app: a copy in a private folder
+  (`$XDG_RUNTIME_DIR/mazemail/attachments` on Linux, a per-user temporary folder on
+  macOS; mode 0700, refused if anyone else owns or can read it), read-only, deleted
+  when Maze quits and after 24 hours if it didn't quit cleanly. Attachments you save go
+  where you pick. Maze asks before opening programs and scripts.
 - **Agent session folders** (`sessions/<id>/` in the data directory): the thread you
   attached to a conversation, as Markdown, because the agent has to read it. Only what
   that session was given; deleted when the session ends, leftovers at the next start.
@@ -102,9 +107,7 @@ Linux).
   `.claude/.credentials.json` there, because the sandbox keeps it out of your keychain).
   Terminal login scripts (`agents/login/`) hold no keys.
 
-As the features arrive, these join the list: attachments you open in another app (a
-private temporary folder, deleted on quit or after 24 hours) and pages you open in a
-browser. The
+As the features arrive, these join the list: pages you open in a browser. The
 original HTML view writes nothing (see [HTML mail](#html-mail)). Maze
 doesn't donate mail to Spotlight.
 

@@ -20,6 +20,7 @@ gpui_kit::assets::icon_assets!(
         CircleDot,
         Clock,
         CloudCheck,
+        Download,
         Columns3,
         FilePen,
         Flag,

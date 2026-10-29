@@ -372,7 +372,7 @@ impl Actor {
 
     fn request_body(&mut self, message: MessageId, priority: BodyPriority, reply: Option<Waiter>) {
         match priority {
-            BodyPriority::Interactive => {
+            BodyPriority::Interactive | BodyPriority::Full => {
                 if self.unavailable() {
                     if let Some(reply) = reply {
                         let _ = reply.send(Err(SyncError::Offline));
@@ -387,7 +387,7 @@ impl Actor {
                 self.enqueue(
                     Job::Body {
                         message,
-                        interactive: true,
+                        interactive: priority == BodyPriority::Interactive,
                     },
                     P_BODY_INTERACTIVE,
                 );

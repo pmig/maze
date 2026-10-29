@@ -18,6 +18,7 @@
 //! Start-up: [`ui::init`], then [`init`], then [`open_main_window`].
 
 pub mod actions;
+pub mod attachment_files;
 mod chrome;
 pub mod command_palette;
 pub mod fake;

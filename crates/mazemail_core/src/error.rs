@@ -117,6 +117,11 @@ pub enum Error {
     #[error(transparent)]
     Send(#[from] smtp::SmtpError),
 
+    /// A message's full body, needed for an attachment, couldn't be downloaded (offline,
+    /// a slow server). The message is for people.
+    #[error("{0}")]
+    BodyUnavailable(String),
+
     /// Accounts can't be added or synced: this core runs without a sync engine.
     #[error("accounts can't be added here: Maze runs without its sync engine")]
     NoSyncEngine,

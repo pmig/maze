@@ -30,11 +30,11 @@ use mazemail_types::{
 use time::{Duration, OffsetDateTime};
 
 use crate::source::{
-    AccountActivity, AccountEntry, AccountKind, AttachmentInfo, BodyLink, Direction, FolderEntry,
-    FolderKey, FolderTree, ListSort, MailSource, MessageBody, MessageDocument, MessageKeys,
-    MessageRow, OriginalHtml, SenderClient, SortBy, SourceError, SourceStatus, StorageUsage,
-    SyncState, ThreadFilter, ThreadKeys, ThreadPredicate, ThreadRow, ThreadScope, ThreadTree,
-    TreeNode, Verdict, Verification,
+    AccountActivity, AccountEntry, AccountKind, AttachmentFile, AttachmentInfo, BodyLink,
+    Direction, FolderEntry, FolderKey, FolderTree, ListSort, MailSource, MessageBody,
+    MessageDocument, MessageKeys, MessageRow, OriginalHtml, SenderClient, SortBy, SourceError,
+    SourceStatus, StorageUsage, SyncState, ThreadFilter, ThreadKeys, ThreadPredicate, ThreadRow,
+    ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
 };
 
 /// Where the "view online" link of invoices goes, and its text.
@@ -1088,6 +1088,7 @@ impl FakeMailSource {
             vec![AttachmentInfo {
                 name: Sensitive::new(pick(&names, h >> 33).into()),
                 size: row.size.saturating_sub(1_500),
+                part_path: "2".into(),
             }]
         } else {
             Vec::new()
@@ -1551,6 +1552,26 @@ impl MailSource for FakeMailSource {
             original.remote_allowed = allowed;
         }
         Ok(doc)
+    }
+
+    fn attachment(
+        &self,
+        message: MessageId,
+        part_path: &str,
+    ) -> Result<AttachmentFile, SourceError> {
+        let state = self.read_state();
+        let doc = self.document(&state, message)?;
+        let info = doc
+            .attachments
+            .iter()
+            .find(|a| a.part_path.as_ref() == part_path)
+            .ok_or(SourceError::MessageNotFound(message))?;
+        let name = info.name.expose().to_string();
+        Ok(AttachmentFile {
+            bytes: format!("Fake attachment {name}\n").into_bytes(),
+            name: Sensitive::new(name),
+            content_type: "application/octet-stream".to_owned(),
+        })
     }
 
     fn allow_remote_content(&self, sender: &str) -> Result<(), SourceError> {

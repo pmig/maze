@@ -328,6 +328,46 @@ pub fn inline_part(raw: &[u8], content_id: &str) -> Option<InlinePart> {
     })
 }
 
+/// An attachment, decoded.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AttachmentPart {
+    /// Decoded file name, if the part has one.
+    pub filename: Option<String>,
+    /// MIME type, lowercase (`application/pdf`).
+    pub content_type: String,
+    /// The decoded content.
+    pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for AttachmentPart {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AttachmentPart")
+            .field("filename", &self.filename.as_ref().map(|_| "<redacted>"))
+            .field("content_type", &self.content_type)
+            .field("bytes", &self.bytes.len())
+            .finish()
+    }
+}
+
+/// The attachment of a raw message at `part_path` ([`AttachmentMeta::part_path`]),
+/// decoded. `None` if there is none or the message can't be parsed.
+pub fn attachment_part(raw: &[u8], part_path: &str) -> Option<AttachmentPart> {
+    let message = MessageParser::default().parse(raw)?;
+    let paths = part_paths(&message);
+    let id = message
+        .attachments
+        .iter()
+        .copied()
+        .find(|&id| paths.get(id as usize).is_some_and(|p| p == part_path))?;
+    let part = message.parts.get(id as usize)?;
+    let meta = attachment_meta(part, part_path.to_owned());
+    Some(AttachmentPart {
+        filename: meta.filename,
+        content_type: meta.content_type,
+        bytes: part.contents().to_vec(),
+    })
+}
+
 fn body_parts<'m>(
     message: &'m mail_parser::Message<'m>,
     ids: &'m [u32],
@@ -808,6 +848,16 @@ mod tests {
         assert!(m.has_attachments);
         assert_eq!(m.text_body.unwrap().text.trim(), "plain");
         assert_eq!(m.html_body.unwrap().trim(), "<p>html</p>");
+
+        let part = attachment_part(raw, "2").unwrap();
+        assert_eq!(part.filename.as_deref(), Some("r.pdf"));
+        assert_eq!(part.content_type, "application/pdf");
+        assert_eq!(part.bytes, b"%PDF-");
+        assert!(
+            attachment_part(raw, "1").is_none(),
+            "the body isn't an attachment"
+        );
+        assert!(attachment_part(raw, "3").is_none());
     }
 
     #[test]

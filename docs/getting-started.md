@@ -561,6 +561,20 @@ them. Each account can override it (`"accounts": { "work": { "remote_content":
 "never" } }`). Maze downloads the images itself, never the engine, and known tracking
 pixels are dropped either way.
 
+### Attachments
+
+Attachments are listed under the message header with their size. Click one to open it
+in the app your system uses for its type; the arrow next to it (**Save…**) asks where to
+save it, starting in Downloads. Large messages may only have their text downloaded so
+far: Maze then downloads the whole message first (the size shows "…" meanwhile), which
+needs a connection to the server.
+
+An attachment you open is written to a private folder only you can read
+(`$XDG_RUNTIME_DIR/mazemail/attachments` on Linux, the system's temporary folder on
+macOS), read-only, so save your changes elsewhere. Maze deletes these copies when it
+quits, and after a day if it didn't quit cleanly. Programs and scripts (`.exe`, `.app`,
+`.sh`, `.command`, …) only open after Maze asks you first.
+
 ### Links in a message
 
 Hover a link in a message to see where it really goes: like a browser, Maze shows the

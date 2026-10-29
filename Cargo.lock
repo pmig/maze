@@ -6247,12 +6247,14 @@ dependencies = [
 name = "mail_ui"
 version = "0.0.0"
 dependencies = [
+ "getrandom 0.4.3",
  "gpui-kit",
  "gpui-pre",
  "gpui-pre-platform",
  "html_view",
  "image",
  "mazemail_types",
+ "rustix",
  "serde",
  "serde_json",
  "settings",
