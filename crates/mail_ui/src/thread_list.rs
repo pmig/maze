@@ -674,6 +674,8 @@ impl ThreadList {
             .col_movable(false)
             .sortable(false)
             .select_on_modifier_click(false)
+            // Up at the first row stays there, like the cards (not to the last row).
+            .loop_selection(false)
         });
         let quick_filter = cx.new(|cx| {
             InputState::new(window, cx)
