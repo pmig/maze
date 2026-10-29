@@ -665,6 +665,28 @@ pub struct AttachmentInfo {
     pub name: Sensitive<SharedString>,
     /// Size in bytes.
     pub size: u64,
+    /// Where it is in the message (`2`, `1.3`), for [`MailSource::attachment`].
+    pub part_path: SharedString,
+}
+
+/// An attachment's content, to open or save ([`MailSource::attachment`]).
+#[derive(Clone, PartialEq, Eq)]
+pub struct AttachmentFile {
+    /// File name, as the message gives it (not yet safe as a path).
+    pub name: Sensitive<String>,
+    /// MIME type, lowercase.
+    pub content_type: String,
+    /// The decoded content.
+    pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for AttachmentFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AttachmentFile")
+            .field("content_type", &self.content_type)
+            .field("bytes", &self.bytes.len())
+            .finish_non_exhaustive()
+    }
 }
 
 /// Direction of a search through a list.
@@ -1113,6 +1135,19 @@ pub trait MailSource: Send + Sync + 'static {
     /// the `ask` policy. `None` when it can't be had.
     fn remote_resource(&self, _message: MessageId, _url: &str, _once: bool) -> Option<Part> {
         None
+    }
+
+    /// The attachment of `message` at `part_path` ([`AttachmentInfo::part_path`]),
+    /// decoded. Blocks until it is there: a large message may have to be downloaded
+    /// first, so call it off the UI thread.
+    fn attachment(
+        &self,
+        _message: MessageId,
+        _part_path: &str,
+    ) -> Result<AttachmentFile, SourceError> {
+        Err(SourceError::Unavailable(
+            "attachments can't be opened here".into(),
+        ))
     }
 
     /// "Always for this sender": messages from `sender` load remote content without

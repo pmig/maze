@@ -2514,6 +2514,57 @@ mod tests {
     }
 
     #[gpui::test]
+    fn an_attachment_is_saved_where_the_user_picks(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            ui::init(cx);
+            crate::init(cx);
+        });
+        let source: Arc<dyn MailSource> =
+            Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            MailWindow::new(source, &MailWindowOptions::default(), window, cx)
+        });
+        cx.run_until_parked();
+        let attachment = |cx: &mut VisualTestContext| {
+            view.read_with(cx, |w, cx| {
+                w.message_view(cx).and_then(|m| {
+                    m.read(cx)
+                        .document()
+                        .and_then(|d| d.attachments.first().cloned())
+                })
+            })
+        };
+        // Down the list to a message with an attachment.
+        let mut found = attachment(cx);
+        for _ in 0..50 {
+            if found.is_some() {
+                break;
+            }
+            cx.simulate_keystrokes("f");
+            cx.run_until_parked();
+            found = attachment(cx);
+        }
+        let attachment = found.expect("a message with an attachment");
+
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let save = cx
+            .debug_bounds("save-attachment-0")
+            .expect("the save button is drawn");
+        cx.simulate_click(save.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("saved.bin");
+        let picked = target.clone();
+        cx.simulate_new_path_selection(move |_| Some(picked));
+        cx.run_until_parked();
+        let saved = std::fs::read_to_string(&target).expect("the file was written");
+        assert_eq!(
+            saved,
+            format!("Fake attachment {}\n", attachment.name.expose())
+        );
+    }
+
+    #[gpui::test]
     fn shift_arrows_select_rows_that_quick_move_moves_together(cx: &mut TestAppContext) {
         use crate::fake::MoveItem;
 

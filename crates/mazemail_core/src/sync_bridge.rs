@@ -49,6 +49,9 @@ pub enum FetchPriority {
     Prefetch,
     /// The user opened the message: jump the queue, fetch text parts first.
     Interactive,
+    /// The user needs the whole message now (an attachment): jump the queue and fetch
+    /// the full raw message.
+    Full,
 }
 
 /// What to refresh.

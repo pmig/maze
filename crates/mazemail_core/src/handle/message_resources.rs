@@ -1,6 +1,12 @@
-//! Resources of a message for the original HTML mode (ADR-020): inline parts (`cid:`
-//! images) decoded from the encrypted blob, and remote images fetched by Maze itself
-//! when the message's remote content decision allows it. Everything stays in memory.
+//! Resources of a message: inline parts (`cid:` images) for the original HTML mode
+//! (ADR-020) and attachments, decoded from the encrypted blob, and remote images
+//! fetched by Maze itself when the message's remote content decision allows it.
+//! Everything stays in memory; writing an attachment to a file is the UI's decision.
+//!
+//! An attachment needs the full message. Large messages may only have their text
+//! parts stored ([`BodyState::TextParts`]); [`CoreHandle::attachment`] then has the sync
+//! engine download the whole message first ([`FetchPriority::Full`]) and waits up to
+//! [`ATTACHMENT_DOWNLOAD_TIMEOUT`].
 //!
 //! Remote fetches use their own HTTP client: no cookies, no `Referer`, a generic
 //! `User-Agent`, a timeout and a size cap, images only, and only URLs the message
@@ -9,13 +15,14 @@
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use mazemail_mime::InlinePart;
 use mazemail_mime::html::{ResourceOrigin, rewrite_resources};
+use mazemail_mime::{AttachmentPart, InlinePart};
 use mazemail_types::{MessageId, PublicId as _};
-use store::Queries as _;
+use store::{BodyState, Queries as _};
 
 use super::CoreHandle;
 use crate::message::RemoteContent;
+use crate::sync_bridge::FetchPriority;
 use crate::{Error, Result};
 
 /// The most a remote image may weigh.
@@ -23,6 +30,9 @@ pub const REMOTE_MAX_BYTES: usize = 5 * 1024 * 1024;
 
 /// How long a remote image may take, in total (below the UI's wait for the core).
 pub const REMOTE_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// How long [`CoreHandle::attachment`] waits for a message's full body to download.
+pub const ATTACHMENT_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// A remote image fetched for a message.
 #[derive(Clone, PartialEq, Eq)]
@@ -94,6 +104,66 @@ impl CoreHandle {
                 Ok(mazemail_mime::inline_part(&raw, &content_id))
             })
             .await
+    }
+
+    /// The attachment of message `id` at `part_path` (`AttachmentMeta::part_path`),
+    /// decoded. Downloads the full message first when only its text parts (or nothing)
+    /// are stored. `None` when the message has no such attachment.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::BodyUnavailable`] when the message couldn't be downloaded within
+    /// [`ATTACHMENT_DOWNLOAD_TIMEOUT`] (offline, no sync engine).
+    pub async fn attachment(
+        &self,
+        id: MessageId,
+        part_path: String,
+    ) -> Result<Option<AttachmentPart>> {
+        self.ensure_open()?;
+        if self.body_state(id)? != BodyState::Full {
+            // Subscribe first, so the batch with the stored body can't be missed.
+            let mut events = self.events();
+            self.inner.sync.fetch_body(id, FetchPriority::Full);
+            let deadline = tokio::time::Instant::now() + ATTACHMENT_DOWNLOAD_TIMEOUT;
+            while self.body_state(id)? != BodyState::Full {
+                match tokio::time::timeout_at(deadline, events.recv()).await {
+                    Ok(Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => {}
+                    Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) | Err(_) => {
+                        return Err(Error::BodyUnavailable(
+                            "The message couldn't be downloaded. Check your connection and \
+                             try again."
+                                .to_owned(),
+                        ));
+                    }
+                }
+            }
+        }
+        let inner = Arc::clone(&self.inner);
+        self.inner
+            .runtime
+            .blocking(move || {
+                let reader = inner.store.reader()?;
+                let detail = reader
+                    .message(id)?
+                    .ok_or_else(|| Error::not_found("message", id.to_public()))?;
+                let Some(blob) = detail.blob else {
+                    return Ok(None);
+                };
+                let raw = inner.store.blobs().read(&blob)?;
+                Ok(mazemail_mime::attachment_part(&raw, &part_path))
+            })
+            .await
+    }
+
+    /// How much of message `id`'s body is stored.
+    fn body_state(&self, id: MessageId) -> Result<BodyState> {
+        let detail = self
+            .inner
+            .store
+            .reader()?
+            .message(id)?
+            .ok_or_else(|| Error::not_found("message", id.to_public()))?;
+        Ok(detail.body_state)
     }
 
     /// Fetches remote image `url` of message `id`, if the message's remote content

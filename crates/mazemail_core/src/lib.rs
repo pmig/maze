@@ -106,11 +106,13 @@ pub use events::{CoreEventBatch, DEFAULT_EVENT_WINDOW, FolderCounts};
 pub use folders::{FolderNode, FolderNodeKind, UNIFIED_ROLES, folder_path, unified_name};
 pub use global_search::{SearchFacets, SearchOpts, SearchResults, SearchSort, SearchThread};
 pub use handle::CoreHandle;
-pub use handle::message_resources::{REMOTE_MAX_BYTES, REMOTE_TIMEOUT, RemoteResource};
+pub use handle::message_resources::{
+    ATTACHMENT_DOWNLOAD_TIMEOUT, REMOTE_MAX_BYTES, REMOTE_TIMEOUT, RemoteResource,
+};
 pub use indexing::{CoreIndexSink, IndexCheck, IndexDocument, IndexProgress, ReindexReport};
 pub use lock::LOCK_FILE;
 pub use lost_key::{LostKey, RecoveryFailed};
-pub use mazemail_mime::InlinePart;
+pub use mazemail_mime::{AttachmentPart, InlinePart};
 pub use message::{AuthStatus, Body, MessageView, RENDERER_VERSION, RemoteContent, RenderedBody};
 pub use new_mail::{NewMail, NewMailBatch};
 pub use outgoing::{SmtpServerSettings, SmtpSuggestion, smtp_default_port, suggest_smtp_server};

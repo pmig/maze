@@ -727,6 +727,7 @@ impl SyncBridge for SyncEngine {
         };
         let priority = match priority {
             FetchPriority::Interactive => BodyPriority::Interactive,
+            FetchPriority::Full => BodyPriority::Full,
             FetchPriority::Prefetch | FetchPriority::Background => BodyPriority::Background,
         };
         let sent = handle.send(SyncCommand::FetchBody {

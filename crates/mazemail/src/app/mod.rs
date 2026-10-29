@@ -24,6 +24,8 @@
 //!    ([`legacy_local`], ADR-019).
 //! 9. New mail becomes system notifications ([`new_mail`], ADR-021); a click opens the
 //!    message.
+//! 10. Attachments opened in other apps are deleted at quit, and after a day if Maze
+//!     didn't quit cleanly ([`mail_ui::attachment_files`]).
 //!
 //! `MAZEMAIL_DEMO=1` runs the window on synthetic mail (`FakeMailSource`) without a
 //! core, a key or a socket.
@@ -188,8 +190,15 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
         })
         .detach();
 
+        // Attachments opened in other apps: what an unclean quit left behind goes after
+        // a day, everything at a clean quit (docs/security.md).
+        cx.background_spawn(async {
+            mail_ui::attachment_files::remove_old(mail_ui::attachment_files::KEEP_FOR);
+        })
+        .detach();
         cx.on_app_quit(|cx| {
             shutdown(cx);
+            mail_ui::attachment_files::remove_all();
             async {}
         })
         .detach();

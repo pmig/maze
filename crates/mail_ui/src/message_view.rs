@@ -21,15 +21,16 @@ use std::sync::Arc;
 use gpui::{
     App, AppContext as _, ClipboardItem, Context, Entity, FocusHandle, Focusable, Global,
     HighlightStyle, Hsla, InteractiveElement, InteractiveText, IntoElement, MouseButton,
-    MouseMoveEvent, ParentElement, Pixels, Point, Render, Rgba, SharedString,
+    MouseMoveEvent, ParentElement, Pixels, Point, PromptLevel, Render, Rgba, SharedString,
     StatefulInteractiveElement as _, Styled, StyledText, Subscription, UnderlineStyle, Window, div,
     prelude::FluentBuilder as _, px,
 };
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, Selectable as _, Sizable as _, StyledExt as _,
+    ActiveTheme as _, Icon, Selectable as _, Sizable as _, StyledExt as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex, input,
     menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
+    notification::Notification,
     text::TextView,
     v_flex,
 };
@@ -41,11 +42,12 @@ use ui::keymap::shortcut_label;
 use ui::theme::scaled;
 
 use crate::actions::{Archive, Forward, Reply, ReplyAll, ReportJunk, ToggleOriginalHtml};
+use crate::attachment_files;
 use crate::format::{DateFormatter, format_size, format_thousands, initials};
 use crate::links::{HoveredLink, LinkPreview, TextViewLinkProbe, detect_links, open_link};
 use crate::source::{
-    BodyLink, MailSource, MessageBody, MessageDocument, OriginalHtml, SenderClient, Verdict,
-    Verification,
+    AttachmentFile, AttachmentInfo, BodyLink, MailSource, MessageBody, MessageDocument,
+    OriginalHtml, SenderClient, Verdict, Verification,
 };
 
 /// Where a message view is.
@@ -198,6 +200,8 @@ pub struct MessageView {
     load_once: bool,
     /// Remote images of the shown message's HTML, counted once.
     remote_count: std::cell::RefCell<Option<(Arc<str>, usize)>>,
+    /// Attachments being fetched to open or save.
+    fetching: std::collections::HashSet<(MessageId, SharedString)>,
 }
 
 /// The remote content banner's numbers.
@@ -240,6 +244,7 @@ impl MessageView {
             original: None,
             load_once: false,
             remote_count: std::cell::RefCell::default(),
+            fetching: std::collections::HashSet::new(),
         }
     }
 
@@ -879,8 +884,14 @@ impl MessageView {
         }
     }
 
-    fn render_attachments(doc: &MessageDocument, cx: &App) -> impl IntoElement {
-        let theme = cx.theme();
+    /// The attachments: a click opens one in its app, the arrow saves it.
+    fn render_attachments(
+        &self,
+        doc: &MessageDocument,
+        cx: &mut Context<'_, Self>,
+    ) -> impl IntoElement + use<> {
+        let theme = cx.theme().clone();
+        let message = doc.message;
         h_flex()
             .flex_none()
             .flex_wrap()
@@ -889,22 +900,165 @@ impl MessageView {
             .py_1p5()
             .border_b_1()
             .border_color(theme.border)
-            .children(doc.attachments.iter().map(|attachment| {
+            .children(doc.attachments.iter().enumerate().map(|(ix, attachment)| {
+                let busy = self
+                    .fetching
+                    .contains(&(message, attachment.part_path.clone()));
+                let (open, save) = (attachment.clone(), attachment.clone());
                 h_flex()
+                    .id(("attachment", ix))
+                    .debug_selector(move || format!("attachment-{ix}"))
                     .gap_1()
-                    .px_2()
+                    .pl_2()
+                    .pr_0p5()
                     .py_0p5()
                     .rounded_md()
                     .bg(theme.muted)
+                    .hover(|style| style.bg(theme.muted.opacity(0.7)))
+                    .cursor_pointer()
                     .text_xs()
+                    .tooltip(|window, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new("Open").build(window, cx)
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_attachment(open.clone(), window, cx);
+                    }))
                     .child(Icon::new(IconName::Paperclip).xsmall())
                     .child(attachment.name.expose().clone())
+                    .child(div().text_color(theme.muted_foreground).child(if busy {
+                        "…".into()
+                    } else {
+                        format_size(attachment.size)
+                    }))
                     .child(
                         div()
-                            .text_color(theme.muted_foreground)
-                            .child(format_size(attachment.size)),
+                            .debug_selector(move || format!("save-attachment-{ix}"))
+                            .child(
+                                Button::new(("save-attachment", ix))
+                                    .ghost()
+                                    .xsmall()
+                                    .icon(Icon::new(IconName::Download))
+                                    .tooltip("Save…")
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        cx.stop_propagation();
+                                        this.save_attachment(save.clone(), window, cx);
+                                    })),
+                            ),
                     )
             }))
+    }
+
+    /// Fetches an attachment (downloading the message first if needed) and opens it in
+    /// the system's app for its type; programs and scripts only after asking.
+    pub fn open_attachment(
+        &mut self,
+        attachment: AttachmentInfo,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let (Some(source), Some(message)) = (
+            self.source.clone(),
+            self.document.as_ref().map(|d| d.message),
+        ) else {
+            return;
+        };
+        let name = attachment.name.expose().to_string();
+        let confirm = attachment_files::is_risky(&name).then(|| {
+            window.prompt(
+                PromptLevel::Warning,
+                &format!("Open “{}”?", attachment_files::safe_file_name(&name)),
+                Some(
+                    "It is a program or script and could run on your computer. Only open it if \
+                     you expected it from the sender.",
+                ),
+                &["Cancel", "Open"],
+                cx,
+            )
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            if let Some(answer) = confirm
+                && answer.await != Ok(1)
+            {
+                return;
+            }
+            let fetched = this.update(cx, |this, cx| {
+                this.fetch_attachment(source, message, &attachment, cx)
+            });
+            let Ok(fetched) = fetched else { return };
+            let opened = fetched.await.and_then(|file| {
+                attachment_files::write_for_opening(file.name.expose(), &file.bytes)
+                    .map_err(|e| format!("The attachment couldn't be written: {e}"))
+            });
+            this.update_in(cx, |_, window, cx| match opened {
+                Ok(path) => cx.open_with_system(&path),
+                Err(error) => attachment_error(&error, window, cx),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Asks where to save an attachment, fetches it and writes it there.
+    pub fn save_attachment(
+        &mut self,
+        attachment: AttachmentInfo,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let (Some(source), Some(message)) = (
+            self.source.clone(),
+            self.document.as_ref().map(|d| d.message),
+        ) else {
+            return;
+        };
+        let name = attachment_files::safe_file_name(attachment.name.expose());
+        let picked = cx.prompt_for_new_path(&downloads_dir(), Some(&name));
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(path))) = picked.await else {
+                return;
+            };
+            let fetched = this.update(cx, |this, cx| {
+                this.fetch_attachment(source, message, &attachment, cx)
+            });
+            let Ok(fetched) = fetched else { return };
+            let saved = fetched.await.and_then(|file| {
+                attachment_files::save(&path, &file.bytes)
+                    .map_err(|e| format!("The attachment couldn't be saved: {e}"))
+            });
+            if let Err(error) = saved {
+                this.update_in(cx, |_, window, cx| attachment_error(&error, window, cx))
+                    .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Fetches an attachment off the UI thread, marked as busy meanwhile.
+    fn fetch_attachment(
+        &mut self,
+        source: Arc<dyn MailSource>,
+        message: MessageId,
+        attachment: &AttachmentInfo,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Task<Result<AttachmentFile, String>> {
+        let key = (message, attachment.part_path.clone());
+        self.fetching.insert(key.clone());
+        cx.notify();
+        let part_path = attachment.part_path.to_string();
+        let fetch = cx.background_spawn(async move {
+            source
+                .attachment(message, &part_path)
+                .map_err(|e| format!("The attachment couldn't be opened: {e}"))
+        });
+        cx.spawn(async move |this, cx| {
+            let file = fetch.await;
+            this.update(cx, |this, cx| {
+                this.fetching.remove(&key);
+                cx.notify();
+            })
+            .ok();
+            file
+        })
     }
 
     fn render_empty(&self, cx: &App) -> impl IntoElement {
@@ -1084,10 +1238,9 @@ impl Render for MessageView {
                 .into_any_element(),
             None => self.render_body(&doc, cx).into_any_element(),
         };
+        let attachments = (!doc.attachments.is_empty()).then(|| self.render_attachments(&doc, cx));
         root.child(self.render_header(&doc, cx))
-            .when(!doc.attachments.is_empty(), |this| {
-                this.child(Self::render_attachments(&doc, cx))
-            })
+            .children(attachments)
             .when_some(note, |this, note| {
                 this.child(
                     div()
@@ -1126,6 +1279,21 @@ impl Render for MessageView {
             })
             .into_any_element()
     }
+}
+
+/// Where the save dialog starts: Downloads, else the home folder.
+fn downloads_dir() -> std::path::PathBuf {
+    let home = std::env::home_dir().unwrap_or_else(std::env::temp_dir);
+    let downloads = home.join("Downloads");
+    if downloads.is_dir() { downloads } else { home }
+}
+
+/// Tells why an attachment couldn't be opened or saved.
+fn attachment_error(error: &str, window: &mut Window, cx: &mut App) {
+    window.push_notification(
+        Notification::error(error.to_owned()).title(mazemail_types::PRODUCT_NAME),
+        cx,
+    );
 }
 
 #[cfg(test)]

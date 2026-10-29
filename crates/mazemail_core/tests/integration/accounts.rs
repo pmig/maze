@@ -580,6 +580,57 @@ async fn favorites_are_watched_and_notify_except_sent() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_attachment_downloads_the_whole_message_first() {
+    let server = FakeServer::new();
+    server.deliver(
+        "INBOX",
+        FakeMessage::new(format!(
+            "From: Bob <bob@example.net>\r\nTo: alice@example.org\r\nSubject: Report\r\n\
+             Message-ID: <att@example.net>\r\nDate: {OLD}\r\n\
+             Content-Type: multipart/mixed; boundary=a\r\n\r\n--a\r\n\
+             Content-Type: text/plain\r\n\r\nSee attached.\r\n--a\r\n\
+             Content-Type: application/pdf; name=\"r.pdf\"\r\n\
+             Content-Disposition: attachment\r\nContent-Transfer-Encoding: base64\r\n\r\n\
+             JVBERi0=\r\n--a--\r\n"
+        ))
+        .internal_date(time::macros::datetime!(2020-01-06 09:00 UTC)),
+    );
+    let s = open(&server).await;
+    let info = s.core.add_imap_account(input(PASSWORD)).await.unwrap();
+    wait_for("the message", || inbox_count(&s.core) == 1).await;
+    let reader = s.core.store().reader().unwrap();
+    let inbox = reader
+        .folders_with_role(FolderRole::Inbox, Some(info.id))
+        .unwrap()
+        .remove(0);
+    let id = reader.message_by_uid(inbox.id, 1).unwrap().unwrap();
+    // Old mail: only the headers are stored (offline policy: recent).
+    assert_eq!(
+        reader.message(id).unwrap().unwrap().body_state,
+        store::BodyState::None
+    );
+    drop(reader);
+
+    let part = s
+        .core
+        .attachment(id, "2".to_owned())
+        .await
+        .unwrap()
+        .expect("the attachment");
+    assert_eq!(part.filename.as_deref(), Some("r.pdf"));
+    assert_eq!(part.content_type, "application/pdf");
+    assert_eq!(part.bytes, b"%PDF-");
+    assert!(
+        s.core
+            .attachment(id, "9".to_owned())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    s.core.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn removing_stops_sync_and_deletes_data_and_secrets() {
     let server = FakeServer::new();
     server.deliver("INBOX", mail(1, OLD));

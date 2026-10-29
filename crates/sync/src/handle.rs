@@ -37,6 +37,9 @@ pub enum BodyPriority {
     Interactive,
     /// Prefetch at low priority (throttled with the offline-policy downloads).
     Background,
+    /// The user needs the whole message now (to open an attachment): jumps the queue
+    /// like [`BodyPriority::Interactive`] but always fetches the full raw message.
+    Full,
 }
 
 /// Commands to an account's engine. [`AccountHandle`] has a method for each.

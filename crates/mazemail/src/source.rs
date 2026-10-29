@@ -42,11 +42,11 @@ use std::time::Duration;
 use gpui::SharedString;
 use mail_ui::DataChanges;
 use mail_ui::source::{
-    AccountActivity, AccountEntry, AccountKind, ActivityState, AttachmentInfo, BodyLink, Deception,
-    FolderEntry, FolderKey, FolderProgress, FolderStep, FolderTree, ListSort, MailSource,
-    MessageBody, MessageDocument, MessageKeys, MessageRow, OriginalHtml, Part, SenderClient,
-    SortBy, SourceError, SourceStatus, StorageUsage, SyncState, ThreadFilter, ThreadKeys,
-    ThreadRow, ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
+    AccountActivity, AccountEntry, AccountKind, ActivityState, AttachmentFile, AttachmentInfo,
+    BodyLink, Deception, FolderEntry, FolderKey, FolderProgress, FolderStep, FolderTree, ListSort,
+    MailSource, MessageBody, MessageDocument, MessageKeys, MessageRow, OriginalHtml, Part,
+    SenderClient, SortBy, SourceError, SourceStatus, StorageUsage, SyncState, ThreadFilter,
+    ThreadKeys, ThreadRow, ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
 };
 use mazemail_core::correspondents::display;
 use mazemail_core::{
@@ -131,11 +131,20 @@ fn wait<T: Send + 'static>(
     core: &CoreHandle,
     future: impl Future<Output = T> + Send + 'static,
 ) -> Result<T, SourceError> {
+    wait_for(core, future, WAIT_TIMEOUT)
+}
+
+/// [`wait`] with another limit.
+fn wait_for<T: Send + 'static>(
+    core: &CoreHandle,
+    future: impl Future<Output = T> + Send + 'static,
+    timeout: Duration,
+) -> Result<T, SourceError> {
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     core.runtime().spawn(async move {
         let _ = tx.send(future.await);
     });
-    rx.recv_timeout(WAIT_TIMEOUT).map_err(|_| {
+    rx.recv_timeout(timeout).map_err(|_| {
         unavailable(format!(
             "{} didn't answer in time",
             mazemail_types::PRODUCT_NAME
@@ -495,6 +504,7 @@ fn document(view: &MessageView) -> MessageDocument {
                             .into(),
                     ),
                     size: u64::try_from(a.size).unwrap_or(u64::MAX),
+                    part_path: a.part_path.clone().into(),
                 })
                 .collect(),
         ),
@@ -996,6 +1006,30 @@ impl MailSource for CoreMailSource {
         Some(Part {
             content_type: image.content_type,
             bytes: image.bytes,
+        })
+    }
+
+    fn attachment(
+        &self,
+        message: MessageId,
+        part_path: &str,
+    ) -> Result<AttachmentFile, SourceError> {
+        let core = self.ready()?;
+        let runner = core.clone();
+        let part_path = part_path.to_owned();
+        // The core may download the message first; it gives up on its own before this.
+        let timeout = mazemail_core::ATTACHMENT_DOWNLOAD_TIMEOUT + WAIT_TIMEOUT;
+        let part = wait_for(
+            &core,
+            async move { runner.attachment(message, part_path).await },
+            timeout,
+        )?
+        .map_err(unavailable)?
+        .ok_or(SourceError::MessageNotFound(message))?;
+        Ok(AttachmentFile {
+            name: Sensitive::new(part.filename.unwrap_or_else(|| "attachment".to_owned())),
+            content_type: part.content_type,
+            bytes: part.bytes,
         })
     }
 
