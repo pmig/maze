@@ -34,6 +34,7 @@ search = { path = "crates/search" }
 security = { path = "crates/security" }
 settings = { path = "crates/settings" }
 smtp = { path = "crates/smtp" }
+spelling = { path = "crates/spelling" }
 store = { path = "crates/store" }
 sync = { path = "crates/sync" }
 ui = { path = "crates/ui" }
@@ -116,6 +117,8 @@ serde_ignored = "0.1"
 serde_json = "1"
 serde_path_to_error = "0.1"
 sha2 = "0.11"
+# Spell checking (PLAN-spellcheck): a pure-Rust Nuspell port reading Hunspell dictionaries.
+spellbook = "0.4"
 tantivy = { version = "0.27", default-features = false, features = ["stemmer", "lz4-compression", "columnar-zstd-compression"] }
 tar = { version = "0.4", default-features = false }
 thiserror = "2"

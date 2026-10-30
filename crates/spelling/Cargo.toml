@@ -1,0 +1,22 @@
+[package]
+name = "spelling"
+description = "Maze spell checking: bundled Hunspell dictionaries, a Markdown-aware tokenizer and per-paragraph language detection (no GPUI, no IO)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+linkify = { workspace = true }
+mazemail_mime = { workspace = true }
+ruzstd = { workspace = true }
+spellbook = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+
+[lints]
+workspace = true
