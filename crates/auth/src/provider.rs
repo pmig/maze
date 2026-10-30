@@ -9,7 +9,7 @@ use mazemail_types::{MicrosoftTenant, Sensitive};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::{AuthError, OAuthClient};
+use crate::{AuthError, Capabilities, Capability, OAuthClient, TokenResource};
 
 /// A built-in OAuth provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -212,7 +212,8 @@ impl fmt::Debug for ClientCredentials {
     }
 }
 
-/// One OAuth provider: endpoints, scopes, PKCE and the configured client.
+/// One OAuth provider: endpoints, scopes per [`Capability`], PKCE and the configured
+/// client.
 ///
 /// Microsoft's endpoints name a tenant (`https://login.microsoftonline.com/<tenant>/…`,
 /// see [`MicrosoftTenant`]); [`Provider::with_tenant`] switches it. Endpoints set
@@ -222,7 +223,10 @@ pub struct Provider {
     kind: ProviderKind,
     authorization_endpoint: Url,
     token_endpoint: Url,
+    /// The scopes for [`Capability::Mail`].
     scopes: Vec<String>,
+    /// The scopes for [`Capability::Contacts`].
+    contacts_scopes: Vec<String>,
     use_pkce: bool,
     credentials: Option<ClientCredentials>,
     /// Microsoft: the login authority and tenant the endpoints were built from;
@@ -265,29 +269,57 @@ impl Provider {
     pub const MICROSOFT_TOKEN_ENDPOINT: &str =
         "https://login.microsoftonline.com/common/oauth2/v2.0/token";
 
+    /// Google's scope for IMAP and SMTP.
+    pub const GOOGLE_MAIL_SCOPE: &str = "https://mail.google.com/";
+    /// Google People API: read and write the user's contacts ("My Contacts").
+    pub const GOOGLE_CONTACTS_SCOPE: &str = "https://www.googleapis.com/auth/contacts";
+    /// Google People API: read the auto-saved "Other contacts".
+    pub const GOOGLE_OTHER_CONTACTS_SCOPE: &str =
+        "https://www.googleapis.com/auth/contacts.other.readonly";
+    /// Outlook's IMAP scope (resource `outlook.office.com`).
+    pub const MICROSOFT_IMAP_SCOPE: &str = "https://outlook.office.com/IMAP.AccessAsUser.All";
+    /// Outlook's SMTP scope (resource `outlook.office.com`).
+    pub const MICROSOFT_SMTP_SCOPE: &str = "https://outlook.office.com/SMTP.Send";
+    /// Microsoft Graph: read and write the user's contacts (resource
+    /// `graph.microsoft.com`).
+    pub const MICROSOFT_CONTACTS_SCOPE: &str = "https://graph.microsoft.com/Contacts.ReadWrite";
+    /// Microsoft's scope for refresh tokens. Not a capability of its own.
+    pub const OFFLINE_ACCESS_SCOPE: &str = "offline_access";
+    /// The prefix of Microsoft Graph scopes; Graph token responses may list them
+    /// without it (`Contacts.ReadWrite`).
+    const MICROSOFT_GRAPH_PREFIX: &str = "https://graph.microsoft.com/";
+
     /// The built-in provider, without client credentials.
     pub fn builtin(kind: ProviderKind) -> Self {
-        let (authorization, token, scopes): (_, _, &[&str]) = match kind {
+        let (authorization, token, scopes, contacts_scopes): (_, _, &[&str], &[&str]) = match kind {
             ProviderKind::Google => (
                 Self::GOOGLE_AUTHORIZATION_ENDPOINT,
                 Self::GOOGLE_TOKEN_ENDPOINT,
-                &["https://mail.google.com/"],
+                &[Self::GOOGLE_MAIL_SCOPE],
+                &[
+                    Self::GOOGLE_CONTACTS_SCOPE,
+                    Self::GOOGLE_OTHER_CONTACTS_SCOPE,
+                ],
             ),
             ProviderKind::Microsoft => (
                 Self::MICROSOFT_AUTHORIZATION_ENDPOINT,
                 Self::MICROSOFT_TOKEN_ENDPOINT,
                 &[
-                    "https://outlook.office.com/IMAP.AccessAsUser.All",
-                    "https://outlook.office.com/SMTP.Send",
-                    "offline_access",
+                    Self::MICROSOFT_IMAP_SCOPE,
+                    Self::MICROSOFT_SMTP_SCOPE,
+                    Self::OFFLINE_ACCESS_SCOPE,
                 ],
+                &[Self::MICROSOFT_CONTACTS_SCOPE, Self::OFFLINE_ACCESS_SCOPE],
             ),
         };
+        let owned =
+            |scopes: &[&str]| -> Vec<String> { scopes.iter().map(|&s| s.to_owned()).collect() };
         Self {
             kind,
             authorization_endpoint: builtin_url(authorization),
             token_endpoint: builtin_url(token),
-            scopes: scopes.iter().map(|&s| s.to_owned()).collect(),
+            scopes: owned(scopes),
+            contacts_scopes: owned(contacts_scopes),
             use_pkce: true,
             credentials: None,
             tenancy: (kind == ProviderKind::Microsoft).then(|| Tenancy {
@@ -351,14 +383,28 @@ impl Provider {
         Ok(self)
     }
 
-    /// Replaces the requested scopes.
+    /// Replaces the scopes requested for mail ([`Capability::Mail`]).
     #[must_use]
-    pub fn with_scopes<I, S>(mut self, scopes: I) -> Self
+    pub fn with_scopes<I, S>(self, scopes: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.scopes = scopes.into_iter().map(Into::into).collect();
+        self.with_scopes_for(Capability::Mail, scopes)
+    }
+
+    /// Replaces the scopes requested for `capability`.
+    #[must_use]
+    pub fn with_scopes_for<I, S>(mut self, capability: Capability, scopes: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let scopes = scopes.into_iter().map(Into::into).collect();
+        match capability {
+            Capability::Mail => self.scopes = scopes,
+            Capability::Contacts => self.contacts_scopes = scopes,
+        }
         self
     }
 
@@ -384,9 +430,79 @@ impl Provider {
         &self.token_endpoint
     }
 
-    /// The scopes Maze requests.
+    /// The scopes Maze requests for mail ([`Capability::Mail`]).
     pub fn scopes(&self) -> &[String] {
         &self.scopes
+    }
+
+    /// The scopes Maze requests for `capability`.
+    ///
+    /// - Google: mail `https://mail.google.com/`; contacts
+    ///   `https://www.googleapis.com/auth/contacts` and
+    ///   `https://www.googleapis.com/auth/contacts.other.readonly`.
+    /// - Microsoft: mail `https://outlook.office.com/IMAP.AccessAsUser.All`,
+    ///   `https://outlook.office.com/SMTP.Send` and `offline_access`; contacts
+    ///   `https://graph.microsoft.com/Contacts.ReadWrite` and `offline_access`.
+    pub fn scopes_for(&self, capability: Capability) -> &[String] {
+        match capability {
+            Capability::Mail => &self.scopes,
+            Capability::Contacts => &self.contacts_scopes,
+        }
+    }
+
+    /// The scopes of every capability in `capabilities`, without duplicates, in
+    /// [`Capability::ALL`] order. Empty `capabilities` means mail.
+    pub fn scopes_for_all(&self, capabilities: Capabilities) -> Vec<String> {
+        let capabilities = if capabilities.is_empty() {
+            Capabilities::MAIL
+        } else {
+            capabilities
+        };
+        let mut scopes: Vec<String> = Vec::new();
+        for scope in capabilities.iter().flat_map(|c| self.scopes_for(c)) {
+            if !scopes.iter().any(|s| s.eq_ignore_ascii_case(scope)) {
+                scopes.push(scope.clone());
+            }
+        }
+        scopes
+    }
+
+    /// Which access token `capability` needs: Microsoft's contacts live in Graph, a
+    /// resource of their own; everything else uses the primary token.
+    pub fn resource_for(&self, capability: Capability) -> TokenResource {
+        match (self.kind, capability) {
+            (ProviderKind::Microsoft, Capability::Contacts) => TokenResource::Graph,
+            _ => TokenResource::Primary,
+        }
+    }
+
+    /// The `scope` parameter of a token request (refresh or code exchange) for
+    /// `capability`'s token: Microsoft names the resource's scopes (one access token
+    /// per resource, and a refresh token for several resources would otherwise be
+    /// ambiguous); Google sends none and gets every granted scope.
+    pub(crate) fn token_request_scopes(&self, capability: Capability) -> Option<&[String]> {
+        match self.kind {
+            ProviderKind::Microsoft => Some(self.scopes_for(capability)),
+            ProviderKind::Google => None,
+        }
+    }
+
+    /// The capabilities `granted` covers: every scope a capability requests is
+    /// among them (`offline_access` aside). Comparison ignores ASCII case, and a
+    /// Graph scope also matches its short form (`Contacts.ReadWrite`).
+    pub fn capabilities_of(&self, granted: &[String]) -> Capabilities {
+        Capability::ALL
+            .into_iter()
+            .filter(|&capability| {
+                let mut needed = self
+                    .scopes_for(capability)
+                    .iter()
+                    .filter(|s| !s.eq_ignore_ascii_case(Self::OFFLINE_ACCESS_SCOPE))
+                    .peekable();
+                needed.peek().is_some()
+                    && needed.all(|scope| granted.iter().any(|g| scope_matches(scope, g)))
+            })
+            .collect()
     }
 
     /// Whether the flow uses PKCE (RFC 7636). True for both built-in providers.
@@ -398,6 +514,20 @@ impl Provider {
     pub fn credentials(&self) -> Option<&ClientCredentials> {
         self.credentials.as_ref()
     }
+}
+
+/// Whether the granted scope `granted` is the requested `requested`: ASCII
+/// case-insensitive (Microsoft's casing varies), and Graph scopes also in their short
+/// form, which Graph token responses use.
+pub(crate) fn scope_matches(requested: &str, granted: &str) -> bool {
+    if requested.eq_ignore_ascii_case(granted) {
+        return true;
+    }
+    let prefix = Provider::MICROSOFT_GRAPH_PREFIX;
+    requested.len() > prefix.len()
+        && requested.is_char_boundary(prefix.len())
+        && requested[..prefix.len()].eq_ignore_ascii_case(prefix)
+        && requested[prefix.len()..].eq_ignore_ascii_case(granted)
 }
 
 /// Parses a built-in endpoint constant.
@@ -804,5 +934,120 @@ mod tests {
                 .map(Provider::kind),
             Some(ProviderKind::Microsoft)
         );
+    }
+
+    #[test]
+    fn scopes_per_capability() {
+        let google = Provider::builtin(ProviderKind::Google);
+        assert_eq!(
+            google.scopes_for(Capability::Contacts),
+            [
+                "https://www.googleapis.com/auth/contacts",
+                "https://www.googleapis.com/auth/contacts.other.readonly"
+            ]
+        );
+        assert_eq!(google.scopes_for(Capability::Mail), google.scopes());
+        assert_eq!(
+            google.resource_for(Capability::Contacts),
+            TokenResource::Primary
+        );
+        assert_eq!(google.token_request_scopes(Capability::Contacts), None);
+
+        let microsoft = Provider::builtin(ProviderKind::Microsoft);
+        assert_eq!(
+            microsoft.scopes_for(Capability::Contacts),
+            [
+                "https://graph.microsoft.com/Contacts.ReadWrite",
+                "offline_access"
+            ]
+        );
+        assert_eq!(
+            microsoft.resource_for(Capability::Mail),
+            TokenResource::Primary
+        );
+        assert_eq!(
+            microsoft.resource_for(Capability::Contacts),
+            TokenResource::Graph
+        );
+        assert_eq!(
+            microsoft.token_request_scopes(Capability::Mail),
+            Some(microsoft.scopes())
+        );
+        // `offline_access` once, empty means mail.
+        assert_eq!(
+            microsoft.scopes_for_all(Capabilities::MAIL.with(Capability::Contacts)),
+            [
+                "https://outlook.office.com/IMAP.AccessAsUser.All",
+                "https://outlook.office.com/SMTP.Send",
+                "offline_access",
+                "https://graph.microsoft.com/Contacts.ReadWrite",
+            ]
+        );
+        assert_eq!(
+            microsoft.scopes_for_all(Capabilities::NONE),
+            microsoft.scopes()
+        );
+
+        let custom = google.with_scopes_for(Capability::Contacts, ["x"]);
+        assert_eq!(custom.scopes_for(Capability::Contacts), ["x"]);
+    }
+
+    #[test]
+    fn capabilities_of_granted_scopes() {
+        let owned =
+            |scopes: &[&str]| -> Vec<String> { scopes.iter().map(|&s| s.to_owned()).collect() };
+        let google = Provider::builtin(ProviderKind::Google);
+        assert_eq!(
+            google.capabilities_of(&owned(&["https://mail.google.com/"])),
+            Capabilities::MAIL
+        );
+        assert_eq!(
+            google.capabilities_of(&owned(&[
+                "https://www.googleapis.com/auth/contacts",
+                "https://www.googleapis.com/auth/contacts.other.readonly",
+            ])),
+            Capabilities::CONTACTS
+        );
+        assert_eq!(google.capabilities_of(&[]), Capabilities::NONE);
+
+        let microsoft = Provider::builtin(ProviderKind::Microsoft);
+        // `offline_access` isn't needed in the answer; casing doesn't matter.
+        assert_eq!(
+            microsoft.capabilities_of(&owned(&[
+                "https://outlook.office.com/imap.accessasuser.all",
+                "https://outlook.office.com/SMTP.Send",
+            ])),
+            Capabilities::MAIL
+        );
+        assert_eq!(
+            microsoft.capabilities_of(&owned(&["contacts.readwrite"])),
+            Capabilities::CONTACTS
+        );
+        assert_eq!(
+            microsoft.capabilities_of(&owned(&["offline_access"])),
+            Capabilities::NONE
+        );
+        // A capability without scopes is never granted.
+        let none = microsoft.with_scopes_for(Capability::Contacts, ["offline_access"]);
+        assert_eq!(
+            none.capabilities_of(&owned(&["offline_access"])),
+            Capabilities::NONE
+        );
+    }
+
+    #[test]
+    fn graph_scopes_match_their_short_form() {
+        let graph = Provider::MICROSOFT_CONTACTS_SCOPE;
+        assert!(scope_matches(graph, "Contacts.ReadWrite"));
+        assert!(scope_matches(
+            graph,
+            "https://GRAPH.microsoft.com/contacts.readwrite"
+        ));
+        assert!(!scope_matches(graph, "Contacts.Read"));
+        assert!(!scope_matches(
+            Provider::MICROSOFT_IMAP_SCOPE,
+            "IMAP.AccessAsUser.All"
+        ));
+        assert!(!scope_matches("https://graph.microsoft.com/", ""));
     }
 }

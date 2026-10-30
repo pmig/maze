@@ -5,7 +5,7 @@ use std::io;
 
 use mazemail_types::Sensitive;
 
-use crate::{Provider, ProviderKind};
+use crate::{Capability, Provider, ProviderKind};
 
 /// What the user sees when a Microsoft 365 organization blocks Maze until an
 /// administrator approves it (CONCEPT §6). Shown for [`AuthError::AdminConsentRequired`].
@@ -17,6 +17,7 @@ sign in again once they have approved it.";
 
 /// Why the user has to go through the browser sign-in again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ReauthReason {
     /// No refresh token is stored for the account: it was never signed in, was signed
     /// out, or the stored token was removed.
@@ -27,15 +28,32 @@ pub enum ReauthReason {
     /// The provider needs the user in the browser (`interaction_required`,
     /// `login_required`, `consent_required`), e.g. for a new MFA prompt.
     InteractionRequired,
+    /// The account's grant doesn't cover `capability` (e.g. contacts on an account
+    /// that signed in for mail only, or the user unticked it on the consent page).
+    /// Only that capability is affected: mail keeps working. A sign-in with
+    /// [`AuthorizeOptions::incremental_consent`](crate::AuthorizeOptions::incremental_consent)
+    /// for the capability fixes it (the UI says "Contacts need permission").
+    MissingScope {
+        /// The capability without permission.
+        capability: Capability,
+    },
 }
 
 impl fmt::Display for ReauthReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::NotSignedIn => "the account is not signed in",
-            Self::TokenRejected => "the provider rejected the saved sign-in",
-            Self::InteractionRequired => "the provider needs you to confirm the sign-in",
-        })
+        match self {
+            Self::NotSignedIn => f.write_str("the account is not signed in"),
+            Self::TokenRejected => f.write_str("the provider rejected the saved sign-in"),
+            Self::InteractionRequired => {
+                f.write_str("the provider needs you to confirm the sign-in")
+            }
+            Self::MissingScope { capability } => {
+                write!(
+                    f,
+                    "the account hasn't given Maze access to its {capability}"
+                )
+            }
+        }
     }
 }
 
@@ -215,8 +233,28 @@ pub enum AuthError {
 
 impl AuthError {
     /// Whether the UI should offer "Sign in again" (a browser sign-in can fix it).
+    /// True for [`ReauthReason::MissingScope`] too; check
+    /// [`missing_capability`](Self::missing_capability) first to offer the sign-in
+    /// for that capability only.
     pub fn requires_reauth(&self) -> bool {
         matches!(self, Self::ReauthRequired { .. })
+    }
+
+    /// The capability the account's grant lacks ([`ReauthReason::MissingScope`]).
+    pub fn missing_capability(&self) -> Option<Capability> {
+        match self {
+            Self::ReauthRequired {
+                reason: ReauthReason::MissingScope { capability },
+            } => Some(*capability),
+            _ => None,
+        }
+    }
+
+    /// [`AuthError::ReauthRequired`] with [`ReauthReason::MissingScope`].
+    pub fn missing_scope(capability: Capability) -> Self {
+        Self::ReauthRequired {
+            reason: ReauthReason::MissingScope { capability },
+        }
     }
 
     /// Whether retrying later without user action may succeed (network trouble,
@@ -269,6 +307,32 @@ const SINGLE_TENANT_CODES: &[u32] = &[50194];
 
 /// `AADSTS` codes for a tenant Microsoft doesn't know (not found, invalid name).
 const UNKNOWN_TENANT_CODES: &[u32] = &[90002, 900023, 900021];
+
+/// `AADSTS` codes for "the grant doesn't cover the requested scopes": not consented
+/// (65001), and scopes unauthorized or expired (70000).
+const MISSING_CONSENT_CODES: &[u32] = &[65001, 70000];
+
+/// Maps an error response to a token request for a secondary resource's token
+/// (Microsoft Graph for `capability`): "not consented" means the grant lacks
+/// `capability` ([`ReauthReason::MissingScope`]), not that the account has to sign in
+/// again or an administrator has to act, so mail is left alone. Anything else as
+/// [`classify`].
+pub(crate) fn classify_for(
+    provider: &Provider,
+    details: OAuthErrorDetails,
+    capability: Option<Capability>,
+) -> AuthError {
+    if let Some(capability) = capability
+        && (details.has_code(MISSING_CONSENT_CODES)
+            || matches!(
+                details.error.as_str(),
+                "consent_required" | "interaction_required" | "invalid_scope"
+            ))
+    {
+        return AuthError::missing_scope(capability);
+    }
+    classify(provider, details)
+}
 
 /// Maps an OAuth error response from `provider` to an [`AuthError`].
 pub(crate) fn classify(provider: &Provider, details: OAuthErrorDetails) -> AuthError {
@@ -467,6 +531,43 @@ mod tests {
         let text = format!("{err} {err:?}");
         assert!(!text.contains("bob@example.org"), "{text}");
         assert!(text.contains("AADSTS50020"), "{text}");
+    }
+
+    #[test]
+    fn missing_consent_for_a_secondary_resource_is_a_missing_scope() {
+        let ms = Provider::builtin(ProviderKind::Microsoft);
+        for d in [
+            details("invalid_grant", Some("AADSTS65001: not consented"), &[]),
+            details("invalid_grant", None, &[70000]),
+            details("consent_required", None, &[]),
+            details("interaction_required", None, &[]),
+            details("invalid_scope", None, &[]),
+        ] {
+            let err = classify_for(&ms, d.clone(), Some(Capability::Contacts));
+            assert_eq!(
+                err.missing_capability(),
+                Some(Capability::Contacts),
+                "{d}: {err:?}"
+            );
+            assert!(err.requires_reauth());
+            assert_eq!(
+                err.to_string(),
+                "sign in again: the account hasn't given Maze access to its contacts"
+            );
+            // The primary token's errors stay what they were.
+            assert_eq!(classify_for(&ms, d, None).missing_capability(), None);
+        }
+        // A dead refresh token stays a dead refresh token.
+        assert!(matches!(
+            classify_for(
+                &ms,
+                details("invalid_grant", None, &[70008]),
+                Some(Capability::Contacts)
+            ),
+            AuthError::ReauthRequired {
+                reason: ReauthReason::TokenRejected
+            }
+        ));
     }
 
     #[test]

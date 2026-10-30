@@ -10,10 +10,14 @@ use serde::Deserialize;
 use tokio::time::Instant;
 use url::Url;
 
-use crate::error::{OAuthErrorDetails, classify};
+use crate::error::{OAuthErrorDetails, classify, classify_for};
 use crate::loopback::{CallbackParams, LoopbackListener};
 use crate::pkce::{PkceVerifier, STATE_BYTES, constant_time_eq, random_token};
-use crate::{AuthError, BrowserOpener, ClientCredentials, Provider, TokenSet};
+use crate::provider::scope_matches;
+use crate::{
+    AuthError, BrowserOpener, Capabilities, Capability, ClientCredentials, Provider, ProviderKind,
+    TokenResource, TokenSet,
+};
 
 /// How long the browser sign-in may take by default.
 pub const DEFAULT_AUTHORIZE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -23,6 +27,8 @@ pub const DEFAULT_AUTHORIZE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub struct AuthorizeOptions {
     login_hint: Option<Sensitive<String>>,
     timeout: Duration,
+    capabilities: Capabilities,
+    incremental: bool,
 }
 
 impl Default for AuthorizeOptions {
@@ -30,14 +36,47 @@ impl Default for AuthorizeOptions {
         Self {
             login_hint: None,
             timeout: DEFAULT_AUTHORIZE_TIMEOUT,
+            capabilities: Capabilities::MAIL,
+            incremental: false,
         }
     }
 }
 
 impl AuthorizeOptions {
-    /// No login hint, [`DEFAULT_AUTHORIZE_TIMEOUT`].
+    /// No login hint, [`DEFAULT_AUTHORIZE_TIMEOUT`], mail only.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// What to ask permission for (default [`Capabilities::MAIL`]; empty means
+    /// mail). The authorization request carries the scopes of all of them
+    /// ([`Provider::scopes_for_all`]).
+    ///
+    /// Microsoft gives one access token per resource: the sign-in's token is for the
+    /// first capability's resource (mail when mail is asked for), the others are
+    /// fetched with the refresh token when needed
+    /// ([`OAuthTokenManager::access_token_for`](crate::OAuthTokenManager::access_token_for)).
+    #[must_use]
+    pub fn capabilities(mut self, capabilities: Capabilities) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
+
+    /// Asks for [`capabilities`](Self::capabilities) on top of what the account
+    /// already granted, e.g. contacts for an account that signed in for mail:
+    ///
+    /// - Google: `include_granted_scopes=true`, so the new grant (and its refresh
+    ///   token) covers the earlier scopes too, and `prompt=consent`, so Google shows
+    ///   the consent page and issues a new refresh token with the combined scopes.
+    /// - Microsoft: nothing extra. Consent is kept per app and user, and the new
+    ///   refresh token works for every consented resource.
+    ///
+    /// Ask only for the new capabilities (e.g. [`Capabilities::CONTACTS`]): the
+    /// consent page then doesn't offer to untick mail.
+    #[must_use]
+    pub fn incremental_consent(mut self) -> Self {
+        self.incremental = true;
+        self
     }
 
     /// Pre-fills the account at the provider (`login_hint`), as Thunderbird does.
@@ -127,6 +166,16 @@ impl OAuthClient {
             None
         };
 
+        let capabilities = if options.capabilities.is_empty() {
+            Capabilities::MAIL
+        } else {
+            options.capabilities
+        };
+        let scopes = self.provider.scopes_for_all(capabilities);
+        // The sign-in's access token is for the first capability's resource.
+        let capability = capabilities.iter().next().unwrap_or(Capability::Mail);
+        let incremental = options.incremental && self.provider.kind() == ProviderKind::Google;
+
         let mut url = self.provider.authorization_endpoint().clone();
         {
             let mut query = url.query_pairs_mut();
@@ -135,8 +184,13 @@ impl OAuthClient {
                 .append_pair("client_id", self.credentials.client_id())
                 .append_pair("redirect_uri", listener.redirect_uri())
                 .append_pair("state", &state);
-            if !self.provider.scopes().is_empty() {
-                query.append_pair("scope", &self.provider.scopes().join(" "));
+            if !scopes.is_empty() {
+                query.append_pair("scope", &scopes.join(" "));
+            }
+            if incremental {
+                query
+                    .append_pair("include_granted_scopes", "true")
+                    .append_pair("prompt", "consent");
             }
             if let Some(verifier) = &verifier {
                 query
@@ -148,26 +202,57 @@ impl OAuthClient {
             }
         }
 
-        tracing::info!(provider = %self.provider.kind(), "starting OAuth sign-in");
+        tracing::info!(
+            provider = %self.provider.kind(),
+            ?capabilities,
+            incremental = options.incremental,
+            "starting OAuth sign-in"
+        );
         Ok(AuthorizationRequest {
             client: self,
             listener,
             state,
             verifier,
             url,
+            scopes,
+            capability,
             deadline: Instant::now() + options.timeout,
         })
     }
 
-    /// Gets a new access token with a refresh token. The result carries a new refresh
-    /// token if the provider rotated it (Microsoft does).
+    /// Gets a new access token for mail with a refresh token
+    /// ([`refresh_for`](Self::refresh_for) with [`Capability::Mail`]).
     pub async fn refresh(&self, refresh_token: &Sensitive<String>) -> Result<TokenSet, AuthError> {
-        tracing::debug!(provider = %self.provider.kind(), "refreshing OAuth access token");
-        self.token_request(&[
+        self.refresh_for(refresh_token, Capability::Mail).await
+    }
+
+    /// Gets a new access token for `capability`'s resource
+    /// ([`Provider::resource_for`]) with a refresh token. The result carries a new
+    /// refresh token if the provider rotated it (Microsoft does).
+    ///
+    /// Microsoft gets `scope` with the resource's scopes (Outlook's for mail, Graph's
+    /// `Contacts.ReadWrite offline_access` for contacts); Google gets none and
+    /// answers with a token for every granted scope. A Graph request the grant
+    /// doesn't cover fails with [`ReauthReason::MissingScope`](crate::ReauthReason::MissingScope).
+    pub async fn refresh_for(
+        &self,
+        refresh_token: &Sensitive<String>,
+        capability: Capability,
+    ) -> Result<TokenSet, AuthError> {
+        tracing::debug!(provider = %self.provider.kind(), %capability, "refreshing OAuth access token");
+        let scopes = self.provider.token_request_scopes(capability);
+        let joined = scopes.map(|scopes| scopes.join(" "));
+        let mut params = vec![
             ("grant_type", "refresh_token"),
-            ("refresh_token", refresh_token.expose()),
-        ])
-        .await
+            ("refresh_token", refresh_token.expose().as_str()),
+        ];
+        if let Some(joined) = &joined {
+            params.push(("scope", joined));
+        }
+        // Without `scope` in the request or the response, the mail scopes are what
+        // the grant surely has (RFC 6749 §5.1: the requested ones).
+        let requested = scopes.unwrap_or(self.provider.scopes());
+        self.token_request(&params, requested, capability).await
     }
 
     async fn exchange_code(
@@ -175,7 +260,11 @@ impl OAuthClient {
         code: &Sensitive<String>,
         redirect_uri: &str,
         verifier: Option<&PkceVerifier>,
+        authorized_scopes: &[String],
+        capability: Capability,
     ) -> Result<TokenSet, AuthError> {
+        let scopes = self.provider.token_request_scopes(capability);
+        let joined = scopes.map(|scopes| scopes.join(" "));
         let mut params = vec![
             ("grant_type", "authorization_code"),
             ("code", code.expose().as_str()),
@@ -184,11 +273,23 @@ impl OAuthClient {
         if let Some(verifier) = verifier {
             params.push(("code_verifier", verifier.as_str()));
         }
-        self.token_request(&params).await
+        if let Some(joined) = &joined {
+            // Microsoft: an authorization for several resources is redeemed for one.
+            params.push(("scope", joined));
+        }
+        let requested = scopes.unwrap_or(authorized_scopes);
+        self.token_request(&params, requested, capability).await
     }
 
-    /// POSTs a token request (RFC 6749 §4.1.3, §6) and parses the response.
-    async fn token_request(&self, params: &[(&str, &str)]) -> Result<TokenSet, AuthError> {
+    /// POSTs a token request (RFC 6749 §4.1.3, §6) for `capability`'s token and
+    /// parses the response. `requested` are the scopes asked for, which count as
+    /// granted if the response doesn't list any.
+    async fn token_request(
+        &self,
+        params: &[(&str, &str)],
+        requested: &[String],
+        capability: Capability,
+    ) -> Result<TokenSet, AuthError> {
         let body = {
             let mut form = url::form_urlencoded::Serializer::new(String::new());
             form.append_pair("client_id", self.credentials.client_id());
@@ -213,7 +314,7 @@ impl OAuthClient {
             .map_err(AuthError::network)?;
         let status = response.status();
         let bytes = response.bytes().await.map_err(AuthError::network)?;
-        self.parse_token_response(status, &bytes, sent_at)
+        self.parse_token_response(status, &bytes, sent_at, requested, capability)
     }
 
     fn parse_token_response(
@@ -221,7 +322,10 @@ impl OAuthClient {
         status: reqwest::StatusCode,
         body: &[u8],
         sent_at: Instant,
+        requested: &[String],
+        capability: Capability,
     ) -> Result<TokenSet, AuthError> {
+        let resource = self.provider.resource_for(capability);
         // serde_json's messages can quote the input, which may contain tokens; only
         // the position goes into the error.
         let raw: RawTokenResponse = match serde_json::from_slice(body) {
@@ -248,7 +352,9 @@ impl OAuthClient {
                 http_status = status.as_u16(),
                 "token endpoint returned an error"
             );
-            return Err(classify(&self.provider, details));
+            // A secondary resource's "not consented" is a missing capability.
+            let secondary = (resource != TokenResource::Primary).then_some(capability);
+            return Err(classify_for(&self.provider, details, secondary));
         }
         if !status.is_success() {
             return Err(AuthError::Http {
@@ -273,20 +379,20 @@ impl OAuthClient {
         let scopes: Vec<String> = match &raw.scope {
             Some(scope) => scope.split_whitespace().map(str::to_owned).collect(),
             // RFC 6749 §5.1: omitted means the requested scopes were granted.
-            None => self.provider.scopes().to_vec(),
+            None => requested.to_vec(),
         };
-        let missing: Vec<&str> = self
-            .provider
-            .scopes()
+        let missing: Vec<&str> = requested
             .iter()
-            .filter(|s| s.as_str() != "offline_access")
-            .filter(|s| !scopes.iter().any(|g| g.eq_ignore_ascii_case(s)))
+            .filter(|s| !s.eq_ignore_ascii_case(Provider::OFFLINE_ACCESS_SCOPE))
+            .filter(|s| !scopes.iter().any(|g| scope_matches(s, g)))
             .map(String::as_str)
             .collect();
         if !missing.is_empty() {
-            // Like Thunderbird, only warn: the server will refuse what isn't granted.
+            // Like Thunderbird, only warn: the server will refuse what isn't granted,
+            // and a missing capability is reported when it is used.
             tracing::warn!(provider = %self.provider.kind(), ?missing, "not all requested scopes were granted");
         }
+        let capabilities = self.provider.capabilities_of(&scopes);
 
         Ok(TokenSet {
             access_token: Sensitive::new(access_token),
@@ -299,6 +405,8 @@ impl OAuthClient {
                 .and_then(|secs| sent_at.checked_add(Duration::from_secs(secs)))
                 .map(Instant::into_std),
             scopes,
+            resource,
+            capabilities,
         })
     }
 }
@@ -361,6 +469,10 @@ pub struct AuthorizationRequest<'a> {
     state: String,
     verifier: Option<PkceVerifier>,
     url: Url,
+    /// The scopes in the authorization URL.
+    scopes: Vec<String>,
+    /// The capability whose resource the code is redeemed for.
+    capability: Capability,
     deadline: Instant,
 }
 
@@ -389,23 +501,33 @@ impl AuthorizationRequest<'_> {
     /// Waits for the browser's redirect, checks `state`, exchanges the code and shows
     /// a success or failure page in the browser.
     pub async fn finish(self) -> Result<TokenSet, AuthError> {
-        let redirect_uri = self.listener.redirect_uri().to_owned();
-        let (params, pending) = self.listener.wait(self.deadline).await?;
-        let result = complete(
-            self.client,
-            &self.state,
-            self.verifier.as_ref(),
-            &redirect_uri,
-            params,
-        )
-        .await;
+        let Self {
+            client,
+            listener,
+            state,
+            verifier,
+            url: _,
+            scopes,
+            capability,
+            deadline,
+        } = self;
+        let redirect_uri = listener.redirect_uri().to_owned();
+        let (params, pending) = listener.wait(deadline).await?;
+        let redemption = Redemption {
+            client,
+            state,
+            verifier,
+            scopes,
+            capability,
+        };
+        let result = redemption.complete(&redirect_uri, params).await;
         match &result {
             Ok(_) => {
-                tracing::info!(provider = %self.client.provider.kind(), "OAuth sign-in succeeded");
+                tracing::info!(provider = %client.provider.kind(), "OAuth sign-in succeeded");
                 pending.succeed().await;
             }
             Err(err) => {
-                tracing::warn!(provider = %self.client.provider.kind(), %err, "OAuth sign-in failed");
+                tracing::warn!(provider = %client.provider.kind(), %err, "OAuth sign-in failed");
                 pending.fail(err).await;
             }
         }
@@ -413,27 +535,44 @@ impl AuthorizationRequest<'_> {
     }
 }
 
-async fn complete(
-    client: &OAuthClient,
-    expected_state: &str,
-    verifier: Option<&PkceVerifier>,
-    redirect_uri: &str,
-    params: CallbackParams,
-) -> Result<TokenSet, AuthError> {
-    // Check `state` first, also for error responses, so a forged redirect can't
-    // inject anything.
-    match &params.state {
-        Some(state) if constant_time_eq(state, expected_state) => {}
-        _ => return Err(AuthError::StateMismatch),
+/// What redeeming the redirect needs from the [`AuthorizationRequest`].
+struct Redemption<'a> {
+    client: &'a OAuthClient,
+    state: String,
+    verifier: Option<PkceVerifier>,
+    scopes: Vec<String>,
+    capability: Capability,
+}
+
+impl Redemption<'_> {
+    async fn complete(
+        &self,
+        redirect_uri: &str,
+        params: CallbackParams,
+    ) -> Result<TokenSet, AuthError> {
+        // Check `state` first, also for error responses, so a forged redirect can't
+        // inject anything.
+        match &params.state {
+            Some(state) if constant_time_eq(state, &self.state) => {}
+            _ => return Err(AuthError::StateMismatch),
+        }
+        if let Some(error) = params.error {
+            let details = OAuthErrorDetails::new(error, params.error_description, Vec::new());
+            return Err(classify(&self.client.provider, details));
+        }
+        let code = params.code.ok_or_else(|| {
+            AuthError::InvalidResponse("the redirect has neither a code nor an error".to_owned())
+        })?;
+        self.client
+            .exchange_code(
+                &code,
+                redirect_uri,
+                self.verifier.as_ref(),
+                &self.scopes,
+                self.capability,
+            )
+            .await
     }
-    if let Some(error) = params.error {
-        let details = OAuthErrorDetails::new(error, params.error_description, Vec::new());
-        return Err(classify(&client.provider, details));
-    }
-    let code = params.code.ok_or_else(|| {
-        AuthError::InvalidResponse("the redirect has neither a code nor an error".to_owned())
-    })?;
-    client.exchange_code(&code, redirect_uri, verifier).await
 }
 
 #[cfg(test)]
@@ -442,7 +581,7 @@ mod tests {
     use reqwest::StatusCode;
 
     use super::*;
-    use crate::{ProviderKind, ReauthReason};
+    use crate::ReauthReason;
 
     fn client(kind: ProviderKind) -> OAuthClient {
         OAuthClient::new(Provider::builtin(kind).with_credentials(ClientCredentials::new("id")))
@@ -450,10 +589,23 @@ mod tests {
     }
 
     fn parse(status: u16, body: &str) -> Result<TokenSet, AuthError> {
-        client(ProviderKind::Microsoft).parse_token_response(
+        parse_for(ProviderKind::Microsoft, Capability::Mail, status, body)
+    }
+
+    fn parse_for(
+        kind: ProviderKind,
+        capability: Capability,
+        status: u16,
+        body: &str,
+    ) -> Result<TokenSet, AuthError> {
+        let client = client(kind);
+        let requested = client.provider().scopes_for(capability).to_vec();
+        client.parse_token_response(
             StatusCode::from_u16(status).unwrap(),
             body.as_bytes(),
             Instant::now(),
+            &requested,
+            capability,
         )
     }
 
@@ -471,6 +623,89 @@ mod tests {
         let expires_at = tokens.expires_at.unwrap();
         assert!(expires_at > before + Duration::from_secs(3590));
         assert_eq!(tokens.scopes.len(), 2);
+        assert_eq!(tokens.resource, TokenResource::Primary);
+        assert_eq!(tokens.capabilities, Capabilities::MAIL);
+    }
+
+    #[test]
+    fn granted_scopes_become_capabilities() {
+        // Google: one token for everything granted.
+        let tokens = parse_for(
+            ProviderKind::Google,
+            Capability::Mail,
+            200,
+            r#"{"access_token":"at","scope":"https://www.googleapis.com/auth/contacts.other.readonly https://mail.google.com/ https://www.googleapis.com/auth/contacts"}"#,
+        )
+        .unwrap();
+        assert_eq!(tokens.resource, TokenResource::Primary);
+        assert_eq!(
+            tokens.capabilities,
+            Capabilities::MAIL.with(Capability::Contacts)
+        );
+        // Unticking "Other contacts" on Google's consent page means no contacts.
+        let tokens = parse_for(
+            ProviderKind::Google,
+            Capability::Mail,
+            200,
+            r#"{"access_token":"at","scope":"https://mail.google.com/ https://www.googleapis.com/auth/contacts"}"#,
+        )
+        .unwrap();
+        assert_eq!(tokens.capabilities, Capabilities::MAIL);
+        // Microsoft Graph lists its scopes in short form.
+        let tokens = parse_for(
+            ProviderKind::Microsoft,
+            Capability::Contacts,
+            200,
+            r#"{"access_token":"gt","scope":"Contacts.ReadWrite profile openid email"}"#,
+        )
+        .unwrap();
+        assert_eq!(tokens.resource, TokenResource::Graph);
+        assert_eq!(tokens.capabilities, Capabilities::CONTACTS);
+        // Omitted: the requested scopes were granted.
+        let tokens = parse_for(
+            ProviderKind::Microsoft,
+            Capability::Contacts,
+            200,
+            r#"{"access_token":"gt"}"#,
+        )
+        .unwrap();
+        assert_eq!(tokens.capabilities, Capabilities::CONTACTS);
+        // Mail without SMTP.Send isn't the mail capability (mail still uses the token).
+        let tokens = parse(
+            200,
+            r#"{"access_token":"at","scope":"https://outlook.office.com/IMAP.AccessAsUser.All"}"#,
+        )
+        .unwrap();
+        assert_eq!(tokens.capabilities, Capabilities::NONE);
+    }
+
+    #[test]
+    fn graph_consent_errors_are_missing_scopes_but_mail_errors_are_not() {
+        let body = r#"{"error":"invalid_grant","error_codes":[65001],"error_description":"AADSTS65001: not consented"}"#;
+        let err = parse_for(ProviderKind::Microsoft, Capability::Contacts, 400, body).unwrap_err();
+        assert_eq!(err.missing_capability(), Some(Capability::Contacts));
+        let err = parse_for(ProviderKind::Microsoft, Capability::Mail, 400, body).unwrap_err();
+        assert!(
+            matches!(err, AuthError::AdminConsentRequired { .. }),
+            "{err:?}"
+        );
+        // Google's contacts share the mail token's request: no remapping.
+        let err = parse_for(
+            ProviderKind::Google,
+            Capability::Contacts,
+            400,
+            r#"{"error":"invalid_grant"}"#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AuthError::ReauthRequired {
+                    reason: ReauthReason::TokenRejected
+                }
+            ),
+            "{err:?}"
+        );
     }
 
     #[test]
@@ -571,8 +806,79 @@ mod tests {
         );
         assert_eq!(query["state"], request.state);
         assert_eq!(query["login_hint"], "bob@gmail.com");
+        assert!(!query.contains_key("include_granted_scopes"));
+        assert!(!query.contains_key("prompt"));
         // The secret only goes to the token endpoint.
         assert!(!url.as_str().contains("not-secret"));
         assert!(!format!("{request:?}").contains("bob@gmail.com"));
+    }
+
+    async fn authorization_query(
+        kind: ProviderKind,
+        options: AuthorizeOptions,
+    ) -> std::collections::HashMap<String, String> {
+        let client = client(kind);
+        let request = client.begin_authorization(&options).await.unwrap();
+        request.url().query_pairs().into_owned().collect()
+    }
+
+    #[tokio::test]
+    async fn google_contacts_consent_is_incremental() {
+        let query = authorization_query(
+            ProviderKind::Google,
+            AuthorizeOptions::new()
+                .capabilities(Capabilities::CONTACTS)
+                .incremental_consent(),
+        )
+        .await;
+        assert_eq!(
+            query["scope"],
+            "https://www.googleapis.com/auth/contacts \
+             https://www.googleapis.com/auth/contacts.other.readonly"
+        );
+        assert_eq!(query["include_granted_scopes"], "true");
+        assert_eq!(query["prompt"], "consent");
+
+        // A new account can ask for both at once.
+        let query = authorization_query(
+            ProviderKind::Google,
+            AuthorizeOptions::new().capabilities(Capabilities::MAIL.with(Capability::Contacts)),
+        )
+        .await;
+        assert_eq!(
+            query["scope"],
+            "https://mail.google.com/ https://www.googleapis.com/auth/contacts \
+             https://www.googleapis.com/auth/contacts.other.readonly"
+        );
+        assert!(!query.contains_key("include_granted_scopes"));
+    }
+
+    #[tokio::test]
+    async fn microsoft_contacts_consent_asks_for_graph() {
+        let query = authorization_query(
+            ProviderKind::Microsoft,
+            AuthorizeOptions::new()
+                .capabilities(Capabilities::CONTACTS)
+                .incremental_consent(),
+        )
+        .await;
+        assert_eq!(
+            query["scope"],
+            "https://graph.microsoft.com/Contacts.ReadWrite offline_access"
+        );
+        // Microsoft keeps consent per app and user: nothing else to send.
+        assert!(!query.contains_key("include_granted_scopes"));
+        assert!(!query.contains_key("prompt"));
+
+        let query = authorization_query(
+            ProviderKind::Microsoft,
+            AuthorizeOptions::new().capabilities(Capabilities::MAIL.with(Capability::Contacts)),
+        )
+        .await;
+        assert_eq!(
+            query["scope"],
+            "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send \
+             offline_access https://graph.microsoft.com/Contacts.ReadWrite"
+        );
     }
 }

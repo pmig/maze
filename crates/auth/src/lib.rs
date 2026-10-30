@@ -10,6 +10,11 @@
 //! - **Token lifecycle**: access tokens in memory, refreshed 60 s before expiry;
 //!   refresh tokens in the account's [`SecretStore`] ([`OAuthTokenManager`],
 //!   [`TokenProvider`]).
+//! - **Capabilities**: what a grant covers, mail and opt-in contacts
+//!   ([`Capability`]), each with its scopes; contacts can be added to a signed-in
+//!   account with an incremental consent ([`OAuthTokenManager::grant`]). Access
+//!   tokens are cached per [`TokenResource`] (Microsoft Graph gets its own), and a
+//!   missing grant is [`ReauthReason::MissingScope`] for that capability only.
 //! - **Secrets**: passwords and refresh tokens under `mazemail/<account-uuid>/<kind>`
 //!   ([`SecretStore`], [`AccountSecrets`]). The app keeps them in its encrypted store
 //!   (ADR-017); the keychain stores of earlier versions remain for moving them out
@@ -43,6 +48,7 @@
 //! ```
 
 mod browser;
+mod capability;
 mod client;
 mod error;
 mod loopback;
@@ -53,6 +59,7 @@ mod secret;
 mod token;
 
 pub use browser::{BrowserOpener, SystemBrowser};
+pub use capability::{Capabilities, Capability, TokenResource};
 pub use client::{AuthorizationRequest, AuthorizeOptions, DEFAULT_AUTHORIZE_TIMEOUT, OAuthClient};
 pub use error::{ADMIN_CONSENT_EXPLANATION, AuthError, OAuthErrorDetails, ReauthReason};
 pub use mazemail_types::{InvalidTenant, MicrosoftTenant};
@@ -67,5 +74,8 @@ pub use secret::{
     AccountSecrets, FileSecretStore, MemorySecretStore, SERVICE, SecretKey, SecretKind,
     SecretStore, SecretStoreError, legacy_system_secret_store,
 };
-pub use token::{OAuthTokenManager, REFRESH_MARGIN, StaticTokenProvider, TokenProvider, TokenSet};
+pub use token::{
+    MISSING_SCOPE_RETRY, OAuthTokenManager, REFRESH_MARGIN, StaticTokenProvider, TokenProvider,
+    TokenSet,
+};
 pub use uuid::Uuid;

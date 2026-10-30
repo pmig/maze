@@ -11,9 +11,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use auth::{
-    AccountSecrets, AuthError, AuthorizeOptions, BrowserOpener, ClientCredentials,
-    MemorySecretStore, OAuthClient, OAuthTokenManager, Provider, ProviderKind, ReauthReason,
-    SecretKey, SecretKind, SecretStore, TokenProvider, Uuid,
+    AccountSecrets, AuthError, AuthorizeOptions, BrowserOpener, Capabilities, Capability,
+    ClientCredentials, MemorySecretStore, OAuthClient, OAuthTokenManager, Provider, ProviderKind,
+    ReauthReason, SecretKey, SecretKind, SecretStore, TokenProvider, Uuid,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -580,4 +580,488 @@ async fn sign_out_forgets_everything() {
     assert!(store.is_empty());
     assert!(!manager.is_signed_in().await.unwrap());
     assert!(manager.access_token().await.unwrap_err().requires_reauth());
+}
+
+// Capabilities: contacts next to mail, per-resource tokens, incremental consent.
+
+const MAIL_SCOPE_MS: &str = "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send offline_access";
+const GRAPH_SCOPE: &str = "https://graph.microsoft.com/Contacts.ReadWrite offline_access";
+const GOOGLE_CONTACTS: &str = "https://www.googleapis.com/auth/contacts \
+                               https://www.googleapis.com/auth/contacts.other.readonly";
+
+fn scoped_token_json(access: &str, refresh: Option<&str>, scope: &str) -> ResponseTemplate {
+    let mut body = serde_json::json!({
+        "access_token": access,
+        "token_type": "Bearer",
+        "expires_in": 3600,
+        "scope": scope,
+    });
+    if let Some(refresh) = refresh {
+        body["refresh_token"] = refresh.into();
+    }
+    ResponseTemplate::new(200).set_body_json(body)
+}
+
+/// A token endpoint answering by request: the key is `"<grant_type> <scope>"` (scope
+/// empty when not sent), each with its responses in order. Panics on anything else.
+async fn token_router(server: &MockServer, routes: Vec<(&str, Vec<ResponseTemplate>)>) {
+    let routes: HashMap<String, Mutex<std::vec::IntoIter<ResponseTemplate>>> = routes
+        .into_iter()
+        .map(|(key, responses)| (key.to_owned(), Mutex::new(responses.into_iter())))
+        .collect();
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(move |request: &Request| {
+            let f = form(request);
+            let key = format!(
+                "{} {}",
+                f["grant_type"],
+                f.get("scope").map_or("", String::as_str)
+            );
+            let next = routes
+                .get(&key)
+                .unwrap_or_else(|| panic!("unexpected token request {key:?}"))
+                .lock()
+                .unwrap()
+                .next();
+            next.unwrap_or_else(|| panic!("too many token requests {key:?}"))
+        })
+        .mount(server)
+        .await;
+}
+
+/// The token requests the server saw, as `"<grant_type> <scope>"`.
+async fn token_requests(server: &MockServer) -> Vec<String> {
+    server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path() == "/token")
+        .map(|r| {
+            let f = form(r);
+            format!(
+                "{} {}",
+                f["grant_type"],
+                f.get("scope").map_or("", String::as_str)
+            )
+        })
+        .collect()
+}
+
+/// A signed-in account (refresh token `refresh-0`) of `kind` on `fake`.
+fn signed_in(fake: &Fake, kind: ProviderKind) -> (Arc<MemorySecretStore>, OAuthTokenManager) {
+    let store = Arc::new(MemorySecretStore::new());
+    store
+        .store(&refresh_key(), &Sensitive::new("refresh-0".to_owned()))
+        .unwrap();
+    let manager = OAuthTokenManager::new(
+        fake.client(kind, ClientCredentials::new("app")),
+        AccountSecrets::new(store.clone(), ACCOUNT),
+    );
+    (store, manager)
+}
+
+fn refresh_key_for(scope: &str) -> String {
+    format!("refresh_token {scope}")
+}
+
+#[tokio::test]
+async fn microsoft_contacts_get_their_own_graph_token() {
+    let fake = Fake::start(Consent::Grant).await;
+    token_router(
+        &fake.server,
+        vec![
+            (
+                &refresh_key_for(MAIL_SCOPE_MS),
+                vec![scoped_token_json(
+                    "mail-1",
+                    None,
+                    "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send",
+                )],
+            ),
+            (
+                &refresh_key_for(GRAPH_SCOPE),
+                vec![scoped_token_json(
+                    "graph-1",
+                    Some("refresh-1"),
+                    "Contacts.ReadWrite profile openid email",
+                )],
+            ),
+        ],
+    )
+    .await;
+    let (store, manager) = signed_in(&fake, ProviderKind::Microsoft);
+
+    assert_eq!(manager.access_token().await.unwrap().expose(), "mail-1");
+    assert_eq!(
+        manager
+            .access_token_for(Capability::Contacts)
+            .await
+            .unwrap()
+            .expose(),
+        "graph-1"
+    );
+    // Both cached, each for its resource.
+    assert_eq!(manager.access_token().await.unwrap().expose(), "mail-1");
+    assert_eq!(
+        manager
+            .access_token_for(Capability::Contacts)
+            .await
+            .unwrap()
+            .expose(),
+        "graph-1"
+    );
+    assert!(manager.has_capability(Capability::Contacts).await.unwrap());
+    assert_eq!(
+        manager.known_capabilities().await,
+        Capabilities::MAIL.with(Capability::Contacts)
+    );
+    assert_eq!(
+        token_requests(&fake.server).await,
+        [refresh_key_for(MAIL_SCOPE_MS), refresh_key_for(GRAPH_SCOPE)]
+    );
+    // The Graph refresh rotated the refresh token.
+    assert_eq!(stored_refresh(&store).as_deref(), Some("refresh-1"));
+
+    // Invalidating one resource leaves the other cached.
+    manager.invalidate_for(Capability::Contacts).await;
+    assert_eq!(manager.access_token().await.unwrap().expose(), "mail-1");
+    assert_eq!(token_requests(&fake.server).await.len(), 2);
+}
+
+#[tokio::test]
+async fn microsoft_without_contacts_consent_keeps_mail_working() {
+    let fake = Fake::start(Consent::Grant).await;
+    token_router(
+        &fake.server,
+        vec![
+            (
+                &refresh_key_for(MAIL_SCOPE_MS),
+                vec![
+                    token_json("mail-1", None, 3600),
+                    token_json("mail-2", None, 3600),
+                ],
+            ),
+            (
+                &refresh_key_for(GRAPH_SCOPE),
+                vec![
+                    ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                        "error": "invalid_grant",
+                        "error_description": "AADSTS65001: The user or administrator has not consented to use the application.",
+                        "error_codes": [65001],
+                    })),
+                    scoped_token_json("graph-1", None, "Contacts.ReadWrite"),
+                ],
+            ),
+        ],
+    )
+    .await;
+    let (store, manager) = signed_in(&fake, ProviderKind::Microsoft);
+
+    let err = manager
+        .access_token_for(Capability::Contacts)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        err.missing_capability(),
+        Some(Capability::Contacts),
+        "{err:?}"
+    );
+    assert!(matches!(
+        err,
+        AuthError::ReauthRequired {
+            reason: ReauthReason::MissingScope {
+                capability: Capability::Contacts
+            }
+        }
+    ));
+    // The refresh token stays and mail works.
+    assert_eq!(stored_refresh(&store).as_deref(), Some("refresh-0"));
+    assert_eq!(manager.access_token().await.unwrap().expose(), "mail-1");
+    // The answer is remembered: no second Graph request.
+    assert!(!manager.has_capability(Capability::Contacts).await.unwrap());
+    assert_eq!(
+        token_requests(&fake.server).await,
+        [refresh_key_for(GRAPH_SCOPE), refresh_key_for(MAIL_SCOPE_MS)]
+    );
+    // Until it is forgotten (or a sign-in grants more).
+    manager.invalidate_for(Capability::Contacts).await;
+    assert!(manager.has_capability(Capability::Contacts).await.unwrap());
+    assert_eq!(manager.access_token().await.unwrap().expose(), "mail-1");
+}
+
+#[tokio::test]
+async fn a_rejected_graph_refresh_doesnt_sign_mail_out() {
+    let fake = Fake::start(Consent::Grant).await;
+    token_router(
+        &fake.server,
+        vec![
+            (
+                &refresh_key_for(GRAPH_SCOPE),
+                vec![ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                    "error": "invalid_grant",
+                    "error_codes": [70008],
+                }))],
+            ),
+            (
+                &refresh_key_for(MAIL_SCOPE_MS),
+                vec![token_json("mail-1", None, 3600)],
+            ),
+        ],
+    )
+    .await;
+    let (store, manager) = signed_in(&fake, ProviderKind::Microsoft);
+    let err = manager
+        .access_token_for(Capability::Contacts)
+        .await
+        .unwrap_err();
+    assert!(
+        err.requires_reauth() && err.missing_capability().is_none(),
+        "{err:?}"
+    );
+    // Only mail's own refresh decides whether the refresh token is dead.
+    assert_eq!(stored_refresh(&store).as_deref(), Some("refresh-0"));
+    assert_eq!(manager.access_token().await.unwrap().expose(), "mail-1");
+}
+
+#[tokio::test]
+async fn google_contacts_share_the_mail_token() {
+    let fake = Fake::start(Consent::Grant).await;
+    token_router(
+        &fake.server,
+        vec![(
+            "refresh_token ",
+            vec![scoped_token_json(
+                "both-1",
+                None,
+                &format!("https://mail.google.com/ {GOOGLE_CONTACTS}"),
+            )],
+        )],
+    )
+    .await;
+    let (_store, manager) = signed_in(&fake, ProviderKind::Google);
+    assert_eq!(
+        manager
+            .access_token_for(Capability::Contacts)
+            .await
+            .unwrap()
+            .expose(),
+        "both-1"
+    );
+    assert_eq!(manager.access_token().await.unwrap().expose(), "both-1");
+    assert_eq!(token_requests(&fake.server).await, ["refresh_token "]);
+}
+
+#[tokio::test]
+async fn google_mail_only_grant_is_a_missing_contacts_scope() {
+    let fake = Fake::start(Consent::Grant).await;
+    token_router(
+        &fake.server,
+        vec![(
+            "refresh_token ",
+            vec![scoped_token_json(
+                "mail-1",
+                None,
+                "https://mail.google.com/",
+            )],
+        )],
+    )
+    .await;
+    let (store, manager) = signed_in(&fake, ProviderKind::Google);
+    assert_eq!(manager.access_token().await.unwrap().expose(), "mail-1");
+    // Known from the cached token, without asking Google again.
+    let err = manager
+        .access_token_for(Capability::Contacts)
+        .await
+        .unwrap_err();
+    assert_eq!(err.missing_capability(), Some(Capability::Contacts));
+    assert_eq!(manager.known_capabilities().await, Capabilities::MAIL);
+    assert_eq!(manager.access_token().await.unwrap().expose(), "mail-1");
+    assert_eq!(stored_refresh(&store).as_deref(), Some("refresh-0"));
+    assert_eq!(token_requests(&fake.server).await.len(), 1);
+}
+
+#[tokio::test]
+async fn google_grant_adds_contacts_incrementally() {
+    let fake = Fake::start(Consent::Grant).await;
+    token_router(
+        &fake.server,
+        vec![(
+            "authorization_code ",
+            vec![scoped_token_json(
+                "both-1",
+                Some("refresh-1"),
+                &format!("https://mail.google.com/ {GOOGLE_CONTACTS}"),
+            )],
+        )],
+    )
+    .await;
+    let (store, manager) = signed_in(&fake, ProviderKind::Google);
+    let (browser, _page) = FakeBrowser::new();
+    let granted = manager
+        .grant(
+            &browser,
+            Capabilities::CONTACTS,
+            AuthorizeOptions::new().login_hint("bob@gmail.com"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(granted, Capabilities::CONTACTS);
+    assert_eq!(stored_refresh(&store).as_deref(), Some("refresh-1"));
+    assert_eq!(manager.access_token().await.unwrap().expose(), "both-1");
+
+    let requests = fake.server.received_requests().await.unwrap();
+    let authorize = requests
+        .iter()
+        .find(|r| r.url.path() == "/authorize")
+        .unwrap();
+    let q = query(&authorize.url);
+    assert_eq!(q["scope"], GOOGLE_CONTACTS);
+    assert_eq!(q["include_granted_scopes"], "true");
+    assert_eq!(q["prompt"], "consent");
+    assert_eq!(q["login_hint"], "bob@gmail.com");
+    // Exchange only; the token came with the grant.
+    assert_eq!(token_requests(&fake.server).await, ["authorization_code "]);
+}
+
+#[tokio::test]
+async fn google_grant_reports_an_unticked_contacts_permission() {
+    let fake = Fake::start(Consent::Grant).await;
+    token_router(
+        &fake.server,
+        vec![(
+            "authorization_code ",
+            vec![scoped_token_json(
+                "mail-1",
+                Some("refresh-1"),
+                "https://mail.google.com/",
+            )],
+        )],
+    )
+    .await;
+    let (_store, manager) = signed_in(&fake, ProviderKind::Google);
+    let (browser, _page) = FakeBrowser::new();
+    let granted = manager
+        .grant(&browser, Capabilities::CONTACTS, AuthorizeOptions::new())
+        .await
+        .unwrap();
+    assert_eq!(granted, Capabilities::NONE);
+    assert_eq!(manager.access_token().await.unwrap().expose(), "mail-1");
+}
+
+#[tokio::test]
+async fn microsoft_grant_redeems_the_code_for_graph() {
+    let fake = Fake::start(Consent::Grant).await;
+    token_router(
+        &fake.server,
+        vec![
+            (
+                &format!("authorization_code {GRAPH_SCOPE}"),
+                vec![scoped_token_json(
+                    "graph-1",
+                    Some("refresh-1"),
+                    "https://graph.microsoft.com/Contacts.ReadWrite",
+                )],
+            ),
+            (
+                // Remembered "not consented" from before the grant is forgotten.
+                &refresh_key_for(GRAPH_SCOPE),
+                vec![ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                    "error": "invalid_grant", "error_codes": [65001],
+                }))],
+            ),
+            (
+                &refresh_key_for(MAIL_SCOPE_MS),
+                vec![token_json("mail-1", None, 3600)],
+            ),
+        ],
+    )
+    .await;
+    let (store, manager) = signed_in(&fake, ProviderKind::Microsoft);
+    assert!(!manager.has_capability(Capability::Contacts).await.unwrap());
+
+    let (browser, _page) = FakeBrowser::new();
+    let granted = manager
+        .grant(&browser, Capabilities::CONTACTS, AuthorizeOptions::new())
+        .await
+        .unwrap();
+    assert_eq!(granted, Capabilities::CONTACTS);
+    assert_eq!(stored_refresh(&store).as_deref(), Some("refresh-1"));
+    assert_eq!(
+        manager
+            .access_token_for(Capability::Contacts)
+            .await
+            .unwrap()
+            .expose(),
+        "graph-1"
+    );
+    // Mail refreshes its own token with the new refresh token.
+    assert_eq!(manager.access_token().await.unwrap().expose(), "mail-1");
+    let requests = fake.server.received_requests().await.unwrap();
+    let authorize = requests
+        .iter()
+        .find(|r| r.url.path() == "/authorize")
+        .unwrap();
+    let q = query(&authorize.url);
+    assert_eq!(q["scope"], GRAPH_SCOPE);
+    assert!(!q.contains_key("include_granted_scopes"));
+    let mail_refresh = requests
+        .iter()
+        .filter(|r| r.url.path() == "/token")
+        .map(form)
+        .find(|f| f.get("scope").map(String::as_str) == Some(MAIL_SCOPE_MS))
+        .unwrap();
+    assert_eq!(mail_refresh["refresh_token"], "refresh-1");
+}
+
+#[tokio::test]
+async fn each_resource_refreshes_once_for_concurrent_callers() {
+    let fake = Fake::start(Consent::Grant).await;
+    token_router(
+        &fake.server,
+        vec![
+            (
+                &refresh_key_for(MAIL_SCOPE_MS),
+                vec![token_json("mail-1", None, 3600)],
+            ),
+            (
+                &refresh_key_for(GRAPH_SCOPE),
+                vec![scoped_token_json("graph-1", None, "Contacts.ReadWrite")],
+            ),
+        ],
+    )
+    .await;
+    let (_store, manager) = signed_in(&fake, ProviderKind::Microsoft);
+    let manager = Arc::new(manager);
+    let calls: Vec<_> = (0..16)
+        .map(|i| {
+            let manager = manager.clone();
+            let capability = if i % 2 == 0 {
+                Capability::Mail
+            } else {
+                Capability::Contacts
+            };
+            tokio::spawn(async move {
+                (
+                    capability,
+                    manager.access_token_for(capability).await.unwrap(),
+                )
+            })
+        })
+        .collect();
+    for call in calls {
+        let (capability, token) = call.await.unwrap();
+        let expected = match capability {
+            Capability::Mail => "mail-1",
+            _ => "graph-1",
+        };
+        assert_eq!(token.expose(), expected);
+    }
+    let mut requests = token_requests(&fake.server).await;
+    requests.sort();
+    assert_eq!(
+        requests,
+        [refresh_key_for(GRAPH_SCOPE), refresh_key_for(MAIL_SCOPE_MS)]
+    );
 }
