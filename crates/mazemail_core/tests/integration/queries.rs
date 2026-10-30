@@ -235,6 +235,7 @@ async fn favorites_need_a_settings_file() {
 async fn thread_lists_are_key_snapshots_and_rows_come_from_the_cache() {
     let t = common::open().await;
     let f = common::fixture(&t.core).await;
+    let mut events = t.core.events();
     let mut threads = Vec::new();
     for n in 1..=5 {
         let (_, thread) = common::ingest(
@@ -245,6 +246,11 @@ async fn thread_lists_are_key_snapshots_and_rows_come_from_the_cache() {
         .await;
         threads.push(thread);
     }
+    // A write resolves before its change set reaches the row cache, which drops the
+    // touched rows when it arrives. Wait for the last ingest's batch (change sets are
+    // applied in commit order), so no ingest evicts the rows read below.
+    let newest = threads[4];
+    common::wait_for(&mut events, |b| b.threads_updated.contains(&newest)).await;
     let query = ListQuery::new(ListScope::Folder(f.inbox));
     let snapshot = t.core.thread_list(&query).unwrap();
     assert_eq!(snapshot.len(), 5);
@@ -273,11 +279,8 @@ async fn thread_lists_are_key_snapshots_and_rows_come_from_the_cache() {
     t.core.rows(&ids[..3], snapshot.context()).unwrap();
     assert_eq!(t.core.row_cache_stats().hits, 3);
 
-    // A change from elsewhere (sync marking a message read) invalidates the row.
-    let mut events = t.core.events();
-    // Let batches from the ingest above go by, so the next one is the change below.
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    while events.try_recv().is_ok() {}
+    // A change from elsewhere (sync marking a message read) invalidates the row. The
+    // ingest's batch for this thread was consumed above, so the next one is this change.
     let newest_message = rows[0].last_message.unwrap();
     t.core
         .store()
