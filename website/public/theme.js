@@ -3,8 +3,10 @@
 // 2. Wires the theme toggle. Choosing the theme the system already uses forgets the
 //    choice, so the site follows the system again.
 // 3. Keyboard shortcuts printed in the header: one letter per link, marked with
-//    data-shortcut="<letter>" ("d" opens the docs). Ignored while typing in a field or
-//    with cmd/ctrl/alt held, so browser shortcuts keep working.
+//    data-shortcut="<letter>" ("h" goes home, "d" opens the docs). The first link with
+//    the letter wins; a second one (the home page's "Read the docs") must go to the same
+//    page. Ignored while typing in a field or with cmd/ctrl/alt held, so browser
+//    shortcuts keep working.
 // 4. Detects the visitor's operating system: sets data-os="mac|linux|windows" on <html>
 //    and names their computer in [data-device] elements ("device" stays the default).
 // Stored in localStorage under "theme"; no cookies. Nothing is sent anywhere.

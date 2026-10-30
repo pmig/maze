@@ -6,7 +6,7 @@ import { SITE } from "../data/site";
 const path = Astro.url.pathname;
 // `key` is a single-letter shortcut: press it anywhere on the site (outside a text
 // field, without cmd/ctrl/alt) to follow the link. public/theme.js handles the keys;
-// the badge next to each label prints them.
+// the badge next to each label prints them. "h" (on the logo) goes home.
 const NAV = [
   { href: "/docs/", label: "Docs", key: "d" },
   { href: "/roadmap/", label: "Roadmap", key: "r" },
@@ -17,9 +17,10 @@ const current = (href: string) => path === href || (href !== "/" && path.startsW
 
 <header class="site-header">
   <div class="bar">
-    <a class="brand" href="/" aria-label="Maze, home">
+    <a class="brand" href="/" aria-label="Maze, home" data-shortcut="h" aria-keyshortcuts="h">
       <Logo size={28} />
       <span class="brand-name">Maze</span>
+      <kbd class="key" aria-hidden="true">H</kbd>
     </a>
 
     <nav class="nav" aria-label="Main">
@@ -170,7 +171,12 @@ const current = (href: string) => path === href || (href !== "/" && path.startsW
     line-height: 1;
   }
 
+  .brand .key {
+    margin-left: 0;
+  }
+
   .nav a:hover .key,
+  .brand:hover .key,
   .nav a[aria-current="page"] .key {
     border-color: var(--border-strong);
     color: var(--muted);

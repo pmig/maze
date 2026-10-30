@@ -336,6 +336,13 @@ hr {
   border-bottom-width: 1px;
 }
 
+/* Key hints only where there is a keyboard (the header hides its own the same way). */
+@media (hover: none) and (pointer: coarse) {
+  .button kbd {
+    display: none;
+  }
+}
+
 /* ---------- Badges ---------- */
 
 .badge {

@@ -1,5 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
+import AgentDemo from "../components/AgentDemo.astro";
 import Icon from "../components/Icon.astro";
 import Screenshot from "../components/Screenshot.astro";
 import Terminal from "../components/Terminal.astro";
@@ -39,6 +40,7 @@ const TERMINAL = [
 
 <Base>
   <script is:inline src="/dots.js" defer></script>
+  <script is:inline src="/agent-demo.js" defer></script>
   <div class="frame">
     <section class="hero" aria-labelledby="hero-title">
       <div class="hero-text">
@@ -280,6 +282,16 @@ const TERMINAL = [
       </div>
     </section>
 
+    <section class="section" id="ask" aria-labelledby="ask-title">
+      <p class="eyebrow">What to ask</p>
+      <h2 class="section-title" id="ask-title">Ask in plain words. Review every change.</h2>
+      <p class="lede">
+        The agent searches and reads your mail with the <code>mazemail</code> CLI; whatever
+        would change it comes back as a proposal, and nothing happens until you accept.
+      </p>
+      <AgentDemo />
+    </section>
+
     <section class="section split split--terminal" id="cli" aria-labelledby="cli-title">
       <div>
         <p class="eyebrow">Built for scripts</p>
@@ -372,7 +384,7 @@ const TERMINAL = [
         <a class="button button--primary" href="/download/"><Icon name="download" /> Download</a>
         */}
         <a class="button button--primary" href="/docs/getting-started/#from-source"><Icon name="terminal" /> Build from source</a>
-        <a class="button" href="/docs/getting-started/">Read the docs</a>
+        <a class="button" href="/docs/" data-shortcut="d" aria-keyshortcuts="d">Read the docs <kbd aria-hidden="true">D</kbd></a>
       </div>
     </section>
   </div>

@@ -76,6 +76,8 @@ Nothing is copied: no assets, logos, copy, or CSS from either site.
   window, served as AVIF/WebP at several widths. No stock art, no illustrations. The
   one exception is the dot animation next to the hero text, built from the logo and
   simple icons for what Maze does (mail, search, speed, encryption, keys, CLI, agents).
+  The other is the agent panel on the home page: an HTML mock of an agent conversation
+  in Maze, Cursor-like, in the site's own type and colors, with made-up mail.
 - **Tone.** Short sentences, concrete nouns, no hype. Say what exists; label everything
   else "planned". The product is "Maze"; `mazemail` appears only as a technical name
   (CLI, domain, repository).
@@ -84,7 +86,13 @@ Nothing is copied: no assets, logos, copy, or CSS from either site.
   becomes "Mac", "Linux PC" or "Windows PC"; nothing is sent anywhere), plus `dots.js`
   (about 15 KB, 5 KB compressed, home page only) for the hero animation: one canvas,
   paused off screen and in background tabs, a still logo under
-  `prefers-reduced-motion`, hidden below 1000 px. The site works fully without either.
+  `prefers-reduced-motion`, hidden below 1000 px. And `agent-demo.js` (about 6 KB, 2 KB
+  compressed, home page only) for the agent panel under "What to ask": a made-up
+  conversation, typed out and accepted step by step, paused off screen, in background
+  tabs and with its Pause button, final states only under `prefers-reduced-motion`. The
+  panel is `aria-hidden` with a text list of the same tasks for screen readers, and
+  tasks that aren't shipped carry a "Soon" badge. Its classes start with `ag-`, never
+  `ad-`, which ad blockers hide. The site works fully without any of them.
 - **Privacy.** No analytics, no cookies, no third-party requests of any kind, enforced
   by the Content Security Policy. The footer says so.
 - **Accessibility.** Semantic landmarks, one `h1` per page, skip link, visible focus,
