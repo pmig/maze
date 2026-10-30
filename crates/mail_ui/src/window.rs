@@ -2684,6 +2684,46 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    fn up_and_down_move_through_the_list_from_the_message_pane(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            ui::init(cx);
+            crate::init(cx);
+        });
+        let source: Arc<dyn MailSource> =
+            Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            MailWindow::new(source, &MailWindowOptions::default(), window, cx)
+        });
+        cx.run_until_parked();
+        let selected = |cx: &mut VisualTestContext| {
+            view.read_with(cx, |w, cx| {
+                w.thread_list(cx).unwrap().read(cx).selected_index()
+            })
+        };
+        let pane = view.read_with(cx, |w, cx| w.message_view(cx).unwrap());
+        cx.simulate_keystrokes("home");
+        cx.update(|window, cx| window.focus(&pane.focus_handle(cx), cx));
+        cx.simulate_keystrokes("down down up");
+        cx.run_until_parked();
+        assert_eq!(selected(cx), Some(1));
+        assert!(
+            cx.update(|window, cx| pane.focus_handle(cx).is_focused(window)),
+            "the message pane keeps the focus"
+        );
+
+        // A message tab has no list next to it: the arrows leave the list alone.
+        cx.simulate_keystrokes("cmd-o");
+        cx.run_until_parked();
+        let tab = view.read_with(cx, |w, cx| w.active_message_tab(cx));
+        let tab = tab.expect("a message tab is active");
+        let tab_view = tab.read_with(cx, |t, _| t.view().clone());
+        cx.update(|window, cx| window.focus(&tab_view.focus_handle(cx), cx));
+        cx.simulate_keystrokes("down down");
+        cx.run_until_parked();
+        assert_eq!(selected(cx), Some(1));
+    }
+
     /// Right-clicks at the middle of what `selector` marks, and draws the menu.
     fn right_click(cx: &mut VisualTestContext, selector: String) {
         let selector: &'static str = Box::leak(selector.into_boxed_str());

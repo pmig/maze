@@ -127,6 +127,15 @@
     }
   },
   {
+    // With the message pane focused, up and down still move through the list (as in
+    // Thunderbird); a message tab has no list next to it.
+    "context": "MessageView && place == pane",
+    "bindings": {
+      "down": "mail::NextMessage",
+      "up": "mail::PreviousMessage"
+    }
+  },
+  {
     // The compose window (Thunderbird: cmd-enter sends, Escape closes).
     "context": "Composer",
     "bindings": {

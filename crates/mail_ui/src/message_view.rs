@@ -20,10 +20,10 @@ use std::sync::Arc;
 
 use gpui::{
     App, AppContext as _, ClipboardItem, Context, Entity, FocusHandle, Focusable, Global,
-    HighlightStyle, Hsla, InteractiveElement, InteractiveText, IntoElement, MouseButton,
-    MouseMoveEvent, ParentElement, Pixels, Point, PromptLevel, Render, Rgba, SharedString,
-    StatefulInteractiveElement as _, Styled, StyledText, Subscription, UnderlineStyle, Window, div,
-    prelude::FluentBuilder as _, px,
+    HighlightStyle, Hsla, InteractiveElement, InteractiveText, IntoElement, KeyContext,
+    MouseButton, MouseMoveEvent, ParentElement, Pixels, Point, PromptLevel, Render, Rgba,
+    SharedString, StatefulInteractiveElement as _, Styled, StyledText, Subscription,
+    UnderlineStyle, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_kit::component::{
     ActiveTheme as _, Icon, Selectable as _, Sizable as _, StyledExt as _, WindowExt as _,
@@ -1179,11 +1179,18 @@ impl Focusable for MessageView {
 impl Render for MessageView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let theme = cx.theme();
+        // `place=pane`: the keymap lets up and down move through the list from the
+        // message pane, but not from a message tab.
+        let mut key_context = KeyContext::new_with_defaults();
+        key_context.add("MessageView");
+        if self.place == ViewPlace::Pane {
+            key_context.set("place", "pane");
+        }
         let root = v_flex()
             .id("message-view")
             .debug_selector(|| "message-view".to_owned())
             .size_full()
-            .key_context("MessageView")
+            .key_context(key_context)
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &ToggleOriginalHtml, _, cx| this.toggle_mode(cx)))
             // Clicking into the message gives it focus, so n/p/f/b keep working.
