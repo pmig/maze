@@ -4,10 +4,13 @@ import Logo from "./Logo.astro";
 import { SITE } from "../data/site";
 
 const path = Astro.url.pathname;
+// `key` is a single-letter shortcut: press it anywhere on the site (outside a text
+// field, without cmd/ctrl/alt) to follow the link. public/theme.js handles the keys;
+// the badge next to each label prints them.
 const NAV = [
-  { href: "/docs/", label: "Docs" },
-  { href: "/roadmap/", label: "Roadmap" },
-  { href: "/changelog/", label: "Changelog" },
+  { href: "/docs/", label: "Docs", key: "d" },
+  { href: "/roadmap/", label: "Roadmap", key: "r" },
+  { href: "/changelog/", label: "Changelog", key: "c" },
 ];
 const current = (href: string) => path === href || (href !== "/" && path.startsWith(href));
 ---
@@ -24,16 +27,23 @@ const current = (href: string) => path === href || (href !== "/" && path.startsW
         {
           NAV.map((item) => (
             <li>
-              <a href={item.href} aria-current={current(item.href) ? "page" : undefined}>
+              <a
+                href={item.href}
+                aria-current={current(item.href) ? "page" : undefined}
+                data-shortcut={item.key}
+                aria-keyshortcuts={item.key}
+              >
                 {item.label}
+                <kbd class="key" aria-hidden="true">{item.key.toUpperCase()}</kbd>
               </a>
             </li>
           ))
         }
         <li>
-          <a href={SITE.repo} class="nav-icon" rel="noopener">
+          <a href={SITE.repo} class="nav-icon" rel="noopener" data-shortcut="g" aria-keyshortcuts="g">
             <Icon name="github" />
             <span>GitHub</span>
+            <kbd class="key" aria-hidden="true">G</kbd>
           </a>
         </li>
       </ul>
@@ -44,7 +54,8 @@ const current = (href: string) => path === href || (href !== "/" && path.startsW
         <Icon name="moon" class="when-light" />
         <Icon name="sun" class="when-dark" />
       </button>
-      {/* No downloads yet. Restore with the first release.
+      {/* No downloads yet. Restore with the first release. "d" is Docs now, so the
+          Download button needs another free letter (and its <kbd>) when it comes back.
       <a
         class="button button--primary download"
         href="/download/"
@@ -138,6 +149,38 @@ const current = (href: string) => path === href || (href !== "/" && path.startsW
   .nav a[aria-current="page"] {
     color: var(--text-strong);
     font-weight: 500;
+  }
+
+  /* Key hints next to the labels, as small as a footnote: they are there for those
+     who look, not to compete with the labels. */
+  .key {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 1rem;
+    min-width: 1rem;
+    margin-left: -0.1rem;
+    padding: 0 0.25rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface-2);
+    color: var(--faint);
+    font-size: 0.625rem;
+    font-weight: 500;
+    line-height: 1;
+  }
+
+  .nav a:hover .key,
+  .nav a[aria-current="page"] .key {
+    border-color: var(--border-strong);
+    color: var(--muted);
+  }
+
+  /* Phones and tablets without a keyboard can't press them. */
+  @media (hover: none) and (pointer: coarse) {
+    .key {
+      display: none;
+    }
   }
 
   .actions {

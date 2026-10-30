@@ -2,7 +2,9 @@
 // 1. Applies a saved theme before first paint (loaded blocking in <head>).
 // 2. Wires the theme toggle. Choosing the theme the system already uses forgets the
 //    choice, so the site follows the system again.
-// 3. Keyboard shortcuts printed in the header: "d" opens Download.
+// 3. Keyboard shortcuts printed in the header: one letter per link, marked with
+//    data-shortcut="<letter>" ("d" opens the docs). Ignored while typing in a field or
+//    with cmd/ctrl/alt held, so browser shortcuts keep working.
 // 4. Detects the visitor's operating system: sets data-os="mac|linux|windows" on <html>
 //    and names their computer in [data-device] elements ("device" stays the default).
 // Stored in localStorage under "theme"; no cookies. Nothing is sent anywhere.
@@ -75,14 +77,18 @@
     }
 
     document.addEventListener("keydown", function (event) {
-      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.defaultPrevented || event.repeat || event.isComposing) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      var key = (event.key || "").toLowerCase();
+      if (!/^[a-z]$/.test(key)) return;
       var target = event.target;
       if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
-      var link = document.querySelector('[data-shortcut="' + event.key.toLowerCase() + '"]');
-      if (link && link.href) {
-        event.preventDefault();
-        window.location.href = link.href;
-      }
+      var link = document.querySelector('a[data-shortcut="' + key + '"]');
+      if (!link || !link.href) return;
+      event.preventDefault();
+      // Already there (e.g. "d" on /docs/): stay put instead of reloading.
+      if (link.href === window.location.origin + window.location.pathname) return;
+      window.location.href = link.href;
     });
   });
 })();

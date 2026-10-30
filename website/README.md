@@ -10,7 +10,7 @@ The design rules are in [DESIGN.md](DESIGN.md).
   release-please writes it, and the favicon comes from `../assets/icons/maze.svg`. Edit
   those files, not copies.
 - **No client framework, no third parties.** Two scripts: `public/theme.js` (theme
-  toggle, the `d` shortcut and naming the visitor's computer, about 4 KB) and `public/dots.js` (the hero's dot
+  toggle, the header's one-letter shortcuts and naming the visitor's computer, about 4 KB) and `public/dots.js` (the hero's dot
   animation, home page only, about 15 KB). Fonts (IBM Plex Sans, Lilex; both
   SIL OFL 1.1) are configured in `astro.config.mjs` (`fonts`, npm provider) and
   self-hosted under `/_astro/fonts/`. The CSP in `public/_headers` allows nothing but
