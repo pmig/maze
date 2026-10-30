@@ -694,7 +694,9 @@ two random words such as `brave-otter`; split the window to keep the Inbox next 
   separated by commas: `anna@example.com, "Doe, John" <john@example.com>`.
 - The body is **Markdown**: `**bold**`, `*italic*`, lists, `> quotes`, links. Maze sends
   your text as the plain-text part and renders it as the HTML part, so recipients see
-  normal formatted mail. Single line breaks are kept.
+  normal formatted mail. Single line breaks are kept. A new line starts at the
+  indentation of the one before, so nested lists stay nested; `tab` and `shift-tab`
+  indent and outdent.
 - **Attach…** (`cmd-shift-a`) adds files; they are read when the message is sent.
 - **"Sent with Maze"** (on by default) adds a short line below your messages:
   "Sent with Maze (https://mazemail.dev)", with a plain link to the website, no

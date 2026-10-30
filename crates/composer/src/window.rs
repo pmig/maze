@@ -46,7 +46,8 @@ use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IndexPath, Sizable as _, TitleBar,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{self, Input, InputEvent, InputState, Textarea, TextareaState},
+    input::{self, Editor, EditorState, Input, InputEvent, InputState},
+    native_menu::NativeMenu,
     select::{Select, SelectEvent, SelectItem, SelectState},
     v_flex,
 };
@@ -68,6 +69,9 @@ const DEFAULT_SIZE: (f32, f32) = (760., 640.);
 const MIN_SIZE: (f32, f32) = (480., 360.);
 /// The window title without a subject.
 const UNTITLED: &str = "New Message";
+
+/// How much further the code editor insets its text than a plain text field.
+const BODY_GUTTER_EXTRA: f32 = 2.;
 
 /// The layout kind of draft tabs (`{"kind": "compose", "data": {"draft": 17}}`).
 pub const COMPOSE_KIND: &str = "compose";
@@ -189,7 +193,7 @@ pub struct Composer {
     cc: Entity<InputState>,
     bcc: Entity<InputState>,
     subject: Entity<InputState>,
-    body: Entity<TextareaState>,
+    body: Entity<EditorState>,
     attachments: Vec<DraftAttachment>,
     /// The "Sent with Maze" line is added (the account's `compose.support_maze`).
     support_maze: bool,
@@ -248,6 +252,76 @@ fn parse_field(text: &str) -> Result<Vec<Address>, String> {
     Address::parse_list(text).map_err(|err| format!("“{}” isn't an email address.", err.entry))
 }
 
+/// The body's text field: gpui-kit's code editor set up for prose (PLAN §4.10).
+///
+/// The editor (not the plain textarea) is used because only it can decorate text
+/// ranges, which spelling marks need. Everything that makes it a code editor is
+/// off, so it types like a plain text field: no line numbers, folding or indent
+/// guides, no automatic closing of brackets and quotes (`don't` stays `don't`),
+/// no bracket-splitting Enter, no search panel (`cmd-f` stays the main window's
+/// Quick Filter) and no scrolling past the last line. Long paragraphs wrap. The
+/// language is Markdown, but no Markdown grammar is compiled in, so the text isn't
+/// highlighted.
+fn body_editor(
+    text: String,
+    window: &mut Window,
+    cx: &mut Context<'_, EditorState>,
+) -> EditorState {
+    EditorState::new(window, cx)
+        .language("markdown")
+        .line_number(false)
+        .folding(false)
+        .indent_guides(false)
+        .auto_close(false)
+        .smart_indent(false)
+        .searchable(false)
+        .scroll_beyond_last_line(Some(0))
+        .soft_wrap(true)
+        .placeholder("Write in Markdown…")
+        .default_value(text)
+}
+
+/// An entry of the body's right-click menu (`None` in the list is a separator).
+struct MenuItem {
+    label: SharedString,
+    disabled: bool,
+    action: Box<dyn gpui::Action>,
+}
+
+impl MenuItem {
+    fn new(label: &'static str, disabled: bool, action: Box<dyn gpui::Action>) -> Option<Self> {
+        Some(Self {
+            label: label.into(),
+            disabled,
+            action,
+        })
+    }
+}
+
+/// The body's right-click menu: what a plain text field offers (the code editor's
+/// own menu would add "Go to Definition" and "Show Code Actions"). Right-clicking
+/// outside the selection has moved the cursor to the click already.
+fn body_menu_items(body: &EditorState) -> Vec<Option<MenuItem>> {
+    let editable = body.is_editable();
+    let copyable = body.is_copyable();
+    vec![
+        MenuItem::new("Cut", !(editable && copyable), Box::new(input::Cut)),
+        MenuItem::new("Copy", !copyable, Box::new(input::Copy)),
+        MenuItem::new("Paste", !editable, Box::new(input::Paste)),
+        None,
+        MenuItem::new("Select All", false, Box::new(input::SelectAll)),
+    ]
+}
+
+fn native_menu(items: Vec<Option<MenuItem>>) -> NativeMenu {
+    items
+        .into_iter()
+        .fold(NativeMenu::new(), |menu, item| match item {
+            Some(item) => menu.menu_with_disabled(item.label, item.disabled, item.action),
+            None => menu.separator(),
+        })
+}
+
 impl Composer {
     /// Builds the window content.
     pub fn new(
@@ -280,12 +354,7 @@ impl Composer {
         let bcc = line("Bcc", Address::format_list(&draft.bcc), window, cx);
         let subject = line("Subject", draft.subject.clone(), window, cx);
         let body_text = draft.body_markdown.clone();
-        let body = cx.new(|cx| {
-            TextareaState::new(window, cx)
-                .soft_wrap(true)
-                .placeholder("Write in Markdown…")
-                .default_value(body_text)
-        });
+        let body = cx.new(|cx| body_editor(body_text, window, cx));
 
         let several_accounts = identities
             .iter()
@@ -495,7 +564,7 @@ impl Composer {
 
     fn on_body_event(
         &mut self,
-        _: &Entity<TextareaState>,
+        _: &Entity<EditorState>,
         event: &InputEvent,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
@@ -856,6 +925,22 @@ impl Composer {
             .child(div().flex_1().min_w_0().child(field))
     }
 
+    /// The body in the UI font at the size and leading of a plain text field (the
+    /// code editor would use the monospace font).
+    fn render_body(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let body = self.body.downgrade();
+        Editor::new(&self.body)
+            .h(relative(1.))
+            .appearance(false)
+            .font_family(cx.theme().font_family.clone())
+            .text_sm()
+            .line_height(gpui::rems(1.25))
+            .context_menu(move |menu, _, cx| match body.upgrade() {
+                Some(body) => native_menu(body_menu_items(body.read(cx))),
+                None => menu,
+            })
+    }
+
     fn render_attachments(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
         h_flex()
@@ -897,7 +982,7 @@ impl Focusable for Composer {
 }
 
 impl Render for Composer {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
         let no_identity = self.identities.is_empty();
         let from: gpui::AnyElement = match &self.from {
@@ -996,9 +1081,14 @@ impl Render for Composer {
                 div()
                     .flex_1()
                     .min_h_0()
-                    .px_3()
+                    // `px_3`, but the editor insets its text 2 px more than a plain
+                    // text field (a 6 px gutter beside its 6 px padding instead of
+                    // 10 px padding): less that on the left, so the text starts
+                    // where it always did.
+                    .pl(window.rem_size() * 0.75 - px(BODY_GUTTER_EXTRA))
+                    .pr_3()
                     .py_2()
-                    .child(Textarea::new(&self.body).h(relative(1.)).appearance(false)),
+                    .child(self.render_body(cx)),
             )
             .when(!footer_preview.is_empty(), |this| {
                 this.child(

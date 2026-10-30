@@ -622,3 +622,338 @@ fn open_in_new_window_hands_the_draft_over(cx: &mut TestAppContext) {
     assert_eq!(options.draft.name, "quiet-heron");
     assert_eq!(options.draft.to[0].email, "anna@example.com");
 }
+
+// ---- the body (a prose-configured code editor) --------------------------------------
+
+/// A composer with a recipient, so the body has the focus, and `body` as its text.
+fn open_body<'a>(
+    cx: &'a mut TestAppContext,
+    body: &str,
+) -> (Entity<Composer>, &'a mut VisualTestContext) {
+    let mut options = options();
+    options.draft.to = vec![Address::new(None::<String>, "anna@example.com")];
+    options.draft.body_markdown = body.to_owned();
+    open(cx, Arc::new(FakeBackend::default()), options)
+}
+
+fn body_text(view: &Entity<Composer>, cx: &mut VisualTestContext) -> String {
+    view.read_with(cx, |c, cx| c.body.read(cx).value().to_string())
+}
+
+fn draw(cx: &mut VisualTestContext) {
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+}
+
+#[gpui::test]
+fn the_body_types_like_a_plain_text_field(cx: &mut TestAppContext) {
+    let (view, cx) = open_body(cx, "");
+    // No closing brackets or quotes are added, umlauts and emoji go in as typed.
+    cx.simulate_input("Don't (see \"this\") [x] {y} – Grüße, Jänner 🎉");
+    assert_eq!(
+        body_text(&view, cx),
+        "Don't (see \"this\") [x] {y} – Grüße, Jänner 🎉"
+    );
+    assert!(view.read_with(cx, |c, _| c.is_dirty()));
+
+    // Enter between brackets is a plain line break, not a code block.
+    view.update_in(cx, |c, window, cx| {
+        c.body.update(cx, |b, cx| b.set_value("f()", window, cx));
+        c.body.update(cx, |b, cx| b.set_selected_range(2..2, cx));
+    });
+    cx.simulate_keystrokes("enter");
+    assert_eq!(body_text(&view, cx), "f(\n)");
+
+    // Tab indents in the body, as it did in the plain text field.
+    view.update_in(cx, |c, window, cx| {
+        c.body.update(cx, |b, cx| b.set_value("item", window, cx));
+        c.body.update(cx, |b, cx| b.set_selected_range(0..0, cx));
+    });
+    cx.simulate_keystrokes("tab");
+    assert_eq!(body_text(&view, cx), "  item");
+    cx.simulate_keystrokes("shift-tab");
+    assert_eq!(body_text(&view, cx), "item");
+}
+
+#[gpui::test]
+fn enter_keeps_the_indentation_of_the_line(cx: &mut TestAppContext) {
+    // The one editing difference to the plain text field: a new line starts at the
+    // indentation of the one before (nested Markdown lists, indented code).
+    let (view, cx) = open_body(cx, "");
+    cx.simulate_input("- one\n  - two");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("- three");
+    assert_eq!(body_text(&view, cx), "- one\n  - two\n  - three");
+}
+
+#[gpui::test]
+fn undo_and_redo_in_the_body(cx: &mut TestAppContext) {
+    let (view, cx) = open_body(cx, "Hello");
+    view.update_in(cx, |c, _, cx| {
+        c.body.update(cx, |b, cx| b.set_selected_range(5..5, cx));
+    });
+    cx.simulate_input(" world");
+    assert_eq!(body_text(&view, cx), "Hello world");
+    cx.simulate_keystrokes("cmd-z");
+    assert_eq!(body_text(&view, cx), "Hello");
+    cx.simulate_keystrokes("cmd-shift-z");
+    assert_eq!(body_text(&view, cx), "Hello world");
+}
+
+#[gpui::test]
+fn cut_copy_and_paste_in_the_body(cx: &mut TestAppContext) {
+    let (view, cx) = open_body(cx, "Grüße 🎉");
+    cx.simulate_keystrokes("cmd-a cmd-c");
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|c| c.text()).as_deref(),
+        Some("Grüße 🎉")
+    );
+    cx.simulate_keystrokes("cmd-x");
+    assert_eq!(body_text(&view, cx), "");
+    cx.simulate_keystrokes("cmd-v cmd-v");
+    assert_eq!(body_text(&view, cx), "Grüße 🎉Grüße 🎉");
+    // The menu's actions do the same.
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string("> quoted\n".into()));
+    view.update_in(cx, |c, _, cx| {
+        c.body.update(cx, |b, cx| b.set_selected_range(0..0, cx));
+    });
+    cx.dispatch_action(input::Paste);
+    assert_eq!(body_text(&view, cx), "> quoted\nGrüße 🎉Grüße 🎉");
+}
+
+#[gpui::test]
+fn the_context_menu_has_cut_copy_and_paste(cx: &mut TestAppContext) {
+    let (view, cx) = open_body(cx, "Hallo Welt");
+    let menu = |view: &Entity<Composer>, cx: &mut VisualTestContext| {
+        view.read_with(cx, |c, cx| {
+            body_menu_items(c.body.read(cx))
+                .into_iter()
+                .map(|item| item.map(|i| (i.label.to_string(), i.disabled, i.action.name())))
+                .collect::<Vec<_>>()
+        })
+    };
+    let item = |label: &str, disabled: bool, action: &dyn gpui::Action| {
+        Some((label.to_owned(), disabled, action.name()))
+    };
+    // Nothing selected: nothing to cut or copy, no code-editor items.
+    assert_eq!(
+        menu(&view, cx),
+        vec![
+            item("Cut", true, &input::Cut),
+            item("Copy", true, &input::Copy),
+            item("Paste", false, &input::Paste),
+            None,
+            item("Select All", false, &input::SelectAll),
+        ]
+    );
+    view.update_in(cx, |c, _, cx| {
+        c.body.update(cx, |b, cx| b.set_selected_range(0..5, cx));
+    });
+    let items = menu(&view, cx);
+    assert_eq!(items[0], item("Cut", false, &input::Cut));
+    assert_eq!(items[1], item("Copy", false, &input::Copy));
+}
+
+#[gpui::test]
+fn composing_text_with_an_input_method(cx: &mut TestAppContext) {
+    use gpui::EntityInputHandler as _;
+    let (view, cx) = open_body(cx, "Gr");
+    view.update_in(cx, |c, window, cx| {
+        c.body.update(cx, |b, cx| {
+            b.set_selected_range(2..2, cx);
+            // A dead key (macOS option-u) shows a marked "¨", the next key commits "ü".
+            b.replace_and_mark_text_in_range(None, "¨", Some(1..1), window, cx);
+            assert_eq!(b.value(), "Gr¨");
+            assert_eq!(b.marked_text_range(window, cx), Some(2..3));
+            b.replace_text_in_range(None, "ü", window, cx);
+            assert_eq!(b.value(), "Grü");
+            assert_eq!(b.marked_text_range(window, cx), None);
+        });
+    });
+    cx.simulate_input("ße");
+    assert_eq!(body_text(&view, cx), "Grüße");
+    assert!(view.read_with(cx, |c, _| c.is_dirty()));
+
+    view.update_in(cx, |c, window, cx| {
+        c.body.update(cx, |b, cx| {
+            // Japanese: the preedit changes as you type and is committed at once.
+            b.replace_and_mark_text_in_range(None, " に", Some(2..2), window, cx);
+            b.replace_and_mark_text_in_range(None, " にほ", Some(3..3), window, cx);
+            b.replace_and_mark_text_in_range(None, " 日本", Some(3..3), window, cx);
+            assert_eq!(b.value(), "Grüße 日本");
+            b.replace_text_in_range(None, " 日本", window, cx);
+            assert_eq!(b.marked_text_range(window, cx), None);
+            // A cancelled preedit leaves nothing behind.
+            b.replace_and_mark_text_in_range(None, "ka", Some(2..2), window, cx);
+            b.replace_and_mark_text_in_range(None, "", None, window, cx);
+            assert_eq!(b.value(), "Grüße 日本");
+        });
+    });
+    draw(cx);
+    // The committed composition is one undo step.
+    cx.simulate_keystrokes("cmd-z");
+    assert_eq!(body_text(&view, cx), "Grüße");
+    let draft = view.read_with(cx, |c, cx| c.draft(cx)).unwrap();
+    assert_eq!(draft.body_markdown, "Grüße");
+}
+
+#[gpui::test]
+fn long_lines_emoji_and_rtl_text_wrap_and_edit(cx: &mut TestAppContext) {
+    let url = format!("https://example.com/{}?q=1", "very/long/path/".repeat(40));
+    let paragraph = "A paragraph nobody breaks by hand, because it is prose. ".repeat(30);
+    let text = format!(
+        "{paragraph}\n{url}\nEmoji 🎉👍🏽 👨‍👩‍👧‍👦 🇦🇹 end\nRTL שלום עולם, مرحبا بالعالم (mixed).\n"
+    );
+    let (view, cx) = open_body(cx, &text);
+    cx.simulate_resize(size(px(480.), px(360.)));
+    draw(cx);
+    let (rows, lines) = view.read_with(cx, |c, cx| {
+        let b = c.body.read(cx);
+        (b.display_map().wrap_row_count(), b.value().lines().count())
+    });
+    assert!(
+        rows > lines + 10,
+        "soft wrapped: {rows} rows for {lines} lines"
+    );
+
+    // Walk through every character and line, drawing as we go: no panics on
+    // grapheme clusters, bidi text or wrapped rows.
+    cx.simulate_keystrokes("cmd-up");
+    for _ in 0..text.chars().count() {
+        cx.simulate_keystrokes("right");
+    }
+    draw(cx);
+    assert_eq!(
+        view.read_with(cx, |c, cx| c.body.read(cx).selected_range()),
+        text.len()..text.len()
+    );
+    cx.simulate_keystrokes("cmd-up");
+    for _ in 0..rows {
+        cx.simulate_keystrokes("down");
+        draw(cx);
+    }
+    // Typing inside the RTL run and after the emoji.
+    let rtl = text.find("עולם").unwrap();
+    view.update_in(cx, |c, _, cx| {
+        c.body
+            .update(cx, |b, cx| b.set_selected_range(rtl..rtl, cx));
+    });
+    cx.simulate_input("x");
+    let emoji_end = text.find(" end").unwrap();
+    view.update_in(cx, |c, _, cx| {
+        c.body
+            .update(cx, |b, cx| b.set_selected_range(emoji_end..emoji_end, cx));
+    });
+    cx.simulate_input("!");
+    draw(cx);
+    let body = body_text(&view, cx);
+    assert!(body.contains("שלום xעולם"), "{body}");
+    assert!(body.contains("🇦🇹! end"), "{body}");
+}
+
+#[gpui::test]
+fn typing_in_a_long_mail_stays_fast(cx: &mut TestAppContext) {
+    // 2,000 lines, ~100 KB, a long paragraph every 100 lines; type in the middle and
+    // draw a frame after every key. The release build measured ~0.55 ms per key and
+    // frame with the real text system, the same as the plain text field; this only
+    // guards against a gross regression (debug build, test text system).
+    let mut text = String::new();
+    for i in 0..2000 {
+        if i % 100 == 99 {
+            text.push_str(&"Ein langer Absatz über Größe, der weich umbrochen wird. ".repeat(12));
+            text.push('\n');
+        } else {
+            text.push_str("Lorem ipsum dolor sit amet, consectetur elit.\n");
+        }
+    }
+    assert!((100_000..130_000).contains(&text.len()), "{}", text.len());
+    let (view, cx) = open_body(cx, &text);
+    let mid = text.len() / 2;
+    view.update_in(cx, |c, _, cx| {
+        c.body
+            .update(cx, |b, cx| b.set_selected_range(mid..mid, cx));
+    });
+    draw(cx);
+    let keys = 200;
+    let start = std::time::Instant::now();
+    for _ in 0..keys {
+        cx.simulate_input("a");
+        draw(cx);
+    }
+    let per_key = start.elapsed() / keys;
+    assert_eq!(body_text(&view, cx).len(), text.len() + keys as usize);
+    assert!(
+        per_key < Duration::from_millis(25),
+        "{per_key:?} per key and frame"
+    );
+}
+
+#[gpui::test]
+fn composer_keys_reach_the_composer_from_the_body(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend::default());
+    let mut options = options();
+    options.draft.to = vec![Address::new(None::<String>, "anna@example.com")];
+    let (view, cx) = open(cx, backend.clone(), options);
+    cx.simulate_input("Hi");
+    let focused_body = |view: &Entity<Composer>, cx: &mut VisualTestContext| {
+        view.update_in(cx, |c, window, cx| {
+            c.body.read(cx).focus_handle(cx).is_focused(window)
+        })
+    };
+    assert!(focused_body(&view, cx));
+
+    // The code editor's own search panel stays off: cmd-f is the main window's.
+    cx.simulate_keystrokes("cmd-f");
+    cx.simulate_keystrokes("cmd-shift-f");
+    assert!(!view.read_with(cx, |c, cx| c.body.read(cx).search_session().is_active()));
+
+    cx.simulate_keystrokes("cmd-s");
+    cx.run_until_parked();
+    assert_eq!(backend.saves().len(), 1);
+    assert_eq!(backend.saves()[0].1.body_markdown, "Hi");
+
+    cx.simulate_keystrokes("cmd-shift-a");
+    assert!(cx.did_prompt_for_paths());
+
+    cx.simulate_keystrokes("cmd-shift-c");
+    assert!(view.read_with(cx, |c, _| c.cc_visible()));
+    view.update_in(cx, |c, window, cx| {
+        let focus = c.body.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
+    });
+
+    cx.simulate_keystrokes("cmd-enter");
+    cx.run_until_parked();
+    let sends = backend.sends();
+    assert_eq!(sends.len(), 1);
+    assert_eq!(sends[0].1.body_markdown, "Hi", "no line break added");
+    assert!(view.read_with(cx, |c, _| c.is_closed()));
+}
+
+#[gpui::test]
+fn tab_moves_from_the_subject_into_the_body(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        ui::init(cx);
+        let _ = ui::keymap::bind_keymap(ui::keymap::DEFAULT_MACOS_KEYMAP, cx);
+    });
+    let mut composer = None;
+    let (_, cx) = cx.add_window_view(|window, cx| {
+        let backend: Arc<dyn ComposeBackend> = Arc::new(FakeBackend::default());
+        let view = cx.new(|cx| Composer::new(backend, options(), window, cx));
+        composer = Some(view.clone());
+        ui::kit::base::Root::new(view, window, cx)
+    });
+    let view = composer.unwrap();
+    cx.run_until_parked();
+    view.update_in(cx, |c, window, cx| {
+        let focus = c.subject.focus_handle(cx);
+        window.focus(&focus, cx);
+    });
+    draw(cx);
+    cx.simulate_keystrokes("tab");
+    cx.simulate_input("Body text");
+    assert_eq!(body_text(&view, cx), "Body text");
+    assert_eq!(
+        view.read_with(cx, |c, cx| c.subject.read(cx).value().to_string()),
+        ""
+    );
+}
