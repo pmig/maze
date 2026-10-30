@@ -690,8 +690,9 @@ two random words such as `brave-otter`; split the window to keep the Inbox next 
 
 - **From** picks the identity you send as. Replies pick it for you: the identity whose
   address the message was sent to (To, Cc or `Delivered-To`), else the account's default.
-- **To**, **Cc** and **Bcc** (click **Cc Bcc** or press `cmd-shift-c`) take addresses
-  separated by commas: `anna@example.com, "Doe, John" <john@example.com>`.
+- **To**, **Cc** and **Bcc** (click **Cc Bcc** or press `cmd-shift-c`) show each
+  recipient as a chip with their initials and name (hover for the address). See
+  [Recipients](#recipients) below.
 - The body is **Markdown**: `**bold**`, `*italic*`, lists, `> quotes`, links. Maze sends
   your text as the plain-text part and renders it as the HTML part, so recipients see
   normal formatted mail. Single line breaks are kept. A new line starts at the
@@ -742,8 +743,30 @@ sends it twice. The copy in your Sent folder is described under
 
 Drafts are saved on your computer (encrypted, like your mail) a moment after you stop
 typing. Not there yet: drafts in the server's Drafts folder, forwarding the original's
-attachments, signatures switching with the identity, address completion, send later
-and undo send.
+attachments, signatures switching with the identity, send later and undo send.
+
+### Recipients
+
+Type an address into To, Cc or Bcc and end it with a comma, a semicolon, `enter` or
+`tab` (or just click elsewhere): it becomes a chip. Pasting a list such as
+`Anna <anna@example.com>, "Doe, John" <john@example.com>; bob@example.org` makes one
+chip per address. Text that isn't an address becomes a red chip, and Maze won't send or
+autosave until you fix or remove it; double-click any chip to edit it as text.
+
+While you type, Maze suggests addresses after a moment: entries of your address books
+first (the ones imported from Thunderbird), then addresses you have written to. Every
+address you send a message to (To, Cc and Bcc, your own addresses left out) is
+remembered on your computer, in the encrypted database, with how often you wrote to
+it, so the people you write to most come first. `up` and `down` move through the
+suggestions, `enter` or `tab` takes one, `escape` closes the list; a click works too.
+Syncing your Google and Microsoft contacts comes later
+([ADR-024](adr/0024-server-owned-contacts.md)).
+
+Click a chip to select it, then `backspace` or `delete` removes it; `backspace` in the
+empty field selects the last chip, and `left` / `right` move between chips. **Drag a
+chip** to move a recipient between To, Cc and Bcc (or to another place in the same
+field). When Cc and Bcc are hidden they appear while you drag, and stay open when you
+drop a chip there.
 
 ### Spell checking
 
@@ -975,6 +998,9 @@ you chose. These are bound today:
 | Reply / reply all (list and message)        | `r` / `shift-r`                                      |
 | Send                                        | `cmd-enter`                                          |
 | Save draft / attach / Cc and Bcc            | `cmd-s` / `cmd-shift-a` / `cmd-shift-c`              |
+| Recipient: make a chip / take a suggestion   | `,` `;` `enter` `tab` / `enter`, `tab`               |
+| Recipient: select the last chip / remove it  | `backspace` / `backspace`, `delete`                  |
+| Recipient: move between chips                | `left` / `right`                                     |
 | Close the draft (asks to keep changes)      | `escape`                                             |
 | **Tabs and panes**                          |                                                      |
 | Close the tab                               | `cmd-w`                                              |

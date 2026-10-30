@@ -563,3 +563,59 @@ async fn the_personal_spelling_dictionary_is_kept() {
     assert_eq!(core.spelling_words().unwrap(), ["Glasskube"]);
     core.shutdown().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn addresses_you_write_to_are_offered_for_completion() {
+    let server = FakeServer::new();
+    let s = open(&server).await;
+    let message = account_with_original(&s).await;
+    assert!(s.core.complete_addresses("an", 8).unwrap().is_empty());
+
+    let mut reply = s.core.reply_draft(message, ReplyKind::All).await.unwrap();
+    reply.bcc = vec![
+        Address::new(Some("The Boss"), "boss@example.org"),
+        // Your own address isn't collected.
+        Address::new(None::<String>, "Alice@Example.org"),
+    ];
+    s.core.send_draft(None, reply).await.unwrap();
+
+    assert_eq!(
+        s.core.complete_addresses("an", 8).unwrap(),
+        [Address::new(Some("Anna Example"), "anna@example.com")]
+    );
+    // By name too, and every field counts (To, Cc and Bcc).
+    assert_eq!(
+        s.core.complete_addresses("boss", 8).unwrap(),
+        [Address::new(Some("The Boss"), "boss@example.org")]
+    );
+    assert_eq!(
+        s.core.complete_addresses("car", 8).unwrap(),
+        [Address::new(None::<String>, "carol@example.com")]
+    );
+    assert!(s.core.complete_addresses("ali", 8).unwrap().is_empty());
+
+    // Writing again ranks by how often: Bob twice now, before the Boss once.
+    let mut again = s.core.new_draft().unwrap();
+    again.to = vec![Address::new(Some("Bob"), "BOB@example.net")];
+    s.core.send_draft(None, again).await.unwrap();
+    let b: Vec<String> = s
+        .core
+        .complete_addresses("b", 8)
+        .unwrap()
+        .into_iter()
+        .map(|a| a.email)
+        .collect();
+    assert_eq!(b, ["bob@example.net", "boss@example.org"]);
+
+    // All of them in the collected book, once each.
+    let contacts = s
+        .core
+        .store()
+        .reader()
+        .unwrap()
+        .search_contacts("", 50)
+        .unwrap();
+    assert!(contacts.iter().all(|c| c.book == "collected"));
+    assert_eq!(contacts.len(), 4, "anna, bob, carol and the boss");
+    s.core.shutdown().await.unwrap();
+}

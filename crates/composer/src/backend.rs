@@ -88,7 +88,9 @@ pub trait ComposeBackend: Send + Sync + 'static {
         draft: Draft,
     ) -> BoxFuture<Result<SendOutcome, ComposeError>>;
 
-    /// Address completion for `prefix` (known correspondents). Optional.
+    /// Address completion for `prefix`, the text typed into To, Cc or Bcc: address book
+    /// entries first, then addresses you wrote to. Called on a background thread a
+    /// moment after the typing stops, so it may read the database. Optional.
     fn complete_address(&self, prefix: &str) -> Vec<Address> {
         let _ = prefix;
         Vec::new()

@@ -32,7 +32,7 @@ Linux), and all of it is encrypted:
 
 | Data                                                 | Encryption                                                                   |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Database `mazemail.db` (messages, folders, accounts, identities, account passwords and OAuth refresh tokens, API token hashes, audit log, your spelling dictionary) | SQLCipher 4: AES-256 with an HMAC-SHA512 per page |
+| Database `mazemail.db` (messages, folders, accounts, identities, account passwords and OAuth refresh tokens, API token hashes, audit log, your spelling dictionary, address books and the addresses you wrote to) | SQLCipher 4: AES-256 with an HMAC-SHA512 per page |
 | Raw messages and attachments (`blobs/`), caches (`cache/`) | XChaCha20-Poly1305 in 64 KiB chunks, bound to the blob's id, after compression |
 | Search index (`index/`)                              | Tantivy segments in 16 KiB XChaCha20-Poly1305 blocks                         |
 | Pre-migration database backups (`backups/`)          | SQLCipher, same key                                                          |

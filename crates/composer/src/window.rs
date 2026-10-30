@@ -23,6 +23,14 @@
 //! they are added when the message is sent, not part of the text you edit. The Maze
 //! line is only a setting; the composer has no switch for it.
 //!
+//! # Recipients
+//!
+//! To, Cc and Bcc are [`RecipientField`]s: addresses as chips, suggestions from
+//! [`ComposeBackend::complete_address`] while you type, chips dragged between the
+//! fields. While a chip is dragged, collapsed Cc and Bcc fields show up as drop
+//! targets; dropping a chip there keeps them open. The draft gets the same address
+//! lists as before (chips, then any text not turned into a chip yet).
+//!
 //! # Spelling
 //!
 //! The body is spell checked as you type, off the UI thread, with wavy underlines;
@@ -72,6 +80,7 @@ use crate::actions::{
     Send, ToggleCcBcc, ToggleSpellingLanguage,
 };
 use crate::backend::{ComposeBackend, IdentityChoice, SendOutcome};
+use crate::recipients::{CompleteAddress, RecipientField, RecipientFieldEvent};
 
 mod spellcheck;
 
@@ -203,9 +212,9 @@ pub struct Composer {
     identities: Vec<IdentityChoice>,
     identity: Option<IdentityId>,
     from: Option<Entity<IdentitySelect>>,
-    to: Entity<InputState>,
-    cc: Entity<InputState>,
-    bcc: Entity<InputState>,
+    to: Entity<RecipientField>,
+    cc: Entity<RecipientField>,
+    bcc: Entity<RecipientField>,
     subject: Entity<InputState>,
     body: Entity<EditorState>,
     /// Spell checking the body.
@@ -261,11 +270,6 @@ fn format_size(bytes: u64) -> String {
         KB..MB => format!("{} KB", bytes.div_ceil(KB)),
         _ => format!("{:.1} MB", bytes as f64 / MB as f64),
     }
-}
-
-/// Parses one address field; the error names the entry that isn't an address.
-fn parse_field(text: &str) -> Result<Vec<Address>, String> {
-    Address::parse_list(text).map_err(|err| format!("“{}” isn't an email address.", err.entry))
 }
 
 /// The body's text field: gpui-kit's code editor set up for prose (PLAN §4.10).
@@ -370,9 +374,21 @@ impl Composer {
                     .default_value(value)
             })
         };
-        let to = line("To", Address::format_list(&draft.to), window, cx);
-        let cc = line("Cc", Address::format_list(&draft.cc), window, cx);
-        let bcc = line("Bcc", Address::format_list(&draft.bcc), window, cx);
+        let complete: CompleteAddress = {
+            let backend = backend.clone();
+            Arc::new(move |prefix: &str| backend.complete_address(prefix))
+        };
+        let recipients = |name: &'static str,
+                          placeholder: &'static str,
+                          addresses: &[Address],
+                          window: &mut Window,
+                          cx: &mut Context<'_, Self>| {
+            let complete = Some(complete.clone());
+            cx.new(|cx| RecipientField::new(name, placeholder, addresses, complete, window, cx))
+        };
+        let to = recipients("to", "To", &draft.to, window, cx);
+        let cc = recipients("cc", "Cc", &draft.cc, window, cx);
+        let bcc = recipients("bcc", "Bcc", &draft.bcc, window, cx);
         let subject = line("Subject", draft.subject.clone(), window, cx);
         let body_text = draft.body_markdown.clone();
         let body = cx.new(|cx| body_editor(body_text, window, cx));
@@ -392,9 +408,9 @@ impl Composer {
         });
 
         let mut subscriptions = vec![
-            cx.subscribe_in(&to, window, Self::on_input_event),
-            cx.subscribe_in(&cc, window, Self::on_input_event),
-            cx.subscribe_in(&bcc, window, Self::on_input_event),
+            cx.subscribe_in(&to, window, Self::on_recipients_event),
+            cx.subscribe_in(&cc, window, Self::on_recipients_event),
+            cx.subscribe_in(&bcc, window, Self::on_recipients_event),
             cx.subscribe_in(&subject, window, Self::on_subject_event),
             cx.subscribe_in(&body, window, Self::on_body_event),
         ];
@@ -471,7 +487,7 @@ impl Composer {
     }
 
     fn focus_first_field(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let to_empty = self.to.read(cx).value().trim().is_empty();
+        let to_empty = self.to.read(cx).is_empty(cx);
         let field = if to_empty {
             self.to.focus_handle(cx)
         } else {
@@ -540,13 +556,12 @@ impl Composer {
 
     /// The draft as the fields describe it, or the first problem with the addresses.
     pub fn draft(&self, cx: &App) -> Result<Draft, String> {
-        let value = |input: &Entity<InputState>| input.read(cx).value().to_string();
         Ok(Draft {
             identity: self.identity,
-            to: parse_field(&value(&self.to))?,
-            cc: parse_field(&value(&self.cc))?,
-            bcc: parse_field(&value(&self.bcc))?,
-            subject: value(&self.subject).trim().to_owned(),
+            to: self.to.read(cx).addresses(cx)?,
+            cc: self.cc.read(cx).addresses(cx)?,
+            bcc: self.bcc.read(cx).addresses(cx)?,
+            subject: self.subject.read(cx).value().trim().to_owned(),
             body_markdown: self.body.read(cx).value().to_string(),
             in_reply_to: self.base.in_reply_to.clone(),
             references: self.base.references.clone(),
@@ -559,16 +574,32 @@ impl Composer {
 
     // ---- changes and autosave -------------------------------------------------------
 
-    fn on_input_event(
+    fn on_recipients_event(
         &mut self,
-        _: &Entity<InputState>,
-        event: &InputEvent,
+        field: &Entity<RecipientField>,
+        event: &RecipientFieldEvent,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if matches!(event, InputEvent::Change) {
-            self.changed(window, cx);
+        match event {
+            // A chip dropped on Cc or Bcc while they were collapsed: keep them open.
+            RecipientFieldEvent::Dropped => {
+                if field != &self.to {
+                    self.cc_visible = true;
+                    cx.notify();
+                }
+            }
+            RecipientFieldEvent::Changed => self.changed(window, cx),
         }
+    }
+
+    /// Whether a recipient chip is being dragged (collapsed Cc and Bcc show up as
+    /// drop targets meanwhile).
+    fn dragging_recipient(&self, cx: &App) -> bool {
+        cx.has_active_drag()
+            && [&self.to, &self.cc, &self.bcc]
+                .iter()
+                .any(|field| field.read(cx).is_dragging())
     }
 
     fn on_subject_event(
@@ -949,9 +980,20 @@ impl Composer {
     fn field_row(label: &'static str, field: impl IntoElement) -> impl IntoElement {
         h_flex()
             .gap_2()
-            .items_center()
-            // 56 px at the default font size, growing with the label text.
-            .child(div().w(gpui::rems(4.)).flex_none().text_sm().child(label))
+            // The label stays next to the first line of a field that wraps.
+            .items_start()
+            // 56 px at the default font size, growing with the label text; as high
+            // as a field's first line.
+            .child(
+                div()
+                    .w(gpui::rems(4.))
+                    .h(gpui::rems(1.5))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .text_sm()
+                    .child(label),
+            )
             .child(div().flex_1().min_w_0().child(field))
     }
 
@@ -1043,6 +1085,7 @@ impl Render for Composer {
         };
         let footer_preview = self.footer_preview();
         let spelling_status = self.spelling_status(cx);
+        let dragging_recipient = self.dragging_recipient(cx);
 
         v_flex()
             .id("composer")
@@ -1106,24 +1149,30 @@ impl Render for Composer {
                         "To",
                         h_flex()
                             .gap_1()
-                            .child(div().flex_1().child(Input::new(&self.to).small()))
+                            .items_start()
+                            .child(div().flex_1().min_w_0().child(self.to.clone()))
                             .child(
-                                Button::new("toggle-cc")
-                                    .ghost()
-                                    .xsmall()
-                                    .label("Cc Bcc")
-                                    .tooltip(format!(
-                                        "Show Cc and Bcc ({})",
-                                        shortcut_label("cmd-shift-c", cx)
-                                    ))
-                                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                                        this.toggle_cc(window, cx);
-                                    })),
+                                // Centered on the field's first line.
+                                h_flex().h(gpui::rems(1.5)).child(
+                                    Button::new("toggle-cc")
+                                        .ghost()
+                                        .xsmall()
+                                        .label("Cc Bcc")
+                                        .tooltip(format!(
+                                            "Show Cc and Bcc ({})",
+                                            shortcut_label("cmd-shift-c", cx)
+                                        ))
+                                        .on_click(cx.listener(
+                                            |this, _: &ClickEvent, window, cx| {
+                                                this.toggle_cc(window, cx);
+                                            },
+                                        )),
+                                ),
                             ),
                     ))
-                    .when(self.cc_visible, |this| {
-                        this.child(Self::field_row("Cc", Input::new(&self.cc).small()))
-                            .child(Self::field_row("Bcc", Input::new(&self.bcc).small()))
+                    .when(self.cc_visible || dragging_recipient, |this| {
+                        this.child(Self::field_row("Cc", self.cc.clone()))
+                            .child(Self::field_row("Bcc", self.bcc.clone()))
                     })
                     .child(Self::field_row(
                         "Subject",

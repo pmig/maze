@@ -11,6 +11,10 @@
 //! [`ComposeBackend`] trait, which the `mazemail` binary implements over
 //! `mazemail_core` (and tests with a fake). It shares only `mazemail_types`' [`Draft`].
 //!
+//! To, Cc and Bcc hold the addresses as chips ([`recipients::RecipientField`]), with
+//! completion from [`ComposeBackend::complete_address`] (address books and the
+//! addresses you wrote to) and chips that can be dragged between the fields.
+//!
 //! The body is spell checked as you type (crate `spelling`, PLAN-spellcheck) in the
 //! languages the app sets with [`set_spellcheck`] (the `spellcheck` setting); the
 //! personal dictionary comes from and goes to the backend
@@ -18,6 +22,7 @@
 
 pub mod actions;
 mod backend;
+pub mod recipients;
 mod window;
 
 use gpui::App;

@@ -39,6 +39,8 @@ struct FakeBackend {
     spelling_words: Vec<String>,
     /// Words added with "Add to Dictionary".
     added_words: Mutex<Vec<String>>,
+    /// What address completion knows.
+    contacts: Vec<Address>,
 }
 
 impl FakeBackend {
@@ -103,6 +105,20 @@ impl ComposeBackend for FakeBackend {
 
     fn sent_with_maze(&self, _: Option<IdentityId>) -> bool {
         !self.no_maze_line
+    }
+
+    fn complete_address(&self, prefix: &str) -> Vec<Address> {
+        let prefix = prefix.to_lowercase();
+        self.contacts
+            .iter()
+            .filter(|a| {
+                a.email.to_lowercase().starts_with(&prefix)
+                    || a.name
+                        .as_deref()
+                        .is_some_and(|n| n.to_lowercase().starts_with(&prefix))
+            })
+            .cloned()
+            .collect()
     }
 
     fn spelling_words(&self) -> BoxFuture<Result<Vec<String>, ComposeError>> {
@@ -1297,5 +1313,479 @@ fn the_status_item_switches_languages_for_this_draft(cx: &mut TestAppContext) {
     assert_eq!(
         cx.update(|_, cx| cx.global::<SpellcheckSettings>().languages.clone()),
         [Lang::EnUs]
+    );
+}
+
+// ---- recipient chips ------------------------------------------------------------------
+
+use crate::recipients::{Recipient, RecipientField, SUGGEST_DEBOUNCE};
+use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Point};
+
+fn addr(name: Option<&str>, email: &str) -> Address {
+    Address::new(name, email)
+}
+
+fn chips(field: &Entity<RecipientField>, cx: &mut VisualTestContext) -> Vec<Recipient> {
+    field.read_with(cx, |f, _| f.recipients().to_vec())
+}
+
+fn emails(field: &Entity<RecipientField>, cx: &mut VisualTestContext) -> Vec<String> {
+    chips(field, cx)
+        .into_iter()
+        .map(|r| match r {
+            Recipient::Address(a) => a.email,
+            Recipient::Invalid(text) => format!("invalid:{text}"),
+        })
+        .collect()
+}
+
+fn field_text(field: &Entity<RecipientField>, cx: &mut VisualTestContext) -> String {
+    field.read_with(cx, |f, cx| f.text(cx).to_string())
+}
+
+fn to_field(view: &Entity<Composer>, cx: &mut VisualTestContext) -> Entity<RecipientField> {
+    view.read_with(cx, |c, _| c.to.clone())
+}
+
+fn cc_field(view: &Entity<Composer>, cx: &mut VisualTestContext) -> Entity<RecipientField> {
+    view.read_with(cx, |c, _| c.cc.clone())
+}
+
+fn bcc_field(view: &Entity<Composer>, cx: &mut VisualTestContext) -> Entity<RecipientField> {
+    view.read_with(cx, |c, _| c.bcc.clone())
+}
+
+fn focus(field: &Entity<RecipientField>, cx: &mut VisualTestContext) {
+    let field = field.clone();
+    cx.update(|window, cx| {
+        let handle = field.read(cx).focus_handle(cx);
+        window.focus(&handle, cx);
+    });
+}
+
+fn is_focused(field: &Entity<RecipientField>, cx: &mut VisualTestContext) -> bool {
+    let field = field.clone();
+    cx.update(|window, cx| field.read(cx).focus_handle(cx).is_focused(window))
+}
+
+#[gpui::test]
+fn a_comma_semicolon_or_enter_makes_a_chip(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend::default());
+    let (view, cx) = open(cx, backend, options());
+    let to = to_field(&view, cx);
+    cx.simulate_input("anna@example.com,");
+    assert_eq!(emails(&to, cx), ["anna@example.com"]);
+    assert_eq!(field_text(&to, cx), "");
+    // A comma inside quotes doesn't split; the semicolon after the address does.
+    cx.simulate_input(" \"Doe, John\" <john@example.com>;");
+    assert_eq!(
+        chips(&to, cx)[1],
+        Recipient::Address(addr(Some("Doe, John"), "john@example.com"))
+    );
+    assert_eq!(chips(&to, cx)[1].label(), "Doe, John");
+    cx.simulate_input("carl@example.com");
+    assert_eq!(chips(&to, cx).len(), 2, "not before Enter");
+    cx.simulate_keystrokes("enter");
+    assert_eq!(
+        emails(&to, cx),
+        ["anna@example.com", "john@example.com", "carl@example.com"]
+    );
+    // The same address twice is one chip.
+    cx.simulate_input("Anna@Example.com,");
+    assert_eq!(chips(&to, cx).len(), 3);
+    let draft = view.read_with(cx, |c, cx| c.draft(cx)).unwrap();
+    assert_eq!(draft.to.len(), 3);
+    assert!(view.read_with(cx, |c, _| c.is_dirty()));
+}
+
+#[gpui::test]
+fn leaving_the_field_makes_chips_and_keeps_the_focus_order(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        ui::init(cx);
+        let _ = ui::keymap::bind_keymap(ui::keymap::DEFAULT_MACOS_KEYMAP, cx);
+    });
+    let mut composer = None;
+    let (_, cx) = cx.add_window_view(|window, cx| {
+        let backend: Arc<dyn ComposeBackend> = Arc::new(FakeBackend::default());
+        let mut options = options();
+        options.draft.cc = vec![addr(None, "cc@example.com")];
+        let view = cx.new(|cx| Composer::new(backend, options, window, cx));
+        composer = Some(view.clone());
+        ui::kit::base::Root::new(view, window, cx)
+    });
+    let view = composer.unwrap();
+    cx.run_until_parked();
+    draw(cx);
+    let (to, cc, bcc) = (
+        to_field(&view, cx),
+        cc_field(&view, cx),
+        bcc_field(&view, cx),
+    );
+    assert!(is_focused(&to, cx));
+    cx.simulate_input("anna@example.com");
+    // To → (the "Cc Bcc" button, as before) → Cc → Bcc → Subject → body, the typed
+    // address a chip on the way.
+    cx.simulate_keystrokes("tab");
+    assert_eq!(emails(&to, cx), ["anna@example.com"]);
+    assert!(!is_focused(&to, cx));
+    cx.simulate_keystrokes("tab");
+    assert!(is_focused(&cc, cx));
+    cx.simulate_keystrokes("tab");
+    assert!(is_focused(&bcc, cx));
+    cx.simulate_input("nobody");
+    cx.simulate_keystrokes("tab");
+    // Text that isn't an address is a (red) chip too.
+    assert_eq!(emails(&bcc, cx), ["invalid:nobody"]);
+    assert!(view.update_in(cx, |c, window, cx| {
+        c.subject.read(cx).focus_handle(cx).is_focused(window)
+    }));
+    cx.simulate_keystrokes("tab");
+    assert!(view.update_in(cx, |c, window, cx| {
+        c.body.read(cx).focus_handle(cx).is_focused(window)
+    }));
+    // Shift-tab goes back (from the subject: in the body it outdents).
+    view.update_in(cx, |c, window, cx| {
+        let focus = c.subject.focus_handle(cx);
+        window.focus(&focus, cx);
+    });
+    cx.simulate_keystrokes("shift-tab");
+    assert!(is_focused(&bcc, cx));
+}
+
+#[gpui::test]
+fn pasting_a_list_makes_a_chip_per_address(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend::default());
+    let (view, cx) = open(cx, backend.clone(), options());
+    let to = to_field(&view, cx);
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+        "Anna <anna@example.com>, bob@example.org\nnobody".into(),
+    ));
+    cx.simulate_keystrokes("secondary-v");
+    assert_eq!(
+        chips(&to, cx),
+        [
+            Recipient::Address(addr(Some("Anna"), "anna@example.com")),
+            Recipient::Address(addr(None, "bob@example.org")),
+            Recipient::Invalid("nobody".into()),
+        ]
+    );
+    assert_eq!(field_text(&to, cx), "");
+    // The invalid chip stops sending with the message the plain field gave.
+    cx.simulate_keystrokes("cmd-enter");
+    cx.run_until_parked();
+    let error = view.read_with(cx, |c, _| c.error()).unwrap();
+    assert_eq!(error, "“nobody” isn't an email address.");
+    assert!(backend.sends().is_empty());
+
+    // A single address pasted into the empty field is a chip too; pasting part of an
+    // address into text is just text.
+    cx.simulate_keystrokes("backspace backspace");
+    assert_eq!(chips(&to, cx).len(), 2, "the invalid chip is gone");
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string("carl@example.com".into()));
+    cx.simulate_keystrokes("secondary-v");
+    assert_eq!(chips(&to, cx).len(), 3);
+    cx.simulate_input("dora@");
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string("example.com".into()));
+    cx.simulate_keystrokes("secondary-v");
+    assert_eq!(field_text(&to, cx), "dora@example.com");
+    cx.simulate_keystrokes("cmd-enter");
+    cx.run_until_parked();
+    let sends = backend.sends();
+    assert_eq!(
+        sends[0]
+            .1
+            .to
+            .iter()
+            .map(|a| a.email.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "anna@example.com",
+            "bob@example.org",
+            "carl@example.com",
+            "dora@example.com"
+        ]
+    );
+}
+
+#[gpui::test]
+fn suggestions_appear_after_a_pause_and_enter_takes_one(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend {
+        contacts: vec![
+            addr(Some("Anna Example"), "anna@example.com"),
+            addr(Some("Andreas"), "andreas@example.org"),
+            addr(Some("Bob"), "bob@example.org"),
+        ],
+        ..FakeBackend::default()
+    });
+    let (view, cx) = open(cx, backend, options());
+    let to = to_field(&view, cx);
+    let suggestions = |cx: &mut VisualTestContext| {
+        to.read_with(cx, |f, _| {
+            f.suggestions()
+                .iter()
+                .map(|a| a.email.clone())
+                .collect::<Vec<_>>()
+        })
+    };
+    cx.simulate_input("an");
+    cx.run_until_parked();
+    assert!(suggestions(cx).is_empty(), "not while typing");
+    cx.executor().advance_clock(SUGGEST_DEBOUNCE);
+    cx.run_until_parked();
+    assert_eq!(suggestions(cx), ["anna@example.com", "andreas@example.org"]);
+    draw(cx);
+    assert!(
+        cx.debug_bounds("to-suggestions").is_some(),
+        "the list shows"
+    );
+
+    cx.simulate_keystrokes("down");
+    assert_eq!(to.read_with(cx, |f, _| f.highlighted()), 1);
+    cx.simulate_keystrokes("enter");
+    assert_eq!(
+        chips(&to, cx),
+        [Recipient::Address(addr(
+            Some("Andreas"),
+            "andreas@example.org"
+        ))]
+    );
+    assert_eq!(field_text(&to, cx), "");
+    assert!(suggestions(cx).is_empty());
+
+    // Escape closes the list, not the composer; addresses in the field already aren't
+    // offered again; Tab takes the highlighted one.
+    cx.simulate_input("a");
+    cx.executor().advance_clock(SUGGEST_DEBOUNCE);
+    cx.run_until_parked();
+    assert_eq!(suggestions(cx), ["anna@example.com"]);
+    cx.simulate_keystrokes("escape");
+    assert!(suggestions(cx).is_empty());
+    assert!(!view.read_with(cx, |c, _| c.is_closed()));
+    cx.simulate_input("n");
+    cx.executor().advance_clock(SUGGEST_DEBOUNCE);
+    cx.run_until_parked();
+    assert_eq!(suggestions(cx), ["anna@example.com"]);
+    cx.simulate_keystrokes("tab");
+    assert_eq!(emails(&to, cx), ["andreas@example.org", "anna@example.com"]);
+
+    // A click takes one as well.
+    cx.simulate_input("bo");
+    cx.executor().advance_clock(SUGGEST_DEBOUNCE);
+    cx.run_until_parked();
+    draw(cx);
+    let list = cx.debug_bounds("to-suggestions").unwrap();
+    cx.simulate_click(list.center(), Modifiers::none());
+    assert_eq!(
+        emails(&to, cx),
+        ["andreas@example.org", "anna@example.com", "bob@example.org"]
+    );
+    assert!(is_focused(&to, cx), "the focus stays in the field");
+}
+
+#[gpui::test]
+fn backspace_selects_and_removes_the_last_chip(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend::default());
+    let mut options = options();
+    options.draft.to = vec![
+        addr(Some("Anna"), "anna@example.com"),
+        addr(None, "bob@example.org"),
+        addr(None, "carl@example.org"),
+    ];
+    let (view, cx) = open(cx, backend, options);
+    let to = to_field(&view, cx);
+    focus(&to, cx);
+    cx.simulate_keystrokes("backspace");
+    assert_eq!(to.read_with(cx, |f, _| f.selected()), Some(2));
+    assert_eq!(chips(&to, cx).len(), 3, "selected first");
+    cx.simulate_keystrokes("backspace");
+    assert_eq!(emails(&to, cx), ["anna@example.com", "bob@example.org"]);
+    assert!(view.read_with(cx, |c, _| c.is_dirty()));
+    // Left walks through the chips, Delete removes the selected one.
+    cx.simulate_keystrokes("left left");
+    assert_eq!(to.read_with(cx, |f, _| f.selected()), Some(0));
+    cx.simulate_keystrokes("delete");
+    assert_eq!(emails(&to, cx), ["bob@example.org"]);
+    // Typing ends the selection; Backspace then deletes text, not chips.
+    cx.simulate_keystrokes("left");
+    cx.simulate_input("x");
+    assert_eq!(to.read_with(cx, |f, _| f.selected()), None);
+    cx.simulate_keystrokes("backspace");
+    assert_eq!(emails(&to, cx), ["bob@example.org"]);
+    assert_eq!(field_text(&to, cx), "");
+}
+
+#[gpui::test]
+fn clicking_selects_and_double_clicking_edits_a_chip(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend::default());
+    let (view, cx) = open(cx, backend, options());
+    let to = to_field(&view, cx);
+    cx.simulate_input("anna@example.com, nobdy@example");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("x");
+    draw(cx);
+    let chip = cx.debug_bounds("to-chip-1").unwrap();
+    cx.simulate_click(chip.center(), Modifiers::none());
+    assert_eq!(to.read_with(cx, |f, _| f.selected()), Some(1));
+    assert!(is_focused(&to, cx));
+    // The focus stayed in the field, so the typed "x" is still text.
+    assert_eq!(field_text(&to, cx), "x");
+
+    let double = |cx: &mut VisualTestContext, position: Point<gpui::Pixels>| {
+        for click_count in [1, 2] {
+            cx.simulate_event(MouseDownEvent {
+                position,
+                modifiers: Modifiers::none(),
+                button: MouseButton::Left,
+                click_count,
+                first_mouse: false,
+            });
+            cx.simulate_event(MouseUpEvent {
+                position,
+                modifiers: Modifiers::none(),
+                button: MouseButton::Left,
+                click_count,
+            });
+        }
+    };
+    draw(cx);
+    let chip = cx.debug_bounds("to-chip-1").unwrap();
+    double(cx, chip.center());
+    // The pending "x" went into a chip, the edited one into the text.
+    assert_eq!(emails(&to, cx), ["anna@example.com", "invalid:x"]);
+    assert_eq!(field_text(&to, cx), "nobdy@example");
+    cx.simulate_input(".com");
+    cx.simulate_keystrokes("enter");
+    assert_eq!(
+        emails(&to, cx),
+        ["anna@example.com", "invalid:x", "nobdy@example.com"]
+    );
+}
+
+#[gpui::test]
+fn a_chip_can_be_dragged_from_to_to_a_collapsed_cc(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend::default());
+    let mut options = options();
+    options.draft.to = vec![
+        addr(Some("Anna"), "anna@example.com"),
+        addr(Some("Bob"), "bob@example.org"),
+    ];
+    let (view, cx) = open(cx, backend, options);
+    let (to, cc) = (to_field(&view, cx), cc_field(&view, cx));
+    assert!(!view.read_with(cx, |c, _| c.cc_visible()));
+    draw(cx);
+    assert!(cx.debug_bounds("cc-field").is_none(), "collapsed");
+
+    let start = cx.debug_bounds("to-chip-1").unwrap().center();
+    cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(
+        start + Point::new(gpui::px(10.), gpui::px(4.)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    draw(cx);
+    // Dragging a chip shows Cc and Bcc as drop targets.
+    let target = cx
+        .debug_bounds("cc-field")
+        .expect("Cc shows while dragging")
+        .center();
+    assert!(cx.debug_bounds("bcc-field").is_some());
+    cx.simulate_mouse_move(target, MouseButton::Left, Modifiers::none());
+    draw(cx);
+    cx.simulate_mouse_up(target, MouseButton::Left, Modifiers::none());
+    draw(cx);
+
+    assert_eq!(emails(&to, cx), ["anna@example.com"]);
+    assert_eq!(
+        chips(&cc, cx),
+        [Recipient::Address(addr(Some("Bob"), "bob@example.org"))]
+    );
+    assert!(view.read_with(cx, |c, _| c.cc_visible()), "Cc stays open");
+    let draft = view.read_with(cx, |c, cx| c.draft(cx)).unwrap();
+    assert_eq!(draft.cc, vec![addr(Some("Bob"), "bob@example.org")]);
+    assert!(view.read_with(cx, |c, _| c.is_dirty()));
+
+    // And back, onto Anna's chip: in front of her.
+    let start = cx.debug_bounds("cc-chip-0").unwrap().center();
+    let target = cx.debug_bounds("to-chip-0").unwrap().center();
+    cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(target, MouseButton::Left, Modifiers::none());
+    draw(cx);
+    cx.simulate_mouse_move(target, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(target, MouseButton::Left, Modifiers::none());
+    assert_eq!(emails(&to, cx), ["bob@example.org", "anna@example.com"]);
+    assert!(chips(&cc, cx).is_empty());
+
+    // A drag let go elsewhere changes nothing and Cc and Bcc collapse again.
+    view.update_in(cx, |c, window, cx| c.toggle_cc(window, cx));
+    draw(cx);
+    assert!(!view.read_with(cx, |c, _| c.cc_visible()));
+    let start = cx.debug_bounds("to-chip-0").unwrap().center();
+    let away = start + Point::new(gpui::px(0.), gpui::px(300.));
+    cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(away, MouseButton::Left, Modifiers::none());
+    draw(cx);
+    cx.simulate_mouse_up(away, MouseButton::Left, Modifiers::none());
+    draw(cx);
+    assert_eq!(emails(&to, cx), ["bob@example.org", "anna@example.com"]);
+    assert!(cx.debug_bounds("cc-field").is_none());
+}
+
+#[gpui::test]
+fn drafts_and_reply_all_open_with_chips_and_save_the_same_lists(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend::default());
+    let mut options = options();
+    // A reply-all as the core prefills it.
+    options.draft.to = vec![addr(Some("Anna Example"), "anna@example.com")];
+    options.draft.cc = vec![
+        addr(Some("Bob"), "bob@example.net"),
+        addr(None, "carol@example.com"),
+    ];
+    options.draft.bcc = vec![addr(Some("Example, The Boss"), "boss@example.org")];
+    options.draft.origin = Some(DraftOrigin::Reply(MessageId(7)));
+    options.draft.body_markdown = "\n\n> quoted".into();
+    let expected = options.draft.clone();
+    let (view, cx) = open(cx, backend.clone(), options);
+    assert!(view.read_with(cx, |c, _| c.cc_visible()));
+    let (to, cc, bcc) = (
+        to_field(&view, cx),
+        cc_field(&view, cx),
+        bcc_field(&view, cx),
+    );
+    assert_eq!(
+        chips(&to, cx)
+            .iter()
+            .map(Recipient::label)
+            .collect::<Vec<_>>(),
+        ["Anna Example"]
+    );
+    assert_eq!(
+        chips(&cc, cx)
+            .iter()
+            .map(Recipient::label)
+            .collect::<Vec<_>>(),
+        ["Bob", "carol@example.com"]
+    );
+    assert_eq!(
+        chips(&bcc, cx)[0].detail(),
+        "\"Example, The Boss\" <boss@example.org>"
+    );
+    // The body has the focus in a reply.
+    cx.simulate_input("Thanks!");
+    cx.simulate_keystrokes("cmd-s");
+    cx.run_until_parked();
+    let (_, saved) = backend.saves().pop().unwrap();
+    assert_eq!(saved.to, expected.to);
+    assert_eq!(saved.cc, expected.cc);
+    assert_eq!(saved.bcc, expected.bcc);
+
+    // Opening the saved draft again: the same chips.
+    let backend2: Arc<dyn ComposeBackend> = backend;
+    let mut reopened = ComposerOptions::new(saved.clone());
+    reopened.draft_id = Some(DraftId(42));
+    let other = cx.update(|window, cx| cx.new(|cx| Composer::new(backend2, reopened, window, cx)));
+    let draft = other.read_with(cx, |c, cx| c.draft(cx)).unwrap();
+    assert_eq!(
+        (draft.to, draft.cc, draft.bcc),
+        (saved.to, saved.cc, saved.bcc)
     );
 }

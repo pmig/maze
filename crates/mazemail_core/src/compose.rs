@@ -40,6 +40,13 @@
 //! [`smtp::SmtpError::SendAsDenied`]) comes back as [`Error::Send`] and the message is
 //! taken out of the outbox again, so the composer can stay open; a temporary failure
 //! (offline) leaves it queued for the outbox runner.
+//!
+//! # Addresses you write to
+//!
+//! Once a message is queued, its recipients (To, Cc and Bcc, your own addresses left
+//! out) are bumped in the encrypted database's `collected` address book: how often
+//! and when you last wrote to them. [`CoreHandle::complete_addresses`] offers them
+//! after the address book entries (ADR-024).
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -684,20 +691,21 @@ impl CoreHandle {
             .map_err(crate::handle::map_store)
     }
 
-    /// Address completion from the address book and collected addresses.
+    /// Address completion: address book entries whose address or name starts with
+    /// `prefix` first, then addresses you wrote to (the `collected` book, filled when
+    /// mail is sent), each by how often you wrote to them. An address in several books
+    /// is offered once, with the address book's name.
     pub fn complete_addresses(&self, prefix: &str, limit: usize) -> Result<Vec<Address>> {
         self.ensure_open()?;
         let prefix = prefix.trim();
-        if prefix.is_empty() {
+        if prefix.is_empty() || limit == 0 {
             return Ok(Vec::new());
         }
-        Ok(self
+        let contacts = self
             .store()
             .reader()?
-            .search_contacts(prefix, limit)?
-            .into_iter()
-            .map(|c| Address::new(c.display_name.filter(|n| !n.trim().is_empty()), c.email))
-            .collect())
+            .search_contacts(prefix, limit.saturating_mul(4))?;
+        Ok(rank_completions(contacts, limit))
     }
 
     /// Builds the message of `draft` and queues it: `(outbox item, identity)`.
@@ -795,7 +803,39 @@ impl CoreHandle {
         let id = self.store().write_blocking(move |w| {
             w.outbox_enqueue(Some(identity_id), &blob, &message_id, now, Some(&envelope))
         })?;
+        self.collect_recipients(draft, &identities, now);
         Ok((id, identity_id))
+    }
+
+    /// Remembers the addresses a message went to (To, Cc and Bcc, your own left out)
+    /// in the `collected` address book, so completion offers them next time
+    /// ([`Self::complete_addresses`]). Best effort: the message is queued already.
+    fn collect_recipients(&self, draft: &Draft, identities: &[Identity], at: i64) {
+        let own = crate::correspondents::IdentityEmails::new(
+            identities.iter().map(|i| i.input.email.as_str()),
+        );
+        let mut seen = HashSet::new();
+        let recipients: Vec<(String, Option<String>)> = draft
+            .recipients()
+            .filter(|a| !own.contains(&a.email))
+            .filter(|a| seen.insert(a.email.trim().to_lowercase()))
+            .map(|a| {
+                let name = a.name.clone().filter(|n| !n.trim().is_empty());
+                (a.email.trim().to_owned(), name)
+            })
+            .collect();
+        if recipients.is_empty() {
+            return;
+        }
+        let result = self.store().write_blocking(move |w| {
+            for (email, name) in &recipients {
+                w.bump_contact(email, name.as_deref(), at)?;
+            }
+            Ok(())
+        });
+        if let Err(err) = result {
+            tracing::warn!(%err, "remembering the recipients for completion");
+        }
     }
 
     /// Sends `draft` (see the [module docs](self)). A saved draft (`id`) is deleted
@@ -877,6 +917,61 @@ impl CoreHandle {
         accounts.dedup();
         self.sync_bridge().ops_enqueued(&accounts);
     }
+}
+
+/// The `contact.book` of addresses you wrote to.
+const COLLECTED_BOOK: &str = "collected";
+
+/// Merges completion candidates by address (case-insensitive): address book entries
+/// before collected ones, then by how often you wrote to them (all books summed) and
+/// when last. The name comes from the address book when it has one.
+fn rank_completions(contacts: Vec<store::Contact>, limit: usize) -> Vec<Address> {
+    struct Candidate {
+        address: Address,
+        in_book: bool,
+        frequency: u64,
+        last_used: i64,
+        order: usize,
+    }
+    let mut merged: Vec<Candidate> = Vec::new();
+    for (order, contact) in contacts.into_iter().enumerate() {
+        let in_book = contact.book != COLLECTED_BOOK;
+        let name = contact.display_name.filter(|n| !n.trim().is_empty());
+        let key = contact.email.trim().to_lowercase();
+        let last_used = contact.last_used.unwrap_or(0);
+        match merged
+            .iter_mut()
+            .find(|c| c.address.email.trim().to_lowercase() == key)
+        {
+            Some(existing) => {
+                existing.frequency += u64::from(contact.frequency);
+                existing.last_used = existing.last_used.max(last_used);
+                if in_book && !existing.in_book {
+                    existing.in_book = true;
+                    if name.is_some() {
+                        existing.address.name = name;
+                    }
+                } else if existing.address.name.is_none() {
+                    existing.address.name = name;
+                }
+            }
+            None => merged.push(Candidate {
+                address: Address::new(name, contact.email),
+                in_book,
+                frequency: u64::from(contact.frequency),
+                last_used,
+                order,
+            }),
+        }
+    }
+    merged.sort_by(|a, b| {
+        b.in_book
+            .cmp(&a.in_book)
+            .then(b.frequency.cmp(&a.frequency))
+            .then(b.last_used.cmp(&a.last_used))
+            .then(a.order.cmp(&b.order))
+    });
+    merged.into_iter().take(limit).map(|c| c.address).collect()
 }
 
 #[cfg(test)]
@@ -1012,6 +1107,46 @@ mod tests {
             (emails(&to), emails(&cc)),
             (vec!["anna@example.com"], vec!["bob@example.com"])
         );
+    }
+
+    #[test]
+    fn completions_put_the_address_book_first_and_merge_books() {
+        let contact =
+            |book: &str, name: Option<&str>, email: &str, frequency: u32| store::Contact {
+                id: store::ContactId(0),
+                book: book.into(),
+                display_name: name.map(Into::into),
+                email: email.into(),
+                frequency,
+                last_used: None,
+                vcard: None,
+            };
+        let ranked = rank_completions(
+            vec![
+                contact("collected", None, "anna@example.com", 9),
+                contact("collected", Some("Bob"), "bob@example.com", 5),
+                contact(
+                    "thunderbird:abook",
+                    Some("Anna Example"),
+                    "Anna@Example.com",
+                    0,
+                ),
+                contact("thunderbird:abook", Some("Carl"), "carl@example.com", 0),
+                contact("collected", Some(" "), "dora@example.com", 7),
+            ],
+            8,
+        );
+        assert_eq!(
+            ranked,
+            vec![
+                // In the address book, and written to most.
+                Address::new(Some("Anna Example"), "anna@example.com"),
+                Address::new(Some("Carl"), "carl@example.com"),
+                Address::new(None::<String>, "dora@example.com"),
+                Address::new(Some("Bob"), "bob@example.com"),
+            ]
+        );
+        assert_eq!(rank_completions(Vec::new(), 8), Vec::<Address>::new());
     }
 
     #[test]
