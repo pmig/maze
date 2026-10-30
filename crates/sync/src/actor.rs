@@ -286,8 +286,10 @@ impl Actor {
         self.start_round(false);
         loop {
             self.dispatch();
-            self.publish_status();
+            // Activity first: whoever sees the new status (`Idle`) must find the
+            // finished passes gone from the activity already.
             self.publish_activity();
+            self.publish_status();
             if self.stopping {
                 break;
             }
