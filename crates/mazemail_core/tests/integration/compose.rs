@@ -535,3 +535,31 @@ async fn refusals_are_typed_and_offline_mail_waits() {
     assert!(s.mailer.submissions().is_empty());
     s.core.shutdown().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_personal_spelling_dictionary_is_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let keys = Arc::new(MemoryKeyStore::new());
+    let core = CoreHandle::open(common::config(&dir.path().join("data"), &keys))
+        .await
+        .unwrap();
+    assert!(core.spelling_words().unwrap().is_empty());
+    core.add_spelling_word("Glasskube".into()).await.unwrap();
+    core.add_spelling_word("Jänner".into()).await.unwrap();
+    core.add_spelling_word("Glasskube".into()).await.unwrap();
+    assert_eq!(core.spelling_words().unwrap(), ["Glasskube", "Jänner"]);
+    assert!(matches!(
+        core.add_spelling_word("two words".into()).await,
+        Err(Error::InvalidCommand(_))
+    ));
+    assert!(core.remove_spelling_word("Jänner".into()).await.unwrap());
+    assert!(!core.remove_spelling_word("Jänner".into()).await.unwrap());
+    assert_eq!(core.spelling_words().unwrap(), ["Glasskube"]);
+    core.shutdown().await.unwrap();
+
+    let core = CoreHandle::open(common::config(&dir.path().join("data"), &keys))
+        .await
+        .unwrap();
+    assert_eq!(core.spelling_words().unwrap(), ["Glasskube"]);
+    core.shutdown().await.unwrap();
+}

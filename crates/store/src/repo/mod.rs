@@ -12,6 +12,7 @@ pub(crate) mod ops;
 pub(crate) mod remote_content;
 pub(crate) mod secrets;
 pub(crate) mod sort;
+pub(crate) mod spelling;
 pub(crate) mod threads;
 
 use std::collections::BTreeSet;
@@ -136,6 +137,11 @@ pub trait Queries: sealed::Sealed {
     /// ("Always for this sender"; case-insensitive).
     fn remote_content_allowed(&self, email: &str) -> Result<bool> {
         remote_content::remote_content_allowed(self.connection(sealed::Token), email)
+    }
+
+    /// The personal spelling dictionary, sorted ("Add to Dictionary" in the composer).
+    fn spelling_words(&self) -> Result<Vec<String>> {
+        spelling::spelling_words(self.connection(sealed::Token))
     }
 
     // ---- folders ------------------------------------------------------------------

@@ -18,3 +18,4 @@ mod plaintext;
 mod remote_content;
 mod secrets;
 mod sorting;
+mod spelling;

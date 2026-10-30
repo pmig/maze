@@ -45,6 +45,46 @@ impl Lang {
         }
     }
 
+    /// The bundled language closest to a system locale (`de-AT`, `en_IE.UTF-8`,
+    /// `en-AT`): like [`FromStr`], but any region falls back to the language's main
+    /// variant (`de-BE` is de-DE, `en-AT` en-US, `en-AU` en-GB). `None` for languages
+    /// without a dictionary.
+    pub fn from_system_locale(locale: &str) -> Option<Lang> {
+        if let Ok(lang) = locale.parse() {
+            return Some(lang);
+        }
+        let tag = locale.trim().split(['.', '@']).next().unwrap_or_default();
+        let mut parts = tag.split(['-', '_']);
+        let language = parts.next().unwrap_or_default().to_ascii_lowercase();
+        let region = parts
+            .find(|part| part.len() != 4)
+            .map(str::to_ascii_uppercase);
+        match (language.as_str(), region.as_deref()) {
+            ("de", _) => Some(Lang::DeDe),
+            ("en", Some("AU" | "NZ" | "ZA" | "IN" | "SG" | "HK" | "MT")) => Some(Lang::EnGb),
+            ("en", _) => Some(Lang::EnUs),
+            _ => None,
+        }
+    }
+
+    /// The languages to check when the `spellcheck` setting names none: the bundled
+    /// languages matching the system's preferred `locales` (best first, see
+    /// [`Lang::from_system_locale`]), without duplicates. With no match: en-US.
+    pub fn system_languages<S: AsRef<str>>(locales: impl IntoIterator<Item = S>) -> Vec<Lang> {
+        let mut langs = Vec::new();
+        for locale in locales {
+            if let Some(lang) = Lang::from_system_locale(locale.as_ref())
+                && !langs.contains(&lang)
+            {
+                langs.push(lang);
+            }
+        }
+        if langs.is_empty() {
+            langs.push(Lang::EnUs);
+        }
+        langs
+    }
+
     /// Position in [`Lang::ALL`], for per-language tables.
     pub(crate) fn index(self) -> usize {
         self as usize
@@ -116,6 +156,32 @@ mod tests {
         for input in ["", "fr", "fr-FR", "en-AU", "de-XX", "english"] {
             assert!(input.parse::<Lang>().is_err(), "{input}");
         }
+    }
+
+    #[test]
+    fn system_locales_map_to_the_closest_dictionary() {
+        let cases = [
+            ("de-AT", Some(Lang::DeAt)),
+            ("de_CH.UTF-8", Some(Lang::DeCh)),
+            ("de-BE", Some(Lang::DeDe)),
+            ("de-IT", Some(Lang::DeDe)),
+            ("en-AT", Some(Lang::EnUs)),
+            ("en-AU", Some(Lang::EnGb)),
+            ("en-IE", Some(Lang::EnGb)),
+            ("en", Some(Lang::EnUs)),
+            ("fr-FR", None),
+            ("C", None),
+            ("POSIX", None),
+        ];
+        for (locale, lang) in cases {
+            assert_eq!(Lang::from_system_locale(locale), lang, "{locale}");
+        }
+        assert_eq!(
+            Lang::system_languages(["de-AT", "en-AT", "fr-FR", "de-AT", "en-US"]),
+            [Lang::DeAt, Lang::EnUs]
+        );
+        assert_eq!(Lang::system_languages(["fr-FR", "it"]), [Lang::EnUs]);
+        assert_eq!(Lang::system_languages(Vec::<String>::new()), [Lang::EnUs]);
     }
 
     #[test]

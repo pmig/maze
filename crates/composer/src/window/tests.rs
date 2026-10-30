@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Mutex;
 
@@ -7,6 +8,7 @@ use mazemail_types::MessageId;
 use mazemail_types::compose::DraftOrigin;
 
 use super::*;
+use crate::actions::{IgnoreSpelling, ToggleSpellingLanguage};
 use crate::backend::{BoxFuture, ComposeError};
 
 /// Records what the composer asks for.
@@ -21,6 +23,10 @@ struct FakeBackend {
     footer: String,
     /// `compose.support_maze` is off.
     no_maze_line: bool,
+    /// The personal spelling dictionary as stored.
+    spelling_words: Vec<String>,
+    /// Words added with "Add to Dictionary".
+    added_words: Mutex<Vec<String>>,
 }
 
 impl FakeBackend {
@@ -32,6 +38,9 @@ impl FakeBackend {
     }
     fn deletes(&self) -> Vec<DraftId> {
         self.deletes.lock().unwrap().clone()
+    }
+    fn added_words(&self) -> Vec<String> {
+        self.added_words.lock().unwrap().clone()
     }
 }
 
@@ -82,6 +91,16 @@ impl ComposeBackend for FakeBackend {
 
     fn sent_with_maze(&self, _: Option<IdentityId>) -> bool {
         !self.no_maze_line
+    }
+
+    fn spelling_words(&self) -> BoxFuture<Result<Vec<String>, ComposeError>> {
+        let words = self.spelling_words.clone();
+        Box::pin(async move { Ok(words) })
+    }
+
+    fn add_spelling_word(&self, word: String) -> BoxFuture<Result<(), ComposeError>> {
+        self.added_words.lock().unwrap().push(word);
+        Box::pin(async { Ok(()) })
     }
 
     fn send(
@@ -955,5 +974,315 @@ fn tab_moves_from_the_subject_into_the_body(cx: &mut TestAppContext) {
     assert_eq!(
         view.read_with(cx, |c, cx| c.subject.read(cx).value().to_string()),
         ""
+    );
+}
+
+// ---- spelling -----------------------------------------------------------------------
+
+use ::spelling::Lang;
+
+/// A composer with a recipient (the body has the focus) and `body`, spell checking in
+/// `langs` (set before it opens, as the app does at startup).
+fn open_spelling<'a>(
+    cx: &'a mut TestAppContext,
+    backend: Arc<FakeBackend>,
+    langs: &[Lang],
+    body: &str,
+) -> (Entity<Composer>, &'a mut VisualTestContext) {
+    let langs = langs.to_vec();
+    cx.update(|cx| set_spellcheck(langs, cx));
+    let mut options = options();
+    options.draft.to = vec![Address::new(None::<String>, "anna@example.com")];
+    options.draft.body_markdown = body.to_owned();
+    open(cx, backend, options)
+}
+
+/// The underlined words, as the editor has them now.
+fn marked(view: &Entity<Composer>, cx: &mut VisualTestContext) -> Vec<String> {
+    view.read_with(cx, |c, cx| c.marked(cx))
+        .into_iter()
+        .map(|(_, word)| word)
+        .collect()
+}
+
+/// Let the debounce timer fire and the background check finish.
+fn after_pause(cx: &mut VisualTestContext) {
+    cx.executor().advance_clock(SPELLCHECK_DEBOUNCE);
+    cx.run_until_parked();
+}
+
+fn set_cursor(view: &Entity<Composer>, offset: usize, cx: &mut VisualTestContext) {
+    view.update_in(cx, |c, _, cx| {
+        c.body
+            .update(cx, |b, cx| b.set_selected_range(offset..offset, cx));
+    });
+}
+
+/// An entry of the body's right-click menu: label, disabled, action (`None`: separator).
+type Entry = Option<(String, bool, Box<dyn gpui::Action>)>;
+
+/// The body's right-click menu as it would open now.
+fn body_menu(view: &Entity<Composer>, cx: &mut VisualTestContext) -> Vec<Entry> {
+    view.update_in(cx, |c, _, cx| {
+        c.body_menu(cx)
+            .into_iter()
+            .map(|item| item.map(|i| (i.label.to_string(), i.disabled, i.action)))
+            .collect()
+    })
+}
+
+fn labels(menu: &[Entry]) -> Vec<Option<&str>> {
+    menu.iter()
+        .map(|item| item.as_ref().map(|(label, _, _)| label.as_str()))
+        .collect()
+}
+
+const PLAIN_MENU: [Option<&str>; 5] = [
+    Some("Cut"),
+    Some("Copy"),
+    Some("Paste"),
+    None,
+    Some("Select All"),
+];
+
+#[gpui::test]
+fn misspelled_words_are_underlined_after_a_pause(cx: &mut TestAppContext) {
+    let (view, cx) = open_spelling(cx, Arc::default(), &[Lang::EnUs], "");
+    cx.simulate_input("I will recieve it tomorrow");
+    cx.run_until_parked();
+    assert_eq!(marked(&view, cx), Vec::<String>::new(), "not while typing");
+    after_pause(cx);
+    assert_eq!(marked(&view, cx), ["recieve"]);
+    assert_eq!(
+        view.read_with(cx, |c, cx| c.marked(cx))[0].0,
+        7..14,
+        "byte range in the body"
+    );
+    assert_eq!(
+        view.read_with(cx, |c, cx| c.spelling_status(cx)),
+        Some("1 spelling issue · en-US".into())
+    );
+
+    // Fixing the word: the mark goes with the next check.
+    view.update_in(cx, |c, _, cx| {
+        c.body.update(cx, |b, cx| b.set_selected_range(7..14, cx));
+    });
+    cx.simulate_input("receive");
+    after_pause(cx);
+    assert_eq!(body_text(&view, cx), "I will receive it tomorrow");
+    assert_eq!(marked(&view, cx), Vec::<String>::new());
+    assert_eq!(
+        view.read_with(cx, |c, cx| c.spelling_status(cx)),
+        Some("✓ Spelling en-US".into())
+    );
+}
+
+#[gpui::test]
+fn a_draft_is_checked_when_it_opens_but_not_its_quotes_and_code(cx: &mut TestAppContext) {
+    let body = "Thanks for teh update.\n\n> I qoute this line\n\n```\nlet wrod = 1;\n\nqiuck();\n```\n\nRun `cargo bulid` or see https://exmaple.com/pathh.";
+    let (view, cx) = open_spelling(cx, Arc::default(), &[Lang::EnUs], body);
+    assert_eq!(marked(&view, cx), ["teh"]);
+}
+
+#[gpui::test]
+fn only_changed_paragraphs_are_checked_again(cx: &mut TestAppContext) {
+    let body = "First paragrap here.\n\nSecond one is fine.\n\nThird wiht a typo.";
+    let (view, cx) = open_spelling(cx, Arc::default(), &[Lang::EnUs], body);
+    assert_eq!(marked(&view, cx), ["paragrap", "wiht"]);
+    let blocks = view.read_with(cx, |c, _| c.spelling.cache_blocks());
+    assert_eq!(blocks, 3);
+    // Typing in the second paragraph shifts the third; its results are reused.
+    set_cursor(&view, body.find(" one").unwrap(), cx);
+    cx.simulate_input(" (taht)");
+    after_pause(cx);
+    assert_eq!(marked(&view, cx), ["paragrap", "taht", "wiht"]);
+    let text = body_text(&view, cx);
+    let ranges: Vec<Range<usize>> = view
+        .read_with(cx, |c, cx| c.marked(cx))
+        .into_iter()
+        .map(|(r, _)| r)
+        .collect();
+    assert_eq!(&text[ranges[2].clone()], "wiht");
+}
+
+#[gpui::test]
+fn german_and_english_paragraphs_accept_each_others_words(cx: &mut TestAppContext) {
+    let body = "Wir sehen uns morgen im Büro und besprechen dann alles weitere, tomorrow.\n\n\
+        I will bring the Unterlagen and recieve the keys.\n\nLiebe Grüße";
+    let (view, cx) = open_spelling(cx, Arc::default(), &[Lang::DeAt, Lang::EnUs], body);
+    assert_eq!(marked(&view, cx), ["recieve"]);
+    assert_eq!(
+        view.read_with(cx, |c, cx| c.spelling_status(cx)),
+        Some("1 spelling issue · de-AT · en-US".into())
+    );
+}
+
+#[gpui::test]
+fn right_clicking_a_misspelled_word_offers_suggestions(cx: &mut TestAppContext) {
+    let (view, cx) = open_spelling(cx, Arc::default(), &[Lang::EnUs], "I hope to recieve it.");
+    assert_eq!(marked(&view, cx), ["recieve"]);
+    // Computed in the background before anyone asks.
+    assert!(view.read_with(cx, |c, _| c.spelling.has_suggestions_for("recieve")));
+    // Elsewhere: the plain menu.
+    set_cursor(&view, 3, cx);
+    assert_eq!(labels(&body_menu(&view, cx)), PLAIN_MENU);
+
+    // On the word (gpui-kit put the cursor where the click was).
+    set_cursor(&view, 12, cx);
+    let menu = body_menu(&view, cx);
+    let labels = labels(&menu);
+    assert_eq!(labels[0], Some("receive"));
+    let suggestions = labels.iter().take_while(|l| l.is_some()).count();
+    assert!((1..=5).contains(&suggestions), "{labels:?}");
+    assert_eq!(
+        labels[suggestions..],
+        [
+            &[
+                None,
+                Some("Ignore Spelling"),
+                Some("Add to Dictionary"),
+                None
+            ][..],
+            &PLAIN_MENU[..]
+        ]
+        .concat()
+    );
+
+    // Choosing it replaces exactly that word.
+    let (_, _, action) = menu[0].as_ref().unwrap();
+    let action = action.boxed_clone();
+    cx.update(|window, cx| window.dispatch_action(action, cx));
+    assert_eq!(body_text(&view, cx), "I hope to receive it.");
+    assert_eq!(marked(&view, cx), Vec::<String>::new(), "unmarked at once");
+    after_pause(cx);
+    assert_eq!(marked(&view, cx), Vec::<String>::new());
+    // One undo step brings the typo back, and its mark with the next check.
+    cx.simulate_keystrokes("cmd-z");
+    assert_eq!(body_text(&view, cx), "I hope to recieve it.");
+    after_pause(cx);
+    assert_eq!(marked(&view, cx), ["recieve"]);
+}
+
+#[gpui::test]
+fn suggestions_keep_the_capitalization(cx: &mut TestAppContext) {
+    let (view, cx) = open_spelling(cx, Arc::default(), &[Lang::EnUs], "Recieve it soon.");
+    set_cursor(&view, 2, cx);
+    let menu = body_menu(&view, cx);
+    assert_eq!(labels(&menu)[0], Some("Receive"));
+    let (_, _, action) = menu[0].as_ref().unwrap();
+    let action = action.boxed_clone();
+    cx.update(|window, cx| window.dispatch_action(action, cx));
+    assert_eq!(body_text(&view, cx), "Receive it soon.");
+}
+
+#[gpui::test]
+fn ignore_lasts_for_this_draft(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend::default());
+    let body = "Greetings from Glasskube, and Glasskube again, with a typpo.";
+    let (view, cx) = open_spelling(cx, backend.clone(), &[Lang::EnUs], body);
+    assert_eq!(marked(&view, cx), ["Glasskube", "Glasskube", "typpo"]);
+    cx.dispatch_action(IgnoreSpelling {
+        word: "Glasskube".into(),
+    });
+    assert_eq!(marked(&view, cx), ["typpo"], "at once");
+    cx.run_until_parked();
+    assert_eq!(marked(&view, cx), ["typpo"]);
+    cx.simulate_input(" Glasskube");
+    after_pause(cx);
+    assert_eq!(marked(&view, cx), ["typpo"]);
+    assert!(backend.added_words().is_empty(), "nothing is kept");
+
+    // Another draft still marks it.
+    let other = cx.update(|window, cx| {
+        let backend: Arc<dyn ComposeBackend> = backend.clone();
+        let mut options = options();
+        options.draft.body_markdown = "Hello Glasskube".into();
+        cx.new(|cx| Composer::new(backend, options, window, cx))
+    });
+    cx.run_until_parked();
+    assert_eq!(marked(&other, cx), ["Glasskube"]);
+}
+
+#[gpui::test]
+fn add_to_dictionary_is_kept_for_every_draft(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend {
+        spelling_words: vec!["Mazecon".into()],
+        ..FakeBackend::default()
+    });
+    let body = "See you at Mazecon, says the Glasskube team.";
+    let (view, cx) = open_spelling(cx, backend.clone(), &[Lang::EnUs], body);
+    // Words from the stored dictionary are known from the start.
+    assert_eq!(marked(&view, cx), ["Glasskube"]);
+    set_cursor(&view, body.find("Glasskube").unwrap() + 3, cx);
+    let menu = body_menu(&view, cx);
+    let add = menu
+        .iter()
+        .flatten()
+        .find(|(label, _, _)| label == "Add to Dictionary")
+        .map(|(_, _, action)| action.boxed_clone())
+        .unwrap();
+    cx.update(|window, cx| window.dispatch_action(add, cx));
+    assert_eq!(marked(&view, cx), Vec::<String>::new(), "at once");
+    cx.run_until_parked();
+    assert_eq!(backend.added_words(), ["Glasskube"]);
+    assert_eq!(marked(&view, cx), Vec::<String>::new());
+
+    // A draft opened later knows it too.
+    let other = cx.update(|window, cx| {
+        let backend: Arc<dyn ComposeBackend> = backend.clone();
+        let mut options = options();
+        options.draft.body_markdown = "The Glasskube and Mazecon folks, with a typpo.".into();
+        cx.new(|cx| Composer::new(backend, options, window, cx))
+    });
+    cx.run_until_parked();
+    assert_eq!(marked(&other, cx), ["typpo"]);
+}
+
+#[gpui::test]
+fn with_spell_checking_off_nothing_is_marked(cx: &mut TestAppContext) {
+    let body = "I will recieve it.";
+    let (view, cx) = open_spelling(cx, Arc::default(), &[], body);
+    assert_eq!(marked(&view, cx), Vec::<String>::new());
+    assert_eq!(view.read_with(cx, |c, cx| c.spelling_status(cx)), None);
+    set_cursor(&view, 9, cx);
+    assert_eq!(labels(&body_menu(&view, cx)), PLAIN_MENU);
+
+    // The setting changes while the draft is open.
+    cx.update(|_, cx| set_spellcheck(vec![Lang::EnGb], cx));
+    cx.run_until_parked();
+    assert_eq!(marked(&view, cx), ["recieve"]);
+    cx.update(|_, cx| set_spellcheck(Vec::new(), cx));
+    cx.run_until_parked();
+    assert_eq!(marked(&view, cx), Vec::<String>::new());
+}
+
+#[gpui::test]
+fn the_status_item_switches_languages_for_this_draft(cx: &mut TestAppContext) {
+    let body = "Wir treffen uns morgen zum Frühstück im Kaffeehaus am Ring.";
+    let (view, cx) = open_spelling(cx, Arc::default(), &[Lang::EnUs], body);
+    let status = |view: &Entity<Composer>, cx: &mut VisualTestContext| {
+        view.read_with(cx, |c, cx| c.spelling_status(cx))
+            .map(|s| s.to_string())
+    };
+    // English only: the German words are unknown.
+    assert!(marked(&view, cx).len() > 3, "{:?}", marked(&view, cx));
+    cx.dispatch_action(ToggleSpellingLanguage { lang: Lang::DeAt });
+    cx.run_until_parked();
+    assert_eq!(marked(&view, cx), Vec::<String>::new());
+    assert_eq!(
+        status(&view, cx).as_deref(),
+        Some("✓ Spelling en-US · de-AT")
+    );
+    cx.dispatch_action(ToggleSpellingLanguage { lang: Lang::EnUs });
+    cx.dispatch_action(ToggleSpellingLanguage { lang: Lang::DeAt });
+    cx.run_until_parked();
+    assert_eq!(status(&view, cx).as_deref(), Some("Spelling off"));
+    cx.simulate_input(" Fruhstuck");
+    after_pause(cx);
+    assert_eq!(marked(&view, cx), Vec::<String>::new());
+    // Only this draft: the setting stays.
+    assert_eq!(
+        cx.update(|_, cx| cx.global::<SpellcheckSettings>().languages.clone()),
+        [Lang::EnUs]
     );
 }

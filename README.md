@@ -68,6 +68,8 @@ Works today:
   two random words, replies and forwards, local drafts, sending over SMTP (password or
   OAuth) with an outbox that never sends twice and a copy in Sent, `r` / `shift-r` to
   reply, a footer from the settings and an optional "Sent with Maze" line
+- spell checking as you type (German and English dictionaries built in, per paragraph
+  in its language), with suggestions on right-click and a personal dictionary
 - AI agents in the agent column, off until you share an account with them: Claude Code,
   Codex, Gemini CLI, Cursor, pi and custom ACP agents, installed and kept up to date by
   Maze, signed in from the column, with model, mode and thinking pickers, sandboxed
@@ -81,7 +83,7 @@ Works today:
 Not there yet:
 
 - drafts on the server, forwarding attachments, send later, undo send, address
-  autocomplete, spell check, signatures that switch with the identity
+  autocomplete, signatures that switch with the identity
 - filter rules (imported Thunderbird filters are kept, disabled)
 - notifications for new mail
 - a settings window with forms (settings are edited as JSON for now), showing the

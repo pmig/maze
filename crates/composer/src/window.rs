@@ -23,6 +23,13 @@
 //! they are added when the message is sent, not part of the text you edit. The Maze
 //! line is only a setting; the composer has no switch for it.
 //!
+//! # Spelling
+//!
+//! The body is spell checked as you type, off the UI thread, with wavy underlines;
+//! right-clicking an underlined word offers suggestions, "Ignore Spelling" (this
+//! draft) and "Add to Dictionary". A status item in the footer shows the languages
+//! and switches them for this draft. See the `spellcheck` module.
+//!
 //! # In a tab
 //!
 //! Maze opens drafts in tabs of the main window ([`ComposerOptions::in_tab`], ADR-018):
@@ -60,8 +67,15 @@ use ui::names::NameRng;
 use ui::panes::{Item, ItemEvent, SerializedItem};
 use ui::theme::scaled;
 
-use crate::actions::{Attach, Close, OpenInNewWindow, SaveDraft, Send, ToggleCcBcc};
+use crate::actions::{
+    AddToDictionary, Attach, Close, IgnoreSpelling, OpenInNewWindow, ReplaceMisspelling, SaveDraft,
+    Send, ToggleCcBcc, ToggleSpellingLanguage,
+};
 use crate::backend::{ComposeBackend, IdentityChoice, SendOutcome};
+
+mod spellcheck;
+
+pub use spellcheck::{SPELLCHECK_DEBOUNCE, SpellcheckSettings, set_spellcheck};
 
 /// Default window size.
 const DEFAULT_SIZE: (f32, f32) = (760., 640.);
@@ -194,6 +208,8 @@ pub struct Composer {
     bcc: Entity<InputState>,
     subject: Entity<InputState>,
     body: Entity<EditorState>,
+    /// Spell checking the body.
+    spelling: spellcheck::Spelling,
     attachments: Vec<DraftAttachment>,
     /// The "Sent with Maze" line is added (the account's `compose.support_maze`).
     support_maze: bool,
@@ -290,8 +306,12 @@ struct MenuItem {
 
 impl MenuItem {
     fn new(label: &'static str, disabled: bool, action: Box<dyn gpui::Action>) -> Option<Self> {
+        Self::owned(label.into(), disabled, action)
+    }
+
+    fn owned(label: SharedString, disabled: bool, action: Box<dyn gpui::Action>) -> Option<Self> {
         Some(Self {
-            label: label.into(),
+            label,
             disabled,
             action,
         })
@@ -300,7 +320,8 @@ impl MenuItem {
 
 /// The body's right-click menu: what a plain text field offers (the code editor's
 /// own menu would add "Go to Definition" and "Show Code Actions"). Right-clicking
-/// outside the selection has moved the cursor to the click already.
+/// outside the selection has moved the cursor to the click already. On an underlined
+/// word the spelling items come first (`Composer::body_menu`).
 fn body_menu_items(body: &EditorState) -> Vec<Option<MenuItem>> {
     let editable = body.is_editable();
     let copyable = body.is_copyable();
@@ -380,6 +401,13 @@ impl Composer {
         if let Some(from) = &from {
             subscriptions.push(cx.subscribe_in(from, window, Self::on_identity_event));
         }
+        let (mut spelling, spelling_subscriptions) =
+            spellcheck::Spelling::new(&body, &backend, window, cx);
+        subscriptions.extend(spelling_subscriptions);
+        // The draft's text as it opens (a reply's quote is skipped by the tokenizer).
+        spelling.start(cx.spawn(async move |this, cx| {
+            let _ = this.update(cx, |this, cx| this.run_spellcheck(cx));
+        }));
 
         let focus = cx.focus_handle();
         let title = title_for(&draft.subject);
@@ -427,6 +455,7 @@ impl Composer {
             bcc,
             subject,
             body,
+            spelling,
             cc_visible,
             dirty: false,
             sending: false,
@@ -571,6 +600,7 @@ impl Composer {
     ) {
         if matches!(event, InputEvent::Change) {
             self.changed(window, cx);
+            self.schedule_spellcheck(cx);
         }
     }
 
@@ -925,18 +955,29 @@ impl Composer {
             .child(div().flex_1().min_w_0().child(field))
     }
 
+    /// The body's right-click menu: spelling items on an underlined word, then what a
+    /// plain text field offers.
+    fn body_menu(&mut self, cx: &mut Context<'_, Self>) -> Vec<Option<MenuItem>> {
+        let mut items = self
+            .spelling_menu(cx)
+            .map(|menu| menu.items())
+            .unwrap_or_default();
+        items.extend(body_menu_items(self.body.read(cx)));
+        items
+    }
+
     /// The body in the UI font at the size and leading of a plain text field (the
     /// code editor would use the monospace font).
     fn render_body(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let body = self.body.downgrade();
+        let this = cx.entity().downgrade();
         Editor::new(&self.body)
             .h(relative(1.))
             .appearance(false)
             .font_family(cx.theme().font_family.clone())
             .text_sm()
             .line_height(gpui::rems(1.25))
-            .context_menu(move |menu, _, cx| match body.upgrade() {
-                Some(body) => native_menu(body_menu_items(body.read(cx))),
+            .context_menu(move |menu, _, cx| match this.upgrade() {
+                Some(this) => native_menu(this.update(cx, |this, cx| this.body_menu(cx))),
                 None => menu,
             })
     }
@@ -1001,6 +1042,7 @@ impl Render for Composer {
             Status::Error(message) => Some((message.clone(), colors.danger)),
         };
         let footer_preview = self.footer_preview();
+        let spelling_status = self.spelling_status(cx);
 
         v_flex()
             .id("composer")
@@ -1023,6 +1065,20 @@ impl Render for Composer {
             .on_action(cx.listener(|this, _: &Attach, window, cx| this.attach(window, cx)))
             .on_action(cx.listener(|this, _: &ToggleCcBcc, window, cx| this.toggle_cc(window, cx)))
             .on_action(cx.listener(|this, _: &OpenInNewWindow, _, cx| this.open_in_new_window(cx)))
+            .on_action(
+                cx.listener(|this, action: &ReplaceMisspelling, window, cx| {
+                    this.replace_misspelling(action, window, cx);
+                }),
+            )
+            .on_action(cx.listener(|this, action: &IgnoreSpelling, _, cx| {
+                this.ignore_spelling(&action.word, cx);
+            }))
+            .on_action(cx.listener(|this, action: &AddToDictionary, _, cx| {
+                this.add_to_dictionary(&action.word, cx);
+            }))
+            .on_action(cx.listener(|this, action: &ToggleSpellingLanguage, _, cx| {
+                this.toggle_spelling_language(action.lang, cx);
+            }))
             .when(!self.in_tab, |this| {
                 this.child(
                     TitleBar::new()
@@ -1138,6 +1194,18 @@ impl Render for Composer {
                                 this.text_color(color).child(text)
                             }),
                     )
+                    .when_some(spelling_status, |this, label| {
+                        this.child(
+                            Button::new("spelling-status")
+                                .ghost()
+                                .xsmall()
+                                .label(label)
+                                .tooltip("Spelling languages for this message")
+                                .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
+                                    this.show_spelling_menu(event, window, cx);
+                                })),
+                        )
+                    })
                     .child(
                         Button::new("send")
                             .primary()

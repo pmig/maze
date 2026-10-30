@@ -40,8 +40,10 @@ pub struct Settings {
     pub reader: ReaderSettings,
     /// Writing mail.
     pub compose: ComposeSettings,
-    /// Spell-check languages as BCP 47 tags. Empty: the system's languages.
-    pub spellcheck: Vec<String>,
+    /// Spell checking in the composer: a list of languages as BCP 47 tags (`de-DE`,
+    /// `de-AT`, `de-CH`, `en-US`, `en-GB`), `[]` for the system's preferred languages,
+    /// or `false` to turn it off.
+    pub spellcheck: Spellcheck,
     /// Which messages are kept on this computer (default for all accounts).
     pub offline: OfflinePolicy,
     /// Days of message bodies kept when `offline` is `recent`.
@@ -81,7 +83,7 @@ impl Default for Settings {
             quick_filter: QuickFilterSettings::default(),
             reader: ReaderSettings::default(),
             compose: ComposeSettings::default(),
-            spellcheck: Vec::new(),
+            spellcheck: Spellcheck::default(),
             offline: OfflinePolicy::default(),
             offline_recent_days: 90,
             accounts: BTreeMap::new(),
@@ -567,6 +569,146 @@ impl JsonSchema for UndoSendSeconds {
     }
 }
 
+/// The `spellcheck` setting: `false`, or the languages to check (PLAN-spellcheck).
+///
+/// In the file it is `false` (off), a list of BCP 47 tags (`["de-AT", "en-US"]`, best
+/// first: a German paragraph is checked as the first German language listed), or `[]`
+/// (also `true`): the system's preferred languages that have a bundled dictionary,
+/// en-US if none has. Tags without a dictionary are ignored with a warning
+/// ([`DiagnosticKind::UnsupportedValue`](crate::DiagnosticKind::UnsupportedValue));
+/// when none is left, the system's languages apply.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Spellcheck {
+    /// `false`: no spell checking.
+    Off,
+    /// The languages as written in the file (empty: the system's languages).
+    Languages(Vec<String>),
+}
+
+impl Default for Spellcheck {
+    fn default() -> Self {
+        Self::Languages(Vec::new())
+    }
+}
+
+impl Spellcheck {
+    /// The bundled languages the setting names, in order, without duplicates; tags
+    /// without a dictionary are left out. `None` when spell checking is off; empty when
+    /// the system's languages apply (see [`Spellcheck::resolve`]).
+    pub fn languages(&self) -> Option<Vec<spelling::Lang>> {
+        let Self::Languages(tags) = self else {
+            return None;
+        };
+        let mut langs = Vec::new();
+        for tag in tags {
+            if let Ok(lang) = tag.parse::<spelling::Lang>()
+                && !langs.contains(&lang)
+            {
+                langs.push(lang);
+            }
+        }
+        Some(langs)
+    }
+
+    /// The languages to check: the ones the setting names, or else the bundled ones
+    /// matching the system's preferred `system_locales` (best first; en-US if none
+    /// matches). Empty when spell checking is off.
+    pub fn resolve<S: AsRef<str>>(
+        &self,
+        system_locales: impl IntoIterator<Item = S>,
+    ) -> Vec<spelling::Lang> {
+        match self.languages() {
+            None => Vec::new(),
+            Some(langs) if langs.is_empty() => spelling::Lang::system_languages(system_locales),
+            Some(langs) => langs,
+        }
+    }
+
+    /// The tags without a bundled dictionary, with their index in the list.
+    pub(crate) fn unsupported(&self) -> Vec<(usize, &str)> {
+        match self {
+            Self::Off => Vec::new(),
+            Self::Languages(tags) => tags
+                .iter()
+                .enumerate()
+                .filter(|(_, tag)| tag.parse::<spelling::Lang>().is_err())
+                .map(|(i, tag)| (i, tag.as_str()))
+                .collect(),
+        }
+    }
+}
+
+impl Serialize for Spellcheck {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Off => serializer.serialize_bool(false),
+            Self::Languages(tags) => tags.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Spellcheck {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = Spellcheck;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("false or a list of language tags such as [\"de-AT\", \"en-US\"]")
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, on: bool) -> Result<Spellcheck, E> {
+                Ok(if on {
+                    Spellcheck::default()
+                } else {
+                    Spellcheck::Off
+                })
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Spellcheck, A::Error> {
+                let mut tags = Vec::new();
+                while let Some(tag) = seq.next_element::<String>()? {
+                    tags.push(tag);
+                }
+                Ok(Spellcheck::Languages(tags))
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+impl JsonSchema for Spellcheck {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Spellcheck".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let tags: Vec<&str> = spelling::Lang::ALL.iter().map(|l| l.as_str()).collect();
+        schemars::json_schema!({
+            "anyOf": [
+                {
+                    "type": "boolean",
+                    "description": "false: no spell checking (true: the system's languages)."
+                },
+                {
+                    "type": "array",
+                    "description": "Languages as BCP 47 tags, best first. Empty: the system's languages.",
+                    "items": {
+                        "type": "string",
+                        "examples": tags,
+                    },
+                    "uniqueItems": true,
+                }
+            ]
+        })
+    }
+}
+
 /// Which messages are kept on this computer (CONCEPT §5.3).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -1003,6 +1145,39 @@ mod tests {
         assert_eq!(other.offline, OfflinePolicy::Recent);
         assert_eq!(other.remote_content, RemoteContentPolicy::Ask);
         assert_eq!(other.agent_access, AgentAccess::Off);
+    }
+
+    #[test]
+    fn spellcheck_is_false_or_a_list_of_languages() {
+        use spelling::Lang;
+        let parse = |json: &str| serde_json::from_str::<Spellcheck>(json).unwrap();
+        assert_eq!(parse("false"), Spellcheck::Off);
+        assert_eq!(parse("true"), Spellcheck::default());
+        assert_eq!(parse("[]"), Spellcheck::Languages(Vec::new()));
+        assert_eq!(
+            parse(r#"["de-AT", "en-US"]"#),
+            Spellcheck::Languages(vec!["de-AT".into(), "en-US".into()])
+        );
+        assert!(serde_json::from_str::<Spellcheck>(r#""de-AT""#).is_err());
+        assert!(serde_json::from_str::<Spellcheck>("[1]").is_err());
+        assert_eq!(serde_json::to_string(&Spellcheck::Off).unwrap(), "false");
+        assert_eq!(
+            serde_json::to_string(&parse(r#"["de-AT"]"#)).unwrap(),
+            r#"["de-AT"]"#
+        );
+
+        let system = ["de-AT", "en-AT"];
+        assert_eq!(Spellcheck::Off.resolve(system), Vec::<Lang>::new());
+        assert_eq!(parse("[]").resolve(system), [Lang::DeAt, Lang::EnUs]);
+        assert_eq!(parse("[]").resolve(["fr-FR"]), [Lang::EnUs]);
+        let listed = parse(r#"["en-GB", "fr-FR", "de_CH", "en-GB"]"#);
+        assert_eq!(listed.resolve(system), [Lang::EnGb, Lang::DeCh]);
+        assert_eq!(listed.unsupported(), [(1, "fr-FR")]);
+        // Only unknown tags: the system's languages.
+        assert_eq!(
+            parse(r#"["fr-FR"]"#).resolve(system),
+            [Lang::DeAt, Lang::EnUs]
+        );
     }
 
     #[test]

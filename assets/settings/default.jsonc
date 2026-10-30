@@ -108,8 +108,11 @@
     "support_maze": true
   },
 
-  // Spell-check languages as BCP 47 tags, e.g. ["de-AT", "en-US"]. Empty: the
-  // system's languages.
+  // Spell checking in the composer: the languages as BCP 47 tags, best first, e.g.
+  // ["de-AT", "en-US"]. Dictionaries: "de-DE", "de-AT", "de-CH", "en-US", "en-GB".
+  // []: the system's preferred languages that have a dictionary (English (US) if
+  // none). false: off. Each paragraph is checked in its detected language and also
+  // accepts the words of the other languages listed.
   "spellcheck": [],
 
   // Which messages are kept on this computer: "headers_only", "recent" (bodies of

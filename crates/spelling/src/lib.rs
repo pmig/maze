@@ -14,7 +14,12 @@
 //! - [`words`]: the words of composer Markdown worth checking, with byte ranges (skips
 //!   code, quotes, URLs, email addresses, words with digits, ALL-CAPS; see [`tokenize`]).
 //! - [`Checker`] / [`check_text`]: checks a text paragraph by paragraph in each
-//!   paragraph's detected language, with a [`PersonalWords`] list on top.
+//!   paragraph's detected language, with a [`PersonalWords`] list on top. A word the
+//!   other enabled languages know is fine in any paragraph (the mixed-language rule,
+//!   [`ACCEPT_OTHER_LANGUAGES`]). [`blocks`] splits a text into parts that can be
+//!   checked on their own, so an editor re-checks only what changed.
+//! - [`Lang::system_languages`]: the bundled languages that match the system's preferred
+//!   languages (the `spellcheck` setting's default).
 //! - [`suggest::refine`]: filters and re-ranks the dictionaries' suggestions.
 //!
 //! ```
@@ -43,9 +48,11 @@
 //! | suggest one word | ~10 ms | ~25 ms (up to ~100 ms for long compounds) |
 //! | memory once loaded | ~4.5 MB | ~8 MB |
 //!
-//! Debug builds are about three times slower. Checking changed paragraphs on every
-//! (debounced) edit is cheap; suggestions belong behind a right click, computed off the
-//! UI thread.
+//! Debug builds are about three times slower. [`Checker::suggest`] asks every enabled
+//! language (the paragraph's first, see the mixed-language rule), so its time is the
+//! sum of the rows above. Checking
+//! changed paragraphs on every (debounced) edit is cheap; suggestions belong off the UI
+//! thread (the composer computes them in the background after each check).
 
 pub mod dictionary;
 pub mod suggest;
@@ -55,7 +62,7 @@ mod check;
 mod lang;
 mod speller;
 
-pub use check::{Checker, Misspelling, check_text};
+pub use check::{ACCEPT_OTHER_LANGUAGES, Checker, Misspelling, blocks, check_text};
 pub use dictionary::LoadError;
 pub use lang::{Lang, UnknownLang};
 pub use speller::{PersonalWords, SpellbookSpeller, Speller};

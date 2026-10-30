@@ -15,8 +15,9 @@
 //!
 //! Requests arrive while a window is busy handling an event, so opening is deferred (see
 //! `palette_actions_must_defer_window_updates` in `mail_ui`). [`CoreComposeBackend`]
-//! is the composer's view of the core: identities, drafts and sending. When a message
-//! only got queued (offline), the main window says so.
+//! is the composer's view of the core: identities, drafts, sending and the personal
+//! spelling dictionary. When a message only got queued (offline), the main window says
+//! so.
 
 use std::sync::Arc;
 
@@ -120,6 +121,20 @@ impl ComposeBackend for CoreComposeBackend {
 
     fn sent_with_maze(&self, identity: Option<IdentityId>) -> bool {
         self.core.compose_footer(identity).support_maze
+    }
+
+    fn spelling_words(&self) -> BoxFuture<Result<Vec<String>, ComposeError>> {
+        let core = self.core.clone();
+        Box::pin(async move { core.spelling_words().map_err(|error| compose_error(&error)) })
+    }
+
+    fn add_spelling_word(&self, word: String) -> BoxFuture<Result<(), ComposeError>> {
+        let core = self.core.clone();
+        Box::pin(async move {
+            core.add_spelling_word(word)
+                .await
+                .map_err(|error| compose_error(&error))
+        })
     }
 }
 

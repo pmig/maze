@@ -101,6 +101,19 @@ pub trait ComposeBackend: Send + Sync + 'static {
         String::new()
     }
 
+    /// The personal spelling dictionary: words to accept in every draft. Loaded once
+    /// per app, when the first composer opens. Optional.
+    fn spelling_words(&self) -> BoxFuture<Result<Vec<String>, ComposeError>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    /// Adds `word` to the personal spelling dictionary ("Add to Dictionary"); it is
+    /// kept for every later draft. Optional.
+    fn add_spelling_word(&self, word: String) -> BoxFuture<Result<(), ComposeError>> {
+        let _ = word;
+        Box::pin(async { Ok(()) })
+    }
+
     /// Whether messages sent from `identity` get the "Sent with Maze" line
     /// (`compose.support_maze`, per account). Only a setting: the composer just previews
     /// it.

@@ -39,6 +39,7 @@ release_channel = { workspace = true }
 security = { workspace = true }
 serde_json = { workspace = true }
 settings = { workspace = true }
+sys-locale = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true, features = ["local-offset"] }
 tokio = { workspace = true }

@@ -10,6 +10,11 @@
 //! Like `mail_ui`, the composer doesn't depend on the core: everything goes through the
 //! [`ComposeBackend`] trait, which the `mazemail` binary implements over
 //! `mazemail_core` (and tests with a fake). It shares only `mazemail_types`' [`Draft`].
+//!
+//! The body is spell checked as you type (crate `spelling`, PLAN-spellcheck) in the
+//! languages the app sets with [`set_spellcheck`] (the `spellcheck` setting); the
+//! personal dictionary comes from and goes to the backend
+//! ([`ComposeBackend::spelling_words`], [`ComposeBackend::add_spelling_word`]).
 
 pub mod actions;
 mod backend;
@@ -19,9 +24,10 @@ use gpui::App;
 
 pub use backend::{BoxFuture, ComposeBackend, ComposeError, IdentityChoice, SendOutcome};
 pub use mazemail_types::compose::{Draft, DraftAttachment, DraftOrigin};
+pub use spelling::Lang as SpellingLang;
 pub use window::{
-    COMPOSE_KIND, Composer, ComposerEvent, ComposerOptions, OpenComposerError, SerializedDraft,
-    open_composer,
+    COMPOSE_KIND, Composer, ComposerEvent, ComposerOptions, OpenComposerError, SPELLCHECK_DEBOUNCE,
+    SerializedDraft, SpellcheckSettings, open_composer, set_spellcheck,
 };
 
 /// Call once at startup, after `ui::init`. The composer's keys (`cmd-enter` to send,

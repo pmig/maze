@@ -39,6 +39,7 @@ mod legacy_local;
 mod lost_key;
 mod new_mail;
 mod reading;
+mod spellcheck;
 mod theme;
 mod updates;
 
@@ -142,6 +143,7 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
         ui::init(cx);
         theme::apply_from_file(&theme_paths, cx);
         reading::apply_from_file(&theme_paths, cx);
+        spellcheck::apply_from_file(&theme_paths, cx);
         keyboard::apply_from_file(&theme_paths, cx);
         mail_ui::init(cx);
         composer::init(cx);
@@ -393,6 +395,7 @@ pub(crate) fn core_ready(core: &CoreHandle, cx: &mut App) {
     updates::follow_core_settings(core, cx);
     theme::follow_core_settings(core, cx);
     reading::follow_core_settings(core, cx);
+    spellcheck::follow_core_settings(core, cx);
     compose::register_restore(core, cx);
     agents::start(core, &authorizer, cx);
     let window = cx

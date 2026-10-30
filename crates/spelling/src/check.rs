@@ -5,7 +5,7 @@ use std::fmt;
 use std::ops::Range;
 
 use crate::speller::{PersonalWords, SpellbookSpeller, Speller};
-use crate::tokenize::{Word, is_all_caps, is_apostrophe, is_hyphen, words};
+use crate::tokenize::{Word, fence_marker, is_all_caps, is_apostrophe, is_hyphen, words};
 use crate::{Lang, LoadError, suggest};
 
 /// A misspelled word in a checked text.
@@ -20,6 +20,21 @@ pub struct Misspelling {
     /// is unknown in every enabled language. [`Checker::suggest`] uses it.
     pub lang: Option<Lang>,
 }
+
+/// The mixed-language rule (decided 2026-10-30): a paragraph in a detected language
+/// also accepts the words the other enabled languages know.
+///
+/// With German and English enabled, "tomorrow" in a German paragraph and "Termin" in an
+/// English one are fine: a word is a misspelling only if the paragraph's language *and*
+/// every other enabled language reject it. People who write in two languages mix them
+/// (an English product name in a German sentence, a German greeting in an English
+/// mail), and flagging those words is noise. The detected language still decides which
+/// dictionary [`Checker::suggest`] asks first ([`Misspelling::lang`]); the others only
+/// add suggestions that are closer to the word.
+///
+/// [`Checker::accept_other_languages`] turns the rule off for one checker (then a
+/// detected paragraph is checked in its language only).
+pub const ACCEPT_OTHER_LANGUAGES: bool = true;
 
 /// Which spellers decide about a paragraph.
 #[derive(Debug, Clone, Copy)]
@@ -38,6 +53,8 @@ enum Judge {
 pub struct Checker {
     spellers: Vec<(Lang, Box<dyn Speller>)>,
     personal: PersonalWords,
+    /// [`ACCEPT_OTHER_LANGUAGES`], unless changed for this checker.
+    accept_other_languages: bool,
 }
 
 impl fmt::Debug for Checker {
@@ -45,6 +62,7 @@ impl fmt::Debug for Checker {
         f.debug_struct("Checker")
             .field("langs", &self.langs().collect::<Vec<_>>())
             .field("personal", &self.personal.len())
+            .field("accept_other_languages", &self.accept_other_languages)
             .finish()
     }
 }
@@ -65,7 +83,18 @@ impl Checker {
 
     /// A checker with custom spellers, e.g. a platform spell checker or a test double.
     pub fn with_spellers(spellers: Vec<(Lang, Box<dyn Speller>)>, personal: PersonalWords) -> Self {
-        Self { spellers, personal }
+        Self {
+            spellers,
+            personal,
+            accept_other_languages: ACCEPT_OTHER_LANGUAGES,
+        }
+    }
+
+    /// Whether a paragraph in a detected language also accepts words of the other
+    /// enabled languages ([`ACCEPT_OTHER_LANGUAGES`], the default).
+    pub fn accept_other_languages(mut self, accept: bool) -> Self {
+        self.accept_other_languages = accept;
+        self
     }
 
     /// The enabled languages, in order of preference.
@@ -88,8 +117,10 @@ impl Checker {
     /// The text is split into paragraphs at blank lines. Each paragraph's language is
     /// detected ([`mazemail_mime::detect_language`], from its words only, at least 20
     /// letters); if it's German or English and a matching language is enabled, the
-    /// paragraph is checked in the first such language. Otherwise a word is accepted if
-    /// any enabled language knows it. With no languages enabled nothing is reported.
+    /// paragraph is checked in the first such language, and by the mixed-language rule
+    /// ([`ACCEPT_OTHER_LANGUAGES`]) a word the other enabled languages know is fine too.
+    /// Otherwise a word is accepted if any enabled language knows it. With no languages
+    /// enabled nothing is reported.
     ///
     /// Hyphenated words that the dictionary doesn't know as a whole are checked part by
     /// part, and only the unknown parts are reported. A word followed by `.` is also
@@ -125,22 +156,44 @@ impl Checker {
     }
 
     /// Corrections for a misspelling from [`Checker::check_text`], best first, at most
-    /// [`suggest::MAX_SUGGESTIONS`]. Asks the misspelling's language, or every enabled
-    /// language if it has none.
+    /// [`suggest::MAX_SUGGESTIONS`].
+    ///
+    /// Asks the misspelling's language, or every enabled language if it has none. By
+    /// the mixed-language rule ([`ACCEPT_OTHER_LANGUAGES`]) the other enabled languages
+    /// are asked too, and their suggestions join the list when they are closer to the
+    /// word ([`suggest::distance`]) than the best one of the paragraph's language: a
+    /// typo in a German paragraph may be an English word ("tomorow"), but an English
+    /// typo shouldn't get German look-alikes at the end of its list.
     ///
     /// Slow: tens of milliseconds per language for German. Never call this on the UI
     /// thread.
     pub fn suggest(&self, misspelling: &Misspelling) -> Vec<String> {
         let word = normalize(&misspelling.word);
-        let spellers = self
-            .spellers
-            .iter()
-            .filter(|(lang, _)| misspelling.lang.is_none_or(|l| l == *lang));
-        let mut all = Vec::new();
-        for (_, speller) in spellers {
-            all.extend(speller.suggest(&word));
+        let ask = |pick: &dyn Fn(Lang) -> bool| {
+            let mut all = Vec::new();
+            for (_, speller) in self.spellers.iter().filter(|(lang, _)| pick(*lang)) {
+                all.extend(speller.suggest(&word));
+            }
+            suggest::refine(&word, all)
+        };
+        let Some(lang) = misspelling.lang else {
+            return ask(&|_| true);
+        };
+        let primary = ask(&|l| l == lang);
+        if !self.accept_other_languages || self.spellers.len() < 2 {
+            return primary;
         }
-        suggest::refine(&word, all)
+        let best = primary
+            .first()
+            .map_or(f32::INFINITY, |s| suggest::distance(&word, s));
+        let closer: Vec<String> = ask(&|l| l != lang)
+            .into_iter()
+            .filter(|s| suggest::distance(&word, s) < best)
+            .collect();
+        if closer.is_empty() {
+            return primary;
+        }
+        suggest::refine(&word, closer.into_iter().chain(primary))
     }
 
     /// Pick the speller for a paragraph from the language of its words.
@@ -163,7 +216,15 @@ impl Checker {
     fn accepts(&self, word: &str, judge: Judge) -> bool {
         self.personal.contains(word)
             || match judge {
-                Judge::One(i) => self.spellers[i].1.check(word),
+                Judge::One(i) => {
+                    self.spellers[i].1.check(word)
+                        || (self.accept_other_languages
+                            && self
+                                .spellers
+                                .iter()
+                                .enumerate()
+                                .any(|(j, (_, s))| j != i && s.check(word)))
+                }
                 Judge::Any => self.spellers.iter().any(|(_, s)| s.check(word)),
             }
     }
@@ -245,6 +306,50 @@ pub(crate) fn normalize(word: &str) -> Cow<'_, str> {
     } else {
         Cow::Borrowed(word)
     }
+}
+
+/// Byte ranges of the parts of `text` that can be checked on their own: the paragraphs
+/// (runs of non-blank lines, each with its line breaks), except that a fenced code block
+/// stays in one part with the paragraph it starts in, blank lines and all.
+///
+/// [`Checker::check_text`] of a block gives the same misspellings (shifted by the block's
+/// start) as checking the whole text: language detection works per paragraph, and the
+/// only Markdown that spans blank lines is a fenced code block. The composer re-checks
+/// only the blocks an edit changed and keeps the results of the others.
+pub fn blocks(text: &str) -> Vec<Range<usize>> {
+    let mut out = Vec::new();
+    let mut current: Option<Range<usize>> = None;
+    let mut fence: Option<(u8, usize)> = None;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let range = offset..offset + line.len();
+        offset = range.end;
+        let content = line.trim_end_matches(['\n', '\r']);
+        let indent = content.len() - content.trim_start_matches(' ').len();
+        let body = content.trim_start();
+        let marker = (indent <= 3).then(|| fence_marker(body)).flatten();
+        match fence {
+            Some((c, len)) => {
+                if marker
+                    .is_some_and(|(mc, ml)| mc == c && ml >= len && body[ml..].trim().is_empty())
+                {
+                    fence = None;
+                }
+            }
+            None if marker.is_some() => fence = marker,
+            None if line.trim().is_empty() => {
+                out.extend(current.take());
+                continue;
+            }
+            None => {}
+        }
+        match &mut current {
+            Some(block) => block.end = range.end,
+            None => current = Some(range),
+        }
+    }
+    out.extend(current);
+    out
 }
 
 /// Byte ranges of the paragraphs: runs of non-blank lines.
@@ -437,11 +542,81 @@ mod tests {
                 ("becuase", Some(Lang::EnUs))
             ]
         );
-        // The German paragraph is checked in German only: an English word is flagged
-        // there, but accepted in the English one.
+    }
+
+    #[test]
+    fn a_paragraph_accepts_words_of_the_other_enabled_languages() {
+        let langs = [Lang::EnUs, Lang::DeAt];
+        // The mixed-language rule: "tomorrow" in a German paragraph and "Termin" in an
+        // English one are known to another enabled language, so they are fine.
+        let text = "Wir sehen uns morgen im Büro und besprechen dann alles weitere, tomorrow.\n\n\
+            We will meet tomorrow at the office for the Termin and discuss everything else.";
+        const { assert!(ACCEPT_OTHER_LANGUAGES) };
+        assert_eq!(misspelled(&langs, text), Vec::<String>::new());
+        // A word no enabled language knows is still flagged, in the paragraph's language.
+        let text = "Wir sehen uns morgen im Büro und besprechen dann alles weitere, tomorow.";
+        let found = checker(&langs).check_text(text);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].word, "tomorow");
+        assert_eq!(found[0].lang, Some(Lang::DeAt));
+        // German has nothing close: the suggestions come from English then.
+        let suggestions = checker(&langs).suggest(&found[0]);
+        assert!(
+            suggestions.iter().any(|s| s == "tomorrow"),
+            "{suggestions:?}"
+        );
+
+        // Without the rule a detected paragraph is checked in its language only.
+        let strict = checker(&langs).accept_other_languages(false);
         let text = "Wir sehen uns morgen im Büro und besprechen dann alles weitere, tomorrow.\n\n\
             We will meet tomorrow at the office and discuss everything else then.";
-        assert_eq!(misspelled(&langs, text), ["tomorrow"]);
+        let words: Vec<String> = strict
+            .check_text(text)
+            .into_iter()
+            .map(|m| m.word)
+            .collect();
+        assert_eq!(words, ["tomorrow"]);
+    }
+
+    #[test]
+    fn blocks_keep_fenced_code_together() {
+        let text = "Hallo Anna,\nwie geht's?\n\n```\nlet teh = 1;\n\nqiuck();\n```\nDanach.\n\n\n> zitat\n\nEnde";
+        let blocks: Vec<&str> = blocks(text).into_iter().map(|r| &text[r]).collect();
+        assert_eq!(
+            blocks,
+            [
+                "Hallo Anna,\nwie geht's?\n",
+                "```\nlet teh = 1;\n\nqiuck();\n```\nDanach.\n",
+                "> zitat\n",
+                "Ende"
+            ]
+        );
+        assert_eq!(super::blocks(""), Vec::<Range<usize>>::new());
+        // An unclosed fence runs to the end.
+        let text = "a\n\n~~~\nx\n\ny";
+        assert_eq!(super::blocks(text), [0..2, 3..text.len()]);
+    }
+
+    #[test]
+    fn checking_block_by_block_matches_checking_the_whole_text() {
+        let text = "Hallo Maria,\n\n\
+            im Jänner fahren wir nach Wien und kaufen dort Paradeiser für das Abendesen.\n\n\
+            ```\nlet wrod = teh;\n\nqiuck brwon\n```\nI will send the documnets tomorrow.\n\n\
+            > I qoute this line\n\n\
+            Thnaks, and see you `cargo bulid` soon at https://exmaple.com.\n\n\
+            Liebe Grüße";
+        let checker = checker(&[Lang::DeAt, Lang::EnUs]);
+        let whole = checker.check_text(text);
+        let mut by_block = Vec::new();
+        for block in blocks(text) {
+            for mut m in checker.check_text(&text[block.clone()]) {
+                m.range = m.range.start + block.start..m.range.end + block.start;
+                by_block.push(m);
+            }
+        }
+        assert_eq!(by_block, whole);
+        let words: Vec<&str> = whole.iter().map(|m| m.word.as_str()).collect();
+        assert_eq!(words, ["Abendesen", "documnets", "Thnaks"]);
     }
 
     #[test]
@@ -535,6 +710,33 @@ mod tests {
             let _ = crate::dictionary::load(lang).unwrap();
             eprintln!("{lang}: load {:?}", start.elapsed());
         }
+        // A long mail: ~100 KB, a German and an English paragraph in turn.
+        let mut long = String::new();
+        while long.len() < 100_000 {
+            long.push_str(
+                "Wir treffen uns morgen zum Frühstück im Kaffeehaus am Ring und besprechen \
+                 den Bericht an den Rechnungsprüfungsausschuss, bzw. die Termine.\n\n\
+                 I hope to receive your answer by tomorrow, thanks a lot for the help with \
+                 the documents and the recieve flow.\n\n",
+            );
+        }
+        let both = checker(&[Lang::DeAt, Lang::EnUs]);
+        let start = Instant::now();
+        let blocks = blocks(&long);
+        eprintln!(
+            "blocks of {} bytes: {} in {:?}",
+            long.len(),
+            blocks.len(),
+            start.elapsed()
+        );
+        let start = Instant::now();
+        let found = both.check_text(&long);
+        eprintln!(
+            "check_text {} bytes (de-AT, en-US): {} misspellings in {:?}",
+            long.len(),
+            found.len(),
+            start.elapsed()
+        );
         for (lang, text, typo) in samples {
             let checker = checker(&[lang]);
             let words = words(text);

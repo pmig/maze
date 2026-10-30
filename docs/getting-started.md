@@ -742,8 +742,53 @@ sends it twice. The copy in your Sent folder is described under
 
 Drafts are saved on your computer (encrypted, like your mail) a moment after you stop
 typing. Not there yet: drafts in the server's Drafts folder, forwarding the original's
-attachments, signatures switching with the identity, spell check, address completion,
-send later and undo send.
+attachments, signatures switching with the identity, address completion, send later
+and undo send.
+
+### Spell checking
+
+Maze checks the body as you type and underlines misspelled words with a red wavy line
+a moment after you stop typing. Dictionaries for German (Germany, Austria and
+Switzerland) and English (US and UK) are built in and work offline; nothing you write
+leaves your computer. (The dictionaries come from
+[wooorm/dictionaries](https://github.com/wooorm/dictionaries): SCOWL for English,
+igerman98 for German; licenses in
+[`third_party/dictionaries`](../third_party/dictionaries/README.md).)
+
+- **Right-click** an underlined word for up to five suggestions; choosing one replaces
+  the word (`cmd-z` undoes it). **Ignore Spelling** accepts the word in this draft
+  only. **Add to Dictionary** accepts it in every draft from now on.
+- **Your dictionary** (the words you added) is kept in Maze's encrypted database,
+  because they are often names, and applies to every language. There's no list to edit
+  yet: a word added by mistake stays until a later version can remove it.
+- **Mixed languages:** each paragraph is checked in its own language, detected from
+  its words, and also accepts the words of your other spelling languages. With German
+  and English on, "tomorrow" in a German paragraph and "Termin" in an English one are
+  fine. Short paragraphs (a greeting, a sign-off) accept any of your languages.
+- **Not checked:** quoted lines (`>`), code (`` `inline` `` and fenced blocks), links,
+  web and email addresses, words with digits and words in ALL CAPS. The subject line
+  isn't checked yet.
+- **The status item** at the bottom of the draft, next to **Send**, shows the languages
+  and how many words are underlined, for example "✓ Spelling de-AT · en-US" or
+  "2 spelling issues · de-AT · en-US". Click it to turn languages on or off for this
+  draft only.
+
+The languages come from the `spellcheck` setting. By default (`[]`) Maze uses your
+system's preferred languages that have a dictionary (on macOS the list in **System
+Settings → General → Language & Region**; on Linux `LANGUAGE`, `LC_ALL`,
+`LC_MESSAGES` and `LANG`), and English (US) when none has. Name them yourself, best
+first (a German paragraph is checked as the first German language you list), or turn
+spell checking off:
+
+```jsonc
+{
+  "spellcheck": ["de-AT", "en-US"]   // or [] for the system's languages, or false
+}
+```
+
+The tags are `de-DE`, `de-AT`, `de-CH`, `en-US` and `en-GB` (`de_AT` and `de` work
+too); Maze lists any other tag as a warning under the settings editor and ignores it.
+Changes apply to open drafts right away.
 
 ## Agents
 
@@ -777,7 +822,9 @@ yet. It's a plain JSON editor (comments and trailing commas are allowed):
 - `cmd-s` saves and applies the settings at once. The tab shows a dot while it has
   unsaved changes, and closing it asks whether to save them.
 - Problems are listed below the editor with their line: syntax errors, keys Maze
-  doesn't know (ignored) and values of the wrong type (that key uses its default). A
+  doesn't know (ignored), values of the wrong type (that key uses its default) and
+  values Maze can't use, such as a spell checking language without a dictionary
+  (ignored). A
   file with a syntax error changes nothing: Maze keeps the settings it had until you
   fix it.
 - When the file changes on disk while the tab is open (Maze writes your favorite

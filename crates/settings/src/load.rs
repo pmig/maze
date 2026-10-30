@@ -3,7 +3,10 @@
 //! The user file is merged over the embedded defaults as JSON values (objects merge
 //! key by key, everything else replaces), then deserialized into [`Settings`]:
 //!
-//! - unknown keys become [`DiagnosticKind::UnknownKey`] warnings and are ignored;
+//! - unknown keys become [`DiagnosticKind::UnknownKey`] warnings and are ignored, and
+//!   so do values Maze can't use but that don't break anything
+//!   ([`DiagnosticKind::UnsupportedValue`]: a `spellcheck` language without a
+//!   dictionary);
 //! - an invalid value becomes a [`DiagnosticKind::InvalidValue`] error with its JSON
 //!   path, and only that key falls back to its default;
 //! - a syntax error in the user file ignores the whole file (defaults apply) and
@@ -88,12 +91,18 @@ pub enum DiagnosticKind {
     InvalidValue,
     /// A key Maze doesn't know. It is ignored.
     UnknownKey,
+    /// A well-formed value Maze can't use, e.g. a `spellcheck` language without a
+    /// dictionary. It is ignored.
+    UnsupportedValue,
 }
 
 impl Diagnostic {
-    /// Unknown keys are warnings; everything else is an error.
+    /// Unknown keys and unsupported values are warnings; everything else is an error.
     pub fn is_error(&self) -> bool {
-        !matches!(self.kind, DiagnosticKind::UnknownKey)
+        !matches!(
+            self.kind,
+            DiagnosticKind::UnknownKey | DiagnosticKind::UnsupportedValue
+        )
     }
 }
 
@@ -174,6 +183,22 @@ pub fn parse_settings(user_text: Option<&str>) -> LoadedSettings {
                     path: format_path(&segments),
                     line: lines.line(&segments),
                 }));
+                diagnostics.extend(settings.spellcheck.unsupported().into_iter().map(
+                    |(index, tag)| {
+                        let segments =
+                            [Segment::Key("spellcheck".to_owned()), Segment::Index(index)];
+                        Diagnostic {
+                            kind: DiagnosticKind::UnsupportedValue,
+                            path: format_path(&segments),
+                            message: format!(
+                                "no spell checking dictionary for {}, ignored (available: {})",
+                                Value::String(tag.to_owned()),
+                                spelling::Lang::ALL.map(spelling::Lang::as_str).join(", ")
+                            ),
+                            line: lines.line(&segments),
+                        }
+                    },
+                ));
                 // Report in a stable order. serde_json's map order depends on whether
                 // some other crate in the build enables its `preserve_order` feature.
                 diagnostics.sort_by(|a, b| a.path.cmp(&b.path));
@@ -531,6 +556,30 @@ mod tests {
         );
         assert!(!loaded.has_errors());
         assert_eq!(loaded.settings.layout, Layout::FourColumn);
+    }
+
+    #[test]
+    fn spellcheck_languages_without_a_dictionary_are_warnings() {
+        let loaded = parse_settings(Some("{\n  \"spellcheck\": [\"de-AT\",\n    \"fr-FR\"]\n}"));
+        assert_eq!(loaded.diagnostics.len(), 1, "{:?}", loaded.diagnostics);
+        let warning = &loaded.diagnostics[0];
+        assert_eq!(warning.kind, DiagnosticKind::UnsupportedValue);
+        assert_eq!(warning.path, "spellcheck[1]");
+        assert_eq!(warning.line, Some(3));
+        assert!(warning.message.contains("\"fr-FR\""), "{}", warning.message);
+        assert!(!loaded.has_errors());
+        assert_eq!(
+            loaded.settings.spellcheck.languages(),
+            Some(vec![spelling::Lang::DeAt])
+        );
+
+        let off = parse_settings(Some(r#"{ "spellcheck": false }"#));
+        assert!(off.diagnostics.is_empty());
+        assert_eq!(off.settings.spellcheck, crate::Spellcheck::Off);
+        // Anything else is an invalid value: the default (system languages) applies.
+        let wrong = parse_settings(Some(r#"{ "spellcheck": "de-AT" }"#));
+        assert!(wrong.has_errors());
+        assert_eq!(wrong.settings.spellcheck, crate::Spellcheck::default());
     }
 
     #[test]

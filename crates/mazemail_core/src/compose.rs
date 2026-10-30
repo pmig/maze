@@ -653,6 +653,37 @@ impl CoreHandle {
             .collect())
     }
 
+    // ---- the personal spelling dictionary -------------------------------------------
+
+    /// The personal spelling dictionary ("Add to Dictionary" in the composer), sorted.
+    /// One list for every language, kept in the encrypted database (words are often
+    /// names).
+    pub fn spelling_words(&self) -> Result<Vec<String>> {
+        self.ensure_open()?;
+        Ok(self.store().reader()?.spelling_words()?)
+    }
+
+    /// Adds `word` to the personal spelling dictionary (idempotent). `word` must be one
+    /// word ([`Error::InvalidCommand`] otherwise).
+    pub async fn add_spelling_word(&self, word: String) -> Result<()> {
+        self.ensure_open()?;
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        self.store()
+            .write(move |w| w.add_spelling_word(&word, now))
+            .await
+            .map_err(crate::handle::map_store)
+    }
+
+    /// Removes `word` from the personal spelling dictionary; returns whether it was
+    /// there.
+    pub async fn remove_spelling_word(&self, word: String) -> Result<bool> {
+        self.ensure_open()?;
+        self.store()
+            .write(move |w| w.remove_spelling_word(&word))
+            .await
+            .map_err(crate::handle::map_store)
+    }
+
     /// Address completion from the address book and collected addresses.
     pub fn complete_addresses(&self, prefix: &str, limit: usize) -> Result<Vec<Address>> {
         self.ensure_open()?;

@@ -195,7 +195,7 @@ fn skip_ranges(text: &str) -> Vec<Range<usize>> {
 }
 
 /// ```` ``` ```` or `~~~` (three or more) at the start of `body`: the char and run length.
-fn fence_marker(body: &str) -> Option<(u8, usize)> {
+pub(crate) fn fence_marker(body: &str) -> Option<(u8, usize)> {
     let first = *body.as_bytes().first()?;
     if first != b'`' && first != b'~' {
         return None;

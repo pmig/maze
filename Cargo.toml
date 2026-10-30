@@ -119,6 +119,9 @@ serde_path_to_error = "0.1"
 sha2 = "0.11"
 # Spell checking (PLAN-spellcheck): a pure-Rust Nuspell port reading Hunspell dictionaries.
 spellbook = "0.4"
+# The system's preferred languages (macOS: CFLocaleCopyPreferredLanguages; Linux:
+# LANGUAGE, LC_ALL, LC_MESSAGES, LANG): the default spell checking languages.
+sys-locale = "0.3"
 tantivy = { version = "0.27", default-features = false, features = ["stemmer", "lz4-compression", "columnar-zstd-compression"] }
 tar = { version = "0.4", default-features = false }
 thiserror = "2"

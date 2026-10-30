@@ -21,7 +21,9 @@
 //!   good settings and publishes the diagnostics (with line numbers) for the editor.
 //!
 //! This crate is layer L1 and has no GPUI dependency: `auth`, `sync`, `auto_update`,
-//! `agent` and `mazemail --headless` all read settings.
+//! `agent` and `mazemail --headless` all read settings. Its one same-layer dependency is
+//! `spelling` (pure, no IO), for the language tags of the `spellcheck` setting
+//! ([`Spellcheck`]): which tags have a dictionary, and the system's languages.
 //!
 //! JSONC is parsed with `jsonc-parser` (dprint/Deno, maintained, serde support): it is
 //! exactly JSONC as editors understand it, whereas JSON5 parsers accept more syntax

@@ -30,6 +30,7 @@ const MAIN: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/main/0011_remote_content_senders.sql"
     )),
+    M::up(include_str!("../migrations/main/0012_spelling_words.sql")),
 ];
 
 const SENDLOG: &[M<'static>] = &[M::up(include_str!(
@@ -554,6 +555,40 @@ mod tests {
         conn.execute_batch("DELETE FROM pending_op WHERE id = 1;")
             .unwrap();
         assert_eq!(refs(&conn), 0);
+    }
+
+    #[test]
+    fn v12_adds_the_spelling_dictionary_and_keeps_everything_else() {
+        let tmp = tempfile::tempdir().unwrap();
+        let key = key(12);
+        let mut conn = conn::open(&tmp.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
+        migrate_with_backup(&mut conn, &key, tmp.path(), "1.0.0", &MAIN[..11]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO remote_content_sender (email, added) VALUES ('news@shop.example', 1);",
+        )
+        .unwrap();
+        let report = migrate_main(&mut conn, &key, tmp.path(), "1.1.0").unwrap();
+        assert_eq!((report.from, report.to), (11, SCHEMA_VERSION));
+        assert!(report.backup.is_some());
+        conn.execute(
+            "INSERT INTO spelling_word (word, added) VALUES ('Glasskube', 2)",
+            [],
+        )
+        .unwrap();
+        // The word is the key.
+        assert!(
+            conn.execute(
+                "INSERT INTO spelling_word (word, added) VALUES ('Glasskube', 3)",
+                []
+            )
+            .is_err()
+        );
+        let senders: i64 = conn
+            .query_row("SELECT COUNT(*) FROM remote_content_sender", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(senders, 1);
     }
 
     #[test]
