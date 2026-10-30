@@ -12,7 +12,7 @@ default = []
 # The Servo engine. Off in dev builds and CI tests (it adds minutes to a clean build);
 # on in release builds. Without it, `OriginalView::AVAILABLE` is false and the message
 # view stays in reader mode.
-servo = ["dep:servo", "dep:dpi", "dep:euclid", "dep:http", "dep:image"]
+servo = ["dep:servo", "dep:dpi", "dep:euclid", "dep:http", "dep:image", "dep:rustls"]
 
 [dependencies]
 async-channel = { workspace = true }
@@ -24,6 +24,7 @@ dpi = { workspace = true, optional = true }
 euclid = { workspace = true, optional = true }
 http = { workspace = true, optional = true }
 image = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
 servo = { workspace = true, optional = true }
 
 [dev-dependencies]

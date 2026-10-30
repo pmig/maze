@@ -108,6 +108,11 @@ fn opts() -> Opts {
 
 /// Servo with Maze's options, preferences and process-wide delegate.
 pub(crate) fn build_servo(waker: Box<dyn EventLoopWaker>) -> Servo {
+    // Servo's resource thread builds its TLS config from rustls' process-wide provider
+    // (even though every load is answered from memory) and expects the embedder to
+    // install it. Maze uses aws-lc-rs only (see the workspace `rustls` dependency); an
+    // error means a provider is installed already.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let servo = ServoBuilder::default()
         .opts(opts())
         .preferences(preferences())
@@ -512,6 +517,9 @@ mod tests {
         context.make_current().unwrap();
         let started = Instant::now();
         let servo = build_servo(Box::new(Flag(Arc::new(AtomicBool::new(false)))));
+        // Without a process-wide provider Servo's resource thread panics if rustls was
+        // ever built with a second provider.
+        assert!(rustls::crypto::CryptoProvider::get_default().is_some());
         let inbox = Rc::new(Inbox::default());
         let delegate = Rc::new(Delegate::new(
             document,
