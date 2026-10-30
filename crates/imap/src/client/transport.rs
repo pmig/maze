@@ -76,10 +76,10 @@ impl AsyncWrite for BoxedStream {
     }
 }
 
-/// Build a rustls client configuration with an explicit `ring` provider, so that it
-/// does not depend on a process-wide default provider being installed.
+/// Build a rustls client configuration with an explicit `aws-lc-rs` provider, so that
+/// it does not depend on a process-wide default provider being installed.
 pub(crate) fn tls_config(verification: &TlsVerification) -> Result<Arc<ClientConfig>> {
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
     let builder = ClientConfig::builder_with_provider(provider.clone())
         .with_safe_default_protocol_versions()
         .map_err(|e| ImapError::Tls(e.to_string()))?;
