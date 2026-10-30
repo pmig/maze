@@ -112,8 +112,9 @@
   // system's languages.
   "spellcheck": [],
 
-  // Which messages are kept on this computer: "headers_only", "recent" (bodies of the
-  // last `offline_recent_days` days), "all" or "on_demand". Can be overridden per account.
+  // Which messages are kept on this computer: "headers_only", "recent" (bodies of
+  // messages dated within the last `offline_recent_days` days, by the date the message
+  // list shows), "all" or "on_demand". Can be overridden per account.
   "offline": "recent",
   "offline_recent_days": 90,
 

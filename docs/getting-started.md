@@ -119,7 +119,9 @@ Maze talks IMAP to your mail servers. It uses CONDSTORE and QRESYNC where the se
 supports them (only changes are fetched), IDLE for new mail, and Gmail's extensions for
 labels and threads. Which message bodies are kept offline is set with `"offline"` in
 `settings.json` (`headers_only`, `recent` with `offline_recent_days`, `all` or
-`on_demand`), per account under `"accounts"`.
+`on_demand`), per account under `"accounts"`. With `recent`, a message's age is the date
+the message list shows (its `Date:` header), not when the server received it; any other
+message's body is downloaded when you open it.
 
 ### Adding an account
 

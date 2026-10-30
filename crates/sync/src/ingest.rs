@@ -174,18 +174,37 @@ impl StoreIngest {
     }
 }
 
+/// A message's date as the store keeps it (Unix seconds): its `Date:` header, else
+/// `INTERNALDATE`. The message list shows and sorts by it, and the offline policy
+/// ([`OfflinePolicy::Recent`](crate::OfflinePolicy::Recent)) judges a message's age by
+/// it, in the folder pass and in the backfill alike.
+pub(crate) fn message_date(
+    date_header: Option<OffsetDateTime>,
+    internal_date: Option<OffsetDateTime>,
+) -> Option<i64> {
+    date_header
+        .or(internal_date)
+        .map(OffsetDateTime::unix_timestamp)
+}
+
+/// [`message_date`] of a raw header block.
+pub(crate) fn header_block_date(
+    header: &[u8],
+    internal_date: Option<OffsetDateTime>,
+) -> Option<i64> {
+    let date_header = mazemail_mime::parse_headers_only(header)
+        .ok()
+        .and_then(|h| h.date);
+    message_date(date_header, internal_date)
+}
+
 /// Builds the store's [`NewMessage`] from a header input (parsing the header block).
 pub fn new_message(input: &HeaderInput) -> NewMessage {
     let headers = mazemail_mime::parse_headers_only(input.header.expose()).ok();
-    let internal = input.internal_date.map(OffsetDateTime::unix_timestamp);
-    let date = headers
-        .as_ref()
-        .and_then(|h| h.date)
-        .map(OffsetDateTime::unix_timestamp)
-        .or(internal)
+    let date = message_date(headers.as_ref().and_then(|h| h.date), input.internal_date)
         .unwrap_or_default();
     let mut m = NewMessage::new(input.account, date);
-    m.received = internal;
+    m.received = input.internal_date.map(OffsetDateTime::unix_timestamp);
     m.size = Some(u64::from(input.size));
     m.has_attachments = input
         .body
@@ -321,6 +340,20 @@ mod tests {
         // Not Gmail: labels are ignored.
         assert_eq!(m.locations.len(), 1);
         assert!(!m.replace_labels);
+    }
+
+    #[test]
+    fn the_date_header_wins_over_the_internal_date() {
+        let internal = OffsetDateTime::from_unix_timestamp(1_700_000_000).ok();
+        let header = b"Subject: x\r\nDate: Thu, 22 Oct 2026 10:00:00 +0000\r\n\r\n";
+        assert_eq!(header_block_date(header, internal), Some(1_792_663_200));
+        assert_eq!(
+            header_block_date(b"Subject: x\r\n\r\n", internal),
+            Some(1_700_000_000)
+        );
+        assert_eq!(header_block_date(b"Subject: x\r\n\r\n", None), None);
+        let m = new_message(&input("Date: Thu, 22 Oct 2026 10:00:00 +0000\r\n\r\n"));
+        assert_eq!(Some(m.date), header_block_date(header, internal));
     }
 
     #[test]

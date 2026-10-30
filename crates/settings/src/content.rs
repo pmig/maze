@@ -573,7 +573,8 @@ impl JsonSchema for UndoSendSeconds {
 pub enum OfflinePolicy {
     /// Headers only; bodies are fetched when opened.
     HeadersOnly,
-    /// Bodies of the last `offline_recent_days` days.
+    /// Bodies of messages dated (`Date:` header, as the list shows it) within the last
+    /// `offline_recent_days` days.
     #[default]
     Recent,
     /// Everything (Thunderbird's "keep messages on this computer").

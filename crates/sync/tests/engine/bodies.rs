@@ -3,10 +3,10 @@
 use bytes::Bytes;
 use imap::fake::{FakeMessage, FakeServer};
 use imap::{BodyPart, BodySummary};
-use mazemail_types::Sensitive;
+use mazemail_types::{MessageId, Sensitive};
 use pretty_assertions::assert_eq;
 use store::{BodyState, Queries};
-use sync::{BodyPriority, OfflinePolicy, SyncScope, SyncStatus};
+use sync::{AccountHandle, BodyPriority, OfflinePolicy, SyncScope, SyncStatus};
 
 use crate::common::{Harness, mail, wait_for, wait_idle};
 
@@ -151,19 +151,40 @@ async fn an_opened_message_jumps_ahead_of_a_long_sync() {
     handle.shutdown().await;
 }
 
+/// A message whose `Date:` header is `date_days` days ago and which the server
+/// received (`INTERNALDATE`) `received_days` days ago.
+fn mail_dated(n: u32, date_days: i64, received_days: i64) -> FakeMessage {
+    let now = time::OffsetDateTime::now_utc();
+    let date = (now - time::Duration::days(date_days))
+        .format(&time::format_description::well_known::Rfc2822)
+        .unwrap();
+    FakeMessage::new(format!(
+        "From: Sender {n} <s{n}@example.org>\r\nTo: me@example.org\r\n\
+         Subject: Message {n}\r\nMessage-ID: <m{n}@example.org>\r\nDate: {date}\r\n\
+         Content-Type: text/plain; charset=utf-8\r\n\r\nBody of message {n}\r\n"
+    ))
+    .internal_date(now - time::Duration::days(received_days))
+}
+
+/// Waits until `messages` have their bodies and the background queue is empty: the
+/// policy queues each pass's (and the backfill's) bodies at once, so whatever it
+/// queued together with `messages` has been fetched by then too.
+async fn wait_for_bodies(h: &Harness, handle: &AccountHandle, messages: &[MessageId]) {
+    wait_for("background bodies", || {
+        messages
+            .iter()
+            .all(|m| h.message(*m).body_state == BodyState::Full)
+            && handle.activity().bodies_queued == 0
+    })
+    .await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn offline_policy_downloads_recent_bodies_in_the_background() {
     let server = FakeServer::new();
-    let now = time::OffsetDateTime::now_utc();
-    server.deliver(
-        "INBOX",
-        mail(1).internal_date(now - time::Duration::days(200)),
-    );
-    server.deliver(
-        "INBOX",
-        mail(2).internal_date(now - time::Duration::days(3)),
-    );
-    server.deliver("Sent", mail(3).internal_date(now - time::Duration::days(1)));
+    server.deliver("INBOX", mail_dated(1, 200, 200));
+    server.deliver("INBOX", mail_dated(2, 3, 3));
+    server.deliver("Sent", mail_dated(3, 1, 1));
     let h = Harness::new(server.clone()).await;
     let config = h.config().with_offline(OfflinePolicy::Recent, 90);
     let handle = h.spawn(config);
@@ -171,11 +192,7 @@ async fn offline_policy_downloads_recent_bodies_in_the_background() {
     let old = h.message_at("INBOX", 1);
     let recent = h.message_at("INBOX", 2);
     let sent = h.message_at("Sent", 1);
-    wait_for("background bodies", || {
-        h.message(recent).body_state == BodyState::Full
-            && h.message(sent).body_state == BodyState::Full
-    })
-    .await;
+    wait_for_bodies(&h, &handle, &[recent, sent]).await;
     assert_eq!(h.message(old).body_state, BodyState::None);
     handle.shutdown().await;
 
@@ -185,6 +202,51 @@ async fn offline_policy_downloads_recent_bodies_in_the_background() {
         h.message(old).body_state == BodyState::Full
     })
     .await;
+    handle.shutdown().await;
+}
+
+/// The messages of [`offline_policy_goes_by_the_message_date`]: `Date:` header and
+/// `INTERNALDATE` agree on the first and the last, not on the two in between.
+fn mixed_dates() -> FakeServer {
+    let server = FakeServer::new();
+    server.deliver("INBOX", mail_dated(1, 200, 200));
+    // Old, but the server got it yesterday (a migrated mailbox, a re-upload).
+    server.deliver("INBOX", mail_dated(2, 200, 1));
+    // Recent, with an old `INTERNALDATE`.
+    server.deliver("INBOX", mail_dated(3, 3, 200));
+    server.deliver("INBOX", mail_dated(4, 3, 3));
+    server
+}
+
+/// Issue #5: the folder pass judged a message's age by `INTERNALDATE`, the backfill by
+/// its date (the `Date:` header, as the list shows it), so each fetched bodies the
+/// other left out. Both go by the message date now.
+#[tokio::test(flavor = "multi_thread")]
+async fn offline_policy_goes_by_the_message_date() {
+    // The folder pass: every message is new.
+    let h = Harness::new(mixed_dates()).await;
+    let handle = h.spawn(h.config().with_offline(OfflinePolicy::Recent, 90));
+    wait_idle(&handle).await;
+    let ids: Vec<MessageId> = (1..=4).map(|uid| h.message_at("INBOX", uid)).collect();
+    wait_for_bodies(&h, &handle, &[ids[2], ids[3]]).await;
+    assert_eq!(h.message(ids[0]).body_state, BodyState::None);
+    assert_eq!(h.message(ids[1]).body_state, BodyState::None);
+    handle.shutdown().await;
+
+    // The backfill: the headers are there, the policy changes to `recent`.
+    let h = Harness::new(mixed_dates()).await;
+    let handle = h.spawn(h.config().with_offline(OfflinePolicy::HeadersOnly, 0));
+    wait_idle(&handle).await;
+    handle.shutdown().await;
+    let ids: Vec<MessageId> = (1..=4).map(|uid| h.message_at("INBOX", uid)).collect();
+    assert!(
+        ids.iter()
+            .all(|m| h.message(*m).body_state == BodyState::None)
+    );
+    let handle = h.spawn(h.config().with_offline(OfflinePolicy::Recent, 90));
+    wait_for_bodies(&h, &handle, &[ids[2], ids[3]]).await;
+    assert_eq!(h.message(ids[0]).body_state, BodyState::None);
+    assert_eq!(h.message(ids[1]).body_state, BodyState::None);
     handle.shutdown().await;
 }
 

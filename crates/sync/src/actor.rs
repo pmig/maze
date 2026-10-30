@@ -1472,7 +1472,8 @@ async fn run_idle(
 }
 
 /// Messages whose bodies the offline policy wants but which have none yet, newest
-/// first: walks the account's threads newest-first until the cutoff.
+/// first: walks the account's threads newest-first until the cutoff. A message's age
+/// is its stored date ([`message_date`](crate::ingest::message_date)), as in the pass.
 async fn backfill(shared: &Shared, cutoff: i64) -> Result<Vec<MessageId>> {
     const PAGE: usize = 1000;
     let account = shared.account();

@@ -28,7 +28,7 @@ use crate::connect::Conn;
 use crate::error::{Result, SyncError};
 use crate::events::{Delta, FolderCounts, SyncEvent};
 use crate::gmail::{GmailFolders, apply_labels, drop_labels};
-use crate::ingest::{HeaderInput, ReuseQuery};
+use crate::ingest::{HeaderInput, ReuseQuery, header_block_date};
 use crate::shared::{Shared, YieldFlag};
 
 /// What a pass should do beyond the minimum.
@@ -514,8 +514,7 @@ async fn ingest_batch(
         .into_iter()
         .zip(labels)
         .map(|(h, labels)| {
-            let date = h.internal_date.map_or(now, |d| d.unix_timestamp());
-            meta.push((h.size, date, h.header.clone(), labels.clone()));
+            meta.push((h.size, h.internal_date, h.header.clone(), labels.clone()));
             HeaderInput {
                 account,
                 location: NewLocation {
@@ -542,7 +541,7 @@ async fn ingest_batch(
             outcomes.len()
         )));
     }
-    for ((size, date, header, labels), outcome) in meta.into_iter().zip(outcomes) {
+    for ((size, internal_date, header, labels), outcome) in meta.into_iter().zip(outcomes) {
         let message = outcome.message;
         delta.added(folder, message);
         for label in labels {
@@ -556,7 +555,7 @@ async fn ingest_batch(
             message,
             rfc_message_id: None,
             size: Some(u64::from(size)),
-            header: Some(header),
+            header: Some(header.clone()),
         };
         if let Some(raw) = shared.ingest.lookup_reused_body(&query).await? {
             shared
@@ -564,8 +563,14 @@ async fn ingest_batch(
                 .attach_body(message, raw, store::BodyState::Full)
                 .await?;
             shared.events.emit(SyncEvent::BodyFetched(message));
-        } else if cutoff.is_some_and(|c| date >= c) {
-            report.body_candidates.push((message, date));
+        } else if let Some(cutoff) = cutoff {
+            // The offline policy goes by the date the store keeps (the `Date:` header),
+            // like the backfill: not by `INTERNALDATE`, which only says when the server
+            // got the message (a migrated mailbox can have all of it "received" today).
+            let date = header_block_date(header.expose(), internal_date).unwrap_or(now);
+            if date >= cutoff {
+                report.body_candidates.push((message, date));
+            }
         }
     }
     Ok(())
