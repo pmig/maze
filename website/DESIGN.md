@@ -76,8 +76,20 @@ Nothing is copied: no assets, logos, copy, or CSS from either site.
   window, served as AVIF/WebP at several widths. No stock art, no illustrations. The
   one exception is the dot animation next to the hero text, built from the logo and
   simple icons for what Maze does (mail, search, speed, encryption, keys, CLI, agents).
-  The other is the agent panel on the home page: an HTML mock of an agent conversation
-  in Maze, Cursor-like, in the site's own type and colors, with made-up mail.
+  The other is Maze's own window on the home page, rebuilt in HTML and CSS the way
+  zed.dev shows its editor: title bar, spaces bar, folder pane, message list, message and
+  the agent column on the right, laid out after `crates/mail_ui` and `crates/agent_ui`
+  in Maze's default One Light / One Dark colors (taken from `assets/themes/one.json`,
+  following the site's theme) and the system UI font, like the app. It sits directly
+  under the hero text, above the first real screenshot, which now illustrates "Nothing
+  to relearn", so the page never shows two big app images back to back. The window has
+  made-up mail; agent tasks play in its agent column (prompt, `mazemail` commands,
+  proposal, Accept) and the mailbox reacts: matching rows light up, then leave the list
+  or get a star, folder counts change. It renders at a fixed design size (1200 × 720)
+  and is scaled to its column with CSS alone (container query units and
+  `tan(atan2())` for the ratio), so its height is fixed before anything loads and
+  nothing shifts. Narrower columns get smaller design sizes: without the message view
+  (800 × 720), and on phones the list above the agent column (420 × 840).
 - **Tone.** Short sentences, concrete nouns, no hype. Say what exists; label everything
   else "planned". The product is "Maze"; `mazemail` appears only as a technical name
   (CLI, domain, repository).
@@ -86,13 +98,16 @@ Nothing is copied: no assets, logos, copy, or CSS from either site.
   becomes "Mac", "Linux PC" or "Windows PC"; nothing is sent anywhere), plus `dots.js`
   (about 15 KB, 5 KB compressed, home page only) for the hero animation: one canvas,
   paused off screen and in background tabs, a still logo under
-  `prefers-reduced-motion`, hidden below 1000 px. And `agent-demo.js` (about 6 KB, 2 KB
-  compressed, home page only) for the agent panel under "What to ask": a made-up
-  conversation, typed out and accepted step by step, paused off screen, in background
-  tabs and with its Pause button, final states only under `prefers-reduced-motion`. The
-  panel is `aria-hidden` with a text list of the same tasks for screen readers, and
-  tasks that aren't shipped carry a "Soon" badge. Its classes start with `ag-`, never
-  `ad-`, which ad blockers hide. The site works fully without any of them.
+  `prefers-reduced-motion`, hidden below 1000 px. And `maze-window.js` (about 12 KB, 4 KB
+  compressed, home page only) for the HTML Maze window under the hero: four made-up
+  agent tasks, typed out, run, proposed and accepted step by step while the mailbox
+  reacts, paused off screen, in background tabs and with its Pause button. Under
+  `prefers-reduced-motion` each task shows still at its proposal; without JavaScript the
+  first one does. The window is `aria-hidden` with nothing focusable inside and a text
+  list of the same tasks for screen readers; tasks that aren't shipped carry a "Soon"
+  badge. Its markup is about 44 KB (7 KB compressed) with one inline icon sprite and no
+  images. Its classes start with `mw-`, never `ad-`, which ad blockers hide. The site
+  works fully without any of them.
 - **Privacy.** No analytics, no cookies, no third-party requests of any kind, enforced
   by the Content Security Policy. The footer says so.
 - **Accessibility.** Semantic landmarks, one `h1` per page, skip link, visible focus,

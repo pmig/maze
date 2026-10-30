@@ -29,7 +29,7 @@
   Cache-Control: public, max-age=3600, must-revalidate
 /dots.js
   Cache-Control: public, max-age=3600, must-revalidate
-/agent-demo.js
+/maze-window.js
   Cache-Control: public, max-age=3600, must-revalidate
 /favicon.svg
   Cache-Control: public, max-age=86400

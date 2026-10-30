@@ -1,7 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
-import AgentDemo from "../components/AgentDemo.astro";
 import Icon from "../components/Icon.astro";
+import MazeWindow from "../components/MazeWindow.astro";
 import Screenshot from "../components/Screenshot.astro";
 import Terminal from "../components/Terminal.astro";
 import { NUMBERS, SITE, repoFile } from "../data/site";
@@ -40,7 +40,7 @@ const TERMINAL = [
 
 <Base>
   <script is:inline src="/dots.js" defer></script>
-  <script is:inline src="/agent-demo.js" defer></script>
+  <script is:inline src="/maze-window.js" defer></script>
   <div class="frame">
     <section class="hero" aria-labelledby="hero-title">
       <div class="hero-text">
@@ -84,13 +84,7 @@ const TERMINAL = [
     </section>
 
     <div class="hero-shot">
-      <Screenshot
-        src={heroShot}
-        dark={heroShotDark}
-        priority
-        alt="The Maze main window with demo mail: a folder pane with unified folders and accounts, a message list, an open message with DKIM, SPF and DMARC badges, and the agent column, which says AI is off."
-        caption="Demo mailbox. On the right, the agent column, where Claude Code, Codex, Gemini CLI, Cursor or pi help once you turn AI on."
-      />
+      <MazeWindow />
     </div>
 
     <section class="section" id="thunderbird" aria-labelledby="tb-title">
@@ -100,6 +94,15 @@ const TERMINAL = [
         Folder pane, message list, message. Cards or a table. Quick Filter and global search.
         Thunderbird's keyboard shortcuts, plus a command palette for everything else.
       </p>
+
+      <div class="tb-shot">
+        <Screenshot
+          src={heroShot}
+          dark={heroShotDark}
+          alt="A screenshot of the Maze main window with demo mail: a folder pane with unified folders and accounts, a message list, an open message with DKIM, SPF and DMARC badges, and the agent column, which says AI is off."
+          caption="A real screenshot, demo mailbox. On the right, the agent column, where Claude Code, Codex, Gemini CLI, Cursor or pi help once you turn AI on."
+        />
+      </div>
 
       <div class="grid-3">
         <article class="card">
@@ -280,16 +283,6 @@ const TERMINAL = [
           <p><a href="/docs/agents/">Agents in Maze <span aria-hidden="true">→</span></a></p>
         </article>
       </div>
-    </section>
-
-    <section class="section" id="ask" aria-labelledby="ask-title">
-      <p class="eyebrow">What to ask</p>
-      <h2 class="section-title" id="ask-title">Ask in plain words. Review every change.</h2>
-      <p class="lede">
-        The agent searches and reads your mail with the <code>mazemail</code> CLI; whatever
-        would change it comes back as a proposal, and nothing happens until you accept.
-      </p>
-      <AgentDemo />
     </section>
 
     <section class="section split split--terminal" id="cli" aria-labelledby="cli-title">
@@ -495,6 +488,10 @@ const TERMINAL = [
 
   .hero-shot {
     padding: 0 var(--gutter) clamp(2.5rem, 6vw, 4.5rem);
+  }
+
+  .tb-shot {
+    margin-top: 2.25rem;
   }
 
   .grid-3 {

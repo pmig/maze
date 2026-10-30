@@ -1,0 +1,2300 @@
+---
+// Maze's main window, rebuilt in HTML and CSS for the home page: title bar, spaces bar,
+// folder pane, message list, message and the agent column on the right, in Maze's
+// default One Light / One Dark colors, laid out like crates/mail_ui and crates/agent_ui.
+// public/maze-window.js plays four agent tasks in it: the prompt is typed into the agent
+// column, the agent runs `mazemail` commands, its changes come back as a proposal at the
+// top of the column, a pointer accepts it and the mailbox reacts (rows leave, stars
+// appear, counts change).
+//
+// It renders at a fixed design size and is scaled to the width of its container with
+// CSS alone (container query units, `tan(atan2())` for the ratio), so its height is
+// known before anything loads. Narrower containers get smaller layouts: without the
+// message view, and on phones the message list above the agent column.
+//
+// Without JavaScript (and before it runs) the first task shows at its proposal. The
+// window is decoration (aria-hidden, nothing focusable); the list after it says the same
+// for screen readers. All mail and ids are made up. Tasks marked `soon` aren't shipped.
+
+interface Row {
+  key: string;
+  from: string;
+  subject: string;
+  date: string;
+  unread?: boolean;
+  count?: number;
+  clip?: boolean;
+  outgoing?: boolean;
+}
+
+interface Msg {
+  key: string;
+  subject: string;
+  from: string;
+  email: string;
+  date: string;
+  body: string[];
+  sig?: string[];
+  /** An HTML newsletter: Original mode with the remote content banner. */
+  html?: boolean;
+}
+
+interface Tool {
+  cmd: string;
+  out: string[];
+  /** Rows that light up in the list when the command is done. */
+  hit?: string;
+  /** Highlight the signature in the message view. */
+  sig?: boolean;
+}
+
+interface Item {
+  summary: string;
+  reason: string;
+}
+
+interface Task {
+  title: string;
+  prompt: string;
+  agent: string;
+  mode: string;
+  soon?: boolean;
+  /** The row the pointer selects before the prompt. */
+  select?: string;
+  tools: Tool[];
+  say: string;
+  proposal: { title: string; total: number; items: Item[]; more: string; diff?: boolean };
+  /** What accepting does to the mailbox. */
+  effect: {
+    gone?: string;
+    flag?: string;
+    counts?: Record<string, string>;
+    /** The row selected once the selected one has left. */
+    after?: string;
+    enrich?: string;
+  };
+  final: string;
+  summary: string;
+}
+
+const ROWS: Row[] = [
+  { key: "elif", from: "Elif Kaya", subject: "Re: Incident 492: accessibility audit", date: "09:41", count: 2 },
+  { key: "anna", from: "Anna Berger", subject: "Q4 planning: can you confirm the budget by Friday?", date: "Wed", unread: true },
+  { key: "tom", from: "Tom Fischer", subject: "Contract draft, two questions", date: "Tue", unread: true, clip: true },
+  { key: "bank1", from: "Example Bank", subject: "Your October statement is ready", date: "Tue", unread: true },
+  { key: "lea", from: "Lea Novak", subject: "Offsite: which dates work for you?", date: "Mon", unread: true, count: 3 },
+  { key: "byte", from: "The Weekly Byte", subject: "Issue 212: smaller binaries, faster builds", date: "Oct 14", unread: true },
+  { key: "contoso", from: "Contoso Cloud", subject: "What's new in October", date: "Oct 9", unread: true },
+  { key: "journal", from: "Fabrikam Journal", subject: "Five reads for the weekend", date: "Oct 3", unread: true },
+  { key: "northwind", from: "Northwind Store", subject: "Your receipt #48213", date: "Sep 12", clip: true },
+  { key: "buildbot", from: "build-bot", subject: "Nightly build failed: 3 errors in api", date: "Sep 8" },
+  { key: "bank2", from: "Example Bank", subject: "Payment confirmation", date: "Aug 30" },
+  { key: "hannah", from: "Hannah Schmidt", subject: "Photos from the lake", date: "Aug 24", clip: true },
+  { key: "isaac", from: "Isaac Novak", subject: "Climbing on Saturday", date: "Aug 21", count: 4 },
+  { key: "kenji", from: "Kenji Tanaka", subject: "Dinner on Tuesday?", date: "Aug 19", outgoing: true },
+  { key: "mateo", from: "Mateo García", subject: "Design review for search latency", date: "Aug 18" },
+  { key: "clara", from: "Clara Wu", subject: "Flight to Marseille confirmed", date: "Aug 14" },
+  { key: "ben", from: "Ben Okafor", subject: "Contract renewal – Northwind", date: "Aug 12" },
+];
+
+const MSGS: Msg[] = [
+  {
+    key: "elif",
+    subject: "Re: Incident 492: accessibility audit",
+    from: "Elif Kaya",
+    email: "elif@kaya.example",
+    date: "Fri, 30 Oct 2026 09:41",
+    body: [
+      "Hi Sam,",
+      "We went through the screen reader findings this morning. Three of the five issues are fixed on main; the focus order in the settings dialog still needs work.",
+      "Could you take a look before our call on Monday?",
+      "Best,\nElif",
+    ],
+  },
+  {
+    key: "anna",
+    subject: "Q4 planning: can you confirm the budget by Friday?",
+    from: "Anna Berger",
+    email: "anna@northwind.example",
+    date: "Wed, 28 Oct 2026 16:05",
+    body: [
+      "Hi Sam,",
+      "Finance needs the Q4 numbers by Friday. Can you confirm the budget for the offsite and the two contractor roles?",
+      "Thanks,\nAnna",
+    ],
+    sig: ["Anna Berger · Head of Operations", "Northwind Traders · +44 20 7946 0142"],
+  },
+  {
+    key: "byte",
+    subject: "Issue 212: smaller binaries, faster builds",
+    from: "The Weekly Byte",
+    email: "hello@weeklybyte.example",
+    date: "Wed, 14 Oct 2026 07:00",
+    html: true,
+    body: [
+      "This week: how three teams cut their release binaries in half, a tour of incremental builds, and the tools our readers recommend.",
+    ],
+  },
+  {
+    key: "hannah",
+    subject: "Photos from the lake",
+    from: "Hannah Schmidt",
+    email: "hannah@schmidt.example",
+    date: "Mon, 24 Aug 2026 20:12",
+    body: ["Hi Sam,", "Here are the photos from Saturday. The one with the boat is my favourite.", "See you soon,\nHannah"],
+  },
+  {
+    key: "tom",
+    subject: "Contract draft, two questions",
+    from: "Tom Fischer",
+    email: "tom@fabrikam.example",
+    date: "Tue, 27 Oct 2026 11:30",
+    body: [
+      "Hi Sam,",
+      "The contract draft is attached. Two questions before it goes to legal:",
+      "1. Should the notice period be three months or six?\n2. Do we include the support add-on in the first year?",
+      "Thanks,\nTom",
+    ],
+  },
+];
+
+const TASKS: Task[] = [
+  {
+    title: "Old receipts and error reports",
+    prompt: "Find and delete all transaction and error-report emails older than 30 days",
+    agent: "Claude Code",
+    mode: "Manual",
+    tools: [
+      {
+        cmd: `mazemail search 'older_than:30d (receipt OR invoice OR "payment confirmation")' --ids`,
+        out: ["m_3c9a m_41de m_52b0 m_5f1c m_6a07 …  182 ids"],
+        hit: "northwind bank2",
+      },
+      {
+        cmd: `mazemail search 'older_than:30d ("error report" OR "build failed" OR from:alerts)' --ids`,
+        out: ["m_0e21 m_1f8d m_2b44 …  32 ids"],
+        hit: "buildbot",
+      },
+      { cmd: "mazemail folders", out: ["f_7k  Trash"] },
+      {
+        cmd: "mazemail move --to f_7k m_3c9a m_41de m_52b0 m_5f1c m_6a07 …",
+        out: ['{"outcome":"proposed","proposal":"p_2c41"}'],
+      },
+    ],
+    say: "214 messages match: 182 receipts and payment confirmations, 32 error reports. I proposed moving them to Trash.",
+    proposal: {
+      title: "Move 214 messages to Trash",
+      total: 214,
+      items: [
+        { summary: "Northwind Store: Your receipt #48213", reason: "Receipt, Sep 12" },
+        { summary: "build-bot: Nightly build failed: 3 errors in api", reason: "Error report, Sep 8" },
+        { summary: "Example Bank: Payment confirmation", reason: "Payment confirmation, Aug 30" },
+      ],
+      more: "and 211 more",
+    },
+    effect: { gone: "northwind buildbot bank2", counts: { trash: "37", threads: "1,251 threads" } },
+    final: "Done. All 214 are in Trash.",
+    summary:
+      "“Find and delete all transaction and error-report emails older than 30 days.” The agent searches with mazemail search and proposes moving 214 messages to Trash; you accept the proposal in Maze, and the messages leave the list.",
+  },
+  {
+    title: "Enrich contacts from signatures",
+    prompt: "Enrich all my contacts with the details from my email signatures",
+    agent: "Codex",
+    mode: "Auto",
+    soon: true,
+    select: "anna",
+    tools: [
+      { cmd: "mazemail contacts --json", out: ['[{"name":"Anna Berger","email":"anna@northwind…"}, …]  146'] },
+      {
+        cmd: "mazemail show m_8f3a2c --signature",
+        out: ["Anna Berger · Head of Operations", "Northwind Traders · +44 20 7946 0142"],
+        sig: true,
+      },
+      { cmd: "mazemail contacts propose enrich.json", out: ['{"outcome":"proposed","proposal":"p_5e07"}'] },
+    ],
+    say: "38 contacts have newer details in their signatures. Each change names the mail it came from.",
+    proposal: {
+      title: "Update 38 contacts",
+      total: 38,
+      diff: true,
+      items: [
+        { summary: "Anna Berger: + title Head of Operations, + phone", reason: "From the mail of Oct 28" },
+        { summary: "Ravi Menon: + company Fabrikam Ltd, ~ phone", reason: "From the mail of Oct 3" },
+        { summary: "Lea Novak: + title Product Designer", reason: "From the mail of Sep 28" },
+      ],
+      more: "and 35 more",
+    },
+    effect: { enrich: "anna" },
+    final: "Done. Your contacts are updated on the server.",
+    summary:
+      "Planned, not available yet: “Enrich all my contacts with the details from my email signatures.” The agent would propose field changes per contact, such as a phone number or a job title, each with the mail it came from, for you to accept.",
+  },
+  {
+    title: "Unopened newsletters",
+    prompt: "Archive the newsletters I haven't opened in two weeks",
+    agent: "Gemini CLI",
+    mode: "Default",
+    select: "byte",
+    tools: [
+      {
+        cmd: "mazemail search 'list:news is:unread older_than:14d' --ids",
+        out: ["m_0b7e m_12fa m_1c33 m_20d9 …  86 ids"],
+        hit: "byte contoso journal",
+      },
+      { cmd: "mazemail archive m_0b7e m_12fa m_1c33 m_20d9 m_2e41 …", out: ['{"outcome":"proposed","proposal":"p_7a90"}'] },
+    ],
+    say: "86 unread newsletters from 9 lists are older than two weeks. I proposed archiving them.",
+    proposal: {
+      title: "Archive 86 messages",
+      total: 86,
+      items: [
+        { summary: "The Weekly Byte: Issue 212: smaller binaries, faster builds", reason: "Newsletter, unread since Oct 14" },
+        { summary: "Contoso Cloud: What's new in October", reason: "Newsletter, unread since Oct 9" },
+        { summary: "Fabrikam Journal: Five reads for the weekend", reason: "Newsletter, unread since Oct 3" },
+      ],
+      more: "and 83 more",
+    },
+    effect: {
+      gone: "byte contoso journal",
+      after: "hannah",
+      counts: { inbox: "23", pinbox: "9", archive: "86", parchive: "52", threads: "1,165 threads" },
+    },
+    final: "Done. 86 newsletters moved to Archive.",
+    summary:
+      "“Archive the newsletters I haven't opened in two weeks.” The agent finds 86 unread newsletters and proposes archiving them; after you accept, they leave the Inbox.",
+  },
+  {
+    title: "Mail that needs a reply",
+    prompt: "Go through my unread inbox and flag everything that still needs a reply from me",
+    agent: "Cursor",
+    mode: "Agent",
+    select: "tom",
+    tools: [
+      {
+        cmd: "mazemail search 'in:inbox is:unread' --limit 100",
+        out: ["m_8f3a2c  Anna Berger  Q4 planning: can you confirm…", "m_7d10e4  Tom Fischer  Contract draft, two questions"],
+        hit: "anna tom bank1 lea",
+      },
+      { cmd: "mazemail show t_19bd t_2a07 t_31c4 … --format md", out: ["23 threads, 41 messages"] },
+      { cmd: "mazemail flag t_19bd t_2a07 t_31c4 t_4f82", out: ['{"outcome":"proposed","proposal":"p_6b12"}'] },
+    ],
+    say: "4 of the 23 unread messages ask you something directly. The rest are notifications.",
+    proposal: {
+      title: "Flag 4 threads",
+      total: 4,
+      items: [
+        { summary: "Anna Berger: Q4 planning: can you confirm the budget by Friday?", reason: "Asks you to confirm the budget" },
+        { summary: "Tom Fischer: Contract draft, two questions", reason: "Two open questions for you" },
+        { summary: "Lea Novak: Offsite: which dates work for you?", reason: "Waiting for your dates" },
+      ],
+      more: "and 1 more",
+    },
+    effect: { flag: "anna tom lea" },
+    final: "Done. The 4 threads are flagged in your Inbox.",
+    summary:
+      "“Go through my unread inbox and flag everything that still needs a reply from me.” The agent reads the unread threads and proposes flagging the 4 that ask you something; once accepted, they carry a star in the list.",
+  },
+];
+
+const FIRST = TASKS[0]!;
+const firstHits = new Set(FIRST.tools.flatMap((t) => (t.hit ? t.hit.split(" ") : [])));
+
+// Small line icons in the spirit of Maze's (Lucide-style) icon set, drawn for this site.
+const ICONS: Record<string, string> = {
+  mail: '<rect x="2" y="3.5" width="12" height="9" rx="1.5"/><path d="m2.5 4.5 5.5 4 5.5-4"/>',
+  book: '<path d="M3.5 2.5h8.5v11H3.5Z"/><circle cx="7.75" cy="6.75" r="1.5"/><path d="M5.5 11c.4-1.2 1.2-1.8 2.25-1.8S9.6 9.8 10 11"/>',
+  puzzle: '<path d="M3 5h2.75a1.5 1.5 0 1 1 3 0H11.5v2.75a1.5 1.5 0 1 1 0 3V13.5H3Z"/>',
+  gear: '<circle cx="8" cy="8" r="2"/><circle cx="8" cy="8" r="4.75"/><path d="M8 1.5v1.75M8 12.75v1.75M1.5 8h1.75M12.75 8h1.75M3.4 3.4l1.2 1.2M11.4 11.4l1.2 1.2M3.4 12.6l1.2-1.2M11.4 4.6l1.2-1.2"/>',
+  pleft: '<rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M6.25 2.5v11"/>',
+  pright: '<rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M9.75 2.5v11"/>',
+  plus: '<path d="M8 3v10M3 8h10"/>',
+  sync: '<path d="M13 8a5 5 0 1 1-1.46-3.54M13 2.75V5.5h-2.75"/>',
+  search: '<circle cx="7" cy="7" r="4.25"/><path d="m10.25 10.25 3.25 3.25"/>',
+  inbox: '<path d="M2 9h3.5l1 1.5h3l1-1.5H14"/><path d="M4 3.5h8L14 9v3.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V9Z"/>',
+  send: '<path d="M14 2 7 9M14 2 9.5 14 7 9 2 6.5Z"/>',
+  archive: '<rect x="2" y="3" width="12" height="3" rx=".75"/><path d="M3 6v6.5a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6M6.5 9h3"/>',
+  trash: '<path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4"/>',
+  junk: '<path d="M8 1.75 2.75 3.75v3.75c0 3.1 2.2 5.6 5.25 6.75 3.05-1.15 5.25-3.65 5.25-6.75V3.75Z"/><path d="M8 5.25v3M8 10.5v.25"/>',
+  shield: '<path d="M8 1.75 2.75 3.75v3.75c0 3.1 2.2 5.6 5.25 6.75 3.05-1.15 5.25-3.65 5.25-6.75V3.75Z"/><path d="m5.75 8 1.5 1.5 3-3"/>',
+  drafts: '<path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5Z"/><path d="M9.5 2v3.5H13"/>',
+  folder: '<path d="M2 4.5a1 1 0 0 1 1-1h3l1.5 1.5H13a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1Z"/>',
+  down: '<path d="m4.5 6 3.5 3.5L11.5 6"/>',
+  right: '<path d="m6 4.5 3.5 3.5L6 11.5"/>',
+  server: '<rect x="2.5" y="2.5" width="11" height="4.5" rx="1"/><rect x="2.5" y="9" width="11" height="4.5" rx="1"/><path d="M5 4.75h.01M5 11.25h.01"/>',
+  filter: '<path d="M2.5 3.5h11l-4.25 5v4l-2.5 1v-5Z"/>',
+  open: '<path d="M2 6.5 8 2.5l6 4V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1Z"/><path d="m2 6.5 6 4 6-4"/>',
+  star: '<path d="m8 1.8 1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6Z"/>',
+  clip: '<path d="m13 7.5-4.8 4.8a3 3 0 0 1-4.3-4.3l5-5a2 2 0 0 1 2.9 2.9l-5 5a1 1 0 0 1-1.4-1.4l4.6-4.6"/>',
+  sort: '<path d="M5 13V3M2.5 5.5 5 3l2.5 2.5M11 3v10M8.5 10.5 11 13l2.5-2.5"/>',
+  cards: '<path d="M2.5 4h11M2.5 8h11M2.5 12h11"/>',
+  table: '<rect x="2" y="3" width="12" height="10" rx="1"/><path d="M2 6.5h12M6 6.5V13"/>',
+  reply: '<path d="M6.5 4 3 7.5 6.5 11M3 7.5h6.5A3.5 3.5 0 0 1 13 11v1"/>',
+  replyall: '<path d="M5 4 1.5 7.5 5 11M8.5 4 5 7.5 8.5 11M5 7.5h5a3.5 3.5 0 0 1 3.5 3.5v1"/>',
+  fwd: '<path d="M9.5 4 13 7.5 9.5 11M13 7.5H6.5A3.5 3.5 0 0 0 3 11v1"/>',
+  octagon: '<path d="M5.5 2h5L14 5.5v5L10.5 14h-5L2 10.5v-5Z"/><path d="M8 5v3.25M8 10.75V11"/>',
+  bot: '<rect x="3" y="5" width="10" height="8" rx="2"/><path d="M8 5V2.75M6 8.75v.5M10 8.75v.5M1.5 8.5v2M14.5 8.5v2"/>',
+  clock: '<circle cx="8" cy="8" r="6"/><path d="M8 4.75V8l2.25 1.5"/>',
+  sparkles: '<path d="m7 2 1.2 3.3 3.3 1.2-3.3 1.2L7 11 5.8 7.7 2.5 6.5l3.3-1.2Z"/><path d="m12 10 .6 1.4 1.4.6-1.4.6L12 14l-.6-1.4L10 12l1.4-.6Z"/>',
+  term: '<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5"/><path d="m4.5 6.25 2 1.75-2 1.75M8.5 10h3"/>',
+  check: '<path d="m3.5 8.5 3 3 6-7"/>',
+  x: '<path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/>',
+  up: '<path d="M8 13V3.5M4 7.5l4-4 4 4"/>',
+  upright: '<path d="M5 11 11 5M6 5h5v5"/>',
+  image: '<rect x="2" y="3" width="12" height="10" rx="1"/><circle cx="6" cy="6.5" r="1"/><path d="m2.5 12 3.5-3.5 2.5 2.5 2-2 3 3"/>',
+  user: '<circle cx="8" cy="5.5" r="2.5"/><path d="M3 13.5c.6-2.4 2.6-3.75 5-3.75s4.4 1.35 5 3.75"/>',
+};
+
+const ic = (name: string, cls = "") =>
+  `<svg class="mw-i${cls ? ` ${cls}` : ""}" viewBox="0 0 16 16"><use href="#mw-${name}"></use></svg>`;
+
+---
+
+<div class="mw-wrap">
+  <div class="mw-stage">
+    <div class="mw" data-maze-window aria-hidden="true">
+      <svg class="mw-sprite" width="0" height="0">
+        {Object.entries(ICONS).map(([name, d]) => <symbol id={`mw-${name}`} viewBox="0 0 16 16" set:html={d} />)}
+      </svg>
+
+      <div class="mw-title">
+        <span class="mw-lights"><i></i><i></i><i></i></span>
+        <span class="mw-btn" set:html={ic("pleft")} />
+        <span class="mw-btn" set:html={ic("plus")} />
+        <span class="mw-btn" set:html={ic("sync")} />
+        <span class="mw-search"><Fragment set:html={ic("search")} /><span>Search all messages…</span><span class="mw-kbd">⌘⇧F</span></span>
+      </div>
+
+      <div class="mw-main">
+        <div class="mw-spaces">
+          <span class="mw-space on" set:html={ic("mail")} />
+          <span class="mw-space off" set:html={ic("book")} />
+          <span class="mw-grow"></span>
+          <span class="mw-space off" set:html={ic("puzzle")} />
+          <span class="mw-space" set:html={ic("gear")} />
+        </div>
+
+        <div class="mw-folders">
+          <div class="mw-sec">Favorites</div>
+          <div class="mw-f"><Fragment set:html={ic("folder")} /><span class="mw-fn">Clients</span></div>
+          <div class="mw-f"><Fragment set:html={ic("folder")} /><span class="mw-fn">Travel</span><span class="mw-n">2</span></div>
+          <div class="mw-sec">Unified folders</div>
+          <div class="mw-f on b"><Fragment set:html={ic("inbox")} /><span class="mw-fn">Inbox</span><span class="mw-badge" data-count="inbox">109</span></div>
+          <div class="mw-f"><Fragment set:html={ic("drafts")} /><span class="mw-fn">Drafts</span></div>
+          <div class="mw-f"><Fragment set:html={ic("send")} /><span class="mw-fn">Sent</span></div>
+          <div class="mw-f" data-folder="archive"><Fragment set:html={ic("archive")} /><span class="mw-fn">Archive</span><span class="mw-n" data-count="archive"></span></div>
+          <div class="mw-f"><Fragment set:html={ic("junk")} /><span class="mw-fn">Junk</span></div>
+          <div class="mw-f" data-folder="trash"><Fragment set:html={ic("trash")} /><span class="mw-fn">Trash</span><span class="mw-n" data-count="trash"></span></div>
+          <div class="mw-sec">Accounts</div>
+          <div class="mw-f mw-acct b"><Fragment set:html={ic("down", "mw-tw")} /><Fragment set:html={ic("server")} /><span class="mw-fn">Personal</span></div>
+          <div class="mw-f d"><Fragment set:html={ic("inbox")} /><span class="mw-fn">Inbox</span><span class="mw-n" data-count="pinbox">61</span></div>
+          <div class="mw-f d"><Fragment set:html={ic("send")} /><span class="mw-fn">Sent</span></div>
+          <div class="mw-f d"><Fragment set:html={ic("archive")} /><span class="mw-fn">Archive</span><span class="mw-n" data-count="parchive"></span></div>
+          <div class="mw-f mw-acct b"><Fragment set:html={ic("right", "mw-tw")} /><Fragment set:html={ic("server")} /><span class="mw-fn">Work</span></div>
+          <div class="mw-grow"></div>
+          <div class="mw-f mw-add"><Fragment set:html={ic("plus")} /><span class="mw-fn">Add Account…</span></div>
+        </div>
+
+        <div class="mw-pane">
+          <div class="mw-tabs">
+            <span class="mw-tab"><Fragment set:html={ic("inbox")} />Inbox · Unified<Fragment set:html={ic("x", "mw-tx")} /></span>
+          </div>
+          <div class="mw-panebody">
+            <div class="mw-list">
+              <div class="mw-lh">
+                <div class="mw-lh1">
+                  <b>Inbox · Unified</b>
+                  <span class="mw-lc" data-count="threads">1,284 threads</span>
+                  <span class="mw-btn" set:html={ic("sort")} />
+                  <span class="mw-btn on" set:html={ic("cards")} />
+                  <span class="mw-btn" set:html={ic("table")} />
+                </div>
+                <div class="mw-lh2">
+                  <span class="mw-qf"><Fragment set:html={ic("filter")} />Quick filter…<span class="mw-kbd">⌘F</span></span>
+                  <span class="mw-btn" set:html={ic("open")} />
+                  <span class="mw-btn" set:html={ic("star")} />
+                  <span class="mw-btn" set:html={ic("clip")} />
+                </div>
+              </div>
+              <div class="mw-rowsclip">
+                <div class="mw-rows">
+                  {
+                    ROWS.map((r, i) => (
+                      <div
+                        class:list={["mw-row", { u: r.unread, sel: i === 0, hit: firstHits.has(r.key) }]}
+                        data-row={r.key}
+                        data-subject={r.subject}
+                      >
+                        <div class="mw-r1">
+                          <i class="mw-dot" />
+                          {r.outgoing && <Fragment set:html={ic("upright", "mw-out")} />}
+                          <span class="mw-from">{r.from}</span>
+                          <span class="mw-date">{r.date}</span>
+                        </div>
+                        <div class="mw-r2">
+                          <span class="mw-subj">{r.subject}</span>
+                          {r.count && (
+                            <span class="mw-cnt">
+                              <Fragment set:html={ic("right")} />
+                              {r.count}
+                            </span>
+                          )}
+                          {r.clip && <Fragment set:html={ic("clip", "mw-clip")} />}
+                          <Fragment set:html={ic("star", "mw-star")} />
+                        </div>
+                      </div>
+                    ))
+                  }
+                </div>
+              </div>
+            </div>
+
+            <div class="mw-view">
+              {
+                MSGS.map((m, i) => (
+                  <div class:list={["mw-msg", { cur: i === 0 }]} data-msg={m.key}>
+                    <div class="mw-mh">
+                      <div class="mw-ms">{m.subject}</div>
+                      <div class="mw-mfrom">
+                        <span class="mw-av">{m.from.split(" ").map((w) => w[0]).slice(0, 2).join("")}</span>
+                        <span class="mw-who">
+                          <b>{m.from}</b>
+                          <span class="mw-addr">{m.email}</span>
+                          {m.sig && <span class="mw-enrich">Head of Operations · Northwind Traders · +44 20 7946 0142</span>}
+                        </span>
+                        <span class="mw-mdate">{m.date}</span>
+                      </div>
+                      <div class="mw-to">
+                        <span>To</span>Sam Carter
+                      </div>
+                      <div class="mw-ver">
+                        <Fragment set:html={ic("shield", "mw-ok")} />
+                        <span class="mw-chip">
+                          DKIM <em>pass</em>
+                        </span>
+                        <span class="mw-chip">
+                          SPF <em>pass</em>
+                        </span>
+                        <span class="mw-chip">
+                          DMARC <em>pass</em>
+                        </span>
+                        <span class="mw-okt">Verified sender</span>
+                      </div>
+                      <div class="mw-acts">
+                        <span class="mw-ob"><Fragment set:html={ic("reply")} />Reply</span>
+                        <span class="mw-ob"><Fragment set:html={ic("replyall")} />All</span>
+                        <span class="mw-ob"><Fragment set:html={ic("fwd")} />Fwd</span>
+                        <span class="mw-ob"><Fragment set:html={ic("archive")} />Archive</span>
+                        <span class="mw-ob"><Fragment set:html={ic("octagon")} />Junk</span>
+                        {m.html && (
+                          <span class="mw-mode">
+                            <span>Reader</span>
+                            <span class="on">Original</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {m.html && (
+                      <div class="mw-remote">
+                        <Fragment set:html={ic("shield")} />
+                        <span>Remote images are blocked to protect your privacy (6 images blocked, 2 trackers removed).</span>
+                        <span class="mw-ob">Load images</span>
+                      </div>
+                    )}
+                    {m.html ? (
+                      <div class="mw-body mw-news">
+                        <div class="mw-nl-top">THE WEEKLY BYTE · Issue 212</div>
+                        <div class="mw-nl-img">
+                          <Fragment set:html={ic("image")} />
+                        </div>
+                        <div class="mw-nl-h">Smaller binaries, faster builds</div>
+                        {m.body.map((p) => <p>{p}</p>)}
+                        <div class="mw-nl-img mw-nl-img--s">
+                          <Fragment set:html={ic("image")} />
+                        </div>
+                      </div>
+                    ) : (
+                      <div class="mw-body">
+                        {m.body.map((p) => <p>{p}</p>)}
+                        {m.sig && <p class="mw-sig">{m.sig.join("\n")}</p>}
+                      </div>
+                    )}
+                  </div>
+                ))
+              }
+            </div>
+          </div>
+        </div>
+
+        <div class="mw-agent">
+          <div class="mw-ah">
+            <Fragment set:html={ic("bot", "mw-ahi")} />
+            <span class="mw-at" data-mw-title>{FIRST.title}</span>
+            <span class="mw-soon mw-soon--head">Soon</span>
+            <span class="mw-btn" set:html={ic("shield")} />
+            <span class="mw-btn" set:html={ic("clock")} />
+            <span class="mw-btn" set:html={ic("plus")} />
+            <span class="mw-btn" set:html={ic("pright")} />
+          </div>
+          <div class="mw-abody">
+            {
+              TASKS.map((t) => (
+                <div
+                  class:list={["mw-task", { "mw-task--soon": t.soon }]}
+                  data-agent={t.agent}
+                  data-mode={t.mode}
+                  data-title={t.title}
+                  data-select={t.select}
+                  data-gone={t.effect.gone}
+                  data-flag={t.effect.flag}
+                  data-after={t.effect.after}
+                  data-enrich={t.effect.enrich}
+                  data-counts={t.effect.counts ? JSON.stringify(t.effect.counts) : undefined}
+                >
+                  <div class="mw-propwrap">
+                    <div class="mw-prop mw-step">
+                      <div class="mw-ph">
+                        <b>Proposed changes · {t.proposal.total}</b>
+                        <span class="mw-pb mw-pb--primary" data-accept>
+                          Accept all <span class="mw-pk">⌘⇧⏎</span>
+                        </span>
+                        <span class="mw-pb">Reject all</span>
+                      </div>
+                      <div class="mw-pg">
+                        <div class="mw-pgt">
+                          <b>{t.proposal.title}</b>
+                          <span>{t.agent}</span>
+                          {t.soon && <span class="mw-soon">Soon</span>}
+                        </div>
+                        {t.proposal.items.map((it, i) => (
+                          <div class:list={["mw-pi", { cur: i === 0, "mw-pi--diff": t.proposal.diff }]}>
+                            <span class="mw-pit">
+                              <span class="mw-pis">{it.summary}</span>
+                              <span class="mw-pir">{it.reason}</span>
+                            </span>
+                            <span class="mw-pia">
+                              <Fragment set:html={ic("check")} />
+                              <Fragment set:html={ic("x")} />
+                            </span>
+                            <span class="mw-pid">applied</span>
+                          </div>
+                        ))}
+                        <div class="mw-pmore">{t.proposal.more}</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="mw-conv">
+                    <div class="mw-user mw-step">{t.prompt}</div>
+                    <div class="mw-think mw-step" data-dur="1100">
+                      <Fragment set:html={ic("sparkles")} />
+                      Thinking
+                      <Fragment set:html={ic("right")} />
+                    </div>
+                    {t.tools.map((tool) => (
+                      <div class="mw-term mw-step" data-dur={tool.out.length > 1 ? "1000" : "750"} data-hit={tool.hit} data-sig={tool.sig ? "" : undefined}>
+                        <div class="mw-th">
+                          <Fragment set:html={ic("term")} />
+                          <code>{tool.cmd}</code>
+                          <span class="mw-auto">auto</span>
+                          <i class="mw-spin" />
+                          <span class="mw-done">done</span>
+                          <Fragment set:html={ic("down")} />
+                        </div>
+                        <pre class="mw-to2">{tool.out.join("\n")}</pre>
+                      </div>
+                    ))}
+                    <div class="mw-say mw-step">{t.say}</div>
+                    <div class="mw-say mw-final mw-step">{t.final}</div>
+                  </div>
+                </div>
+              ))
+            }
+          </div>
+          <div class="mw-af">
+            <div class="mw-ctx">
+              <span data-mw-ctx>@thread {ROWS[0]!.subject}</span>
+            </div>
+            <div class="mw-field">
+              <span data-mw-typed></span><span class="mw-caret"></span><span class="mw-place">Ask the agent…  ⏎ send, ⇧⏎ new line</span>
+            </div>
+            <div class="mw-bar">
+              <span class="mw-modeb"><span data-mw-mode>{FIRST.mode}</span><Fragment set:html={ic("down")} /></span>
+              <span class="mw-grow"></span>
+              <span class="mw-send">
+                <Fragment set:html={ic("up", "mw-up")} />
+                <i class="mw-stop"></i>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mw-status">
+        <span><Fragment set:html={ic("sync")} />2 accounts</span>
+        <span><Fragment set:html={ic("send")} />Outbox 0</span>
+        <span><i class="mw-online"></i>Online</span>
+        <span><Fragment set:html={ic("bot")} />AI on</span>
+        <span class="mw-grow"></span>
+        <span data-count="threads">1,284 threads</span>
+        <span><b>⌘⇧P</b> commands</span>
+      </div>
+
+      <svg class="mw-cursor" viewBox="0 0 16 22" width="16" height="22"><path d="M1.5 1.5v16l4.2-4 2.8 6.3 2.6-1.1-2.8-6.2h5.9Z"></path></svg>
+    </div>
+  </div>
+  <div class="mw-foot">
+    <p>
+      Not a screenshot: Maze's window in HTML, with made-up mail. Ask in plain words; every change comes back as a
+      proposal you accept or reject. The contacts example is planned (<a href="/roadmap/">roadmap</a>); the others work today.
+    </p>
+    <button class="mw-pause" type="button" data-mw-pause hidden>Pause</button>
+  </div>
+  <div class="visually-hidden">
+    <p>Examples of what you can ask an agent in Maze:</p>
+    <ul>{TASKS.map((t) => <li>{t.summary}</li>)}</ul>
+  </div>
+</div>
+
+<style is:global>
+  /* ---------- Frame and scaling ---------- */
+
+  .mw-wrap {
+    container-type: inline-size;
+  }
+
+  /* The design size of each layout, as unitless numbers (they also give the aspect ratio). */
+  .mw-stage {
+    --mw-w: 1200;
+    --mw-h: 720;
+    position: relative;
+    max-width: calc(var(--mw-w) * 1px);
+    margin-inline: auto;
+    aspect-ratio: var(--mw-w) / var(--mw-h);
+    overflow: hidden;
+    border-radius: var(--radius-lg);
+    /* A ring instead of a border, so the scaled window fills the box exactly. */
+    box-shadow: 0 0 0 1px var(--border-strong), var(--shot-shadow);
+    contain: layout paint;
+  }
+
+  @container (max-width: 959.98px) {
+    .mw-stage {
+      --mw-w: 800;
+      --mw-h: 720;
+    }
+  }
+
+  @container (max-width: 559.98px) {
+    .mw-stage {
+      --mw-w: 420;
+      --mw-h: 840;
+    }
+  }
+
+  .mw {
+    /* One Light, Zed's default light theme (assets/themes/one.json). */
+    --m-bg: #fafafa;
+    --m-panel: #ebebec;
+    --m-chrome: #dcdcdd;
+    --m-line: #c9c9ca;
+    --m-line-2: #dfdfe0;
+    --m-fg: #242529;
+    --m-fg-2: #58585a;
+    --m-fg-3: #7e8086;
+    --m-acc: #5c78e2;
+    --m-acc-fg: #fafafa;
+    --m-hover: #dfdfe0;
+    --m-pick: #cacaca;
+    --m-row-on: #f0f0f0;
+    --m-folder-on: #e4e4e5;
+    --m-ok: #669f59;
+    --m-warn: #a48819;
+    --m-bad: #d36151;
+    --m-hit: color-mix(in srgb, var(--m-acc) 13%, var(--m-bg));
+
+    position: absolute;
+    left: 0;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    width: calc(var(--mw-w) * 1px);
+    height: calc(var(--mw-h) * 1px);
+    overflow: hidden;
+    transform-origin: 0 0;
+    /* Width of the box divided by the design width, as a plain number. */
+    transform: scale(var(--mw-s, min(1, tan(atan2(100cqw, calc(var(--mw-w) * 1px))))));
+    background: var(--m-bg);
+    color: var(--m-fg);
+    font-family: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 12.5px;
+    line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    pointer-events: none;
+    text-align: left;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .mw {
+      --m-bg: #282c33;
+      --m-panel: #2f343e;
+      --m-chrome: #3b414d;
+      --m-line: #464b57;
+      --m-line-2: #363c46;
+      --m-fg: #dce0e5;
+      --m-fg-2: #a9afbc;
+      --m-fg-3: #878a98;
+      --m-acc: #74ade8;
+      --m-acc-fg: #282c33;
+      --m-hover: #363c46;
+      --m-pick: #454a56;
+      --m-row-on: #2e323a;
+      --m-folder-on: #363b46;
+      --m-ok: #a1c181;
+      --m-warn: #dec184;
+      --m-bad: #d07277;
+    }
+  }
+
+  :root[data-theme="dark"] .mw {
+    --m-bg: #282c33;
+    --m-panel: #2f343e;
+    --m-chrome: #3b414d;
+    --m-line: #464b57;
+    --m-line-2: #363c46;
+    --m-fg: #dce0e5;
+    --m-fg-2: #a9afbc;
+    --m-fg-3: #878a98;
+    --m-acc: #74ade8;
+    --m-acc-fg: #282c33;
+    --m-hover: #363c46;
+    --m-pick: #454a56;
+    --m-row-on: #2e323a;
+    --m-folder-on: #363b46;
+    --m-ok: #a1c181;
+    --m-warn: #dec184;
+    --m-bad: #d07277;
+  }
+
+  .mw *,
+  .mw *::before,
+  .mw *::after {
+    box-sizing: border-box;
+  }
+
+  .mw-sprite {
+    position: absolute;
+  }
+
+  .mw-i {
+    width: 14px;
+    height: 14px;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.35;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .mw p {
+    margin: 0;
+    text-wrap: initial;
+  }
+
+  .mw b {
+    font-weight: 600;
+  }
+
+  .mw code,
+  .mw pre {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    color: inherit;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-variant-ligatures: none;
+  }
+
+  .mw-grow {
+    flex: 1;
+  }
+
+  .mw-btn {
+    display: inline-grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    flex: none;
+    border-radius: 4px;
+    color: var(--m-fg-2);
+  }
+
+  .mw-btn.on {
+    background: var(--m-hover);
+    color: var(--m-fg);
+  }
+
+  .mw-kbd {
+    margin-left: 0.5em;
+    color: var(--m-fg-3);
+  }
+
+  /* ---------- Title bar ---------- */
+
+  .mw-title {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    height: 34px;
+    flex: none;
+    padding: 0 8px 0 12px;
+    background: var(--m-chrome);
+    border-bottom: 1px solid var(--m-line);
+  }
+
+  .mw-lights {
+    display: inline-flex;
+    gap: 7px;
+    margin-right: 22px;
+  }
+
+  .mw-lights i {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: #ff5f57;
+  }
+
+  .mw-lights i:nth-child(2) {
+    background: #febc2e;
+  }
+
+  .mw-lights i:nth-child(3) {
+    background: #28c840;
+  }
+
+  .mw-search {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 280px;
+    height: 24px;
+    margin-left: auto;
+    padding: 0 8px;
+    border: 1px solid var(--m-line);
+    border-radius: 4px;
+    background: var(--m-bg);
+    color: var(--m-fg-3);
+    font-size: 12px;
+  }
+
+  /* ---------- Columns ---------- */
+
+  .mw-main {
+    display: grid;
+    grid-template-columns: 36px 164px minmax(0, 1fr) 336px;
+    grid-template-rows: minmax(0, 1fr);
+    flex: 1;
+    min-height: 0;
+  }
+
+  .mw-spaces {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 0;
+    background: var(--m-chrome);
+    border-right: 1px solid var(--m-line);
+    color: var(--m-fg-2);
+  }
+
+  .mw-space {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 4px;
+  }
+
+  .mw-space .mw-i {
+    width: 15px;
+    height: 15px;
+  }
+
+  .mw-space.on {
+    background: var(--m-pick);
+    color: var(--m-fg);
+  }
+
+  .mw-space.off {
+    opacity: 0.55;
+  }
+
+  /* Folder pane */
+  .mw-folders {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    padding: 6px 0 4px;
+    background: var(--m-panel);
+    border-right: 1px solid var(--m-line);
+    font-size: 12.5px;
+  }
+
+  .mw-sec {
+    padding: 8px 10px 3px;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--m-fg-2);
+  }
+
+  .mw-f {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 25px;
+    padding: 0 10px 0 22px;
+    color: var(--m-fg);
+    transition: background-color 0.4s ease;
+  }
+
+  .mw-f > .mw-i {
+    width: 13px;
+    height: 13px;
+    color: var(--m-fg-2);
+  }
+
+  .mw-f.b .mw-fn {
+    font-weight: 600;
+  }
+
+  .mw-f.on {
+    background: var(--m-folder-on);
+  }
+
+  .mw-f.d {
+    padding-left: 38px;
+  }
+
+  .mw-acct {
+    padding-left: 8px;
+  }
+
+  .mw-acct .mw-tw {
+    width: 11px;
+    height: 11px;
+    margin-right: -2px;
+  }
+
+  .mw-add {
+    padding-left: 12px;
+    border-top: 1px solid var(--m-line);
+    height: 30px;
+    color: var(--m-fg);
+  }
+
+  .mw-fn {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mw-n {
+    font-size: 11px;
+    color: var(--m-fg-2);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .mw-badge {
+    min-width: 20px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: var(--m-acc);
+    color: var(--m-acc-fg);
+    font-size: 10.5px;
+    font-weight: 600;
+    line-height: 16px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .mw-n.bump,
+  .mw-badge.bump {
+    animation: mw-bump 0.6s ease;
+  }
+
+  .mw-f.drop {
+    background: var(--m-hit);
+  }
+
+  /* Pane: tab bar, list and message */
+  .mw-pane {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .mw-tabs {
+    display: flex;
+    height: 32px;
+    flex: none;
+    background: var(--m-panel);
+    border-bottom: 1px solid var(--m-line);
+  }
+
+  .mw-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: -1px;
+    padding: 0 10px 0 12px;
+    background: var(--m-bg);
+    border-right: 1px solid var(--m-line);
+    box-shadow: inset 0 2px 0 var(--m-acc);
+    font-size: 12.5px;
+  }
+
+  .mw-tab .mw-i {
+    width: 13px;
+    height: 13px;
+    color: var(--m-fg-2);
+  }
+
+  .mw-tab .mw-tx {
+    width: 11px;
+    height: 11px;
+    margin-left: 4px;
+  }
+
+  .mw-panebody {
+    display: grid;
+    grid-template-columns: 264px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* Message list (cards) */
+  .mw-list {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    border-right: 1px solid var(--m-line);
+  }
+
+  .mw-lh {
+    display: grid;
+    gap: 5px;
+    padding: 6px 8px 6px 10px;
+    border-bottom: 1px solid var(--m-line);
+  }
+
+  .mw-lh1,
+  .mw-lh2 {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .mw-lh1 b {
+    flex: 1;
+    font-size: 12.5px;
+  }
+
+  .mw-lc {
+    margin-right: 4px;
+    font-size: 11px;
+    color: var(--m-fg-2);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .mw-qf {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 5px;
+    height: 23px;
+    margin-right: 4px;
+    padding: 0 7px;
+    border: 1px solid var(--m-line);
+    border-radius: 4px;
+    color: var(--m-fg-3);
+    font-size: 12px;
+  }
+
+  .mw-qf .mw-i {
+    width: 12px;
+    height: 12px;
+  }
+
+  .mw-rowsclip {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .mw-rows {
+    position: relative;
+    transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .mw-row {
+    position: relative;
+    height: 52px;
+    padding: 0 12px 0 8px;
+    overflow: hidden;
+    border-bottom: 1px solid color-mix(in srgb, var(--m-line) 50%, transparent);
+    transition:
+      height 0.45s ease,
+      opacity 0.3s ease,
+      background-color 0.35s ease,
+      border-color 0.45s;
+  }
+
+  .mw-row.sel {
+    background: var(--m-row-on);
+  }
+
+  .mw-row.sel::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 2px;
+    background: var(--m-acc);
+  }
+
+  .mw-row.hit {
+    background: var(--m-hit);
+  }
+
+  .mw-row.gone {
+    height: 0;
+    opacity: 0;
+    border-color: transparent;
+  }
+
+  .mw-r1,
+  .mw-r2 {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+  }
+
+  .mw-r1 {
+    padding-top: 4px;
+  }
+
+  .mw-r2 {
+    padding: 0 0 4px 13px;
+  }
+
+  .mw-dot {
+    width: 7px;
+    height: 7px;
+    flex: none;
+    border-radius: 50%;
+  }
+
+  .mw-row.u .mw-dot {
+    background: var(--m-acc);
+  }
+
+  .mw-out {
+    width: 12px;
+    height: 12px;
+    color: var(--m-fg-2);
+  }
+
+  .mw-from,
+  .mw-subj {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mw-row.u .mw-from {
+    font-weight: 600;
+  }
+
+  .mw-subj {
+    color: var(--m-fg-2);
+  }
+
+  .mw-row.u .mw-subj {
+    color: var(--m-fg);
+  }
+
+  .mw-date {
+    flex: none;
+    font-size: 11px;
+    color: var(--m-fg-2);
+  }
+
+  .mw-row.u .mw-date {
+    color: var(--m-acc);
+  }
+
+  .mw-cnt {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    padding: 0 4px 0 1px;
+    border-radius: 3px;
+    background: var(--m-panel);
+    color: var(--m-fg-2);
+    font-size: 10.5px;
+    line-height: 16px;
+  }
+
+  .mw-cnt .mw-i {
+    width: 11px;
+    height: 11px;
+  }
+
+  .mw-clip {
+    width: 12px;
+    height: 12px;
+    color: var(--m-fg-2);
+  }
+
+  .mw-star {
+    display: none;
+    width: 13px;
+    height: 13px;
+    color: var(--m-warn);
+    fill: currentColor;
+  }
+
+  .mw-row.flag .mw-star {
+    display: block;
+    animation: mw-pop 0.45s ease;
+  }
+
+  /* Message view */
+  .mw-view {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .mw-msg {
+    display: none;
+    flex-direction: column;
+    height: 100%;
+  }
+
+  .mw-msg.cur {
+    display: flex;
+    animation: mw-fade 0.25s ease;
+  }
+
+  .mw-mh {
+    display: grid;
+    gap: 7px;
+    padding: 11px 16px 8px;
+    border-bottom: 1px solid var(--m-line);
+  }
+
+  .mw-ms {
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mw-mfrom {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .mw-av {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    flex: none;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--m-acc) 20%, transparent);
+    color: var(--m-acc);
+    font-size: 10.5px;
+    font-weight: 600;
+  }
+
+  .mw-who {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .mw-who b,
+  .mw-addr {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mw-addr {
+    font-size: 11px;
+    color: var(--m-fg-2);
+  }
+
+  .mw-enrich {
+    display: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    color: var(--m-fg);
+  }
+
+  .mw-msg.enriched .mw-enrich {
+    display: block;
+    animation: mw-fade 0.5s ease;
+  }
+
+  .mw-mdate {
+    flex: none;
+    align-self: flex-start;
+    padding-top: 2px;
+    font-size: 11px;
+    color: var(--m-fg-2);
+  }
+
+  .mw-to {
+    font-size: 12px;
+  }
+
+  .mw-to span {
+    display: inline-block;
+    width: 40px;
+    font-size: 11px;
+    color: var(--m-fg-2);
+  }
+
+  .mw-ver {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .mw-ver .mw-i {
+    width: 12px;
+    height: 12px;
+  }
+
+  .mw-ok,
+  .mw-okt {
+    color: var(--m-ok);
+  }
+
+  .mw-chip {
+    padding: 0 4px;
+    border: 1px solid var(--m-line);
+    border-radius: 3px;
+    color: var(--m-fg-2);
+  }
+
+  .mw-chip em {
+    font-style: normal;
+    color: var(--m-ok);
+  }
+
+  .mw-acts {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    overflow: hidden;
+  }
+
+  .mw-ob {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    flex: none;
+    height: 21px;
+    padding: 0 4px;
+    border: 1px solid var(--m-line);
+    border-radius: 4px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .mw-ob .mw-i {
+    width: 12px;
+    height: 12px;
+  }
+
+  .mw-mode {
+    display: inline-flex;
+    gap: 1px;
+    margin-left: auto;
+    font-size: 10.5px;
+  }
+
+  .mw-mode span {
+    padding: 2px 4px;
+    border-radius: 4px;
+  }
+
+  .mw-mode .on {
+    background: var(--m-hover);
+  }
+
+  .mw-remote {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 16px;
+    border-bottom: 1px solid var(--m-line);
+    background: var(--m-panel);
+    font-size: 11px;
+  }
+
+  .mw-remote > span:first-of-type {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mw-remote .mw-i {
+    width: 12px;
+    height: 12px;
+  }
+
+  .mw-body {
+    display: grid;
+    align-content: start;
+    gap: 11px;
+    padding: 14px 16px;
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-line;
+  }
+
+  .mw-sig {
+    margin-top: 2px;
+    padding: 4px 6px;
+    margin-left: -6px;
+    border-radius: 4px;
+    color: var(--m-fg-2);
+    font-size: 12px;
+    transition: background-color 0.4s ease;
+  }
+
+  .mw-msg.sig .mw-sig {
+    background: var(--m-hit);
+    color: var(--m-fg);
+  }
+
+  .mw-news {
+    gap: 10px;
+    margin: 12px 16px;
+    padding: 14px;
+    border: 1px solid var(--m-line-2);
+    background: #ffffff;
+    color: #1f2328;
+  }
+
+  .mw-nl-top {
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: #6b4fd8;
+  }
+
+  .mw-nl-h {
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.25;
+  }
+
+  .mw-nl-img {
+    display: grid;
+    place-items: center;
+    height: 92px;
+    border: 1px dashed #c8c8cc;
+    border-radius: 3px;
+    color: #9a9aa0;
+  }
+
+  .mw-nl-img--s {
+    height: 48px;
+  }
+
+  .mw-nl-img .mw-i {
+    width: 20px;
+    height: 20px;
+  }
+
+  /* ---------- Agent column ---------- */
+
+  .mw-agent {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    background: var(--m-panel);
+    border-left: 1px solid var(--m-line);
+  }
+
+  .mw-ah {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 32px;
+    flex: none;
+    padding: 0 4px 0 8px;
+    border-bottom: 1px solid var(--m-line);
+    background: var(--m-panel);
+  }
+
+  .mw-ahi {
+    color: var(--m-fg-2);
+  }
+
+  .mw-at {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11.5px;
+    font-weight: 600;
+  }
+
+  .mw-at.ph {
+    font-weight: 400;
+    color: var(--m-fg-2);
+  }
+
+  .mw-ah .mw-btn {
+    width: 20px;
+    height: 20px;
+  }
+
+  .mw-ah .mw-btn .mw-i {
+    width: 13px;
+    height: 13px;
+  }
+
+  .mw-soon {
+    flex: none;
+    padding: 0 5px;
+    border: 1px dashed var(--m-fg-3);
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    font-weight: 400;
+    line-height: 1.5;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--m-fg-2);
+  }
+
+  .mw-soon--head {
+    display: none;
+  }
+
+  .mw.soon .mw-soon--head {
+    display: inline;
+  }
+
+  .mw-abody {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .mw-task {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    transition: opacity 0.35s ease;
+  }
+
+  .mw-task + .mw-task,
+  .mw.js .mw-task:not(.cur) {
+    display: none;
+  }
+
+  .mw.js .mw-task.cur {
+    display: flex;
+  }
+
+  .mw-task.out {
+    opacity: 0;
+  }
+
+  /* Proposals sit at the top of the column, as in Maze. */
+  .mw-propwrap {
+    display: grid;
+    grid-template-rows: 1fr;
+    flex: none;
+    transition: grid-template-rows 0.45s ease;
+  }
+
+  .mw-prop {
+    display: grid;
+    gap: 8px;
+    min-height: 0;
+    overflow: hidden;
+    margin: 8px;
+    padding: 8px;
+    border: 1px solid var(--m-acc);
+    border-radius: 8px;
+    background: var(--m-bg);
+    font-size: 11px;
+    transition:
+      opacity 0.3s ease,
+      margin 0.45s ease,
+      padding 0.45s ease,
+      border-width 0.45s;
+  }
+
+  .mw-ph {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .mw-ph b {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mw-pb {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 20px;
+    padding: 0 7px;
+    border-radius: 4px;
+    font-weight: 500;
+    white-space: nowrap;
+    transition:
+      transform 0.12s ease,
+      filter 0.12s ease;
+  }
+
+  .mw-pb--primary {
+    background: var(--m-acc);
+    color: var(--m-acc-fg);
+  }
+
+  .mw-pb.press {
+    transform: scale(0.94);
+    filter: brightness(0.9);
+  }
+
+  .mw-pk {
+    opacity: 0.75;
+  }
+
+  .mw-pg {
+    display: grid;
+    gap: 2px;
+  }
+
+  .mw-pgt {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-bottom: 1px;
+  }
+
+  .mw-pgt > span:not(.mw-soon) {
+    color: var(--m-fg-2);
+  }
+
+  .mw-pi {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 4px;
+    border-radius: 3px;
+  }
+
+  .mw-pi.cur {
+    background: var(--m-panel);
+  }
+
+  .mw-pit {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .mw-pis,
+  .mw-pir {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mw-pi--diff .mw-pis {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+  }
+
+  .mw-pir {
+    color: var(--m-fg-2);
+  }
+
+  .mw-pia {
+    display: inline-flex;
+    gap: 6px;
+    padding-right: 2px;
+    color: var(--m-fg-2);
+  }
+
+  .mw-pia .mw-i {
+    width: 13px;
+    height: 13px;
+  }
+
+  .mw-pid {
+    display: none;
+    color: var(--m-ok);
+  }
+
+  .mw-prop.ok .mw-pia {
+    display: none;
+  }
+
+  .mw-prop.ok .mw-pid {
+    display: inline;
+  }
+
+  .mw-pmore {
+    padding: 0 4px;
+    color: var(--m-fg-2);
+  }
+
+  .mw-propwrap.gone {
+    grid-template-rows: 0fr;
+  }
+
+  .mw-propwrap.gone .mw-prop {
+    opacity: 0;
+    margin-block: 0;
+    padding-block: 0;
+    border-width: 0;
+  }
+
+  /* Conversation: newest at the bottom, older entries fade under the header. */
+  .mw-conv {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 8px;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    padding-bottom: 10px;
+    mask-image: linear-gradient(transparent, #000 2.5rem);
+  }
+
+  .mw-conv > * {
+    flex: none;
+  }
+
+  .mw-user {
+    margin: 0 8px;
+    padding: 8px;
+    border: 1px solid var(--m-line);
+    border-radius: 6px;
+    background: var(--m-bg);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+  }
+
+  .mw-think {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 16px;
+    font-size: 11px;
+    color: var(--m-fg-2);
+  }
+
+  .mw-think .mw-i {
+    width: 12px;
+    height: 12px;
+  }
+
+  .mw-term {
+    margin: 0 8px;
+    overflow: hidden;
+    border: 1px solid var(--m-line);
+    border-radius: 6px;
+    background: var(--m-bg);
+  }
+
+  .mw-th {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 8px;
+    background: var(--m-panel);
+    font-size: 11px;
+    color: var(--m-fg-2);
+  }
+
+  .mw-th .mw-i {
+    width: 12px;
+    height: 12px;
+  }
+
+  .mw-th code {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--m-fg);
+  }
+
+  .mw-done {
+    color: var(--m-ok);
+  }
+
+  .mw-spin {
+    display: none;
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid var(--m-line);
+    border-top-color: var(--m-fg-2);
+    border-radius: 50%;
+    animation: mw-spin 0.7s linear infinite;
+  }
+
+  .mw .mw-to2 {
+    margin: 0;
+    padding: 5px 8px;
+    border-top: 1px solid var(--m-line);
+    color: var(--m-fg-2);
+    line-height: 1.5;
+    white-space: pre;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .mw-say {
+    padding: 0 16px;
+  }
+
+  /* Footer: context chip, prompt and the mode/send bar */
+  .mw-af {
+    display: grid;
+    gap: 6px;
+    flex: none;
+    padding: 6px 8px 8px;
+    border-top: 1px solid var(--m-line);
+    background: var(--m-bg);
+  }
+
+  .mw-ctx {
+    display: flex;
+    min-width: 0;
+  }
+
+  .mw-ctx span {
+    min-width: 0;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: var(--m-panel);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mw-field {
+    min-height: 36px;
+    padding: 0 2px;
+  }
+
+  .mw-caret {
+    display: inline-block;
+    width: 1.5px;
+    height: 1.15em;
+    margin-right: 1px;
+    vertical-align: text-bottom;
+    background: var(--m-acc);
+    animation: mw-blink 1.1s steps(1) infinite;
+  }
+
+  .mw-place {
+    display: none;
+    color: var(--m-fg-3);
+  }
+
+  [data-mw-typed]:empty ~ .mw-place {
+    display: inline;
+  }
+
+  .mw-bar {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .mw-modeb {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    height: 22px;
+    padding: 0 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--m-fg-2);
+  }
+
+  .mw-modeb .mw-i {
+    width: 11px;
+    height: 11px;
+  }
+
+  .mw-send {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    background: var(--m-acc);
+    color: var(--m-acc-fg);
+  }
+
+  .mw-stop {
+    display: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 1.5px;
+    background: currentColor;
+  }
+
+  .mw.busy .mw-send {
+    background: var(--m-bad);
+    color: #fff;
+  }
+
+  .mw.busy .mw-up {
+    display: none;
+  }
+
+  .mw.busy .mw-stop {
+    display: block;
+  }
+
+  /* ---------- Status bar ---------- */
+
+  .mw-status {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 24px;
+    flex: none;
+    padding: 0 10px;
+    background: var(--m-chrome);
+    border-top: 1px solid var(--m-line);
+    font-size: 11px;
+    color: var(--m-fg-2);
+  }
+
+  .mw-status > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+  }
+
+  .mw-status .mw-i {
+    width: 12px;
+    height: 12px;
+  }
+
+  .mw-status b {
+    font-weight: 500;
+    color: var(--m-fg);
+  }
+
+  .mw-online {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--m-ok);
+  }
+
+  /* ---------- Pointer ---------- */
+
+  .mw-cursor {
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 5;
+    opacity: 0;
+    transition:
+      transform 0.8s cubic-bezier(0.4, 0, 0.2, 1),
+      opacity 0.25s ease;
+  }
+
+  .mw-cursor path {
+    fill: #0b0b0d;
+    stroke: #fff;
+    stroke-width: 1.3;
+    stroke-linejoin: round;
+  }
+
+  .mw-cursor.on {
+    opacity: 1;
+  }
+
+  .mw-cursor.jump {
+    transition: none;
+  }
+
+  /* ---------- Playing (public/maze-window.js) ---------- */
+
+  /* Static (no JavaScript, reduced motion): the task at its proposal. */
+  .mw:not(.live) .mw-final,
+  .mw:not(.live) .mw-spin,
+  .mw:not(.live) .mw-caret {
+    display: none;
+  }
+
+  .mw.live .mw-step:not(.on) {
+    display: none;
+  }
+
+  .mw.live .mw-conv .mw-step.on {
+    animation: mw-in 0.3s ease;
+  }
+
+  .mw.live .mw-prop.on {
+    animation: mw-in 0.3s ease;
+  }
+
+  .mw.live .mw-term:not(.done) .mw-done,
+  .mw.live .mw-term:not(.done) .mw-to2,
+  .mw.live .mw-term:not(.done) .mw-th > .mw-i:last-child {
+    display: none;
+  }
+
+  .mw.live .mw-term:not(.done) .mw-spin {
+    display: inline-block;
+  }
+
+  .mw.live .mw-think:not(.done) {
+    animation: mw-pulse 1.2s ease-in-out infinite;
+  }
+
+  .mw.busy .mw-caret {
+    animation: none;
+    opacity: 0;
+  }
+
+  /* Between loops the mailbox fades out, resets and fades back in. */
+  .mw-panebody,
+  .mw-folders {
+    transition: opacity 0.35s ease;
+  }
+
+  .mw.resetting .mw-panebody,
+  .mw.resetting .mw-folders {
+    opacity: 0;
+  }
+
+  .mw.resetting .mw-row,
+  .mw.resetting .mw-rows {
+    transition: none;
+  }
+
+  .mw.paused .mw-spin,
+  .mw.paused .mw-caret,
+  .mw.paused .mw-think {
+    animation-play-state: paused;
+  }
+
+  @keyframes mw-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+  }
+
+  @keyframes mw-fade {
+    from {
+      opacity: 0;
+    }
+  }
+
+  @keyframes mw-pop {
+    0% {
+      transform: scale(0.2);
+      opacity: 0;
+    }
+    70% {
+      transform: scale(1.25);
+    }
+  }
+
+  @keyframes mw-bump {
+    40% {
+      transform: scale(1.18);
+    }
+  }
+
+  @keyframes mw-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes mw-blink {
+    50% {
+      opacity: 0;
+    }
+  }
+
+  @keyframes mw-pulse {
+    50% {
+      opacity: 0.45;
+    }
+  }
+
+  /* ---------- Smaller layouts ---------- */
+
+  /* Tablets: no message view (spaces, folders, list, agent). */
+  @container (max-width: 959.98px) {
+    .mw-main {
+      grid-template-columns: 36px 164px 264px 336px;
+    }
+    .mw-panebody {
+      grid-template-columns: 264px;
+    }
+    .mw-list {
+      border-right: 0;
+    }
+    .mw-view {
+      display: none;
+    }
+    .mw-tab {
+      max-width: 100%;
+    }
+  }
+
+  /* Phones: the list above the agent column. */
+  @container (max-width: 559.98px) {
+    .mw-lights {
+      display: none;
+    }
+    .mw-search {
+      width: 230px;
+    }
+    .mw-main {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: 322px minmax(0, 1fr);
+    }
+    .mw-spaces,
+    .mw-folders,
+    .mw-tabs {
+      display: none;
+    }
+    .mw-panebody {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .mw-agent {
+      border-left: 0;
+      border-top: 1px solid var(--m-line);
+    }
+    .mw-status > span:nth-child(2),
+    .mw-status > span:nth-child(6) {
+      display: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mw *,
+    .mw {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+
+  /* ---------- Under the window ---------- */
+
+  .mw-foot {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 0.9rem;
+    font-size: 0.8125rem;
+    color: var(--faint);
+  }
+
+  .mw-foot p {
+    max-width: 80ch;
+  }
+
+  .mw-foot a {
+    color: inherit;
+  }
+
+  .mw-pause {
+    flex: none;
+    padding: 0.15rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+
+  .mw-pause:hover {
+    color: var(--text-strong);
+    border-color: var(--border-strong);
+  }
+
+  .mw-pause[hidden] {
+    display: none;
+  }
+
+  @media (max-width: 560px) {
+    .mw-foot {
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+  }
+</style>
