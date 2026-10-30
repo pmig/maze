@@ -721,14 +721,15 @@ fn undo_and_redo_in_the_body(cx: &mut TestAppContext) {
 #[gpui::test]
 fn cut_copy_and_paste_in_the_body(cx: &mut TestAppContext) {
     let (view, cx) = open_body(cx, "Grüße 🎉");
-    cx.simulate_keystrokes("cmd-a cmd-c");
+    // gpui-kit binds editing keys per platform: cmd on macOS, ctrl elsewhere.
+    cx.simulate_keystrokes("secondary-a secondary-c");
     assert_eq!(
         cx.read_from_clipboard().and_then(|c| c.text()).as_deref(),
         Some("Grüße 🎉")
     );
-    cx.simulate_keystrokes("cmd-x");
+    cx.simulate_keystrokes("secondary-x");
     assert_eq!(body_text(&view, cx), "");
-    cx.simulate_keystrokes("cmd-v cmd-v");
+    cx.simulate_keystrokes("secondary-v secondary-v");
     assert_eq!(body_text(&view, cx), "Grüße 🎉Grüße 🎉");
     // The menu's actions do the same.
     cx.write_to_clipboard(gpui::ClipboardItem::new_string("> quoted\n".into()));
@@ -809,7 +810,7 @@ fn composing_text_with_an_input_method(cx: &mut TestAppContext) {
     });
     draw(cx);
     // The committed composition is one undo step.
-    cx.simulate_keystrokes("cmd-z");
+    cx.simulate_keystrokes("secondary-z");
     assert_eq!(body_text(&view, cx), "Grüße");
     let draft = view.read_with(cx, |c, cx| c.draft(cx)).unwrap();
     assert_eq!(draft.body_markdown, "Grüße");
