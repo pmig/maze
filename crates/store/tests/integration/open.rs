@@ -143,3 +143,28 @@ fn accounts_keep_their_uuid() {
     drop(reader);
     common::close(store);
 }
+
+#[test]
+fn dropping_the_last_clone_stops_the_writer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = common::open(tmp.path());
+    let f = common::fixture(&store, AccountKind::Imap);
+    store
+        .write_blocking(move |w| {
+            for uid in 1..=200 {
+                w.upsert_message(&common::message(f.account, f.inbox, uid, 10))?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    let wal = tmp.path().join("mail/mazemail.db-wal");
+    assert!(fs::metadata(&wal).unwrap().len() > 0);
+    let clone = store.clone();
+    drop(store);
+    assert!(fs::metadata(&wal).unwrap().len() > 0, "a clone is left");
+
+    // Without `close`: the writer has checkpointed and closed its connection by the
+    // time `drop` returns, so it can't outlive the process's `atexit` handlers.
+    drop(clone);
+    assert_eq!(fs::metadata(&wal).map_or(0, |m| m.len()), 0);
+}

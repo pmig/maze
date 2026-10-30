@@ -56,6 +56,9 @@ impl StoreConfig {
 ///
 /// Cheap to clone (all clones share the same connections). See the crate docs for the
 /// threading model.
+///
+/// Prefer [`Store::close`]. Dropping the last clone without it also stops the writer
+/// thread, but blocks until the queued writes ran and the WAL is checkpointed.
 #[derive(Clone)]
 pub struct Store {
     inner: Arc<Inner>,
@@ -320,5 +323,32 @@ impl Store {
         self.inner.readers.close();
         self.inner.sendlog.close()?;
         result
+    }
+}
+
+impl Drop for Inner {
+    /// Dropping the last clone without [`Store::close`] stops the writer too, and waits
+    /// for it: a writer left running would still checkpoint and close its connection
+    /// while the process exits, and SQLCipher frees its global state in an `atexit`
+    /// handler, so that connection would crash the process.
+    fn drop(&mut self) {
+        let handle = self
+            .writer
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        let Some(handle) = handle else {
+            // Closed already.
+            return;
+        };
+        if handle.thread().id() == std::thread::current().id() {
+            // A write job held the last clone. The writer can't wait for itself; it
+            // stops by itself after this batch, when it finds the channel closed.
+            return;
+        }
+        let (reply, _) = oneshot::channel();
+        // Fails only if the writer is gone already; joining then returns at once.
+        let _ = self.commands.send(Command::Shutdown { reply });
+        let _ = handle.join();
     }
 }
