@@ -1,0 +1,14 @@
+// Project settings for Zed (https://zed.dev/docs/configuring-zed#settings-files).
+{
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "cargo": {
+          // Build into target/rust-analyzer instead of target/, so rust-analyzer's
+          // checks don't wait for (or invalidate) `mise start`, tests and clippy.
+          "targetDir": true
+        }
+      }
+    }
+  }
+}
