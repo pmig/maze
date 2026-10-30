@@ -11,6 +11,18 @@ use super::*;
 use crate::actions::{IgnoreSpelling, ToggleSpellingLanguage};
 use crate::backend::{BoxFuture, ComposeError};
 
+// gpui-kit binds its editing keys per platform (cmd on macOS, ctrl elsewhere, and a
+// few different keys on Linux), so tests press the ones of the platform they run on.
+const UNDO: &str = "secondary-z";
+#[cfg(target_os = "macos")]
+const REDO: &str = "cmd-shift-z";
+#[cfg(not(target_os = "macos"))]
+const REDO: &str = "ctrl-y";
+#[cfg(target_os = "macos")]
+const TO_START: &str = "cmd-up";
+#[cfg(not(target_os = "macos"))]
+const TO_START: &str = "ctrl-home";
+
 /// Records what the composer asks for.
 #[derive(Default)]
 struct FakeBackend {
@@ -712,9 +724,9 @@ fn undo_and_redo_in_the_body(cx: &mut TestAppContext) {
     });
     cx.simulate_input(" world");
     assert_eq!(body_text(&view, cx), "Hello world");
-    cx.simulate_keystrokes("cmd-z");
+    cx.simulate_keystrokes(UNDO);
     assert_eq!(body_text(&view, cx), "Hello");
-    cx.simulate_keystrokes("cmd-shift-z");
+    cx.simulate_keystrokes(REDO);
     assert_eq!(body_text(&view, cx), "Hello world");
 }
 
@@ -810,7 +822,7 @@ fn composing_text_with_an_input_method(cx: &mut TestAppContext) {
     });
     draw(cx);
     // The committed composition is one undo step.
-    cx.simulate_keystrokes("secondary-z");
+    cx.simulate_keystrokes(UNDO);
     assert_eq!(body_text(&view, cx), "Grüße");
     let draft = view.read_with(cx, |c, cx| c.draft(cx)).unwrap();
     assert_eq!(draft.body_markdown, "Grüße");
@@ -837,7 +849,7 @@ fn long_lines_emoji_and_rtl_text_wrap_and_edit(cx: &mut TestAppContext) {
 
     // Walk through every character and line, drawing as we go: no panics on
     // grapheme clusters, bidi text or wrapped rows.
-    cx.simulate_keystrokes("cmd-up");
+    cx.simulate_keystrokes(TO_START);
     for _ in 0..text.chars().count() {
         cx.simulate_keystrokes("right");
     }
@@ -846,7 +858,7 @@ fn long_lines_emoji_and_rtl_text_wrap_and_edit(cx: &mut TestAppContext) {
         view.read_with(cx, |c, cx| c.body.read(cx).selected_range()),
         text.len()..text.len()
     );
-    cx.simulate_keystrokes("cmd-up");
+    cx.simulate_keystrokes(TO_START);
     for _ in 0..rows {
         cx.simulate_keystrokes("down");
         draw(cx);
@@ -1158,7 +1170,7 @@ fn right_clicking_a_misspelled_word_offers_suggestions(cx: &mut TestAppContext) 
     after_pause(cx);
     assert_eq!(marked(&view, cx), Vec::<String>::new());
     // One undo step brings the typo back, and its mark with the next check.
-    cx.simulate_keystrokes("cmd-z");
+    cx.simulate_keystrokes(UNDO);
     assert_eq!(body_text(&view, cx), "I hope to recieve it.");
     after_pause(cx);
     assert_eq!(marked(&view, cx), ["recieve"]);
