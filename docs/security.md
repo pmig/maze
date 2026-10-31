@@ -32,8 +32,8 @@ Linux), and all of it is encrypted:
 
 | Data                                                 | Encryption                                                                   |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Database `mazemail.db` (messages, folders, accounts, identities, account passwords and OAuth refresh tokens, API token hashes, audit log, your spelling dictionary, address books and the addresses you wrote to) | SQLCipher 4: AES-256 with an HMAC-SHA512 per page |
-| Raw messages and attachments (`blobs/`), caches (`cache/`) | XChaCha20-Poly1305 in 64 KiB chunks, bound to the blob's id, after compression |
+| Database `mazemail.db` (messages, folders, accounts, identities, account passwords and OAuth refresh tokens, API token hashes, audit log, your spelling dictionary, address books and the addresses you wrote to, the domain index) | SQLCipher 4: AES-256 with an HMAC-SHA512 per page |
+| Raw messages and attachments (`blobs/`), caches (`cache/`, favicons included) | XChaCha20-Poly1305 in 64 KiB chunks, bound to the blob's id, after compression |
 | Search index (`index/`)                              | Tantivy segments in 16 KiB XChaCha20-Poly1305 blocks                         |
 | Pre-migration database backups (`backups/`)          | SQLCipher, same key                                                          |
 
@@ -163,6 +163,39 @@ client: only URLs the sanitized message references, only images, at most 5 MB ea
 can still learn when you load images: that the message was opened, when, and from
 which IP address (and roughly where, from that address); which images you loaded if
 their URLs are unique to you. Tracking pixels Maze recognizes are dropped even then.
+
+## Favicons
+
+Maze shows a small icon for the domains in your mail and address books (the Domains
+list, badges on contacts). It fetches each icon **from that domain's own website**,
+never from a third-party icon service (no Google, DuckDuckGo or icon CDN learns which
+domains you correspond with):
+
+- **What leaves your computer:** for a domain such as `northwind.example`, a request to
+  `https://northwind.example/` (or `https://www.northwind.example/` if that doesn't
+  answer), then one or a few requests for the icon it links to on the same domain, or
+  for `/favicon.ico`. The website learns that someone at your IP address looked at its
+  home page and icon, nothing else: no cookies (none are kept), no `Referer`, no
+  credentials, a generic `User-Agent` (`Mozilla/5.0`), nothing about you or your mail.
+- **How often:** once per domain, then again after 30 days at the earliest; a domain
+  without an icon is remembered as such for as long. One domain at a time, in the
+  background, a few seconds apart.
+- **Which domains** (`"favicons"` in `settings.json`): `"contacts"` (the default) only
+  for domains of your contacts, meaning address book entries and addresses you wrote
+  to; `"all"` also for domains you only received mail from (so every sender's website
+  can see that Maze fetched its icon, much like a remote image would tell it you read
+  its mail); `"off"` for none, and stored icons aren't shown then. Free-mail domains
+  (`gmail.com`, `outlook.com`, `web.de`, …) are never fetched.
+- **Hardening:** HTTPS only (also for redirects, at most three, to host names, never
+  IP addresses); host names that resolve to private, loopback or link-local addresses
+  are refused, as are domains outside the public suffix list (`.local`, `.internal`),
+  so a sender can't point Maze at your router or intranet. Icons on other domains
+  (CDNs) aren't loaded. Pages are read up to 512 KB and icons up to 256 KB, with 5 s to
+  connect and 10 s per request. The icon's format is checked from its bytes; PNG, ICO,
+  JPEG, GIF and WebP are decoded with size limits, SVG is rendered without scripts,
+  external files or fonts. Maze keeps only a 64×64 PNG, encrypted in its cache under a
+  random id; the domain index (which domains you correspond with) is in the encrypted
+  database.
 
 ## Lost key and recovery
 

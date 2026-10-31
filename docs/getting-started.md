@@ -852,6 +852,30 @@ The tags are `de-DE`, `de-AT`, `de-CH`, `en-US` and `en-GB` (`de_AT` and `de` wo
 too); Maze lists any other tag as a warning under the settings editor and ignores it.
 Changes apply to open drafts right away.
 
+## Domains and favicons
+
+Maze connects contacts and mail by their **domain**: `anna@mail.eu.northwind.example`
+belongs to `northwind.example` (subdomains count for the domain someone registered;
+`bmi.gv.at` and `example.co.uk` stay as they are). For every domain Maze knows how many
+contacts (address book entries and addresses you wrote to) and messages it has, when
+the latest one came, and whether it is an organization or a free-mail provider such as
+`gmail.com`, `outlook.com` or `web.de` (those are people, not organizations, and the
+Domains list can hide them). Your own addresses don't count, so your own domain only
+lists your colleagues. "Show Mail" for a domain searches `from:@northwind.example`; the
+same query works in the search field and with `mazemail search`. After an update, mail
+you already have is indexed once in the background.
+
+Each domain gets its **favicon** from its own website (never from an icon service),
+fetched in the background, kept for 30 days and stored encrypted. Which domains,
+`"favicons"` in `settings.json`:
+
+- `"contacts"` (the default): domains of your contacts and of addresses you wrote to.
+- `"all"`: also domains you only received mail from. Each of their websites then
+  sees one request from you, much like a loaded remote image.
+- `"off"`: no favicons are fetched or shown.
+
+What exactly is sent is in [security.md](security.md#favicons).
+
 ## Agents
 
 The agent column on the right (`cmd-?` shows and hides it) runs coding agents over the
