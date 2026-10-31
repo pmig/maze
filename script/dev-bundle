@@ -79,4 +79,24 @@ if [[ "$changed" == 1 ]]; then
   printf '%s\n' "$source_id" > "$stamp"
 fi
 
+# Every worktree and every old local bundle registers another app with the same bundle
+# ID, and a click on a notification can then launch one of those instead of bringing
+# this one to the front ("Maze is already running"). Register this bundle and forget the
+# others, in the background: reading the registrations takes about two seconds.
+lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+if [[ -x "$lsregister" ]]; then
+  (
+    "$lsregister" -f "$app"
+    "$lsregister" -dump 2> /dev/null |
+      awk -v id="$bundle_id" '
+        /^path:/ { p = $0; sub(/^path: +/, "", p); sub(/ \(0x[0-9a-f]+\)$/, "", p) }
+        $1 == "identifier:" && $2 == id { print p }' |
+      sort -u |
+      while IFS= read -r other; do
+        [[ "$other" == "$app" ]] || "$lsregister" -u "$other"
+      done
+  ) > /dev/null 2>&1 &
+  disown
+fi
+
 printf '%s\n' "$exe"

@@ -42,6 +42,11 @@ signed again only after a rebuild). Logs still go to the terminal and Ctrl-C sto
 macOS asks once whether "Maze Dev" may send notifications; System Settings →
 Notifications → Maze Dev changes the answer. A plain `cargo run` shows none.
 
+Every worktree's build (and an old local `Maze.app` built from a dev checkout) registers
+another app with the same bundle ID, and a click on a notification could then launch one
+of those instead of bringing the running Maze Dev to the front. So each start registers
+its own bundle and unregisters the others with LaunchServices, in the background.
+
 ## Branches and worktrees
 
 The repository is checked out as a bare repo with one git worktree per branch, so
