@@ -91,7 +91,15 @@ async fn labels_become_locations_of_one_message() {
     handle
         .sync_now(SyncScope::Folder(h.folder_id("Work")))
         .unwrap();
-    wait_for("the label change", || h.folder("Work").total == 2).await;
+    // Labels and flags are applied in separate writes: wait for both.
+    wait_for("the label and flag change", || {
+        h.folder("Work").total == 2
+            && h.message(h.message_at(ALL_MAIL, 2))
+                .locations
+                .iter()
+                .all(|l| l.flags == Flags::FLAGGED)
+    })
+    .await;
     let second = h.message(h.message_at(ALL_MAIL, 2));
     assert_eq!(
         second.locations.len(),
