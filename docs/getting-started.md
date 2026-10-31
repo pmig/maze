@@ -468,11 +468,15 @@ order if not in one piece.
 ### The message list
 
 The list shows two-line cards or, a click (or `cmd-alt-t`) away, Thunderbird's table
-with the columns Star · Subject · Correspondents · Date. Correspondents is the sender
-of mail you received and the recipients, with a small arrow, of mail you sent. More
-columns (Attachment, Unread, Size, Tags, Account, Sender, Recipients) come from the
-columns button in the list header or by right-clicking a column header; drag a header's
-edge to resize it.
+with the columns Star · Unread · Subject · Correspondents · Date. Correspondents is the
+sender of mail you received and the recipients, with a small arrow, of mail you sent.
+Unread mail is bold and has a blue dot, in the cards next to the sender and in the
+table's Unread column; a collapsed thread has it while any of its messages is unread.
+Click the dot (or the empty spot where a read message's dot would be) to mark that
+message or thread read or unread without selecting it, like `m`; `cmd-z` undoes it.
+More columns (Attachment, Size, Tags, Account, Sender, Recipients) come from the
+columns button in the list header or by right-clicking a column header, which also
+turns columns off; drag a header's edge to resize it.
 
 Click any column header to sort by it, and again to reverse the order; an arrow shows
 the sorted column. Dates and sizes start newest and largest first, the star, unread and

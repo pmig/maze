@@ -10,9 +10,9 @@
 //!
 //! ```json
 //! {
-//!   "version": 3,
+//!   "version": 4,
 //!   "list": { "view": "table", "threaded": false, "sort": "subject_asc",
-//!             "columns": ["star", "subject", "correspondents", "size", "date"],
+//!             "columns": ["star", "unread", "subject", "correspondents", "size", "date"],
 //!             "widths": { "correspondents": 220.0 } },
 //!   "move_targets": { "a2": [17, 4] },
 //!   "layout": {
@@ -36,6 +36,10 @@
 //! messages, drafts) plus a draft's random two-word name, never subjects. Tabs whose
 //! message or draft is gone are dropped when restored. Without `layout` (versions 1
 //! and 2) the window opens the unified Inbox.
+//!
+//! Version 4 made the Unread column a default one. A file from an earlier version that
+//! lists its own `columns` gets `unread` added once, when it is read; from then on the
+//! column stays off if it's turned off ([`ListState::migrate`]).
 //!
 //! What isn't in `list` follows the defaults from `settings.json`
 //! (`thread_list.view`, `thread_list.threaded`, `thread_list.sort`), [`ListDefaults`]:
@@ -120,8 +124,14 @@ impl ColumnId {
         Self::Date,
     ];
 
-    /// The default set: Star · Subject · Correspondents · Date (CONCEPT §8.2).
-    pub const DEFAULT: [Self; 4] = [Self::Star, Self::Subject, Self::Correspondents, Self::Date];
+    /// The default set: Star · Unread · Subject · Correspondents · Date (CONCEPT §8.2).
+    pub const DEFAULT: [Self; 5] = [
+        Self::Star,
+        Self::Unread,
+        Self::Subject,
+        Self::Correspondents,
+        Self::Date,
+    ];
 
     /// The name in the header and the column picker.
     pub fn label(self) -> &'static str {
@@ -245,6 +255,21 @@ pub struct ListState {
     pub widths: BTreeMap<ColumnId, f32>,
 }
 
+impl ListState {
+    /// Brings a list state written by format `version` up to [`UI_STATE_VERSION`]:
+    /// before version 4 the Unread column wasn't a default one, so a saved set of
+    /// columns gets it added (once; the file is written as version 4 from then on).
+    fn migrate(&mut self, version: u32) {
+        if version < 4
+            && let Some(columns) = &mut self.columns
+            && !columns.contains(&ColumnId::Unread)
+        {
+            columns.push(ColumnId::Unread);
+            columns.sort_unstable();
+        }
+    }
+}
+
 /// The effective list settings: the remembered state over the defaults.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ListPrefs {
@@ -317,7 +342,7 @@ impl ListPrefs {
 }
 
 /// The format version written now.
-pub const UI_STATE_VERSION: u32 = 3;
+pub const UI_STATE_VERSION: u32 = 4;
 
 /// The contents of `ui_state.json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -368,7 +393,7 @@ impl UiStateStore {
     /// Reads `path` (a missing or unreadable file is an empty state).
     pub fn load(path: impl Into<PathBuf>, defaults: ListDefaults) -> Self {
         let path = path.into();
-        let state = match std::fs::read(&path) {
+        let mut state = match std::fs::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|error| {
                 tracing::warn!(%error, "ignoring an unreadable ui_state.json");
                 UiState::default()
@@ -379,6 +404,8 @@ impl UiStateStore {
                 UiState::default()
             }
         };
+        state.list.migrate(state.version);
+        state.version = UI_STATE_VERSION;
         Self::with(Some(path), state, defaults)
     }
 
@@ -522,6 +549,7 @@ mod tests {
         assert_eq!(
             prefs.columns,
             vec![
+                ColumnId::Unread,
                 ColumnId::Subject,
                 ColumnId::Correspondents,
                 ColumnId::Size,
@@ -638,7 +666,7 @@ mod tests {
         assert_eq!(reopened.state().version, UI_STATE_VERSION);
         let json = std::fs::read_to_string(&path).unwrap();
         assert!(json.contains("\"brave-otter\""), "{json}");
-        assert!(json.contains("\"version\": 3"), "{json}");
+        assert!(json.contains("\"version\": 4"), "{json}");
     }
 
     #[test]
@@ -657,7 +685,48 @@ mod tests {
         let store = UiStateStore::load(&path, ListDefaults::default());
         assert_eq!(
             store.prefs().columns,
-            vec![ColumnId::Subject, ColumnId::Date]
+            vec![ColumnId::Unread, ColumnId::Subject, ColumnId::Date]
         );
+    }
+
+    #[test]
+    fn saved_columns_from_before_version_4_get_the_unread_column_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(UI_STATE_FILE);
+        std::fs::write(
+            &path,
+            r#"{ "version": 3, "list": { "view": "table",
+                 "columns": ["star", "subject", "correspondents", "size", "date"],
+                 "widths": { "correspondents": 220.0 } } }"#,
+        )
+        .unwrap();
+        let store = UiStateStore::load(&path, ListDefaults::default());
+        let mut prefs = store.prefs();
+        assert_eq!(
+            prefs.columns,
+            vec![
+                ColumnId::Star,
+                ColumnId::Unread,
+                ColumnId::Subject,
+                ColumnId::Correspondents,
+                ColumnId::Size,
+                ColumnId::Date
+            ],
+            "added after the star; the other choices stay"
+        );
+        assert_eq!(prefs.width(ColumnId::Correspondents), 220.);
+        assert_eq!(prefs.mode, ListMode::Table);
+
+        // Turned off again, it stays off.
+        prefs.toggle_column(ColumnId::Unread);
+        store.set_prefs(&prefs);
+        let reopened = UiStateStore::load(&path, ListDefaults::default());
+        assert!(!reopened.prefs().columns.contains(&ColumnId::Unread));
+        assert_eq!(reopened.state().version, UI_STATE_VERSION);
+
+        // The old default set wasn't saved, so it simply becomes the new default.
+        std::fs::write(&path, r#"{ "version": 3, "list": { "view": "table" } }"#).unwrap();
+        let store = UiStateStore::load(&path, ListDefaults::default());
+        assert_eq!(store.prefs().columns, ColumnId::DEFAULT);
     }
 }

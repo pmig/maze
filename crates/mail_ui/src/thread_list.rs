@@ -1444,6 +1444,25 @@ impl ThreadList {
         }
     }
 
+    /// A click on a row's dot in the table's Unread column: toggles that row's read
+    /// state without selecting it, as in Thunderbird (a thread row: all its messages).
+    /// Goes the same way as `m`, so `cmd-z` undoes it and it syncs.
+    pub fn toggle_read_at(&mut self, ix: usize, cx: &mut Context<'_, Self>) {
+        let target = self
+            .model
+            .borrow_mut()
+            .row(ix)
+            .map(|row| (row.item, row.flags));
+        let Some((item, flags)) = target else {
+            return;
+        };
+        if flags.contains(Flags::SEEN) {
+            self.change_flags(&[item], Flags::empty(), Flags::SEEN, cx);
+        } else {
+            self.change_flags(&[item], Flags::SEEN, Flags::empty(), cx);
+        }
+    }
+
     /// `s`: toggles the star of the selected rows (or thread, after `cmd-shift-a`).
     pub fn toggle_star(&mut self, cx: &mut Context<'_, Self>) {
         if let Some((_, flags)) = self.command_target() {
@@ -3104,13 +3123,50 @@ impl TableDelegate for ThreadTable {
                     )
                 })
                 .into_any_element(),
-            ColumnId::Unread => cell
-                .flex()
-                .justify_center()
-                .when(unread, |this| {
-                    this.child(div().size(scaled(6., cx)).rounded_full().bg(theme.primary))
-                })
-                .into_any_element(),
+            // The cards' dot, as a button: a filled dot for unread rows, a faint ring
+            // on hover for read ones; a click toggles the row (not the selection).
+            ColumnId::Unread => {
+                const GROUP: &str = "unread-cell";
+                let list = self.list.clone();
+                let ring = theme.muted_foreground.opacity(0.6);
+                h_flex()
+                    .id(("unread", row_ix))
+                    .debug_selector(move || format!("unread-{row_ix}"))
+                    .group(GROUP)
+                    .size_full()
+                    .justify_center()
+                    .cursor_pointer()
+                    .child(
+                        div()
+                            .size(scaled(7., cx))
+                            .flex_none()
+                            .rounded_full()
+                            .map(|this| {
+                                if unread {
+                                    this.debug_selector(move || format!("unread-dot-{row_ix}"))
+                                        .bg(theme.primary)
+                                } else {
+                                    this.border_1()
+                                        .border_color(gpui::transparent_black())
+                                        .group_hover(GROUP, |this| this.border_color(ring))
+                                }
+                            }),
+                    )
+                    .tooltip(move |window, cx| {
+                        Tooltip::new(if unread {
+                            "Mark as Read"
+                        } else {
+                            "Mark as Unread"
+                        })
+                        .build(window, cx)
+                    })
+                    .on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        list.update(cx, |list, cx| list.toggle_read_at(row_ix, cx))
+                            .ok();
+                    })
+                    .into_any_element()
+            }
             ColumnId::Attachment => cell
                 .when(row.attachment, |this| {
                     this.child(
@@ -3690,6 +3746,146 @@ mod tests {
             list.read_with(cx, |list, _| list.sort()),
             ListSort::NEWEST_FIRST
         );
+    }
+
+    /// A store with the table view on, in memory.
+    fn table_memory() -> UiStateStore {
+        let ui_state = memory();
+        let mut prefs = ui_state.prefs();
+        prefs.mode = ListMode::Table;
+        ui_state.set_prefs(&prefs);
+        ui_state
+    }
+
+    /// The rows the list shows first, as the source has them.
+    fn first_threads(list: &ThreadList, source: &Arc<dyn MailSource>, n: usize) -> Vec<ThreadRow> {
+        let ListKeys::Threads(keys) = list.model().borrow().keys().clone() else {
+            panic!("threaded");
+        };
+        source.thread_rows(&keys[..n])
+    }
+
+    fn has_dot(cx: &mut gpui::VisualTestContext, ix: usize) -> bool {
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds(Box::leak(format!("unread-{ix}").into_boxed_str()))
+                .is_some(),
+            "row {ix} has an unread cell"
+        );
+        cx.debug_bounds(Box::leak(format!("unread-dot-{ix}").into_boxed_str()))
+            .is_some()
+    }
+
+    fn click_unread_cell(cx: &mut gpui::VisualTestContext, ix: usize) {
+        let cell = cx
+            .debug_bounds(Box::leak(format!("unread-{ix}").into_boxed_str()))
+            .unwrap_or_else(|| panic!("row {ix} has an unread cell"));
+        cx.simulate_click(cell.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn the_unread_column_shows_a_dot_and_a_click_toggles_the_row(cx: &mut gpui::TestAppContext) {
+        let source = source();
+        let (list, cx) = open_list(cx, &source, inbox(), table_memory());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("th-unread").is_some(), "on by default");
+        let rows = list.read_with(cx, |list, _| first_threads(list, &source, 12));
+        let selected = list.read_with(cx, |list, _| list.selected_item());
+        // Not the first row: opening selects it, which marks it read.
+        let unread = (1..rows.len()).find(|ix| rows[*ix].is_unread()).unwrap();
+        let read = (1..rows.len()).find(|ix| !rows[*ix].is_unread()).unwrap();
+        assert!(has_dot(cx, unread), "an unread row has the dot");
+        assert!(!has_dot(cx, read), "a read row has none");
+
+        click_unread_cell(cx, unread);
+        assert!(!source.thread_rows(&[rows[unread].id])[0].is_unread());
+        assert!(!has_dot(cx, unread), "read now");
+        assert_eq!(
+            list.read_with(cx, |list, _| list.selected_item()),
+            selected,
+            "the click doesn't select the row"
+        );
+
+        click_unread_cell(cx, unread);
+        assert!(source.thread_rows(&[rows[unread].id])[0].is_unread());
+        assert!(has_dot(cx, unread), "unread again");
+
+        click_unread_cell(cx, read);
+        assert!(source.thread_rows(&[rows[read].id])[0].is_unread());
+        assert!(has_dot(cx, read));
+
+        // Like `m`, it can be undone.
+        list.update(cx, |list, cx| list.undo(cx));
+        assert!(!source.thread_rows(&[rows[read].id])[0].is_unread());
+        assert!(!has_dot(cx, read));
+    }
+
+    #[gpui::test]
+    fn a_collapsed_thread_with_one_unread_message_shows_the_dot(cx: &mut gpui::TestAppContext) {
+        let source = source();
+        let keys = source
+            .thread_keys(&inbox(), &ThreadFilter::default(), ListSort::NEWEST_FIRST)
+            .unwrap();
+        let rows = source.thread_rows(&keys[..12]);
+        let ix = (1..rows.len())
+            .find(|ix| rows[*ix].message_count >= 3)
+            .unwrap();
+        let thread = rows[ix].id;
+        source
+            .set_flags(&[thread], Flags::SEEN, Flags::empty())
+            .unwrap();
+        let tree = source.thread_tree(thread).unwrap();
+        source
+            .set_message_flags(&[tree[1].message], Flags::empty(), Flags::SEEN)
+            .unwrap();
+        assert!(source.thread_rows(&[thread])[0].is_unread());
+
+        let (list, cx) = open_list(cx, &source, inbox(), table_memory());
+        cx.run_until_parked();
+        list.read_with(cx, |list, _| {
+            assert_eq!(list.model().borrow().expansions().count(), 0, "collapsed");
+        });
+        assert!(has_dot(cx, ix), "one unread message is enough");
+
+        // A click marks the whole thread read.
+        click_unread_cell(cx, ix);
+        assert!(!has_dot(cx, ix));
+        let messages: Vec<MessageId> = tree.iter().map(|node| node.message).collect();
+        assert!(
+            source
+                .message_rows(&messages)
+                .iter()
+                .all(|row| !row.is_unread())
+        );
+    }
+
+    #[gpui::test]
+    fn a_saved_layout_without_the_unread_column_gets_it(cx: &mut gpui::TestAppContext) {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(crate::ui_state::UI_STATE_FILE);
+        std::fs::write(
+            &path,
+            r#"{ "version": 3, "list": { "view": "table", "columns": ["star", "subject", "size"] } }"#,
+        )
+        .unwrap();
+        let source = source();
+        let ui_state = UiStateStore::load(&path, ListDefaults::default());
+        let (list, cx) = open_list(cx, &source, inbox(), ui_state);
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("th-unread").is_some());
+        assert!(
+            cx.debug_bounds("th-size").is_some(),
+            "the other columns stay"
+        );
+        assert!(cx.debug_bounds("th-correspondents").is_none());
+        let star = cx.debug_bounds("th-star").unwrap();
+        let unread = cx.debug_bounds("th-unread").unwrap();
+        let subject = cx.debug_bounds("th-subject").unwrap();
+        assert!(star.left() < unread.left() && unread.left() < subject.left());
+        let rows = list.read_with(cx, |list, _| first_threads(list, &source, 12));
+        let ix = (1..rows.len()).find(|ix| rows[*ix].is_unread()).unwrap();
+        assert!(has_dot(cx, ix));
     }
 
     #[gpui::test]
