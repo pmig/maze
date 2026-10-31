@@ -419,18 +419,6 @@ impl WriteTx<'_> {
         self.changes.domains = true;
         Ok(())
     }
-
-    /// Forgets a domain's favicon state (its cache entry was dropped), so it is
-    /// fetched again when it is next wanted.
-    pub fn reset_domain_favicon(&mut self, name: &str) -> Result<()> {
-        self.conn
-            .prepare_cached(
-                "UPDATE domain SET favicon_state = 0, favicon_checked = NULL, favicon_key = NULL
-                 WHERE name = ?1",
-            )?
-            .execute([name])?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -729,23 +717,12 @@ mod tests {
                 .as_deref(),
             Some(&b"\x89PNG fake"[..])
         );
-        // Replacing keeps the cache id; a miss later keeps the icon file but says so.
+        // Replacing keeps the cache id.
         store
-            .write_blocking(|w| {
-                w.store_domain_favicon("shop.example", b"new")?;
-                w.reset_domain_favicon("northwind.example")
-            })
+            .write_blocking(|w| w.store_domain_favicon("shop.example", b"new"))
             .unwrap();
         let stored = reader.domain_stat("shop.example").unwrap().unwrap();
         assert!(matches!(stored.favicon, FaviconState::Stored { key: k, .. } if k == key));
-        assert_eq!(
-            reader
-                .domain_stat("northwind.example")
-                .unwrap()
-                .unwrap()
-                .favicon,
-            FaviconState::Unknown
-        );
     }
 
     fn addr(email: &str) -> Address {

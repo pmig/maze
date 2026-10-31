@@ -618,6 +618,9 @@ struct Queue {
     wanted: VecDeque<String>,
     queued: HashSet<String>,
     skipped: HashSet<String>,
+    /// Domains whose stored icon left the cache (it was cleared): due whatever their
+    /// fetch date says.
+    lost: HashSet<String>,
 }
 
 /// The favicon side of the core: reads stored favicons, decides which domains to fetch
@@ -692,8 +695,7 @@ impl FaviconService {
                 .cache_get(&key, FAVICON_CACHE_KIND, FAVICON_CACHE_VERSION);
             if icon.is_none() {
                 // The cache was cleared: fetch it again.
-                let name = domain.to_owned();
-                drop(self.store.write(move |w| w.reset_domain_favicon(&name)));
+                self.queue().lost.insert(domain.to_owned());
                 self.request(domain);
                 return Ok(None);
             }
@@ -736,6 +738,7 @@ impl FaviconService {
             .collect();
         let contacts = reader.domain_contact_counts()?;
         let now = unix_now();
+        let lost = self.queue().lost.clone();
         let eligible = |domain: &str| {
             let stat = stats.get(domain);
             fetcher.may_fetch(domain)
@@ -745,7 +748,7 @@ impl FaviconService {
                     stat,
                     contacts.get(domain).copied().unwrap_or(0),
                 )
-                && stat.is_none_or(|s| is_due(&s.favicon, now))
+                && (stat.is_none_or(|s| is_due(&s.favicon, now)) || lost.contains(domain))
         };
         loop {
             let next = {
@@ -796,6 +799,7 @@ impl FaviconService {
             return Ok(None);
         };
         let fetched = fetcher.fetch(&domain).await;
+        self.queue().lost.remove(&domain);
         let name = domain.clone();
         match &fetched {
             Fetched::Icon(png) => {
@@ -1419,6 +1423,13 @@ mod tests {
         assert_eq!(decode(&icon).dimensions(), (FAVICON_SIZE, FAVICON_SIZE));
         assert_eq!(service.fetch_next(true).await.unwrap(), None);
         assert_eq!(server.received_requests().await.unwrap().len(), requests);
+
+        // A cleared cache brings the icon back on the next fetch.
+        store.blobs().cache_clear().unwrap();
+        assert_eq!(service.favicon("northwind.example").unwrap(), None);
+        let (domain, _) = service.fetch_next(true).await.unwrap().unwrap();
+        assert_eq!(domain, "northwind.example");
+        assert!(service.favicon("northwind.example").unwrap().is_some());
 
         // All: also the domain you only got mail from.
         settings.send_replace(settings_with(FaviconPolicy::All));
