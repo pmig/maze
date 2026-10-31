@@ -1,0 +1,35 @@
+// releases: a tiny Worker that serves the signed update manifests from Workers
+// KV on releases.mazemail.dev (src/index.js). The release workflow writes them with
+// `wrangler kv bulk put`; the .dmg and .tar.zst downloads stay on GitHub Releases.
+// Deploy: `pnpm run deploy` or the release-worker workflow. One-time setup:
+// docs/releasing.md.
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "releases",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-23",
+  "kv_namespaces": [
+    {
+      // Keys are the URL paths without the leading slash: `stable/macos-aarch64.json`,
+      // `preview/linux-x86_64.json`, ... The release workflow and the docs use the
+      // binding name, never the id.
+      "binding": "MANIFESTS",
+      // The namespace `manifests` (docs/releasing.md).
+      "id": "b4dc5e38479b455d8bec2c9667f375ec"
+    }
+  ],
+  // Only reachable on its own domain: no *.workers.dev URL, no preview URLs.
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    // Creates the DNS record and certificate on deploy. The hostname must not already
+    // have a DNS record: delete the old `releases.mazemail.dev → pmig.github.io` CNAME
+    // (GitHub Pages) and remove the custom domain in the repository's Pages settings
+    // first (docs/releasing.md).
+    { "pattern": "releases.mazemail.dev", "custom_domain": true }
+  ],
+  // No request logs or traces: the updater's requests (IP, version) aren't recorded.
+  "observability": { "enabled": false },
+  // No usage metrics from wrangler either.
+  "send_metrics": false
+}

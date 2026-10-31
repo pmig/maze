@@ -3,8 +3,9 @@ name: Release artifacts
 # Started by release-please.yaml on the tag it creates (PLAN §4.16), or by pushing a
 # tag by hand: builds, signs and notarizes the
 # bundles, uploads them to the GitHub Release, and publishes the signed update
-# manifests to the gh-pages branch last, so a client never sees a manifest that
-# points at a missing file.
+# manifests last, to the KV namespace the `releases` Worker serves on
+# releases.mazemail.dev (releases/), so a client never sees a manifest that points at
+# a missing file.
 #
 # macOS bundles are only signed and notarized when all Apple secrets are present
 # (APPLE_CERTIFICATE_P12, APPLE_CERTIFICATE_PASSWORD, APPLE_TEAM_ID, APPLE_NOTARY_KEY,
@@ -200,11 +201,21 @@ jobs:
   publish-manifests:
     name: Publish update manifests
     needs: [prepare, build]
+    # Manifests are only ever published from a release tag (never from a branch, even
+    # with a manual run).
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: write
-    # One manifest publication at a time, across releases.
+      contents: read # gh release download
+    # Its own environment (release tags only) with a token that can only read and write
+    # the manifests in KV; CLOUDFLARE_ACCOUNT_ID is a repository secret
+    # (docs/releasing.md).
+    environment:
+      name: manifests
+      url: https://releases.mazemail.dev
+    # One manifest publication at a time, across releases: the job reads the published
+    # manifests, decides, and writes them back.
     concurrency:
       group: publish-update-manifests
       cancel-in-progress: false
@@ -240,34 +251,62 @@ jobs:
         with:
           key: xtask
 
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.key.outputs.available == 'true'
+        with:
+          package_json_file: releases/package.json
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.key.outputs.available == 'true'
+        with:
+          node-version-file: releases/.node-version
+          cache: pnpm
+          cache-dependency-path: releases/pnpm-lock.yaml
+
+      # The pinned wrangler from releases/pnpm-lock.yaml; wrangler-action uses it too.
+      - name: Install wrangler
+        if: steps.key.outputs.available == 'true'
+        working-directory: releases
+        run: pnpm install --frozen-lockfile
+
       - name: Download release artifacts
         if: steps.key.outputs.available == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets --pattern '*.tar.zst'
 
-      - name: Check out gh-pages
+      # generate-manifests compares against what is published, so a maintenance release
+      # never downgrades a channel and preview never falls behind stable. Read from the
+      # KV API, not from releases.mazemail.dev, which may still serve a cached copy.
+      - name: Fetch the published manifests
         if: steps.key.outputs.available == 'true'
+        working-directory: releases
+        shell: bash
         env:
-          GH_PAGES_TOKEN: ${{ github.token }} # this job has contents: write
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_SEND_METRICS: "false"
         run: |
-          auth=$(printf 'x-access-token:%s' "$GH_PAGES_TOKEN" | base64 | tr -d '\n')
-          echo "::add-mask::$auth"
-          {
-            echo "GIT_CONFIG_COUNT=1"
-            echo "GIT_CONFIG_KEY_0=http.https://github.com/.extraheader"
-            echo "GIT_CONFIG_VALUE_0=AUTHORIZATION: basic $auth"
-          } >> "$GITHUB_ENV"
-          export GIT_CONFIG_COUNT=1
-          export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
-          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
-          remote="https://github.com/$GITHUB_REPOSITORY.git"
-          if git ls-remote --exit-code --heads "$remote" gh-pages >/dev/null; then
-            git clone --quiet --depth 1 --branch gh-pages "$remote" pages
-          else
-            git init --quiet --initial-branch gh-pages pages
-            git -C pages remote add origin "$remote"
-          fi
+          mkdir -p ../manifests
+          pnpm exec wrangler kv key list --binding MANIFESTS --remote > "$RUNNER_TEMP/keys.json"
+          jq -r '.[].name' "$RUNNER_TEMP/keys.json" > "$RUNNER_TEMP/keys.txt"
+          while IFS= read -r key; do
+            # Only the keys the Worker serves; nothing else becomes a path here.
+            if ! [[ $key =~ ^(stable|preview)/(macos|linux)-(aarch64|x86_64)\.json$ ]]; then
+              echo "::warning::ignoring unexpected KV key '$key'"
+              continue
+            fi
+            mkdir -p "../manifests/${key%/*}"
+            pnpm exec wrangler kv key get --binding MANIFESTS --remote "$key" > "../manifests/$key"
+            # A garbled copy would read as "nothing published" and could downgrade.
+            if ! jq -e '.version | type == "string"' "../manifests/$key" > /dev/null; then
+              echo "::error::the published $key is not a manifest"
+              exit 1
+            fi
+            echo "fetched $key"
+          done < "$RUNNER_TEMP/keys.txt"
+          # What generate-manifests changes is compared against this copy.
+          cp -R ../manifests "$RUNNER_TEMP/published"
 
       - name: Generate signed manifests
         if: steps.key.outputs.available == 'true'
@@ -276,35 +315,48 @@ jobs:
         run: |
           key_file="$RUNNER_TEMP/update-signing.key"
           (umask 077 && printf '%s' "$UPDATE_SIGNING_KEY" > "$key_file")
-          export KEY_FILE="$key_file" ASSET_DIR=assets PAGES_DIR=pages
+          export KEY_FILE="$key_file" ASSET_DIR=assets MANIFEST_DIR=manifests
           if [ "$SIGN" != true ]; then
             export SKIP_MACOS=1
           fi
           script/generate-manifests
           rm -f "$key_file"
 
-      - name: Publish to gh-pages
+      - name: Collect the changed manifests
+        id: changed
         if: steps.key.outputs.available == 'true'
+        shell: bash
         run: |
-          cd pages
-          # Custom domain and no Jekyll processing for the static manifests.
-          echo "releases.mazemail.dev" > CNAME
-          touch .nojekyll
-          git config user.name "Maze release bot"
-          git config user.email "philip@pmig.at"
-          git add -A
-          if git diff --cached --quiet; then
+          bulk="$RUNNER_TEMP/manifests-bulk.json"
+          entries=()
+          cd manifests
+          while IFS= read -r file; do
+            key=${file#./}
+            if cmp -s "$file" "$RUNNER_TEMP/published/$key"; then
+              continue
+            fi
+            entries+=("$(jq -cn --arg key "$key" --rawfile value "$file" '{key: $key, value: $value}')")
+            echo "publishing $key"
+          done < <(find . -type f -name '*.json' | sort)
+          if [ "${#entries[@]}" -eq 0 ]; then
             echo "nothing to publish"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          git commit --quiet -m "release: update manifests for $TAG ($CHANNEL)"
-          for attempt in 1 2 3 4 5; do
-            if git push origin HEAD:gh-pages; then
-              exit 0
-            fi
-            echo "push failed (attempt $attempt), retrying"
-            git pull --rebase --quiet origin gh-pages || true
-            sleep $((attempt * 3))
-          done
-          echo "::error::could not push to gh-pages"
-          exit 1
+          printf '%s\n' "${entries[@]}" | jq -s . > "$bulk"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
+      # Last, after every build has uploaded its assets to the GitHub Release, so a
+      # client never sees a manifest that points at a missing file. One bulk write puts
+      # all of this release's manifests at once.
+      - name: Publish to the releases Worker (KV)
+        if: steps.key.outputs.available == 'true' && steps.changed.outputs.publish == 'true'
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
+        env:
+          WRANGLER_SEND_METRICS: "false"
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: releases
+          packageManager: pnpm
+          command: kv bulk put --binding MANIFESTS --remote ${{ runner.temp }}/manifests-bulk.json

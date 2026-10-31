@@ -4,7 +4,7 @@
 // applied by the asset server. Deploy: `pnpm run deploy` or the website workflow.
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "mazemail-website",
+  "name": "website",
   "compatibility_date": "2026-10-23",
   "assets": {
     "directory": "./dist",

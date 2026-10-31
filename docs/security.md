@@ -233,4 +233,6 @@ provider. AI is off for every account unless you turn it on. Details in
 The built-in updater only installs releases whose update manifest is signed with Maze's
 Ed25519 key, checks the SHA-256 of every download against it, and on macOS requires the
 new bundle to be signed by the same Apple team as the running app. It sends nothing but
-a plain request with `User-Agent: mazemail/<version>`.
+a plain request with `User-Agent: mazemail/<version>`: for the manifest to
+`releases.mazemail.dev` (a Cloudflare Worker that keeps no request logs) and for the
+download to GitHub Releases.

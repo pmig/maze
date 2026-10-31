@@ -8,3 +8,6 @@
 /website/dist
 /website/.astro
 /website/.wrangler
+/releases/node_modules
+/releases/dist
+/releases/.wrangler

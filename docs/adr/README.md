@@ -34,3 +34,4 @@ to the index below.
 | [022](0022-go-to-folder-and-search-keys.md) | Go to Folder, search keys, Ctrl | Accepted                   |
 | [023](0023-spell-checking.md)               | Spell checking in the composer | Accepted                    |
 | [024](0024-server-owned-contacts.md)        | Server-owned contacts          | Accepted                    |
+| [025](0025-update-manifests-on-cloudflare.md) | Update manifests on a Cloudflare Worker | Accepted              |

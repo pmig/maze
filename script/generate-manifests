@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Generate the signed update manifests for one release (PLAN §4.15, §4.16).
 #
-# Writes <pages-dir>/<channel>/<os>-<arch>.json for every release artifact found in
+# Writes <manifest-dir>/<channel>/<os>-<arch>.json for every release artifact found in
 # <asset-dir>. A stable release is also written to the preview channel when it is
 # newer than the manifest already published there. A manifest is only written when the
 # release is not older than the one already published for that channel, so a patch
 # release from a maintenance branch never downgrades the channel.
 #
-# This script does not touch git; the release workflow commits and pushes <pages-dir>.
+# This script publishes nothing. The release workflow first downloads the published
+# manifests from the releases Worker's KV namespace into <manifest-dir>, and afterwards
+# uploads the files this script changed (releases/, docs/releasing.md).
 #
 # Usage: script/generate-manifests
 #
@@ -16,7 +18,7 @@
 #   CHANNEL      preview | stable (required)
 #   KEY_FILE     file with the Ed25519 signing key, passed to xtask (required)
 #   ASSET_DIR    directory holding the uploaded release artifacts (required)
-#   PAGES_DIR    checkout of the gh-pages branch (required)
+#   MANIFEST_DIR the published manifests, laid out like their URLs (required)
 #   COMMIT       commit the release was built from (default: git rev-parse --short=7 HEAD)
 #   REPO         GitHub repository (default: $GITHUB_REPOSITORY, else pmig/maze)
 #   SKIP_MACOS   set to 1 to skip macOS manifests, e.g. when the build was not signed
@@ -29,7 +31,7 @@ cd "$repo_root"
 : "${CHANNEL:?CHANNEL is required}"
 : "${KEY_FILE:?KEY_FILE is required}"
 : "${ASSET_DIR:?ASSET_DIR is required}"
-: "${PAGES_DIR:?PAGES_DIR is required}"
+: "${MANIFEST_DIR:?MANIFEST_DIR is required}"
 repo=${REPO:-${GITHUB_REPOSITORY:-pmig/maze}}
 commit=${COMMIT:-$(git rev-parse --short=7 HEAD)}
 skip_macos=${SKIP_MACOS:-0}
@@ -45,7 +47,7 @@ published=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # Version of the manifest currently published for <channel>/<platform>, empty if none.
 published_version() {
-  local file="$PAGES_DIR/$1/$2.json"
+  local file="$MANIFEST_DIR/$1/$2.json"
   if [ -f "$file" ]; then
     sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$file" | head -n1
   fi
@@ -61,7 +63,7 @@ should_publish() {
 
 write_manifest() {
   local channel=$1 os=$2 arch=$3 asset=$4
-  mkdir -p "$PAGES_DIR/$channel"
+  mkdir -p "$MANIFEST_DIR/$channel"
   cargo xtask release-manifest \
     --version "$TAG" \
     --channel "$channel" \
@@ -73,7 +75,7 @@ write_manifest() {
     --file "$ASSET_DIR/$asset" \
     --notes-url "$notes_url" \
     --key-file "$KEY_FILE" \
-    --output "$PAGES_DIR/$channel/$os-$arch.json"
+    --output "$MANIFEST_DIR/$channel/$os-$arch.json"
   echo "wrote $channel/$os-$arch.json for $TAG"
 }
 

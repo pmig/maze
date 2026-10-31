@@ -97,7 +97,7 @@ pnpm run deploy     # astro build && wrangler deploy
 
 Cloudflare recommends Workers with static assets (rather than Pages) for new static
 sites; that's what `wrangler.jsonc` describes: an assets-only Worker named
-`mazemail-website`, no `*.workers.dev` URL, no preview URLs, served on `mazemail.dev`.
+`website`, no `*.workers.dev` URL, no preview URLs, served on `mazemail.dev`.
 
 1. **Account and zone.** In a Cloudflare account, *Add a domain* → `mazemail.dev`
    (Free plan is enough) and switch the domain's nameservers at the registrar to the
@@ -106,8 +106,8 @@ sites; that's what `wrangler.jsonc` describes: an assets-only Worker named
    - Make sure there is **no** record for `mazemail.dev` (the apex) itself; the first
      deploy creates it, along with its certificate (`routes` → `custom_domain` in
      `wrangler.jsonc`).
-   - Keep `releases.mazemail.dev` → `CNAME pmig.github.io`, **DNS only** (grey cloud),
-     so GitHub Pages can issue its certificate (see below).
+   - Leave `releases.mazemail.dev` to the `releases` Worker, which creates
+     its own record on deploy (see below).
    - For `www`: add `AAAA www 100::`, **Proxied**, then *Rules → Redirect Rules →
      Create rule from template "Redirect from WWW to root"* (301, preserve path and
      query string).
@@ -125,12 +125,13 @@ sites; that's what `wrangler.jsonc` describes: an assets-only Worker named
    account lookups. Copy the token, and the **Account ID** from the account's overview
    page.
 5. **GitHub.** *Settings → Environments → New environment* `website` (optionally
-   with required reviewers or a `main`-only branch rule), and in it the secrets
-   `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`:
+   with required reviewers or a `main`-only branch rule), and in it the secret
+   `CLOUDFLARE_API_TOKEN` (this token; the `manifests` and `releases` environments have their own, see
+   `docs/releasing.md`). The account ID is a repository secret, shared by both:
 
    ```sh
    gh secret set CLOUDFLARE_API_TOKEN --env website
-   gh secret set CLOUDFLARE_ACCOUNT_ID --env website
+   gh secret set CLOUDFLARE_ACCOUNT_ID
    ```
 
 6. **First deploy.** Merge to `main`, or run the workflow by hand (*Actions → Website →
@@ -144,19 +145,12 @@ sites; that's what `wrangler.jsonc` describes: an assets-only Worker named
 ### mazemail.dev and releases.mazemail.dev
 
 The update manifests the app polls (`https://releases.mazemail.dev/<channel>/<os>-<arch>.json`)
-are not part of this site. They're published by `release-artifacts.yaml` to the
-`gh-pages` branch and served by **GitHub Pages** on `releases.mazemail.dev`
-([docs/releasing.md](../docs/releasing.md)). Both live in the same Cloudflare zone and
-don't interact: the Worker only answers on the apex (exact-hostname custom domain),
-and `releases` is a DNS-only CNAME to GitHub. Keep that record unproxied, and don't add
+are not part of this site. A second Worker, `releases` in
+[`../releases`](../releases), serves them from Workers KV on `releases.mazemail.dev`;
+`release-artifacts.yaml` writes them, and the downloads stay on GitHub Releases
+([docs/releasing.md](../docs/releasing.md)). Both Workers live in the same zone and
+don't interact: each answers only on its own exact hostname (custom domain). Don't add
 a Worker route like `*.mazemail.dev/*`.
-
-If you'd rather serve the manifests from Cloudflare later, they can move without an app
-change, since the URL stays the same: publish them to an R2 bucket (or a second
-assets-only Worker) attached to `releases.mazemail.dev` as a custom domain, give the
-`.json` files `Cache-Control: no-cache`, switch `publish-manifests` in
-`release-artifacts.yaml` from pushing to `gh-pages` to `wrangler r2 object put`, and
-replace the CNAME. The manifests are signed, so the host doesn't need to be trusted.
 
 ## Updating
 

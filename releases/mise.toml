@@ -1,0 +1,29 @@
+# The releases Worker's tools, active in this directory only (the app's are in
+# ../mise.toml). pnpm matches `packageManager` in package.json; wrangler is pinned there
+# and put on PATH from node_modules, so `wrangler login` works here after
+# `mise run install`.
+[tools]
+node = "24"
+pnpm = "12.15.0"
+
+[env]
+_.path = ["{{config_root}}/node_modules/.bin"]
+
+[tasks.install]
+description = "Install the Worker's dependencies (wrangler)"
+run = "pnpm install --frozen-lockfile"
+
+[tasks.dev]
+description = "Run the Worker locally against a local KV store"
+depends = ["install"]
+run = "pnpm run dev"
+
+[tasks.check]
+description = "Run the tests and a dry-run deploy (bundles and validates wrangler.jsonc)"
+depends = ["install"]
+run = "pnpm run check"
+
+[tasks.deploy]
+description = "Deploy the releases Worker to Cloudflare (after `wrangler login`)"
+depends = ["install"]
+run = "pnpm run deploy"
