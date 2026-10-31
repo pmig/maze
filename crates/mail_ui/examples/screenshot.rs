@@ -15,6 +15,10 @@
 //!   replies selected (`docs/screenshots/list-table-threaded.png`),
 //! - `table-flat`: table view with threads off, Size and Account columns on,
 //! - `cards-expanded`: cards with a branching thread expanded.
+//!
+//! `MAZEMAIL_SCREENSHOT_SPACE=address-book` shows the Address Book space instead of
+//! Mail (`docs/screenshots/address-book.png`), with a person in several accounts
+//! selected.
 
 // A command-line tool: it reports where it saved the file.
 #![allow(clippy::print_stdout)]
@@ -25,7 +29,7 @@ use std::time::Duration;
 use gpui::{AppContext as _, Context, HeadlessAppContext, px, size};
 use mail_ui::thread_list::{ListKeys, ThreadList};
 use mail_ui::ui_state::ColumnId;
-use mail_ui::{FakeMailSource, MailSource, MailWindow, MailWindowOptions};
+use mail_ui::{FakeMailSource, MailSource, MailWindow, MailWindowOptions, Space};
 use ui::kit::component::{Theme, ThemeMode};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -88,6 +92,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         "cards-expanded" => expand_branching_thread(list, &source, cx),
                         other => println!("unknown MAZEMAIL_SCREENSHOT_LIST {other}"),
                     });
+            });
+        })?;
+    }
+    if let (Ok(space), Some(view)) = (std::env::var("MAZEMAIL_SCREENSHOT_SPACE"), &view) {
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            view.update(cx, |mail, cx| match space.as_str() {
+                "address-book" => mail.show_space(Space::AddressBook, window, cx),
+                "mail" => {}
+                other => println!("unknown MAZEMAIL_SCREENSHOT_SPACE {other}"),
             });
         })?;
     }

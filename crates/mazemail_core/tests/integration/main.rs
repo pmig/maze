@@ -12,6 +12,7 @@ mod bench;
 mod commands;
 mod common;
 mod compose;
+mod contacts;
 mod events;
 mod index;
 mod lifecycle;

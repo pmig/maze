@@ -44,12 +44,13 @@ use gpui::{
     WeakEntity, Window, anchored, deferred, div, prelude::FluentBuilder as _, px, relative,
 };
 use gpui_kit::component::{
-    ActiveTheme as _, Sizable as _, StyledExt as _, ThemeStyled as _, h_flex,
+    ActiveTheme as _, Sizable as _, ThemeStyled as _, h_flex,
     input::{self, Input, InputEvent, InputState},
     tooltip::Tooltip,
     v_flex,
 };
 use mazemail_types::Address;
+use ui::components::{Avatar, AvatarTone, initials};
 use ui::theme::scaled;
 
 /// Finds addresses for what was typed (the backend's address completion). Called on a
@@ -177,61 +178,28 @@ fn split_typed(text: &str) -> (Vec<&str>, &str) {
     (entries, &text[start..])
 }
 
-/// Initials for the avatar: "Anna Example" → "AE", "bob@example.org" → "B".
-fn initials(recipient: &Recipient) -> SharedString {
-    let source = match recipient {
-        Recipient::Address(address) => match address.name.as_deref().map(str::trim) {
-            Some(name) if !name.is_empty() => name.to_owned(),
-            _ => address
-                .email
-                .split('@')
-                .next()
-                .unwrap_or_default()
-                .to_owned(),
-        },
-        Recipient::Invalid(_) => return "!".into(),
-    };
-    let letters: String = source
-        .split_whitespace()
-        .filter_map(|word| word.chars().find(|c| c.is_alphanumeric()))
-        .take(2)
-        .flat_map(char::to_uppercase)
-        .collect();
-    if letters.is_empty() {
-        "?".into()
-    } else {
-        letters.into()
+/// Initials for the avatar: "Anna Example" → "AE", "bob@example.org" → "B", and "!"
+/// for text that isn't an address.
+fn recipient_initials(recipient: &Recipient) -> SharedString {
+    match recipient {
+        Recipient::Address(address) => initials(address.name.as_deref(), &address.email),
+        Recipient::Invalid(_) => "!".into(),
     }
 }
 
-/// The round picture in front of a recipient: initials for now.
-///
-/// This is the one place that draws it, for the chips, the drag preview and the
-/// suggestions: contact photos (and opt-in Gravatar) come in a later step
-/// (PLAN-contacts §3, `AvatarProvider`) and replace the initials here with an image
-/// when there is one.
-fn avatar(recipient: &Recipient, size: Pixels, on_accent: bool, cx: &App) -> AnyElement {
-    let theme = cx.theme();
-    let (bg, fg) = match (recipient, on_accent) {
-        (_, true) => (
-            theme.primary_foreground.opacity(0.25),
-            theme.primary_foreground,
-        ),
-        (Recipient::Invalid(_), false) => (theme.danger.opacity(0.15), theme.danger),
-        (Recipient::Address(_), false) => (theme.primary.opacity(0.2), theme.primary),
+/// The round picture in front of a recipient: [`ui::components::Avatar`], the one
+/// look for people across Maze (initials until contact photos arrive).
+fn avatar(recipient: &Recipient, size: Pixels, on_accent: bool, _: &App) -> AnyElement {
+    let tone = match recipient {
+        Recipient::Address(_) => AvatarTone::Accent,
+        Recipient::Invalid(_) => AvatarTone::Danger,
     };
-    div()
-        .size(size)
-        .flex_none()
-        .rounded_full()
-        .bg(bg)
-        .text_color(fg)
-        .text_size((size * 0.45).round())
-        .font_semibold()
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(initials(recipient))
+    Avatar::new(recipient_initials(recipient), size)
+        .tone(if on_accent {
+            AvatarTone::OnAccent
+        } else {
+            tone
+        })
         .into_any_element()
 }
 
@@ -1052,12 +1020,12 @@ mod tests {
         let anna = Recipient::parse("Anna <anna@example.com>").unwrap();
         assert_eq!(anna.label(), "Anna");
         assert_eq!(anna.detail(), "Anna <anna@example.com>");
-        assert_eq!(initials(&anna), "A");
+        assert_eq!(recipient_initials(&anna), "A");
         let bob = Recipient::parse("bob.miller@example.org").unwrap();
         assert_eq!(bob.label(), "bob.miller@example.org");
-        assert_eq!(initials(&bob), "B");
+        assert_eq!(recipient_initials(&bob), "B");
         let both = Recipient::parse("Anna Example <a@x.example>").unwrap();
-        assert_eq!(initials(&both), "AE");
+        assert_eq!(recipient_initials(&both), "AE");
         assert!(!format!("{anna:?}").contains("anna"));
     }
 }

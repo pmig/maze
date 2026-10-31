@@ -179,6 +179,10 @@ pub(crate) fn respond(request: ComposeRequest, cx: &mut App) {
                 ComposeRequest::MailTo(mailto) => {
                     core.new_draft().map(|draft| mail_to(draft, mailto))
                 }
+                ComposeRequest::To(recipients) => core.new_draft().map(|draft| Draft {
+                    to: recipients,
+                    ..draft
+                }),
             }
         })
     };

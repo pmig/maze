@@ -1,10 +1,11 @@
 //! Small shared components that gpui-kit doesn't provide in the shape Maze needs.
 
 use gpui::{
-    App, ElementId, InteractiveElement as _, IntoElement, ParentElement, RenderOnce, SharedString,
-    Styled, Window, div, prelude::FluentBuilder as _,
+    App, ElementId, ImageSource, InteractiveElement as _, IntoElement, ObjectFit, ParentElement,
+    Pixels, RenderOnce, SharedString, Styled, StyledImage as _, Window, div, img,
+    prelude::FluentBuilder as _,
 };
-use gpui_kit::component::{ActiveTheme as _, Icon, h_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, StyledExt as _, h_flex};
 
 /// An unread (or pending) count, right-aligned in a folder row or on a strip.
 ///
@@ -112,9 +113,128 @@ impl RenderOnce for StatusItem {
     }
 }
 
+/// Initials for an avatar: "Anna Example" → "AE", "bob@example.org" → "B" (the
+/// name, else the part of the address before the `@`); "?" without letters.
+pub fn initials(name: Option<&str>, email: &str) -> SharedString {
+    let source = match name.map(str::trim) {
+        Some(name) if !name.is_empty() => name,
+        _ => email.split('@').next().unwrap_or_default(),
+    };
+    let letters: String = source
+        .split_whitespace()
+        .filter_map(|word| word.chars().find(|c| c.is_alphanumeric()))
+        .take(2)
+        .flat_map(char::to_uppercase)
+        .collect();
+    if letters.is_empty() {
+        "?".into()
+    } else {
+        letters.into()
+    }
+}
+
+/// How an [`Avatar`] is colored.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AvatarTone {
+    /// The accent color, lightly (a person).
+    #[default]
+    Accent,
+    /// On an accent background (a selected chip).
+    OnAccent,
+    /// The danger color (a recipient that isn't an address).
+    Danger,
+}
+
+/// The round picture of a person: their initials on a tinted circle, or a photo.
+///
+/// The one look for people across Maze: recipient chips and suggestions, the Address
+/// Book's rows and detail pane. Contact photos (and opt-in Gravatar, PLAN-contacts §3)
+/// come through [`Avatar::photo`] once there is an avatar provider; until then
+/// everyone gets initials.
+#[derive(IntoElement)]
+#[allow(missing_debug_implementations)] // `ImageSource` isn't `Debug`.
+pub struct Avatar {
+    initials: SharedString,
+    size: Pixels,
+    tone: AvatarTone,
+    photo: Option<ImageSource>,
+}
+
+impl Avatar {
+    /// An avatar of `size` showing `initials` (see [`initials`]).
+    pub fn new(initials: impl Into<SharedString>, size: Pixels) -> Self {
+        Self {
+            initials: initials.into(),
+            size,
+            tone: AvatarTone::Accent,
+            photo: None,
+        }
+    }
+
+    /// The colors.
+    pub fn tone(mut self, tone: AvatarTone) -> Self {
+        self.tone = tone;
+        self
+    }
+
+    /// A photo to show instead of the initials, if there is one.
+    pub fn photo(mut self, photo: Option<ImageSource>) -> Self {
+        self.photo = photo;
+        self
+    }
+}
+
+impl RenderOnce for Avatar {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = cx.theme();
+        let (bg, fg) = match self.tone {
+            AvatarTone::OnAccent => (
+                theme.primary_foreground.opacity(0.25),
+                theme.primary_foreground,
+            ),
+            AvatarTone::Danger => (theme.danger.opacity(0.15), theme.danger),
+            AvatarTone::Accent => (theme.primary.opacity(0.2), theme.primary),
+        };
+        let circle = div()
+            .size(self.size)
+            .flex_none()
+            .rounded_full()
+            .overflow_hidden();
+        match self.photo {
+            Some(photo) => circle.child(
+                img(photo)
+                    .size(self.size)
+                    .rounded_full()
+                    .object_fit(ObjectFit::Cover),
+            ),
+            None => circle
+                .bg(bg)
+                .text_color(fg)
+                .text_size((self.size * 0.45).round())
+                .font_semibold()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(self.initials),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn initials_come_from_the_name_or_the_address() {
+        assert_eq!(
+            initials(Some("Anna Example"), "anna@example.com").as_ref(),
+            "AE"
+        );
+        assert_eq!(initials(Some("  "), "bob@example.org").as_ref(), "B");
+        assert_eq!(initials(None, "bob@example.org").as_ref(), "B");
+        assert_eq!(initials(Some("élise de la Tour"), "x@y").as_ref(), "ÉD");
+        assert_eq!(initials(Some("(+)"), "").as_ref(), "?");
+    }
 
     #[test]
     fn formats_counts_compactly() {

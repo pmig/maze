@@ -9,6 +9,10 @@
 //! (threads), some carry attachments, the newsletters are HTML with links and remote
 //! images, and a share is unread or flagged.
 //!
+//! The address book gets addresses you wrote to (the collected book) and an imported
+//! "Personal Address Book" with phone numbers and organizations, overlapping, so the
+//! Address Book space shows people with two labels.
+//!
 //! The data directory uses the development file key store
 //! (`MAZEMAIL_INSECURE_DEV_KEYSTORE=1`), never the keychain, and the settings file
 //! shares both accounts with agents, so the local API works on the demo data at once.
@@ -452,6 +456,29 @@ fn generate(count: usize, seed: u64, now: i64) -> Vec<Generated> {
     out
 }
 
+/// Fills the address book: addresses you wrote to (collected, most recent first) and an
+/// imported Thunderbird book with vCards; the two overlap.
+fn seed_contacts(w: &mut store::WriteTx<'_>, now: i64) -> store::Result<()> {
+    for (ix, (name, email)) in PEOPLE.iter().enumerate().take(11) {
+        let times = 1 + (ix % 4);
+        for time in 0..times {
+            let at = now - i64::try_from(ix * 2 + time).unwrap_or(0) * 86_400;
+            w.bump_contact(email, Some(name), at)?;
+        }
+    }
+    let phones = ["+43 660 1234567", "+49 30 5550142", "+1 415 555 0100"];
+    for (ix, (name, email)) in PEOPLE.iter().enumerate().skip(6) {
+        let company = COMPANIES[ix % COMPANIES.len()];
+        let phone = phones[ix % phones.len()];
+        let vcard = format!(
+            "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:{name}\r\nEMAIL:{email}\r\n\
+             TEL;TYPE=cell:{phone}\r\nORG:{company}\r\nEND:VCARD\r\n"
+        );
+        w.upsert_contact("Personal Address Book", email, Some(name), Some(&vcard))?;
+    }
+    Ok(())
+}
+
 /// Writes `settings.json` sharing the demo accounts with agents, unless one exists.
 fn write_settings(config_dir: &Path) -> Result<PathBuf> {
     fs::create_dir_all(config_dir).with_context(|| format!("creating {}", config_dir.display()))?;
@@ -533,6 +560,7 @@ pub(crate) fn seed_demo(options: &SeedOptions) -> Result<()> {
                     })
                     .collect::<store::Result<Vec<_>>>()
             })?;
+            store.write_blocking(move |w| seed_contacts(w, now))?;
             let mut total = Seeded::default();
             for (ix, (name, role, account)) in FOLDERS.iter().enumerate() {
                 let account = accounts[*account];
@@ -675,6 +703,19 @@ mod tests {
             .block_on(core.search("best", mazemail_core::SearchOpts::default()))
             .unwrap();
         assert!(found.total_messages > 10, "{}", found.total_messages);
+        // The address book: collected and imported, some people in both.
+        let books: Vec<String> = core
+            .address_books()
+            .unwrap()
+            .into_iter()
+            .map(|b| b.name)
+            .collect();
+        assert_eq!(books, ["Collected", "Personal Address Book"]);
+        let contacts = core
+            .contacts(&mazemail_core::ContactQuery::default())
+            .unwrap();
+        assert_eq!(contacts.len(), PEOPLE.len());
+        assert!(contacts.iter().any(|c| c.labels.len() == 2));
         runtime.block_on(core.shutdown()).unwrap();
     }
 }

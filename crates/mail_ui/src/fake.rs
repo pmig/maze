@@ -36,6 +36,7 @@ use crate::source::{
     SourceStatus, StorageUsage, SyncState, ThreadFilter, ThreadKeys, ThreadPredicate, ThreadRow,
     ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
 };
+use crate::source::{AddressBookEntry, ContactDetail, ContactQuery, ContactRow};
 
 /// Where the "view online" link of invoices goes, and its text.
 const INVOICE_URL: &str = "https://billing.example.com/invoices/2026-10/INV-4711?view=full";
@@ -405,6 +406,8 @@ pub struct FakeMailSource {
     account_syncs: Mutex<Vec<AccountId>>,
     /// Senders allowed to load remote content ("Always for this sender").
     remote_senders: Mutex<Vec<String>>,
+    /// [`FakeMailSource::clear_contacts`] was called: no address books.
+    no_contacts: std::sync::atomic::AtomicBool,
 }
 
 impl std::fmt::Debug for FakeMailSource {
@@ -461,7 +464,17 @@ impl FakeMailSource {
             activity: RwLock::new(Vec::new()),
             account_syncs: Mutex::new(Vec::new()),
             remote_senders: Mutex::new(Vec::new()),
+            no_contacts: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Empties the address books (the Address Book's empty state).
+    pub fn clear_contacts(&self) {
+        self.no_contacts.store(true, Ordering::Relaxed);
+    }
+
+    fn has_contacts(&self) -> bool {
+        !self.no_contacts.load(Ordering::Relaxed)
     }
 
     /// How often "Sync Now" was asked for ([`MailSource::sync_now`]).
@@ -1791,6 +1804,29 @@ impl MailSource for FakeMailSource {
             .read()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+
+    fn address_books(&self) -> Vec<AddressBookEntry> {
+        if self.has_contacts() {
+            crate::fake_contacts::books()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn contacts(&self, query: &ContactQuery) -> Result<Arc<[ContactRow]>, SourceError> {
+        if self.has_contacts() {
+            Ok(crate::fake_contacts::contacts(query, self.now))
+        } else {
+            Ok(Arc::from(Vec::new()))
+        }
+    }
+
+    fn contact(&self, email: &str) -> Result<Option<ContactDetail>, SourceError> {
+        Ok(self
+            .has_contacts()
+            .then(|| crate::fake_contacts::contact(email, self.now))
+            .flatten())
     }
 
     fn sync_now(&self) -> Result<(), SourceError> {

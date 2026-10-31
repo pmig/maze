@@ -911,6 +911,8 @@ pub struct DataChanges {
     /// The sync or connection status, or the disk usage, changed: re-render the status
     /// bar.
     pub status: bool,
+    /// Address book entries changed: reload the Address Book.
+    pub contacts: bool,
     /// Changes were lost (or the backend just became available): reload everything.
     pub everything: bool,
 }
@@ -936,6 +938,7 @@ impl DataChanges {
         self.threads |= other.threads;
         self.everything |= other.everything;
         self.status |= other.status;
+        self.contacts |= other.contacts;
         for message in other.messages_updated {
             if !self.messages_updated.contains(&message) {
                 self.messages_updated.push(message);
@@ -947,6 +950,248 @@ impl DataChanges {
             }
         }
     }
+}
+
+// ---- contacts: the Address Book space ----------------------------------------------
+
+/// Where an address book comes from (decides its place in the book pane).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BookKind {
+    /// Addresses you wrote to ("Collected").
+    Collected,
+    /// An address book imported once (Thunderbird).
+    Imported,
+    /// One of an account's books (Google's My Contacts, Other Contacts, …).
+    Account {
+        /// The account.
+        account: AccountId,
+        /// Its name.
+        name: SharedString,
+    },
+    /// A book of an account that doesn't exist (any more): under "Other".
+    Other,
+}
+
+/// An address book in the book pane.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddressBookEntry {
+    /// The backend's id of the book (`contact.book`).
+    pub id: SharedString,
+    /// Its name: "Collected", "My Contacts", "Personal Address Book".
+    pub name: SharedString,
+    /// Where it comes from.
+    pub kind: BookKind,
+    /// How many addresses it has.
+    pub count: u64,
+    /// The account's color key, for an account's book (see [`ContactLabel::color`]).
+    pub color: Option<u32>,
+}
+
+/// The small chip on a contact row saying which account (or collected or imported
+/// book) the contact is in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContactLabel {
+    /// The account's name, "Collected", or the imported book's name.
+    pub text: SharedString,
+    /// For an account: a stable number the UI picks the account's color with (the
+    /// same for every label and book of the account). `None` draws a neutral chip.
+    pub color: Option<u32>,
+}
+
+/// How the contact list is sorted.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ContactSort {
+    /// By name (or address), A to Z.
+    #[default]
+    Name,
+    /// Most recently written to first.
+    LastUsed,
+}
+
+impl ContactSort {
+    /// "Name", "Last used".
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Name => "Name",
+            Self::LastUsed => "Last used",
+        }
+    }
+}
+
+/// What the contact list shows.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ContactQuery {
+    /// One book, or All Contacts (one row per address across books).
+    pub book: Option<SharedString>,
+    /// The quick filter: name or address contains it (case-insensitive).
+    pub text: String,
+    /// The order.
+    pub sort: ContactSort,
+}
+
+/// A row of the contact list.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ContactRow {
+    /// The address.
+    pub email: SharedString,
+    /// The name, if any book has one.
+    pub name: Option<SharedString>,
+    /// One label per account (or collected or imported book) the address is in.
+    pub labels: Vec<ContactLabel>,
+    /// When you last wrote to the address.
+    pub last_used: Option<OffsetDateTime>,
+}
+
+impl std::fmt::Debug for ContactRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Names and addresses are personal data: never in logs.
+        f.debug_struct("ContactRow")
+            .field("labels", &self.labels)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A phone number.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ContactPhone {
+    /// `cell`, `work`, … if the card says.
+    pub kind: Option<SharedString>,
+    /// The number.
+    pub number: SharedString,
+}
+
+impl std::fmt::Debug for ContactPhone {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ContactPhone")
+            .field("kind", &self.kind)
+            .finish_non_exhaustive()
+    }
+}
+
+/// One book's version of a contact.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ContactVersion {
+    /// The backend's id of the entry.
+    pub id: i64,
+    /// The book's id.
+    pub book: SharedString,
+    /// The book's name ("My Contacts").
+    pub book_name: SharedString,
+    /// The label of the book's account (or "Collected", or the imported book).
+    pub label: ContactLabel,
+    /// The name in this book.
+    pub name: Option<SharedString>,
+    /// Its addresses, the contact's own first.
+    pub emails: Vec<SharedString>,
+    /// Its phone numbers.
+    pub phones: Vec<ContactPhone>,
+    /// Organization.
+    pub organization: Option<SharedString>,
+    /// Title.
+    pub title: Option<SharedString>,
+    /// How often you wrote to the address (collected entries).
+    pub frequency: u32,
+    /// When you last wrote to it.
+    pub last_used: Option<OffsetDateTime>,
+    /// Whether this version can be edited ([`MailSource::contact_book_editable`]).
+    pub editable: bool,
+}
+
+impl std::fmt::Debug for ContactVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ContactVersion")
+            .field("id", &self.id)
+            .field("book", &self.book)
+            .field("editable", &self.editable)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Everything known about an address, for the detail pane.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ContactDetail {
+    /// The address.
+    pub email: SharedString,
+    /// The name.
+    pub name: Option<SharedString>,
+    /// Every address of every version, the contact's own first.
+    pub emails: Vec<SharedString>,
+    /// Every phone number of every version.
+    pub phones: Vec<ContactPhone>,
+    /// The first organization a version has.
+    pub organization: Option<SharedString>,
+    /// The first title a version has.
+    pub title: Option<SharedString>,
+    /// Each book's version.
+    pub versions: Vec<ContactVersion>,
+}
+
+impl std::fmt::Debug for ContactDetail {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ContactDetail")
+            .field("versions", &self.versions)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A change to one book's version of a contact, or a new contact: what the contact
+/// editor (with contact sync, ADR-024) hands to [`MailSource::save_contact`].
+#[derive(Clone, PartialEq, Eq)]
+pub struct ContactEdit {
+    /// The book to write to.
+    pub book: SharedString,
+    /// The entry changed, or `None` for a new contact.
+    pub contact: Option<i64>,
+    /// The name.
+    pub name: Option<SharedString>,
+    /// The addresses, primary first.
+    pub emails: Vec<SharedString>,
+    /// The phone numbers.
+    pub phones: Vec<ContactPhone>,
+    /// Organization.
+    pub organization: Option<SharedString>,
+    /// Title.
+    pub title: Option<SharedString>,
+}
+
+impl ContactEdit {
+    /// An edit of `version` that changes nothing yet: the editor starts from it.
+    pub fn of(version: &ContactVersion) -> Self {
+        Self {
+            book: version.book.clone(),
+            contact: Some(version.id),
+            name: version.name.clone(),
+            emails: version.emails.clone(),
+            phones: version.phones.clone(),
+            organization: version.organization.clone(),
+            title: version.title.clone(),
+        }
+    }
+}
+
+impl std::fmt::Debug for ContactEdit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ContactEdit")
+            .field("book", &self.book)
+            .field("contact", &self.contact)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Why a contact couldn't be saved.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ContactError {
+    /// The book is read-only in Maze (collected addresses, imported books, and every
+    /// book until contact sync can write to its server).
+    #[error("this address book can't be edited in Maze")]
+    NotEditable,
+    /// The backend couldn't save it (offline, the server refused, …); the message says
+    /// why, for people.
+    #[error("{0}")]
+    Failed(String),
 }
 
 /// Errors from a [`MailSource`].
@@ -1257,6 +1502,37 @@ pub trait MailSource: Send + Sync + 'static {
     /// Whether the empty state offers "Add account" (no account exists yet).
     fn offers_add_account(&self) -> bool {
         false
+    }
+
+    /// The address books for the Address Book's book pane, in display order: each
+    /// account's books, Collected, imported books, then books of removed accounts.
+    fn address_books(&self) -> Vec<AddressBookEntry> {
+        Vec::new()
+    }
+
+    /// The contact list: one row per address across books (All Contacts) or one
+    /// book's addresses, filtered and sorted as asked. Can take a few milliseconds on
+    /// large address books; the Address Book calls it off the main thread.
+    fn contacts(&self, _query: &ContactQuery) -> Result<Arc<[ContactRow]>, SourceError> {
+        Ok(Arc::from(Vec::new()))
+    }
+
+    /// Everything known about `email` (each book's version); `None` if no book has
+    /// it.
+    fn contact(&self, _email: &str) -> Result<Option<ContactDetail>, SourceError> {
+        Ok(None)
+    }
+
+    /// Whether contacts in `book` can be edited (the detail pane's Edit button).
+    /// `false` for every book until contact sync can write to the server.
+    fn contact_book_editable(&self, _book: &str) -> bool {
+        false
+    }
+
+    /// Saves a contact: to the book's server first, then the local copy from the
+    /// server's answer (ADR-024). Nothing can be saved yet.
+    fn save_contact(&self, _edit: ContactEdit) -> Result<(), ContactError> {
+        Err(ContactError::NotEditable)
     }
 }
 

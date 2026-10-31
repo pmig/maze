@@ -22,6 +22,7 @@
 //! | Messages | [`message`](CoreHandle::message), [`verify_auth`](CoreHandle::verify_auth) |
 //! | Search   | [`search`](CoreHandle::search), [`quick_filter_body`](CoreHandle::quick_filter_body), [`sort_threads`](CoreHandle::sort_threads) / [`sort_messages`](CoreHandle::sort_messages) (search results by any column) |
 //! | Commands | [`apply`](CoreHandle::apply), [`undo`](CoreHandle::undo) |
+//! | Contacts | [`address_books`](CoreHandle::address_books), [`contacts`](CoreHandle::contacts) (All Contacts grouped by address, or one book), [`contact`](CoreHandle::contact) (every book's version), [`contact_book_editable`](CoreHandle::contact_book_editable) / [`save_contact`](CoreHandle::save_contact) (see [`contacts`]) |
 //! | Compose  | [`identities`](CoreHandle::identities), [`new_draft`](CoreHandle::new_draft), [`reply_draft`](CoreHandle::reply_draft), [`forward_draft`](CoreHandle::forward_draft), [`create_draft`](CoreHandle::create_draft)/[`update_draft`](CoreHandle::update_draft)/[`delete_draft`](CoreHandle::delete_draft), [`send_draft`](CoreHandle::send_draft) (see [`compose`], [`outgoing`]) |
 //! | Events   | [`events`](CoreHandle::events), [`settings_watch`](CoreHandle::settings_watch) |
 //! | Sync     | [`accounts_with_status`](CoreHandle::accounts_with_status), [`sync_activity`](CoreHandle::sync_activity) (what each account's sync is doing, see [`activity`]) |
@@ -68,6 +69,7 @@ pub mod api;
 pub mod api_handler;
 pub mod commands;
 pub mod compose;
+pub mod contacts;
 pub mod correspondents;
 pub mod crash_guard;
 mod credentials;
@@ -100,6 +102,10 @@ pub use api_handler::{Authorization, CommandAuthorizer, DenyAgents};
 pub use commands::{CommandOutcome, CommandReceipt, MailCommand, Origin};
 pub use compose::{ComposeErrorKind, IdentityInfo, ReplyKind, SendResult};
 pub use config::{CoreConfig, RuntimeConfig};
+pub use contacts::{
+    AddressBookInfo, BookLabel, BookSource, ContactDetail, ContactEdit, ContactError, ContactPhone,
+    ContactQuery, ContactSort, ContactSummary, ContactVersion,
+};
 pub use crash_guard::{CrashGuardStatus, ROLLBACK_THRESHOLD, SENTINEL_FILE};
 pub use error::{Error, Result};
 pub use events::{CoreEventBatch, DEFAULT_EVENT_WINDOW, FolderCounts};
@@ -134,16 +140,16 @@ pub use mazemail_types::compose::{Draft, DraftAttachment, DraftOrigin};
 pub use smtp::{Mailer, SmtpError};
 
 /// `auth` types that are part of this API.
-pub use auth::{ProviderKind, SecretStore};
+pub use auth::{ProviderKind, SecretStore, Uuid};
 pub use message_list::{MessageListRow, MessageListSnapshot};
 pub use thread_list::{ListQuery, QuickFilter, ThreadListSnapshot};
 pub use thread_tree::TreeNode;
 
 /// Store types that are part of this API.
 pub use store::{
-    Account, AccountKind, AgentThread, AgentThreadId, ListKey, ListOrder, ListScope, MessageKey,
-    MessageRow, OpId, ProposalId, ProposalItemId, ProposalItemState, ProposalState, RuleId,
-    SortField, SortOrder, Tag, ThreadRow, TokenId,
+    Account, AccountKind, AgentThread, AgentThreadId, ContactId, ListKey, ListOrder, ListScope,
+    MessageKey, MessageRow, OpId, ProposalId, ProposalItemId, ProposalItemState, ProposalState,
+    RuleId, SortField, SortOrder, Tag, ThreadRow, TokenId,
 };
 
 /// Search types that are part of this API.

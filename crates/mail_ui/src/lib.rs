@@ -4,6 +4,9 @@
 //! spaces | folder pane | center: tabs and splits | agent column
 //! ```
 //!
+//! The spaces bar switches between Mail and the Address Book ([`address_book`]),
+//! which takes the folder pane's and the center's place.
+//!
 //! The center is a `ui::panes::PaneGroup` of mail views (message list and message),
 //! message tabs, drafts and the settings ([`settings_editor`]).
 //!
@@ -18,10 +21,12 @@
 //! Start-up: [`ui::init`], then [`init`], then [`open_main_window`].
 
 pub mod actions;
+pub mod address_book;
 pub mod attachment_files;
 mod chrome;
 pub mod command_palette;
 pub mod fake;
+mod fake_contacts;
 pub mod folder_pane;
 pub mod format;
 pub mod go_to_folder;
@@ -50,7 +55,7 @@ pub use settings_editor::{SettingsEditor, SettingsFile};
 pub use source::{DataChanges, MailSource};
 pub use ui_state::{ListDefaults, ListMode, UI_STATE_FILE, UiStateStore};
 pub use window::{
-    ComposeRequest, MailWindow, MailWindowOptions, OpenWindowError, open_main_window,
+    ComposeRequest, MailWindow, MailWindowOptions, OpenWindowError, Space, open_main_window,
 };
 
 use crate::actions::{

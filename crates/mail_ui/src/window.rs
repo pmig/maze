@@ -40,7 +40,7 @@ use gpui_kit::component::{
     resizable::{HandleEdge, resize_handle},
     v_flex,
 };
-use mazemail_types::{FolderRole, MessageId, PRODUCT_NAME, ThreadId};
+use mazemail_types::{Address, FolderRole, MessageId, PRODUCT_NAME, ThreadId};
 use time::UtcOffset;
 use ui::assets::IconName;
 use ui::keymap::shortcut_label;
@@ -51,6 +51,7 @@ use ui::panes::{
 use ui::theme::scaled;
 
 use crate::actions::*;
+use crate::address_book::{AddressBook, AddressBookEvent};
 use crate::chrome::{AgentColumn, MailStatusBar, SpacesBar, SyncButton};
 use crate::command_palette::{CommandPalette, Dismissed};
 use crate::folder_pane::{FolderPane, FolderPaneEvent};
@@ -64,7 +65,7 @@ use crate::perf::{FrameStats, ScrollBenchmark, resident_memory};
 use crate::quick_move::{MoveTarget, QuickMove, QuickMoveEvent, source_folder};
 use crate::settings_editor::{SETTINGS_KIND, SerializedSettings, SettingsEditor, SettingsFile};
 use crate::source::{
-    DataChanges, Direction, FolderKey, MailSource, SortBy, SyncState, ThreadScope,
+    ContactSort, DataChanges, Direction, FolderKey, MailSource, SortBy, SyncState, ThreadScope,
 };
 use crate::thread_list::{ItemId, ListMode, ThreadList, card_height, table_row_height};
 use crate::ui_state::{ListDefaults, UiStateStore};
@@ -168,9 +169,22 @@ pub enum ComposeRequest {
     },
     /// A message to the addresses (and subject, body) of a `mailto:` link.
     MailTo(MailTo),
+    /// A new message to these recipients, names and all (New Mail in the Address
+    /// Book).
+    To(Vec<Address>),
 }
 
 impl EventEmitter<ComposeRequest> for MailWindow {}
+
+/// The space shown between the spaces bar and the agent column (CONCEPT §8.2).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Space {
+    /// Folders, message lists and messages, in tabs and splits.
+    #[default]
+    Mail,
+    /// The Address Book: books, contacts and a contact ([`AddressBook`]).
+    AddressBook,
+}
 
 /// The main window couldn't be opened.
 #[derive(Debug, thiserror::Error)]
@@ -208,6 +222,8 @@ enum MoveOwner {
 pub struct MailWindow {
     source: Arc<dyn MailSource>,
     focus: FocusHandle,
+    space: Space,
+    address_book: Entity<AddressBook>,
     folder_pane: Entity<FolderPane>,
     panes: Entity<PaneGroup>,
     views: MailViewContext,
@@ -249,6 +265,12 @@ impl std::fmt::Debug for MailWindow {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MailWindow").finish_non_exhaustive()
     }
+}
+
+/// The search Show Mail runs: mail from, to or copied to `email`.
+pub fn show_mail_query(email: &str) -> String {
+    let quoted = format!("\"{}\"", email.replace('"', ""));
+    format!("from:{quoted} OR to:{quoted} OR cc:{quoted}")
 }
 
 /// The title of a folder, from the folder pane, or the role's name for a unified
@@ -314,7 +336,19 @@ impl MailWindow {
                 ))
                 .clean_on_escape()
         });
+        let address_book = cx.new(|cx| {
+            AddressBook::new(
+                source.clone(),
+                options.ui_state.clone(),
+                prefs.clone(),
+                options.local_offset,
+                window,
+                cx,
+            )
+        });
         let subscriptions = vec![
+            cx.subscribe_in(&address_book, window, Self::on_address_book_event),
+            cx.observe(&address_book, |_, _, cx| cx.notify()),
             cx.subscribe_in(&folder_pane, window, Self::on_folder_pane_event),
             cx.subscribe_in(&panes, window, Self::on_pane_group_event),
             cx.subscribe_in(&search, window, Self::on_search_event),
@@ -323,6 +357,8 @@ impl MailWindow {
         let mut this = Self {
             source,
             focus: cx.focus_handle(),
+            space: Space::Mail,
+            address_book,
             folder_pane,
             panes,
             views,
@@ -526,6 +562,82 @@ impl MailWindow {
             .map(|view| view.read(cx).message_view().clone())
     }
 
+    /// The text in the title bar's search field.
+    pub fn search_text(&self, cx: &App) -> String {
+        self.search.read(cx).value().to_string()
+    }
+
+    /// Where the list view, the layout and the Address Book's state are remembered.
+    pub fn views_ui_state(&self) -> &UiStateStore {
+        &self.ui_state
+    }
+
+    /// The space on screen.
+    pub fn space(&self) -> Space {
+        self.space
+    }
+
+    /// The Address Book space.
+    pub fn address_book(&self) -> &Entity<AddressBook> {
+        &self.address_book
+    }
+
+    /// Switches to `space` and focuses it: the contact list, or the active tab.
+    pub fn show_space(&mut self, space: Space, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.space = space;
+        match space {
+            Space::Mail => self.focus_active_item(window, cx),
+            Space::AddressBook => {
+                let book = self.address_book.clone();
+                book.update(cx, |book, cx| {
+                    book.reload(cx);
+                    book.focus_list(window, cx);
+                });
+            }
+        }
+        cx.notify();
+    }
+
+    /// Runs a search over all mail in a mail view (the title bar's search field,
+    /// Show Mail in the Address Book).
+    fn run_search(&mut self, query: String, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let title: SharedString = format!("Search: “{query}”").into();
+        let view = self.open_folder(
+            ThreadScope::AllFolders,
+            title,
+            Some(query),
+            false,
+            window,
+            cx,
+        );
+        MailView::focus_list(&view, window, cx);
+    }
+
+    fn on_address_book_event(
+        &mut self,
+        _: &Entity<AddressBook>,
+        event: &AddressBookEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match event {
+            AddressBookEvent::NewMail(address) => {
+                cx.emit(ComposeRequest::To(vec![address.clone()]));
+            }
+            AddressBookEvent::ShowMail(email) => {
+                let query = show_mail_query(email);
+                self.search
+                    .update(cx, |search, cx| search.set_value(query.clone(), window, cx));
+                self.space = Space::Mail;
+                self.run_search(query, window, cx);
+                cx.notify();
+            }
+            // The contact editor arrives with contact sync (ADR-024); until then no
+            // version is editable, so there is no Edit button to send this.
+            AddressBookEvent::Edit(_) => {}
+        }
+    }
+
     /// The folder pane.
     pub fn folder_pane(&self) -> &Entity<FolderPane> {
         &self.folder_pane
@@ -707,6 +819,9 @@ impl MailWindow {
     ) {
         if changes.is_empty() {
             return;
+        }
+        if changes.everything || changes.contacts {
+            self.address_book.update(cx, |book, cx| book.reload(cx));
         }
         if changes.everything || changes.folders {
             self.folder_pane.update(cx, |pane, cx| pane.reload(cx));
@@ -928,16 +1043,8 @@ impl MailWindow {
             if query.is_empty() {
                 return;
             }
-            let title: SharedString = format!("Search: “{query}”").into();
-            let view = self.open_folder(
-                ThreadScope::AllFolders,
-                title,
-                Some(query),
-                false,
-                window,
-                cx,
-            );
-            MailView::focus_list(&view, window, cx);
+            self.space = Space::Mail;
+            self.run_search(query, window, cx);
         }
     }
 
@@ -1579,10 +1686,11 @@ impl MailWindow {
                                     IconName::PanelLeftOpen
                                 }))
                                 .tooltip_with_action(
-                                    if folders_visible {
-                                        "Hide Folder Pane"
-                                    } else {
-                                        "Show Folder Pane"
+                                    match (folders_visible, self.space) {
+                                        (true, Space::Mail) => "Hide Folder Pane",
+                                        (false, Space::Mail) => "Show Folder Pane",
+                                        (true, Space::AddressBook) => "Hide Book Pane",
+                                        (false, Space::AddressBook) => "Show Book Pane",
                                     },
                                     &ToggleFolderPane,
                                     Some("Workspace"),
@@ -1662,12 +1770,52 @@ impl MailWindow {
             drop(prefs);
             cx.notify();
         }))
+        .on_action(cx.listener(|this, _: &ShowMail, window, cx| {
+            this.show_space(Space::Mail, window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &ShowAddressBook, window, cx| {
+            this.show_space(Space::AddressBook, window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SelectNextContact, _, cx| {
+            this.address_book.update(cx, |book, cx| book.step(1, cx));
+        }))
+        .on_action(cx.listener(|this, _: &SelectPreviousContact, _, cx| {
+            this.address_book.update(cx, |book, cx| book.step(-1, cx));
+        }))
+        .on_action(cx.listener(|this, _: &SelectFirstContact, _, cx| {
+            this.address_book
+                .update(cx, |book, cx| book.edge(false, cx));
+        }))
+        .on_action(cx.listener(|this, _: &SelectLastContact, _, cx| {
+            this.address_book.update(cx, |book, cx| book.edge(true, cx));
+        }))
+        .on_action(cx.listener(|this, _: &NewMailToContact, _, cx| {
+            this.address_book.update(cx, |book, cx| book.new_mail(cx));
+        }))
+        .on_action(cx.listener(|this, _: &ShowMailWithContact, _, cx| {
+            this.address_book.update(cx, |book, cx| book.show_mail(cx));
+        }))
+        .on_action(cx.listener(|this, _: &SortContactsByName, window, cx| {
+            this.show_space(Space::AddressBook, window, cx);
+            this.address_book
+                .update(cx, |book, cx| book.set_sort(ContactSort::Name, cx));
+        }))
+        .on_action(cx.listener(|this, _: &SortContactsByLastUsed, window, cx| {
+            this.show_space(Space::AddressBook, window, cx);
+            this.address_book
+                .update(cx, |book, cx| book.set_sort(ContactSort::LastUsed, cx));
+        }))
         .on_action(cx.listener(|this, _: &Toggle, window, cx| this.toggle_palette(window, cx)))
         .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
             let focus = this.search.focus_handle(cx);
             window.focus(&focus, cx);
         }))
         .on_action(cx.listener(|this, _: &QuickFilter, window, cx| {
+            if this.space == Space::AddressBook {
+                let filter = this.address_book.read(cx).filter().focus_handle(cx);
+                window.focus(&filter, cx);
+                return;
+            }
             if let Some(list) = this
                 .active_mail_view(cx)
                 .map(|v| v.read(cx).thread_list().clone())
@@ -1862,9 +2010,25 @@ impl Render for MailWindow {
         let has_rows = list
             .as_ref()
             .is_some_and(|list| list.read(cx).key_count() > 0);
-        let context = self.agent_context(cx).map(|(_, subject)| subject);
+        let context = match self.space {
+            Space::Mail => self.agent_context(cx).map(|(_, subject)| subject),
+            Space::AddressBook => None,
+        };
 
-        let center = div().flex_1().min_w_0().h_full().child(self.panes.clone());
+        let center = div()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .map(|this| match self.space {
+                Space::Mail => this.child(self.panes.clone()),
+                Space::AddressBook => this.child(self.address_book.clone()),
+            });
+        let side_pane = match self.space {
+            Space::Mail => self.folder_pane.clone().into_any_element(),
+            Space::AddressBook => self
+                .address_book
+                .update(cx, |book, cx| book.render_book_pane(cx)),
+        };
         let agent = match resolved.agent {
             AgentPlacement::Expanded(width) => match &self.agent_panel {
                 Some(panel) => Self::column(
@@ -1909,7 +2073,7 @@ impl Render for MailWindow {
                     .flex_1()
                     .min_h_0()
                     .w_full()
-                    .child(SpacesBar::new(self.config.spaces_bar))
+                    .child(SpacesBar::new(self.config.spaces_bar, self.space))
                     .when_some(resolved.folder_pane, |this, width| {
                         this.child(Self::column(
                             "resize-folders",
@@ -1920,7 +2084,7 @@ impl Render for MailWindow {
                                 .size_full()
                                 .border_r_1()
                                 .border_color(theme.border)
-                                .child(self.folder_pane.clone()),
+                                .child(side_pane),
                         ))
                     })
                     .child(center)

@@ -31,6 +31,9 @@
       "cmd-b": "workspace::ToggleFolderPane",
       "cmd-?": "workspace::ToggleAgentColumn",
       "f8": "workspace::ToggleMessagePane",
+      // The spaces bar: `cmd-shift-b` (Thunderbird's Address Book key) opens the
+      // Address Book; in the Address Book it goes back to Mail.
+      "cmd-shift-b": "workspace::ShowAddressBook",
       // Jump to any folder by name, like Quick Move (`shift-m`) for opening.
       "cmd-k": "mail::GoToFolder",
       // The Quick Filter narrows the open folder; search covers every account and
@@ -124,6 +127,22 @@
       "*": "mail::ExpandAllThreads",
       "shift-8": "mail::ExpandAllThreads",
       "\\": "mail::CollapseAllThreads"
+    }
+  },
+  {
+    "context": "AddressBook",
+    "bindings": {
+      "cmd-shift-b": "workspace::ShowMail"
+    }
+  },
+  {
+    // The Address Book's contact list.
+    "context": "ContactList",
+    "bindings": {
+      "down": "address_book::SelectNextContact",
+      "up": "address_book::SelectPreviousContact",
+      "home": "address_book::SelectFirstContact",
+      "end": "address_book::SelectLastContact"
     }
   },
   {

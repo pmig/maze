@@ -95,6 +95,9 @@ pub struct CoreEventBatch {
     /// Settings changed: the settings file, or identities, tags, rules and saved
     /// searches in the store.
     pub settings: bool,
+    /// Address book entries changed (collected, imported or synced): reload the
+    /// Address Book.
+    pub contacts: bool,
     /// Maze's disk usage changed ([`CoreHandle::storage_usage`](crate::CoreHandle::storage_usage)).
     pub storage: bool,
     /// Events were lost; reload everything that is on screen.
@@ -121,6 +124,7 @@ struct Accumulator {
     index: Option<IndexProgress>,
     outbox: bool,
     proposals: bool,
+    contacts: bool,
     settings: bool,
     storage: bool,
     reload: bool,
@@ -146,6 +150,7 @@ impl Accumulator {
                 self.settings |= changes.settings;
                 self.outbox |= changes.outbox;
                 self.proposals |= changes.proposals;
+                self.contacts |= changes.contacts;
             }
             CoreEvent::StoreLagged => self.reload = true,
             CoreEvent::Sync(status) => {
@@ -185,6 +190,7 @@ impl Accumulator {
             index: self.index,
             outbox: self.outbox,
             proposals: self.proposals,
+            contacts: self.contacts,
             settings: self.settings,
             storage: self.storage,
             reload: self.reload,

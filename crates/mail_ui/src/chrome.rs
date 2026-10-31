@@ -23,23 +23,25 @@ use ui::components::StatusItem;
 use ui::keymap::shortcut_label;
 use ui::theme::scaled;
 
-use crate::actions::{OpenSettings, SyncNow, Toggle, ToggleAgentColumn};
+use crate::actions::{OpenSettings, ShowAddressBook, ShowMail, SyncNow, Toggle, ToggleAgentColumn};
 use crate::format::format_disk;
 use crate::source::{MailSource, SourceStatus, StorageUsage, SyncState};
 use crate::sync_activity::{OpenChange, SyncActivityItem};
+use crate::window::Space;
 
 /// The slim spaces bar on the far left (CONCEPT §8.2): Mail, Address Book, and at
-/// the bottom Extensions and Settings. Mail and Settings (which opens `settings.json`
-/// in a tab) work so far.
+/// the bottom Extensions and Settings. Mail, the Address Book and Settings (which
+/// opens `settings.json` in a tab) work so far; the shown space is selected.
 #[derive(IntoElement)]
 pub(crate) struct SpacesBar {
     width: f32,
+    space: Space,
 }
 
 impl SpacesBar {
-    /// A spaces bar of the given width.
-    pub(crate) fn new(width: f32) -> Self {
-        Self { width }
+    /// A spaces bar of the given width with `space` selected.
+    pub(crate) fn new(width: f32, space: Space) -> Self {
+        Self { width, space }
     }
 }
 
@@ -51,6 +53,23 @@ impl RenderOnce for SpacesBar {
                 .ghost()
                 .icon(Icon::new(icon))
                 .tooltip(tooltip)
+        };
+        let switch = |id: &'static str,
+                      icon: IconName,
+                      tooltip: &'static str,
+                      action: Box<dyn gpui::Action>,
+                      selected: bool| {
+            let tooltip_action = action.boxed_clone();
+            div().debug_selector(move || id.to_owned()).child(
+                Button::new(id)
+                    .ghost()
+                    .icon(Icon::new(icon))
+                    .selected(selected)
+                    .tooltip_with_action(tooltip, tooltip_action.as_ref(), Some("Workspace"))
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(action.boxed_clone(), cx);
+                    }),
+            )
         };
         v_flex()
             .w(px(self.width))
@@ -65,15 +84,20 @@ impl RenderOnce for SpacesBar {
             .child(
                 v_flex()
                     .gap_1()
-                    .child(space("space-mail", IconName::Mail, "Mail").selected(true))
-                    .child(
-                        space(
-                            "space-contacts",
-                            IconName::BookUser,
-                            "Address Book (coming later)",
-                        )
-                        .disabled(true),
-                    ),
+                    .child(switch(
+                        "space-mail",
+                        IconName::Mail,
+                        "Mail",
+                        Box::new(ShowMail),
+                        self.space == Space::Mail,
+                    ))
+                    .child(switch(
+                        "space-contacts",
+                        IconName::BookUser,
+                        "Address Book",
+                        Box::new(ShowAddressBook),
+                        self.space == Space::AddressBook,
+                    )),
             )
             .child(
                 v_flex()

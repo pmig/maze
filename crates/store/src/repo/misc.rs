@@ -81,6 +81,29 @@ pub(crate) fn contact_by_email(conn: &Connection, email: &str) -> Result<Option<
         .optional()?)
 }
 
+/// Every address book entry without its vCard (`vcard` is `None`), for the Address
+/// Book's lists: name, address, book, use. A few hundred bytes per entry, so 10,000
+/// contacts read in a few milliseconds.
+pub(crate) fn contact_list(conn: &Connection) -> Result<Vec<Contact>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT id, book, display_name, email, frequency, last_used, NULL FROM contact
+         ORDER BY id",
+    )?;
+    Ok(stmt
+        .query_map([], contact_row)?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// Every entry for an address (case-insensitive), in every book, with its vCard.
+pub(crate) fn contacts_by_email(conn: &Connection, email: &str) -> Result<Vec<Contact>> {
+    let mut stmt = conn.prepare_cached(&format!(
+        "SELECT {CONTACT_COLUMNS} FROM contact WHERE email = ?1 ORDER BY id"
+    ))?;
+    Ok(stmt
+        .query_map([email.trim()], contact_row)?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
 const RULE_COLUMNS: &str = "id, account_id, name, ordinal, enabled, trigger_kind, condition_json, actions_json, created, updated";
 
 fn rule_row(row: &Row<'_>) -> rusqlite::Result<Rule> {
@@ -228,6 +251,7 @@ impl WriteTx<'_> {
                    display_name = COALESCE(display_name, excluded.display_name)",
             )?
             .execute(params![display_name, email, at])?;
+        self.changes.contacts = true;
         Ok(self
             .conn
             .prepare_cached("SELECT id FROM contact WHERE book = 'collected' AND email = ?1")?
@@ -249,6 +273,7 @@ impl WriteTx<'_> {
                    display_name = excluded.display_name, vcard = excluded.vcard",
             )?
             .execute(params![book, display_name, email.trim(), vcard])?;
+        self.changes.contacts = true;
         Ok(self
             .conn
             .prepare_cached("SELECT id FROM contact WHERE book = ?1 AND email = ?2")?
@@ -261,7 +286,9 @@ impl WriteTx<'_> {
             .conn
             .prepare_cached("DELETE FROM contact WHERE id = ?1")?
             .execute([id.0])?;
-        ensure_changed(changed, "contact", id.0)
+        ensure_changed(changed, "contact", id.0)?;
+        self.changes.contacts = true;
+        Ok(())
     }
 
     // ---- rules -------------------------------------------------------------------

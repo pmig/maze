@@ -48,6 +48,10 @@ use mail_ui::source::{
     SenderClient, SortBy, SourceError, SourceStatus, StorageUsage, SyncState, ThreadFilter,
     ThreadKeys, ThreadRow, ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
 };
+use mail_ui::source::{
+    AddressBookEntry, BookKind, ContactDetail, ContactEdit, ContactError, ContactLabel,
+    ContactPhone, ContactQuery, ContactRow, ContactSort, ContactVersion,
+};
 use mazemail_core::correspondents::display;
 use mazemail_core::{
     AccountActivity as CoreAccountActivity, AccountInfo, AuthStatus, Body, CoreEventBatch,
@@ -223,6 +227,8 @@ impl CoreMailSource {
             status: !batch.sync_status.is_empty()
                 || !batch.accounts_changed.is_empty()
                 || batch.storage,
+            // Accounts renamed or removed change the books' names and labels.
+            contacts: batch.contacts || !batch.accounts_changed.is_empty(),
             everything: batch.reload,
         }
     }
@@ -734,6 +740,85 @@ pub fn status_of(accounts: &[AccountInfo]) -> SourceStatus {
 
 /// The global search query for the UI's filter: its text plus the toggles as
 /// operators.
+/// The color key of an account's labels: the same for every book and label of the
+/// account, from its stable UUID, so it doesn't change when accounts are reordered.
+fn account_color(uuid: &mazemail_core::Uuid) -> u32 {
+    let bytes = uuid.as_bytes();
+    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+}
+
+fn book_entry(book: &mazemail_core::AddressBookInfo) -> AddressBookEntry {
+    use mazemail_core::BookSource;
+    let (kind, color) = match &book.source {
+        BookSource::Collected => (BookKind::Collected, None),
+        BookSource::Imported => (BookKind::Imported, None),
+        BookSource::Account {
+            account,
+            uuid,
+            account_name,
+            ..
+        } => (
+            BookKind::Account {
+                account: *account,
+                name: account_name.clone().into(),
+            },
+            Some(account_color(uuid)),
+        ),
+        BookSource::Orphaned { .. } => (BookKind::Other, None),
+    };
+    AddressBookEntry {
+        id: book.id.clone().into(),
+        name: book.name.clone().into(),
+        kind,
+        count: book.count,
+        color,
+    }
+}
+
+fn contact_label(label: &mazemail_core::BookLabel) -> ContactLabel {
+    ContactLabel {
+        text: label.text.clone().into(),
+        color: label.account.as_ref().map(|(_, uuid)| account_color(uuid)),
+    }
+}
+
+fn phone(phone: &mazemail_core::ContactPhone) -> ContactPhone {
+    ContactPhone {
+        kind: phone.kind.clone().map(Into::into),
+        number: phone.number.clone().into(),
+    }
+}
+
+fn contact_detail(core: &CoreHandle, detail: &mazemail_core::ContactDetail) -> ContactDetail {
+    let text = |value: &Option<String>| value.clone().map(SharedString::from);
+    ContactDetail {
+        email: detail.email.clone().into(),
+        name: text(&detail.name),
+        emails: detail.emails.iter().cloned().map(Into::into).collect(),
+        phones: detail.phones.iter().map(phone).collect(),
+        organization: text(&detail.organization),
+        title: text(&detail.title),
+        versions: detail
+            .versions
+            .iter()
+            .map(|version| ContactVersion {
+                id: version.id.0,
+                book: version.book.id.clone().into(),
+                book_name: version.book.name.clone().into(),
+                label: contact_label(&version.book.label()),
+                name: text(&version.name),
+                emails: version.emails.iter().cloned().map(Into::into).collect(),
+                phones: version.phones.iter().map(phone).collect(),
+                organization: text(&version.organization),
+                title: text(&version.title),
+                frequency: version.frequency,
+                last_used: version.last_used.map(timestamp),
+                editable: core.contact_book_editable(&version.book.id),
+            })
+            .collect(),
+    }
+}
+
 fn search_query(filter: &ThreadFilter) -> String {
     let mut query = filter.text.clone().unwrap_or_default();
     for (on, operator) in [
@@ -1207,6 +1292,85 @@ impl MailSource for CoreMailSource {
     fn sync_now(&self) -> Result<(), SourceError> {
         self.ready()?.request_refresh(RefreshScope::All);
         Ok(())
+    }
+
+    fn address_books(&self) -> Vec<AddressBookEntry> {
+        let Ok(core) = self.ready() else {
+            return Vec::new();
+        };
+        match core.address_books() {
+            Ok(books) => books.iter().map(book_entry).collect(),
+            Err(error) => {
+                tracing::warn!(%error, "cannot read the address books");
+                Vec::new()
+            }
+        }
+    }
+
+    fn contacts(&self, query: &ContactQuery) -> Result<Arc<[ContactRow]>, SourceError> {
+        let core = self.ready()?;
+        let query = mazemail_core::ContactQuery {
+            book: query.book.as_ref().map(ToString::to_string),
+            text: query.text.clone(),
+            sort: match query.sort {
+                ContactSort::Name => mazemail_core::ContactSort::Name,
+                ContactSort::LastUsed => mazemail_core::ContactSort::LastUsed,
+            },
+        };
+        let rows = core.contacts(&query).map_err(unavailable)?;
+        Ok(rows
+            .into_iter()
+            .map(|row| ContactRow {
+                email: row.email.into(),
+                name: row.name.map(Into::into),
+                labels: row.labels.iter().map(contact_label).collect(),
+                last_used: row.last_used.map(timestamp),
+            })
+            .collect())
+    }
+
+    fn contact(&self, email: &str) -> Result<Option<ContactDetail>, SourceError> {
+        let core = self.ready()?;
+        Ok(core
+            .contact(email)
+            .map_err(unavailable)?
+            .map(|detail| contact_detail(&core, &detail)))
+    }
+
+    fn contact_book_editable(&self, book: &str) -> bool {
+        self.core()
+            .is_some_and(|core| core.contact_book_editable(book))
+    }
+
+    fn save_contact(&self, edit: ContactEdit) -> Result<(), ContactError> {
+        let core = self
+            .ready()
+            .map_err(|error| ContactError::Failed(error.to_string()))?;
+        let text = |value: Option<SharedString>| value.map(|v| v.to_string());
+        let edit = mazemail_core::ContactEdit {
+            book: edit.book.to_string(),
+            contact: edit.contact.map(mazemail_core::ContactId),
+            name: text(edit.name),
+            emails: edit.emails.iter().map(ToString::to_string).collect(),
+            phones: edit
+                .phones
+                .iter()
+                .map(|p| mazemail_core::ContactPhone {
+                    kind: p.kind.as_ref().map(ToString::to_string),
+                    number: p.number.to_string(),
+                })
+                .collect(),
+            organization: text(edit.organization),
+            title: text(edit.title),
+        };
+        let runner = core.clone();
+        match wait(&core, async move { runner.save_contact(edit).await })
+            .map_err(|error| ContactError::Failed(error.to_string()))?
+        {
+            Ok(_) => Ok(()),
+            Err(mazemail_core::ContactError::NotEditable { .. }) => Err(ContactError::NotEditable),
+            Err(error) => Err(ContactError::Failed(error.to_string())),
+        }
     }
 
     fn offers_add_account(&self) -> bool {

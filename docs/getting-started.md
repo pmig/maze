@@ -692,6 +692,35 @@ updates, and where the data directory is. Maze measures it in the background: wh
 starts, every few minutes, and soon after mail arrives, is imported or deleted (at most
 every 30 seconds). Nothing shows until the first measurement is done.
 
+### The Address Book
+
+The second button of the spaces bar on the far left (or `cmd-shift-b`, Thunderbird's
+Address Book key) opens the **Address Book** in place of the folder pane and the mail
+tabs; the first button (or `cmd-shift-b` again) goes back to Mail. **Workspace: Show
+Address Book** and **Workspace: Show Mail** are in the command palette too.
+
+- **The book pane** on the left (`cmd-b` hides it, like the folder pane): **All
+  Contacts** with the number of people, then each account's address books, then **On
+  This Computer**: **Collected** (every address you sent mail to) and the address
+  books you imported from Thunderbird.
+- **The contact list:** one row per address, with the name and a small label for every
+  place the address is in: the account's name in the account's color, "Collected", or
+  the imported book's name. The same person in two address books is one row with two
+  labels; the name comes from an account's or an imported address book before the one
+  collected from your mail. `cmd-f` filters by name or address, `up` and `down` move,
+  and the button next to the count sorts by name or by when you last wrote to them.
+- **The contact** on the right: every address and phone number with a copy button,
+  **New Mail** (a new message with the contact already in To), **Show Mail** (searches
+  all mail from, to or copied to the address and shows it in Mail), and each address
+  book's version of the contact with its label, so you see what each one knows.
+
+Maze remembers the selected book and the order in `ui_state.json`. Contacts are in the
+encrypted database on your computer and nothing about them leaves it. For now the
+Address Book only shows addresses: collected ones and those imported from Thunderbird.
+Your Google and Microsoft contacts, and creating and editing contacts (which writes to
+the account's server first), come in a later version
+([ADR-024](adr/0024-server-owned-contacts.md)).
+
 ## Writing mail
 
 Press `cmd-n`, click **+** in the title bar, or choose **Message → New Message**. The
@@ -769,8 +798,8 @@ address you send a message to (To, Cc and Bcc, your own addresses left out) is
 remembered on your computer, in the encrypted database, with how often you wrote to
 it, so the people you write to most come first. `up` and `down` move through the
 suggestions, `enter` or `tab` takes one, `escape` closes the list; a click works too.
-Syncing your Google and Microsoft contacts comes later
-([ADR-024](adr/0024-server-owned-contacts.md)).
+They are all in the [Address Book](#the-address-book). Syncing your Google and
+Microsoft contacts comes later ([ADR-024](adr/0024-server-owned-contacts.md)).
 
 Click a chip to select it, then `backspace` or `delete` removes it; `backspace` in the
 empty field selects the last chip, and `left` / `right` move between chips. **Drag a
@@ -978,7 +1007,8 @@ you chose. These are bound today:
 | Go to Folder                                | `cmd-k`                                              |
 | Search all messages                         | `cmd-shift-f`, `cmd-/`                               |
 | Quick Filter                                | `cmd-f`, `cmd-shift-k`                               |
-| Toggle folder pane                          | `cmd-b` (or the title bar's left button)             |
+| Toggle folder pane (book pane)              | `cmd-b` (or the title bar's left button)             |
+| Address Book / back to Mail                 | `cmd-shift-b` (or the spaces bar)                    |
 | Toggle message pane                         | `F8`                                                 |
 | Toggle agent column                         | `cmd-?`                                              |
 | Table view / threads on or off              | `cmd-alt-t` / `cmd-alt-g`                            |
@@ -1002,6 +1032,9 @@ you chose. These are bound today:
 | Move to a folder (Quick Move)               | `shift-m`                                            |
 | Delete (move to Trash)                      | `backspace`, `delete`                                |
 | Undo the last archive, move, delete or flag | `cmd-z`                                              |
+| **Address Book**                            |                                                      |
+| Next / previous contact, first / last       | `down` / `up`, `home` / `end`                        |
+| Filter the contacts                         | `cmd-f`                                              |
 | **Writing**                                 |                                                      |
 | New message                                 | `cmd-n`                                              |
 | Reply / reply all / forward                 | `cmd-r` / `cmd-shift-r` / `cmd-l`                    |

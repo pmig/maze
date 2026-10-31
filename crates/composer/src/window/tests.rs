@@ -1789,3 +1789,22 @@ fn drafts_and_reply_all_open_with_chips_and_save_the_same_lists(cx: &mut TestApp
         (saved.to, saved.cc, saved.bcc)
     );
 }
+
+#[gpui::test]
+fn a_draft_to_a_contact_opens_with_its_chip(cx: &mut TestAppContext) {
+    // New Mail in the Address Book opens a draft with the contact in To.
+    let backend = Arc::new(FakeBackend::default());
+    let mut options = options();
+    options.draft.to = vec![addr(Some("Anna Example"), "anna@example.com")];
+    let (view, cx) = open(cx, backend, options);
+    let to = to_field(&view, cx);
+    assert_eq!(
+        chips(&to, cx),
+        [Recipient::Address(addr(
+            Some("Anna Example"),
+            "anna@example.com"
+        ))]
+    );
+    assert_eq!(chips(&to, cx)[0].label(), "Anna Example");
+    assert_eq!(field_text(&to, cx), "");
+}

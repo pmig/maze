@@ -133,6 +133,16 @@ pub trait Queries: sealed::Sealed {
         misc::contact_by_email(self.connection(sealed::Token), email)
     }
 
+    /// Every address book entry, without vCards (the Address Book's lists).
+    fn contact_list(&self) -> Result<Vec<Contact>> {
+        misc::contact_list(self.connection(sealed::Token))
+    }
+
+    /// Every entry for an address (case-insensitive) in every book, with vCards.
+    fn contacts_by_email(&self, email: &str) -> Result<Vec<Contact>> {
+        misc::contacts_by_email(self.connection(sealed::Token), email)
+    }
+
     /// Whether messages from `email` may load remote content without asking
     /// ("Always for this sender"; case-insensitive).
     fn remote_content_allowed(&self, email: &str) -> Result<bool> {

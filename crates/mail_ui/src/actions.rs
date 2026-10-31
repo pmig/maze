@@ -48,6 +48,34 @@ actions!(
         ToggleAgentColumn,
         /// Show or hide the message pane (`F8`).
         ToggleMessagePane,
+        /// Switch to the Mail space (the spaces bar; `cmd-shift-b` in the Address
+        /// Book).
+        ShowMail,
+        /// Switch to the Address Book space (`cmd-shift-b`, Thunderbird's Address Book
+        /// key; the spaces bar).
+        ShowAddressBook,
+    ]
+);
+
+actions!(
+    address_book,
+    [
+        /// Select the next contact (down).
+        SelectNextContact,
+        /// Select the previous contact (up).
+        SelectPreviousContact,
+        /// Select the first contact (home).
+        SelectFirstContact,
+        /// Select the last contact (end).
+        SelectLastContact,
+        /// Write to the selected contact (the detail pane's New Mail).
+        NewMailToContact,
+        /// Show the mail from and to the selected contact in the Mail space.
+        ShowMailWithContact,
+        /// Sort the contact list by name.
+        SortContactsByName,
+        /// Sort the contact list by when you last wrote to them.
+        SortContactsByLastUsed,
     ]
 );
 
@@ -218,6 +246,7 @@ pub const PALETTE_NAMESPACES: &[&str] = &[
     "search",
     "mail",
     "view",
+    "address_book",
     "agent",
 ];
 

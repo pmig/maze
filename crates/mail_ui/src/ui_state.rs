@@ -10,11 +10,12 @@
 //!
 //! ```json
 //! {
-//!   "version": 4,
+//!   "version": 5,
 //!   "list": { "view": "table", "threaded": false, "sort": "subject_asc",
 //!             "columns": ["star", "unread", "subject", "correspondents", "size", "date"],
 //!             "widths": { "correspondents": 220.0 } },
 //!   "move_targets": { "a2": [17, 4] },
+//!   "address_book": { "book": "collected", "sort": "last_used" },
 //!   "layout": {
 //!     "root": { "split": { "axis": "horizontal", "flexes": [1.0, 1.0], "members": [
 //!       { "pane": { "active": 0, "items": [
@@ -36,6 +37,10 @@
 //! messages, drafts) plus a draft's random two-word name, never subjects. Tabs whose
 //! message or draft is gone are dropped when restored. Without `layout` (versions 1
 //! and 2) the window opens the unified Inbox.
+//!
+//! `address_book` (version 5) is the Address Book space's selected book (`book`, the
+//! backend's book id; All Contacts without it) and its order (`sort`: `"name"` or
+//! `"last_used"`). Earlier files have none: All Contacts by name.
 //!
 //! Version 4 made the Unread column a default one. A file from an earlier version that
 //! lists its own `columns` gets `unread` added once, when it is read; from then on the
@@ -60,7 +65,7 @@ use mazemail_types::{AccountId, FolderId};
 
 use ui::panes::SerializedLayout;
 
-use crate::source::{ListSort, SortBy};
+use crate::source::{ContactSort, ListSort, SortBy};
 
 /// The file name in the data directory.
 pub const UI_STATE_FILE: &str = "ui_state.json";
@@ -341,8 +346,25 @@ impl ListPrefs {
     }
 }
 
+/// What the Address Book space remembers.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AddressBookState {
+    /// The selected book; All Contacts when `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub book: Option<String>,
+    /// The contact list's order.
+    pub sort: ContactSort,
+}
+
+impl AddressBookState {
+    fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
 /// The format version written now.
-pub const UI_STATE_VERSION: u32 = 4;
+pub const UI_STATE_VERSION: u32 = 5;
 
 /// The contents of `ui_state.json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -358,6 +380,9 @@ pub struct UiState {
     /// The center's panes and tabs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub layout: Option<SerializedLayout>,
+    /// The Address Book's book and order.
+    #[serde(skip_serializing_if = "AddressBookState::is_default")]
+    pub address_book: AddressBookState,
 }
 
 impl Default for UiState {
@@ -367,6 +392,7 @@ impl Default for UiState {
             list: ListState::default(),
             move_targets: BTreeMap::new(),
             layout: None,
+            address_book: AddressBookState::default(),
         }
     }
 }
@@ -477,6 +503,20 @@ impl UiStateStore {
             return;
         }
         self.change(|inner| inner.state.layout = Some(layout));
+    }
+
+    /// The Address Book's book and order, as saved last.
+    pub fn address_book(&self) -> AddressBookState {
+        self.lock().state.address_book.clone()
+    }
+
+    /// Remembers the Address Book's book and order and writes the file (if there is
+    /// one and they changed).
+    pub fn set_address_book(&self, state: AddressBookState) {
+        if self.lock().state.address_book == state {
+            return;
+        }
+        self.change(|inner| inner.state.address_book = state);
     }
 
     /// Changes the state and writes the file (if there is one).
@@ -666,7 +706,31 @@ mod tests {
         assert_eq!(reopened.state().version, UI_STATE_VERSION);
         let json = std::fs::read_to_string(&path).unwrap();
         assert!(json.contains("\"brave-otter\""), "{json}");
-        assert!(json.contains("\"version\": 4"), "{json}");
+        assert!(json.contains("\"version\": 5"), "{json}");
+    }
+
+    #[test]
+    fn the_address_books_book_and_order_survive_a_restart() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(UI_STATE_FILE);
+        // Version 4 had no Address Book: All Contacts by name.
+        std::fs::write(&path, r#"{ "version": 4, "list": {} }"#).unwrap();
+        let store = UiStateStore::load(&path, ListDefaults::default());
+        assert_eq!(store.address_book(), AddressBookState::default());
+        store.set_address_book(AddressBookState {
+            book: Some("collected".into()),
+            sort: ContactSort::LastUsed,
+        });
+        let json = std::fs::read_to_string(&path).unwrap();
+        assert!(json.contains("\"last_used\""), "{json}");
+        let reopened = UiStateStore::load(&path, ListDefaults::default());
+        assert_eq!(
+            reopened.address_book(),
+            AddressBookState {
+                book: Some("collected".into()),
+                sort: ContactSort::LastUsed,
+            }
+        );
     }
 
     #[test]

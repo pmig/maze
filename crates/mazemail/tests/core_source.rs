@@ -884,3 +884,65 @@ fn sync_activity_maps_the_cores_snapshot() {
     assert!(t.source.sync_activity().is_empty());
     t.source.sync_account_now(AccountId(1)).unwrap();
 }
+
+#[test]
+fn the_address_book_reads_the_cores_contacts() {
+    use mail_ui::source::{BookKind, ContactEdit, ContactError, ContactQuery, ContactSort};
+
+    let s = seeded();
+    let uuid = s.core.accounts().unwrap()[0].uuid;
+    let google = format!("google:{uuid}");
+    let book = google.clone();
+    s.core
+        .store()
+        .write_blocking(move |w| {
+            w.bump_contact("anna@example.com", None, 1_800_000_000)?;
+            w.upsert_contact(&book, "anna@example.com", Some("Anna Example"), None)?;
+            w.upsert_contact(
+                "Personal Address Book",
+                "bob@example.net",
+                Some("Bob"),
+                None,
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+    let books = s.source.address_books();
+    let kinds: Vec<(&str, &BookKind)> = books.iter().map(|b| (b.name.as_ref(), &b.kind)).collect();
+    assert_eq!(kinds.len(), 3);
+    assert_eq!(kinds[0].0, "My Contacts");
+    assert!(matches!(kinds[0].1, BookKind::Account { name, .. } if name.as_ref() == "Personal"));
+    assert_eq!(kinds[1], ("Collected", &BookKind::Collected));
+    assert_eq!(kinds[2], ("Personal Address Book", &BookKind::Imported));
+    // One color per account, for its books and labels alike.
+    assert!(books[0].color.is_some() && books[1].color.is_none());
+
+    let rows = s
+        .source
+        .contacts(&ContactQuery {
+            sort: ContactSort::LastUsed,
+            ..ContactQuery::default()
+        })
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].name.as_deref(), Some("Anna Example"));
+    let labels: Vec<&str> = rows[0].labels.iter().map(|l| l.text.as_ref()).collect();
+    assert_eq!(labels, ["Personal", "Collected"]);
+    assert_eq!(rows[0].labels[0].color, books[0].color);
+    assert_eq!(
+        rows[0].last_used.map(|at| at.unix_timestamp()),
+        Some(1_800_000_000)
+    );
+
+    let anna = s.source.contact("anna@example.com").unwrap().unwrap();
+    assert_eq!(anna.versions.len(), 2);
+    assert_eq!(anna.versions[0].book.as_ref(), google);
+    assert!(!anna.versions[0].editable);
+    assert!(!s.source.contact_book_editable(&google));
+    assert_eq!(
+        s.source.save_contact(ContactEdit::of(&anna.versions[0])),
+        Err(ContactError::NotEditable)
+    );
+    s.runtime.block_on(s.core.shutdown()).unwrap();
+}

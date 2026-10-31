@@ -34,6 +34,8 @@ pub struct ChangeSet {
     pub drafts: bool,
     /// Proposals changed.
     pub proposals: bool,
+    /// Address book entries were added, changed or removed (`contact` table).
+    pub contacts: bool,
 }
 
 impl ChangeSet {
@@ -59,6 +61,7 @@ impl ChangeSet {
         self.outbox |= other.outbox;
         self.drafts |= other.drafts;
         self.proposals |= other.proposals;
+        self.contacts |= other.contacts;
         // A thread removed in a later job isn't "changed" any more, and vice versa.
         for thread in &self.threads_removed {
             self.threads.remove(thread);
