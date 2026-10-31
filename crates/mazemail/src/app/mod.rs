@@ -34,6 +34,7 @@ mod add_account;
 mod agents;
 mod approval;
 mod compose;
+mod contacts;
 mod keyboard;
 mod legacy_local;
 mod lost_key;
@@ -167,6 +168,12 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
         // Settings from another window (a draft in a window of its own): they open in
         // the main window, which handles the action itself when it has the focus.
         cx.on_action(|_: &mail_ui::actions::OpenSettings, cx| cx.defer(open_settings));
+        // Google contacts (ADR-024); deferred like Add Account (it may open a browser
+        // and show notifications).
+        cx.on_action(|_: &mail_ui::actions::ConnectGoogleContacts, cx| {
+            cx.defer(contacts::connect_google_contacts);
+        });
+        cx.on_action(|_: &mail_ui::actions::SyncContacts, cx| cx.defer(contacts::sync_contacts));
         agents::init(cx);
         cx.set_global(AppState {
             source,

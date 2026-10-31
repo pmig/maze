@@ -1822,6 +1822,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
+name = "contacts"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "auth",
+ "mazemail_types",
+ "pretty_assertions",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
+ "uuid 1.28.0",
+ "wiremock",
+]
+
+[[package]]
 name = "content-security-policy"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6432,7 +6451,9 @@ dependencies = [
  "anyhow",
  "async-trait",
  "auth",
+ "blake3",
  "bytes",
+ "contacts",
  "imap",
  "import",
  "ingest",

@@ -22,7 +22,8 @@
 //! | Messages | [`message`](CoreHandle::message), [`verify_auth`](CoreHandle::verify_auth) |
 //! | Search   | [`search`](CoreHandle::search), [`quick_filter_body`](CoreHandle::quick_filter_body), [`sort_threads`](CoreHandle::sort_threads) / [`sort_messages`](CoreHandle::sort_messages) (search results by any column) |
 //! | Commands | [`apply`](CoreHandle::apply), [`undo`](CoreHandle::undo) |
-//! | Contacts | [`address_books`](CoreHandle::address_books), [`contacts`](CoreHandle::contacts) (All Contacts grouped by address, or one book), [`contact`](CoreHandle::contact) (every book's version), [`contact_book_editable`](CoreHandle::contact_book_editable) / [`save_contact`](CoreHandle::save_contact) (see [`contacts`]) |
+//! | Contacts | [`address_books`](CoreHandle::address_books), [`contacts`](CoreHandle::contacts) (All Contacts grouped by address, or one book), [`contact`](CoreHandle::contact) (every book's version), [`contact_book_editable`](CoreHandle::contact_book_editable) / [`save_contact`](CoreHandle::save_contact) (see [`contacts`](mod@contacts)) |
+//! | Google contacts | [`connect_google_contacts`](CoreHandle::connect_google_contacts) / [`disconnect_contacts`](CoreHandle::disconnect_contacts), [`contacts_status`](CoreHandle::contacts_status), [`sync_contacts_now`](CoreHandle::sync_contacts_now), [`create_contact`](CoreHandle::create_contact) / [`update_contact`](CoreHandle::update_contact) (write-through), [`synced_contact`](CoreHandle::synced_contact), [`contact_photo`](CoreHandle::contact_photo) (see [`synced_contacts`]) |
 //! | Compose  | [`identities`](CoreHandle::identities), [`new_draft`](CoreHandle::new_draft), [`reply_draft`](CoreHandle::reply_draft), [`forward_draft`](CoreHandle::forward_draft), [`create_draft`](CoreHandle::create_draft)/[`update_draft`](CoreHandle::update_draft)/[`delete_draft`](CoreHandle::delete_draft), [`send_draft`](CoreHandle::send_draft) (see [`compose`], [`outgoing`]) |
 //! | Events   | [`events`](CoreHandle::events), [`settings_watch`](CoreHandle::settings_watch) |
 //! | Sync     | [`accounts_with_status`](CoreHandle::accounts_with_status), [`sync_activity`](CoreHandle::sync_activity) (what each account's sync is doing, see [`activity`]) |
@@ -89,9 +90,20 @@ pub mod storage;
 pub mod sync_bridge;
 pub mod sync_engine;
 pub mod sync_ingest;
+pub mod synced_contacts;
 pub mod thread_list;
 pub mod thread_tree;
 
+pub use self::contacts::{
+    AddressBookInfo, BookLabel, BookSource, ContactDetail, ContactEdit, ContactError, ContactPhone,
+    ContactQuery, ContactSort, ContactSummary, ContactVersion,
+};
+/// Contact sync types (the `contacts` crate) that are part of this API. Its error is
+/// [`ServerContactError`] here ([`Error::Contacts`]).
+pub use ::contacts::{
+    Book, BookKind, ContactError as ServerContactError, ContactFields, Labeled, Name, Organization,
+    Person, Photo, PostalAddress,
+};
 pub use accounts::{
     AccountAuth, AccountConfig, AccountErrorKind, AccountInfo, AddImapAccount, AddOAuthAccount,
     ConnectionTest, ImapSecurity, ImapServer, ServerSuggestion, suggest_imap_server,
@@ -102,10 +114,6 @@ pub use api_handler::{Authorization, CommandAuthorizer, DenyAgents};
 pub use commands::{CommandOutcome, CommandReceipt, MailCommand, Origin};
 pub use compose::{ComposeErrorKind, IdentityInfo, ReplyKind, SendResult};
 pub use config::{CoreConfig, RuntimeConfig};
-pub use contacts::{
-    AddressBookInfo, BookLabel, BookSource, ContactDetail, ContactEdit, ContactError, ContactPhone,
-    ContactQuery, ContactSort, ContactSummary, ContactVersion,
-};
 pub use crash_guard::{CrashGuardStatus, ROLLBACK_THRESHOLD, SENTINEL_FILE};
 pub use error::{Error, Result};
 pub use events::{CoreEventBatch, DEFAULT_EVENT_WINDOW, FolderCounts};
@@ -132,6 +140,9 @@ pub use sync_engine::{
     AccountSecretsLocation, ImapConnector, NetworkImapConnector, SyncEngineConfig,
 };
 pub use sync_ingest::CoreIngest;
+pub use synced_contacts::{
+    AccountContacts, ContactBookState, ContactBookStatus, ContactsOptIn, SyncedContact,
+};
 
 pub use mazemail_types::DraftId;
 /// Compose types that are part of this API.

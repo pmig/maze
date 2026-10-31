@@ -10,7 +10,10 @@ publish.workspace = true
 [dependencies]
 async-trait = { workspace = true }
 auth = { workspace = true }
+blake3 = { workspace = true }
 bytes = { workspace = true }
+# Google contact sync (ADR-024).
+contacts = { workspace = true }
 imap = { workspace = true }
 import = { workspace = true }
 ingest = { workspace = true }

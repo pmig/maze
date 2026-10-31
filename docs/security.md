@@ -32,8 +32,8 @@ Linux), and all of it is encrypted:
 
 | Data                                                 | Encryption                                                                   |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Database `mazemail.db` (messages, folders, accounts, identities, account passwords and OAuth refresh tokens, API token hashes, audit log, your spelling dictionary, address books and the addresses you wrote to) | SQLCipher 4: AES-256 with an HMAC-SHA512 per page |
-| Raw messages and attachments (`blobs/`), caches (`cache/`) | XChaCha20-Poly1305 in 64 KiB chunks, bound to the blob's id, after compression |
+| Database `mazemail.db` (messages, folders, accounts, identities, account passwords and OAuth refresh tokens, API token hashes, audit log, your spelling dictionary, address books, contacts synced from Google and the addresses you wrote to) | SQLCipher 4: AES-256 with an HMAC-SHA512 per page |
+| Raw messages and attachments (`blobs/`), caches (`cache/`, also contact photos) | XChaCha20-Poly1305 in 64 KiB chunks, bound to the blob's id, after compression |
 | Search index (`index/`)                              | Tantivy segments in 16 KiB XChaCha20-Poly1305 blocks                         |
 | Pre-migration database backups (`backups/`)          | SQLCipher, same key                                                          |
 
@@ -163,6 +163,30 @@ client: only URLs the sanitized message references, only images, at most 5 MB ea
 can still learn when you load images: that the message was opened, when, and from
 which IP address (and roughly where, from that address); which images you loaded if
 their URLs are unique to you. Tracking pixels Maze recognizes are dropped even then.
+
+## Contacts from Google
+
+When you connect an account's Google contacts ([ADR-024](adr/0024-server-owned-contacts.md),
+[getting started](getting-started.md#google-contacts)), Maze stores other people's data
+it didn't have before: names, email and postal addresses, phone numbers,
+organizations, notes and photos. All of it is encrypted like mail: the contacts in the
+database (tables `contact`, `contact_person`, `contact_source`), their photos in the
+blob cache. Nothing of it is logged. Disconnecting the contacts or removing the account
+deletes the copy.
+
+What leaves your computer, and to whom:
+
+- **To Google** (`people.googleapis.com`, with the account's OAuth token): requests for
+  your contacts and their changes, and the contacts you create or edit in Maze, which
+  are sent there when you save them. Nothing else, and nothing from other accounts.
+- **To Google's photo servers** (`lh3.googleusercontent.com` or what the photo URL
+  names): one request per contact photo, about once a week, without your token,
+  cookies or `Referer`, with a generic `User-Agent`. Google learns your IP address and
+  which of your contacts' photos Maze loads.
+
+The contacts scopes are opt-in per account and asked for with a separate consent; an
+account that never connected them sends nothing of this. Restricted local API tokens
+don't see more than before.
 
 ## Lost key and recovery
 

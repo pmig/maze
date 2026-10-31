@@ -263,7 +263,7 @@ impl AccountConfig {
             .filter(|domain| !domain.is_empty())
     }
 
-    fn to_json(&self) -> String {
+    pub(crate) fn to_json(&self) -> String {
         serde_json::to_string(self).unwrap_or_else(|_| "{}".to_owned())
     }
 }
@@ -609,7 +609,7 @@ impl CoreHandle {
         self.engine().and_then(|engine| engine.status(account))
     }
 
-    fn engine_or_err(&self) -> Result<Arc<crate::sync_engine::SyncEngine>> {
+    pub(crate) fn engine_or_err(&self) -> Result<Arc<crate::sync_engine::SyncEngine>> {
         self.engine().ok_or(Error::NoSyncEngine)
     }
 
@@ -987,13 +987,16 @@ impl CoreHandle {
         if let Some(engine) = &engine {
             engine.stop(id).await;
         }
-        self.store()
+        let photos = self
+            .store()
             .write(move |w| {
                 let servers: Vec<_> = w
                     .identities(Some(id))?
                     .iter()
                     .filter_map(|i| i.input.smtp)
                     .collect();
+                // Synced contacts go with the account; their photos leave the cache.
+                let photos = w.delete_contact_books(id)?;
                 w.delete_account(id)?;
                 // SMTP servers only this account's identities used go with it.
                 let in_use: Vec<_> = w
@@ -1006,9 +1009,10 @@ impl CoreHandle {
                         w.delete_smtp_server(server)?;
                     }
                 }
-                Ok(())
+                Ok(photos)
             })
             .await?;
+        crate::sync_engine::contacts::forget_photos(self.store(), &photos);
         tracing::info!(account = %id, "account removed");
         // In the encrypted store the secrets went with the account row; other stores
         // (tests, the development file) delete them here.

@@ -39,7 +39,9 @@
 //!   message's labels again once; v11 adds the senders allowed to load remote content
 //!   ([`WriteTx::allow_remote_content`], [`Queries::remote_content_allowed`]); v12 adds
 //!   the personal spelling dictionary ([`WriteTx::add_spelling_word`],
-//!   [`Queries::spelling_words`]).
+//!   [`Queries::spelling_words`]); v13 adds contacts synced from an account's server
+//!   (`contact_source`, `contact_person`, `contact.resource_name`, `contact_photo`;
+//!   see [`WriteTx::upsert_server_contact`]).
 //!   Migrations only ever add files; opening an older database backs it up first (see
 //!   [`MigrationReport`]).
 //! - **Message lists** (threads off): [`Queries::message_list_keys`] pages through the
@@ -171,6 +173,9 @@ pub use model::*;
 pub use reader::Reader;
 pub use repo::Queries;
 pub use repo::agents::token_hash;
+pub use repo::contact_sync::{
+    ContactPhotoState, ContactSourceState, ServerContact, StoredServerContact,
+};
 pub use repo::ops::{MAX_OP_ATTEMPTS, retry_backoff_secs};
 pub use sendlog::SendLog;
 pub use store::{Store, StoreConfig};

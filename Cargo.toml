@@ -16,6 +16,7 @@ publish = false
 agent = { path = "crates/agent" }
 agent_ui = { path = "crates/agent_ui" }
 auth = { path = "crates/auth" }
+contacts = { path = "crates/contacts" }
 auto_update_ui = { path = "crates/auto_update_ui" }
 composer = { path = "crates/composer" }
 html_view = { path = "crates/html_view" }

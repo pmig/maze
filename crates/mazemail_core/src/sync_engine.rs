@@ -57,6 +57,8 @@ use crate::new_mail::{self, NewMailBatch, NewMailFilter, unix_now};
 use crate::sync_bridge::{FetchPriority, RefreshScope, SyncBridge, SyncState, SyncStatus};
 use crate::sync_ingest::CoreIngest;
 
+pub(crate) mod contacts;
+
 /// How often the sleep watchdog looks at the clocks.
 const WAKE_CHECK: Duration = Duration::from_secs(60);
 
@@ -138,6 +140,11 @@ pub struct SyncEngineConfig {
     pub timing: SyncTiming,
     /// Submits mail (SMTP over the network in production).
     pub mailer: Arc<dyn smtp::Mailer>,
+    /// The Google People API; `None`: Google's ([`contacts::google::PEOPLE_API`](::contacts::google::PEOPLE_API)).
+    /// Tests point it at a mock server.
+    pub contacts_api: Option<String>,
+    /// How contact API calls retry rate limits and server errors.
+    pub contacts_backoff: ::contacts::Backoff,
 }
 
 impl fmt::Debug for SyncEngineConfig {
@@ -174,7 +181,23 @@ impl SyncEngineConfig {
             providers: None,
             timing: SyncTiming::default(),
             mailer: Arc::new(smtp::LettreMailer),
+            contacts_api: None,
+            contacts_backoff: ::contacts::Backoff::default(),
         }
+    }
+
+    /// Talks to the People API at `base` (a mock server in tests).
+    #[must_use]
+    pub fn with_contacts_api(mut self, base: impl Into<String>) -> Self {
+        self.contacts_api = Some(base.into());
+        self
+    }
+
+    /// Retries contact API calls with `backoff`.
+    #[must_use]
+    pub fn with_contacts_backoff(mut self, backoff: ::contacts::Backoff) -> Self {
+        self.contacts_backoff = backoff;
+        self
     }
 
     /// Submits mail with `mailer`.
@@ -236,6 +259,8 @@ pub struct SyncEngine {
     tokens: Mutex<HashMap<AccountId, Arc<OAuthTokenManager>>>,
     statuses: Arc<Mutex<HashMap<AccountId, SyncStatus>>>,
     watchdog: Mutex<Option<JoinHandle<()>>>,
+    /// The contact sync task of each Google account ([`contacts`]).
+    contact_tasks: Mutex<HashMap<AccountId, contacts::ContactTask>>,
 }
 
 impl fmt::Debug for SyncEngine {
@@ -301,6 +326,7 @@ impl SyncEngine {
             tokens: Mutex::new(HashMap::new()),
             statuses: Arc::new(Mutex::new(HashMap::new())),
             watchdog: Mutex::new(None),
+            contact_tasks: Mutex::new(HashMap::new()),
         }
     }
 
@@ -442,7 +468,11 @@ impl SyncEngine {
 
     /// Starts the actor of `account` if it is synced and not running yet. `tokens` is
     /// the token manager of a sign-in that just happened.
-    pub(crate) fn start(&self, account: &Account, tokens: Option<Arc<OAuthTokenManager>>) {
+    pub(crate) fn start(
+        self: &Arc<Self>,
+        account: &Account,
+        tokens: Option<Arc<OAuthTokenManager>>,
+    ) {
         if !matches!(
             account.kind,
             store::AccountKind::Imap | store::AccountKind::Gmail | store::AccountKind::M365
@@ -456,6 +486,7 @@ impl SyncEngine {
             tracing::info!(account = %account.id, method = %config.auth, "login method not supported for sync");
             return;
         };
+        self.start_contacts(account, &config);
         let mut actors = lock(&self.actors);
         if actors.contains_key(&account.id) {
             return;
@@ -501,6 +532,7 @@ impl SyncEngine {
 
     /// Stops the actor of `account` and waits until it logged out.
     pub(crate) async fn stop(&self, account: AccountId) {
+        self.stop_contacts(account);
         let running = lock(&self.actors).remove(&account);
         lock(&self.tokens).remove(&account);
         if let Some(running) = running {
@@ -520,6 +552,9 @@ impl SyncEngine {
     pub(crate) async fn shutdown(&self) {
         if let Some(watchdog) = lock(&self.watchdog).take() {
             watchdog.abort();
+        }
+        for (_, task) in lock(&self.contact_tasks).drain() {
+            task.stop();
         }
         let running: Vec<(AccountId, Running)> = lock(&self.actors).drain().collect();
         let mut stops = tokio::task::JoinSet::new();
@@ -543,6 +578,7 @@ impl SyncEngine {
         for handle in self.handles() {
             let _ = handle.wake();
         }
+        self.sync_contacts_now(None);
     }
 
     /// Every actor reconnects and syncs once.

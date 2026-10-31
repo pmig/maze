@@ -65,6 +65,8 @@ pub struct Settings {
     pub auto_update_install: AutoUpdateInstall,
     /// Notifications for new mail.
     pub notifications: NotificationSettings,
+    /// Contacts synced from Google accounts that connected their contacts.
+    pub contacts: ContactsSettings,
     /// Log verbosity. The `MAZEMAIL_LOG` environment variable takes precedence.
     pub log_level: LogLevel,
 }
@@ -94,6 +96,7 @@ impl Default for Settings {
             update_channel: None,
             auto_update_install: AutoUpdateInstall::default(),
             notifications: NotificationSettings::default(),
+            contacts: ContactsSettings::default(),
             log_level: LogLevel::default(),
         }
     }
@@ -122,6 +125,9 @@ impl Settings {
                 .and_then(|o| o.remote_content)
                 .unwrap_or(self.reader.remote_content),
             agent_access: self.agent.access_for(label),
+            contacts_sync: overrides
+                .and_then(|o| o.contacts_sync)
+                .unwrap_or(self.contacts.sync),
         }
     }
 
@@ -744,6 +750,9 @@ pub struct AccountOverrides {
     /// Overrides `compose.support_maze`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub support_maze: Option<bool>,
+    /// Overrides `contacts.sync`: `false` stops syncing this account's contacts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contacts_sync: Option<bool>,
 }
 
 /// The effective settings of one account, see [`Settings::account`].
@@ -757,6 +766,8 @@ pub struct AccountSettings {
     pub remote_content: RemoteContentPolicy,
     /// What agents may do with this account.
     pub agent_access: AgentAccess,
+    /// Whether the account's contacts are synced (once connected).
+    pub contacts_sync: bool,
 }
 
 /// AI agents.
@@ -951,6 +962,27 @@ pub struct MicrosoftAuthSettings {
     /// the tenant they signed in with.
     #[schemars(with = "String")]
     pub tenant: MicrosoftTenant,
+}
+
+/// Contacts synced from the accounts' servers (ADR-024).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ContactsSettings {
+    /// Sync the contacts of accounts that connected them. `false` keeps the copy on
+    /// this computer but stops syncing it.
+    pub sync: bool,
+    /// Minutes between contact syncs (also at startup and on demand). At least 5.
+    #[schemars(range(min = 5))]
+    pub sync_interval_minutes: u32,
+}
+
+impl Default for ContactsSettings {
+    fn default() -> Self {
+        Self {
+            sync: true,
+            sync_interval_minutes: 30,
+        }
+    }
 }
 
 /// Notifications for new mail.

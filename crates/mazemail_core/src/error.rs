@@ -122,6 +122,12 @@ pub enum Error {
     #[error("{0}")]
     BodyUnavailable(String),
 
+    /// Creating, editing or syncing a contact failed: offline, missing permission, a
+    /// conflict (carrying the server's version), a read-only book. The text is for
+    /// people and contains no contact data.
+    #[error(transparent)]
+    Contacts(#[from] contacts::ContactError),
+
     /// Accounts can't be added or synced: this core runs without a sync engine.
     #[error("accounts can't be added here: Maze runs without its sync engine")]
     NoSyncEngine,

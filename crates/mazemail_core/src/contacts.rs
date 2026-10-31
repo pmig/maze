@@ -31,10 +31,11 @@
 //! # Editing
 //!
 //! The server owns the contacts (ADR-024): an edit writes to the account's server and
-//! the local copy is updated from its answer. Nothing can be edited yet:
-//! [`CoreHandle::contact_book_editable`] says `false` for every book and
-//! [`CoreHandle::save_contact`] answers [`ContactError::NotEditable`]. Contact sync
-//! implements both for its books.
+//! the local copy is updated from its answer. Google's My Contacts are editable once
+//! the account connected its contacts ([`CoreHandle::contact_book_editable`]);
+//! [`CoreHandle::save_contact`] writes through to Google (see
+//! [`crate::synced_contacts`]). Every other book answers
+//! [`ContactError::NotEditable`].
 //!
 //! Contacts are personal data: they stay in the encrypted database, nothing here goes
 //! over the network, and no address or name is logged.
@@ -426,7 +427,7 @@ fn books_of(entries: &[Contact], accounts: &[Account]) -> Vec<AddressBookInfo> {
                 name,
                 source,
                 count,
-                editable: book_editable(id),
+                editable: book_editable(id, accounts),
             };
             (order, info)
         })
@@ -445,10 +446,11 @@ fn books_of(entries: &[Contact], accounts: &[Account]) -> Vec<AddressBookInfo> {
     books.into_iter().map(|(_, book)| book).collect()
 }
 
-/// Whether contacts in `book` can be edited. Nothing can yet: contact sync answers
-/// `true` for the books it can write to on the account's server.
-fn book_editable(_book: &str) -> bool {
-    false
+/// Whether contacts in `book` can be edited: Google's My Contacts (`google:<uuid>`) of
+/// an account that connected its contacts (contact sync, see
+/// [`crate::synced_contacts`]).
+fn book_editable(book: &str, accounts: &[Account]) -> bool {
+    crate::synced_contacts::synced_book_editable(book, accounts)
 }
 
 /// The address an entry groups by.
@@ -712,21 +714,29 @@ impl CoreHandle {
         Ok(detail_of(entries, &books, &accounts))
     }
 
-    /// Whether contacts in `book` can be edited in Maze. `false` for every book for
-    /// now; contact sync says `true` for the books it can write to.
+    /// Whether contacts in `book` can be edited in Maze: Google's My Contacts
+    /// (`google:<uuid>`) of an account that connected its contacts and whose grant
+    /// covers them. Collected addresses, imported books and Google's Other contacts
+    /// are read-only. No network.
     pub fn contact_book_editable(&self, book: &str) -> bool {
-        book_editable(book)
+        self.store()
+            .reader()
+            .and_then(|reader| reader.accounts())
+            .is_ok_and(|accounts| book_editable(book, &accounts))
     }
 
     /// Saves a contact: writes it to the book's server, then updates the local copy
-    /// from the server's answer (ADR-024). No book can be written to yet, so this
-    /// answers [`ContactError::NotEditable`].
+    /// from the server's answer (ADR-024; see [`crate::synced_contacts`]). A new
+    /// contact has `edit.contact` `None`. Books that can't be edited answer
+    /// [`ContactError::NotEditable`]; offline, a missing permission or a contact
+    /// changed elsewhere are [`ContactError::Core`] with
+    /// [`Error::Contacts`](crate::Error::Contacts) (a conflict carries Google's
+    /// current version, which is stored too).
     pub async fn save_contact(
         &self,
         edit: ContactEdit,
     ) -> std::result::Result<ContactDetail, ContactError> {
-        self.ensure_open()?;
-        Err(ContactError::NotEditable { book: edit.book })
+        self.save_contact_edit(edit).await
     }
 }
 

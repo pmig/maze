@@ -14,6 +14,7 @@ mod common;
 mod compose;
 mod contacts;
 mod events;
+mod google_contacts;
 mod index;
 mod lifecycle;
 mod messages;

@@ -8,6 +8,7 @@
 mod aggregates;
 mod blobs;
 mod common;
+mod contacts;
 mod lists;
 mod message_lists;
 mod messages;

@@ -1,0 +1,29 @@
+[package]
+name = "contacts"
+description = "Maze contact sources: the Google People API client (sync tokens, etag-checked writes, photos) and vCard mapping"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+auth = { workspace = true }
+mazemail_types = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tokio = { workspace = true }
+wiremock = { workspace = true }
+
+[lints]
+workspace = true

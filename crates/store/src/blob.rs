@@ -512,6 +512,16 @@ impl BlobStore {
         }
     }
 
+    /// Deletes one cache entry, if it exists.
+    pub fn cache_remove(&self, blob: &BlobId, kind: &str, renderer_version: u32) -> Result<()> {
+        let path = self.cache_path(&self.cache_id(blob, kind, renderer_version));
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(Error::io("removing a cache entry")(err)),
+        }
+    }
+
     /// Deletes the whole cache.
     pub fn cache_clear(&self) -> Result<()> {
         let dir = self.inner.layout.cache_dir();
@@ -1033,6 +1043,10 @@ mod tests {
         );
         assert_eq!(blobs.cache_get(&blob, "reader", 2), None);
         assert_eq!(blobs.cache_get(&blob, "html", 1), None);
+        blobs.cache_put(&blob, "html", 1, b"x").unwrap();
+        blobs.cache_remove(&blob, "html", 1).unwrap();
+        assert_eq!(blobs.cache_get(&blob, "html", 1), None);
+        blobs.cache_remove(&blob, "html", 1).unwrap();
 
         // A damaged entry reads as a miss and is removed.
         let path = blobs.cache_path(&blobs.cache_id(&blob, "reader", 1));

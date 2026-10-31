@@ -80,6 +80,17 @@ actions!(
 );
 
 actions!(
+    contacts,
+    [
+        /// Connect the Google contacts of your Google accounts: sign in to Google once
+        /// more to allow it; Maze then syncs them and saves edits to Google.
+        ConnectGoogleContacts,
+        /// Sync the contacts of every connected account now.
+        SyncContacts,
+    ]
+);
+
+actions!(
     command_palette,
     [
         /// Open or close the command palette (`cmd-shift-p`).
@@ -248,6 +259,7 @@ pub const PALETTE_NAMESPACES: &[&str] = &[
     "view",
     "address_book",
     "agent",
+    "contacts",
 ];
 
 /// "mail::NextUnread" becomes "Mail: Next Unread", the way Zed's palette shows actions.

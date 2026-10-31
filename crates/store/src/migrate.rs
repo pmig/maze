@@ -31,6 +31,7 @@ const MAIN: &[M<'static>] = &[
         "../migrations/main/0011_remote_content_senders.sql"
     )),
     M::up(include_str!("../migrations/main/0012_spelling_words.sql")),
+    M::up(include_str!("../migrations/main/0013_contact_sync.sql")),
 ];
 
 const SENDLOG: &[M<'static>] = &[M::up(include_str!(
@@ -589,6 +590,68 @@ mod tests {
             })
             .unwrap();
         assert_eq!(senders, 1);
+    }
+
+    #[test]
+    fn v13_adds_contact_sync_and_cleans_up_with_the_account() {
+        let tmp = tempfile::tempdir().unwrap();
+        let key = key(13);
+        let mut conn = conn::open(&tmp.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
+        migrate_with_backup(&mut conn, &key, tmp.path(), "1.0.0", &MAIN[..12]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO account (id, kind, name) VALUES (1, 'gmail', 'Work');
+             INSERT INTO contact (book, display_name, email, frequency)
+             VALUES ('collected', 'Anna', 'anna@example.com', 3);",
+        )
+        .unwrap();
+        let report = migrate_main(&mut conn, &key, tmp.path(), "1.1.0").unwrap();
+        assert_eq!((report.from, report.to), (12, SCHEMA_VERSION));
+        assert!(report.backup.is_some());
+        // Existing contacts are local: no server id.
+        let resource: Option<String> = conn
+            .query_row("SELECT resource_name FROM contact", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(resource, None);
+        conn.execute_batch(
+            "INSERT INTO contact_source (book, account_id, kind) VALUES ('google:u', 1, 'google');
+             INSERT INTO contact_person (book, resource_name, emails, vcard, updated_at)
+             VALUES ('google:u', 'people/c1', 'anna@example.com', 'BEGIN:VCARD', 1);
+             INSERT INTO contact (book, display_name, email, resource_name)
+             VALUES ('google:u', 'Anna', 'anna@example.com', 'people/c1');
+             INSERT INTO contact_photo (url, fetched_at, found) VALUES ('https://p', 1, 0);",
+        )
+        .unwrap();
+        // A person needs its book, and states are checked.
+        assert!(
+            conn.execute(
+                "INSERT INTO contact_person (book, resource_name, vcard, updated_at)
+                 VALUES ('google:nope', 'people/c2', '', 1)",
+                []
+            )
+            .is_err()
+        );
+        assert!(
+            conn.execute("UPDATE contact_source SET state = 'weird'", [])
+                .is_err()
+        );
+        let count = |conn: &Connection, sql: &str| -> i64 {
+            conn.query_row(sql, [], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM contact"), 2);
+        // Removing the account removes its books, people and their contact rows; the
+        // collected address stays.
+        conn.execute("DELETE FROM account WHERE id = 1", [])
+            .unwrap();
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM contact_source"), 0);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM contact_person"), 0);
+        let books: Vec<String> = conn
+            .prepare("SELECT book FROM contact")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(books, ["collected"]);
     }
 
     #[test]

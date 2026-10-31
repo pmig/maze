@@ -919,3 +919,71 @@ async fn socket_round_trip() {
     .await
     .expect("the requests are audited");
 }
+
+#[tokio::test]
+async fn account_scope_limits_synced_contacts_to_its_accounts() {
+    let t = open().await;
+    let reader = t.core.store().reader().unwrap();
+    let work = reader.account(t.fixture.work).unwrap().unwrap().uuid;
+    let gmail = reader.account(t.fixture.gmail).unwrap().unwrap().uuid;
+    drop(reader);
+    let (work_id, gmail_id) = (t.fixture.work, t.fixture.gmail);
+    t.core
+        .store()
+        .write(move |w| {
+            for (account, uuid, email) in [
+                (work_id, work, "colleague@work.example"),
+                (gmail_id, gmail, "friend@gmail.example"),
+            ] {
+                let book = format!("google:{uuid}");
+                w.ensure_contact_source(&book, account, "google")?;
+                w.upsert_server_contact(
+                    &book,
+                    &store::ServerContact {
+                        resource_name: "people/c1".into(),
+                        etag: None,
+                        display_name: Some("Someone".into()),
+                        emails: vec![email.into()],
+                        vcard: "BEGIN:VCARD\r\nEND:VCARD\r\n".into(),
+                        photo_url: None,
+                    },
+                    1,
+                )?;
+            }
+            w.upsert_contact("thunderbird", "imported@example.org", None, None)?;
+            w.bump_contact("collected@example.org", None, 1)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let contacts = |value: Value| -> BTreeSet<String> {
+        value
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["email"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let command = || {
+        Command::Contacts(local_api::registry::args::ContactsArgs {
+            query: Sensitive::new(String::new()),
+            limit: 50,
+        })
+    };
+    let record = token(&t, Profile::ReadOnly, accounts(&[t.fixture.work])).await;
+    let scoped = run(&t, &ctx(&t, &record, ExecutionMode::Execute), command())
+        .await
+        .unwrap();
+    assert_eq!(
+        contacts(scoped),
+        BTreeSet::from([
+            "colleague@work.example".to_owned(),
+            "imported@example.org".to_owned()
+        ])
+    );
+    let record = token(&t, Profile::ReadOnly, TokenScope::default()).await;
+    let all = run(&t, &ctx(&t, &record, ExecutionMode::Execute), command())
+        .await
+        .unwrap();
+    assert_eq!(contacts(all).len(), 4);
+}

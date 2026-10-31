@@ -245,6 +245,53 @@ Signing in opens Google's page in your browser and returns to Maze through a loo
 address (`http://127.0.0.1:<port>`), the same flow Thunderbird uses, with PKCE. If
 Google rejects the client, check these two values.
 
+#### Google contacts
+
+Maze can sync the contacts of a Google account that signs in with Google (not with an
+app password): your **My Contacts** and Google's **Other contacts** (the people you
+wrote to, which Google saves by itself). They complete addresses in the composer, ahead
+of the addresses you wrote to, and they are in the [Address Book](#the-address-book). The
+contacts stay Google's ([ADR-024](adr/0024-server-owned-contacts.md)): Maze keeps an
+encrypted copy on your computer and saves every change to Google.
+
+Your OAuth client needs two more things in the same Google Cloud project, once:
+
+1. Under **APIs & Services → Library**, enable the **People API**.
+2. On the **OAuth consent screen** (**Data access** / **Scopes**), add the scopes
+   `https://www.googleapis.com/auth/contacts` (see and edit your contacts) and
+   `https://www.googleapis.com/auth/contacts.other.readonly` (see your "Other
+   contacts"). Both are *sensitive*, not *restricted*: an app in *Testing* can use them
+   for its test users without a verification.
+
+Then choose **Contacts: Connect Google Contacts** in the command palette
+(`cmd-shift-p`). Your browser opens Google's consent page for every Google account
+whose contacts aren't connected yet: sign in and allow Maze to see and edit your
+contacts. Mail keeps working whatever you answer; if you untick the contacts, they stay
+off for that account and the command asks again next time. The first sync follows
+right away.
+
+What happens then:
+
+- **Syncing.** Maze syncs the contacts when it starts, every 30 minutes
+  (`contacts.sync_interval_minutes`), after the computer wakes, and on **Contacts: Sync
+  Contacts**. After the first full sync only changes are fetched; contacts deleted on
+  Google disappear in Maze. Names, email addresses, phone numbers, organizations and
+  titles, postal addresses, web sites and notes are synced, and contact photos are
+  fetched in the background (at 96 pixels, kept for a week).
+- **Editing.** The contact editor comes in a later version. When you create or change
+  a contact in Maze, it goes to Google first; Maze shows it only once Google accepted
+  it. If the contact was changed elsewhere in the meantime
+  (on your phone, say), Maze shows Google's current version instead of overwriting it.
+  New contacts go into My Contacts; Other contacts are read-only.
+- **Offline.** Completion and the contact copy keep working. Saving a contact says it
+  can't be saved while you're offline: Maze doesn't queue changes.
+- **Turning it off.** `"contacts": { "sync": false }` pauses syncing for every account,
+  `"accounts": { "Work": { "contacts_sync": false } }` for one; the copy stays.
+  Removing the account deletes its contacts from your computer.
+
+If Maze reports that the People API isn't enabled, check step 1; if it keeps asking for
+permission, check the scopes in step 2 and connect again.
+
 ### Microsoft 365 and Outlook.com
 
 Microsoft doesn't accept passwords over IMAP any more, so Outlook.com, Hotmail and
@@ -715,11 +762,11 @@ Address Book** and **Workspace: Show Mail** are in the command palette too.
   book's version of the contact with its label, so you see what each one knows.
 
 Maze remembers the selected book and the order in `ui_state.json`. Contacts are in the
-encrypted database on your computer and nothing about them leaves it. For now the
-Address Book only shows addresses: collected ones and those imported from Thunderbird.
-Your Google and Microsoft contacts, and creating and editing contacts (which writes to
-the account's server first), come in a later version
-([ADR-024](adr/0024-server-owned-contacts.md)).
+encrypted database on your computer. The Address Book shows collected addresses, those
+imported from Thunderbird and the [Google contacts](#google-contacts) of accounts that
+connected them (**My Contacts** and **Other Contacts** under the account). Creating and
+editing contacts (which writes to Google first) and Microsoft contacts come in a later
+version ([ADR-024](adr/0024-server-owned-contacts.md)).
 
 ## Writing mail
 
@@ -793,13 +840,15 @@ chip per address. Text that isn't an address becomes a red chip, and Maze won't 
 autosave until you fix or remove it; double-click any chip to edit it as text.
 
 While you type, Maze suggests addresses after a moment: entries of your address books
-first (the ones imported from Thunderbird), then addresses you have written to. Every
+first (your Google contacts and the ones imported from Thunderbird), then addresses you
+have written to. Every
 address you send a message to (To, Cc and Bcc, your own addresses left out) is
 remembered on your computer, in the encrypted database, with how often you wrote to
 it, so the people you write to most come first. `up` and `down` move through the
 suggestions, `enter` or `tab` takes one, `escape` closes the list; a click works too.
-They are all in the [Address Book](#the-address-book). Syncing your Google and
-Microsoft contacts comes later ([ADR-024](adr/0024-server-owned-contacts.md)).
+They are all in the [Address Book](#the-address-book). Google contacts of accounts that
+connected them (see [Google contacts](#google-contacts)) count as address book entries;
+Microsoft contacts come later ([ADR-024](adr/0024-server-owned-contacts.md)).
 
 Click a chip to select it, then `backspace` or `delete` removes it; `backspace` in the
 empty field selects the last chip, and `left` / `right` move between chips. **Drag a

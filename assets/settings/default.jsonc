@@ -124,7 +124,7 @@
   // Overrides per account, keyed by the account's label, e.g.
   // "work": { "offline": "all", "remote_content": "never", "footer": "Acme Inc." }
   // Supported keys: "offline", "offline_recent_days", "remote_content", "footer",
-  // "support_maze".
+  // "support_maze", "contacts_sync".
   "accounts": {},
 
   // OAuth clients for "Sign in with Google" and "Sign in with Microsoft". Maze has no
@@ -210,6 +210,17 @@
     "content": "sender_and_subject",
     // The unread count on the dock icon.
     "dock_badge": true
+  },
+
+  // Contacts of Google accounts that connected them ("Contacts: Connect Google
+  // Contacts" in the command palette): Maze keeps an encrypted copy for completion and
+  // the Address Book, and saves edits to Google.
+  "contacts": {
+    // Sync them. false keeps the copy on this computer but stops syncing; per account:
+    // "accounts": { "Work": { "contacts_sync": false } }.
+    "sync": true,
+    // Minutes between syncs (also at startup and on demand). At least 5.
+    "sync_interval_minutes": 30
   },
 
   // Log verbosity: "error", "warn", "info", "debug" or "trace". The MAZEMAIL_LOG

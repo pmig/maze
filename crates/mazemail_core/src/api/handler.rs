@@ -698,20 +698,26 @@ impl CoreCommandHandler {
     }
 
     /// Contacts. Collected addresses come from the mail of every account, so a token
-    /// limited to some accounts or folders only gets address book entries.
+    /// limited to some accounts or folders only gets address book entries, and of
+    /// synced books (`google:<uuid>`) only those of its accounts.
     fn contacts(
         &self,
         ctx: &RequestContext,
         args: &ContactsArgs,
     ) -> Result<CommandOutput, CommandError> {
         let reader = self.reader()?;
-        let all_accounts: BTreeSet<AccountId> = reader
-            .accounts()
-            .map_err(store_error)?
-            .iter()
-            .map(|a| a.id)
-            .collect();
+        let accounts = reader.accounts().map_err(store_error)?;
+        let all_accounts: BTreeSet<AccountId> = accounts.iter().map(|a| a.id).collect();
         let restricted = ctx.scope.folders().is_some() || *ctx.scope.accounts() != all_accounts;
+        let in_scope: BTreeSet<store::Uuid> = accounts
+            .iter()
+            .filter(|a| ctx.scope.accounts().contains(&a.id))
+            .map(|a| a.uuid)
+            .collect();
+        let visible = |book: &str| match book.parse::<::contacts::Book>() {
+            Ok(synced) => in_scope.contains(&synced.account),
+            Err(_) => !restricted || book != "collected",
+        };
         let limit = usize::try_from(args.limit)
             .unwrap_or(usize::MAX)
             .clamp(1, 500);
@@ -719,7 +725,7 @@ impl CoreCommandHandler {
             .search_contacts(args.query.expose().trim(), limit.saturating_mul(4))
             .map_err(store_error)?
             .into_iter()
-            .filter(|c| !restricted || c.book != "collected")
+            .filter(|c| visible(&c.book))
             .take(limit)
             .map(|c| ContactInfo {
                 name: c.display_name.map(Sensitive::new),

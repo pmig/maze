@@ -3,6 +3,7 @@
 
 pub(crate) mod accounts;
 pub(crate) mod agents;
+pub(crate) mod contact_sync;
 pub(crate) mod drafts;
 pub(crate) mod folders;
 pub(crate) mod lists;
@@ -131,6 +132,63 @@ pub trait Queries: sealed::Sealed {
     /// The contact for an address (case-insensitive), address book entries first.
     fn contact_by_email(&self, email: &str) -> Result<Option<Contact>> {
         misc::contact_by_email(self.connection(sealed::Token), email)
+    }
+
+    /// A synced address book's sync state (`google:<account uuid>`).
+    fn contact_source(&self, book: &str) -> Result<Option<contact_sync::ContactSourceState>> {
+        contact_sync::contact_source(self.connection(sealed::Token), book)
+    }
+
+    /// The synced address books of an account.
+    fn contact_sources(&self, account: AccountId) -> Result<Vec<contact_sync::ContactSourceState>> {
+        contact_sync::contact_sources(self.connection(sealed::Token), account)
+    }
+
+    /// A synced person by server id.
+    fn server_contact(
+        &self,
+        book: &str,
+        resource_name: &str,
+    ) -> Result<Option<contact_sync::StoredServerContact>> {
+        contact_sync::server_contact(self.connection(sealed::Token), book, resource_name)
+    }
+
+    /// The synced person whose `contact` row in `book` is `email`.
+    fn server_contact_by_email(
+        &self,
+        book: &str,
+        email: &str,
+    ) -> Result<Option<contact_sync::StoredServerContact>> {
+        contact_sync::server_contact_by_email(self.connection(sealed::Token), book, email)
+    }
+
+    /// The synced person a `contact` row belongs to.
+    fn server_contact_of_entry(
+        &self,
+        entry: crate::model::ContactId,
+    ) -> Result<Option<contact_sync::StoredServerContact>> {
+        contact_sync::server_contact_of_entry(self.connection(sealed::Token), entry)
+    }
+
+    /// Every synced person of a book (also those without an address), by name.
+    fn server_contacts(&self, book: &str) -> Result<Vec<contact_sync::StoredServerContact>> {
+        contact_sync::server_contacts(self.connection(sealed::Token), book)
+    }
+
+    /// What Maze knows about a contact photo URL.
+    fn contact_photo(&self, url: &str) -> Result<Option<contact_sync::ContactPhotoState>> {
+        contact_sync::contact_photo(self.connection(sealed::Token), url)
+    }
+
+    /// The photo URL of the synced person with address `email` (in `book`, or any
+    /// synced book, My Contacts first).
+    fn contact_photo_url(&self, email: &str, book: Option<&str>) -> Result<Option<String>> {
+        contact_sync::contact_photo_url(self.connection(sealed::Token), email, book)
+    }
+
+    /// Photo URLs of synced people never fetched, or fetched before `fetched_before`.
+    fn contact_photos_due(&self, fetched_before: UnixTime, limit: usize) -> Result<Vec<String>> {
+        contact_sync::contact_photos_due(self.connection(sealed::Token), fetched_before, limit)
     }
 
     /// Every address book entry, without vCards (the Address Book's lists).
