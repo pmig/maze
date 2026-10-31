@@ -12,10 +12,12 @@ ammonia = { workspace = true }
 bitflags = { workspace = true }
 html5ever = { workspace = true }
 htmd = { workspace = true }
+idna = { workspace = true }
 linkify = { workspace = true }
 mail-builder = { workspace = true }
 mail-parser = { workspace = true }
 mazemail_types = { workspace = true }
+psl = { workspace = true }
 pulldown-cmark = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }

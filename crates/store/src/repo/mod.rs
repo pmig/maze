@@ -3,6 +3,7 @@
 
 pub(crate) mod accounts;
 pub(crate) mod agents;
+pub(crate) mod domains;
 pub(crate) mod drafts;
 pub(crate) mod folders;
 pub(crate) mod lists;
@@ -131,6 +132,34 @@ pub trait Queries: sealed::Sealed {
     /// The contact for an address (case-insensitive), address book entries first.
     fn contact_by_email(&self, email: &str) -> Result<Option<Contact>> {
         misc::contact_by_email(self.connection(sealed::Token), email)
+    }
+
+    /// Every row of the domain index (registrable domains seen in mail, and domains
+    /// whose favicon state is known), by name. See [`domains`](self::domains).
+    fn domain_stats(&self) -> Result<Vec<domains::DomainStats>> {
+        domains::domain_stats(self.connection(sealed::Token))
+    }
+
+    /// One domain's index row (`name`: registrable, lowercase ASCII).
+    fn domain_stat(&self, name: &str) -> Result<Option<domains::DomainStats>> {
+        domains::domain_stat(self.connection(sealed::Token), name)
+    }
+
+    /// Distinct contact addresses (all books, `collected` included) per registrable
+    /// domain. Derived from the `contact` table on every call.
+    fn domain_contact_counts(&self) -> Result<std::collections::HashMap<String, u64>> {
+        domains::domain_contact_counts(self.connection(sealed::Token))
+    }
+
+    /// The contacts (all books) whose address is at the registrable domain `name`.
+    fn domain_contacts(&self, name: &str) -> Result<Vec<domains::DomainContact>> {
+        domains::domain_contacts(self.connection(sealed::Token), name)
+    }
+
+    /// Whether messages stored before the domain index still wait for
+    /// [`WriteTx::backfill_domains`].
+    fn domain_backfill_pending(&self) -> Result<bool> {
+        domains::domain_backfill_pending(self.connection(sealed::Token))
     }
 
     /// Every address book entry, without vCards (the Address Book's lists).

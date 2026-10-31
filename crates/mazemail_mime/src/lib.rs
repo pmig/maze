@@ -14,6 +14,8 @@
 //! - [`client`] detects the sender's mail client from `User-Agent`, `X-Mailer` and
 //!   other header traces.
 //! - [`lang`] gives the search index a language hint.
+//! - [`domain`] normalizes domain names (IDNA) and finds registrable domains (Public
+//!   Suffix List) and free-mail providers.
 //! - [`compose`] builds outgoing mail: Markdown to HTML, `multipart/alternative` via
 //!   `mail-builder`, reply/forward subjects, `References` and quoting (HTML quotes
 //!   become Markdown with `htmd`).
@@ -34,6 +36,7 @@
 
 pub mod client;
 pub mod compose;
+pub mod domain;
 pub mod html;
 pub mod lang;
 mod parse;

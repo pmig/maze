@@ -31,6 +31,7 @@ const MAIN: &[M<'static>] = &[
         "../migrations/main/0011_remote_content_senders.sql"
     )),
     M::up(include_str!("../migrations/main/0012_spelling_words.sql")),
+    M::up(include_str!("../migrations/main/0014_domains.sql")),
 ];
 
 const SENDLOG: &[M<'static>] = &[M::up(include_str!(
@@ -589,6 +590,77 @@ mod tests {
             })
             .unwrap();
         assert_eq!(senders, 1);
+    }
+
+    /// The migration before the domain index, found by file name, so the test holds
+    /// whatever migrations come before it.
+    fn before_domains() -> usize {
+        MAIN.iter()
+            .position(|m| format!("{m:?}").contains("CREATE TABLE domain ("))
+            .unwrap()
+    }
+
+    #[test]
+    fn v14_adds_the_domain_index_and_queues_existing_messages_for_the_backfill() {
+        let tmp = tempfile::tempdir().unwrap();
+        let key = key(14);
+        let mut conn = conn::open(&tmp.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
+        let before = before_domains();
+        migrate_with_backup(&mut conn, &key, tmp.path(), "1.0.0", &MAIN[..before]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO account (id, kind, name) VALUES (1, 'imap', 'Work');
+             INSERT INTO thread (id, account_id) VALUES (1, 1);
+             INSERT INTO message (id, account_id, thread_id, date, from_addr)
+               VALUES (7, 1, 1, 50, 'anna@northwind.example'),
+                      (9, 1, 1, 70, 'bob@northwind.example');",
+        )
+        .unwrap();
+        let report = migrate_main(&mut conn, &key, tmp.path(), "1.1.0").unwrap();
+        assert_eq!(
+            (report.from, report.to),
+            (u32::try_from(before).unwrap(), SCHEMA_VERSION)
+        );
+        assert!(report.backup.is_some());
+        let backfill: (i64, i64) = conn
+            .query_row(
+                "SELECT next_message, last_message FROM domain_backfill",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(backfill, (1, 9));
+
+        // The triggers keep the counters; message deletes cascade.
+        conn.execute_batch(
+            "INSERT INTO domain (id, name) VALUES (1, 'northwind.example');
+             INSERT INTO message_domain (domain_id, message_id, roles) VALUES (1, 7, 1), (1, 9, 5);",
+        )
+        .unwrap();
+        let read = |conn: &Connection| -> (i64, i64, i64, i64) {
+            conn.query_row(
+                "SELECT message_count, from_count, sent_count, last_seen FROM domain",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(read(&conn), (2, 2, 1, 70));
+        conn.execute_batch("DELETE FROM message WHERE id = 9;")
+            .unwrap();
+        assert_eq!(read(&conn), (1, 1, 0, 70));
+        // A new database has nothing to backfill.
+        let fresh_dir = tempfile::tempdir().unwrap();
+        let mut fresh =
+            conn::open(&fresh_dir.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
+        migrate_main(&mut fresh, &key, fresh_dir.path(), "1.0.0").unwrap();
+        let pending: bool = fresh
+            .query_row(
+                "SELECT next_message <= last_message FROM domain_backfill",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!pending);
     }
 
     #[test]

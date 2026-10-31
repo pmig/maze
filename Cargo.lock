@@ -6469,6 +6469,7 @@ dependencies = [
  "bitflags 2.13.2",
  "htmd",
  "html5ever 0.40.1",
+ "idna",
  "insta",
  "linkify",
  "mail-builder",
@@ -6476,6 +6477,7 @@ dependencies = [
  "mazemail_types",
  "pretty_assertions",
  "proptest",
+ "psl",
  "pulldown-cmark",
  "serde",
  "serde_json",
@@ -9516,7 +9518,6 @@ version = "0.0.0"
 dependencies = [
  "aws-lc-rs",
  "base64 0.23.1",
- "idna",
  "mail-auth",
  "mazemail_mime",
  "mazemail_types",

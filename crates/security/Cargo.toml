@@ -8,7 +8,6 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-idna = { workspace = true }
 mail-auth = { workspace = true }
 mazemail_mime = { workspace = true }
 mazemail_types = { workspace = true }

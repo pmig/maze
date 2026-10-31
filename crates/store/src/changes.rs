@@ -36,6 +36,9 @@ pub struct ChangeSet {
     pub proposals: bool,
     /// Address book entries were added, changed or removed (`contact` table).
     pub contacts: bool,
+    /// The domain index changed: messages with new domains, or a favicon was stored.
+    /// (Contact changes, which change contact counts, are [`ChangeSet::contacts`].)
+    pub domains: bool,
 }
 
 impl ChangeSet {
@@ -62,6 +65,7 @@ impl ChangeSet {
         self.drafts |= other.drafts;
         self.proposals |= other.proposals;
         self.contacts |= other.contacts;
+        self.domains |= other.domains;
         // A thread removed in a later job isn't "changed" any more, and vice versa.
         for thread in &self.threads_removed {
             self.threads.remove(thread);

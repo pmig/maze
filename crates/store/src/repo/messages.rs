@@ -370,6 +370,12 @@ impl WriteTx<'_> {
             None => {
                 let thread = self.resolve_thread(message)?;
                 let id = self.insert_message(message, thread)?;
+                self.index_message_domains(
+                    id,
+                    message.from.as_ref().map(|a| a.email.as_str()),
+                    &message.to,
+                    &message.cc,
+                )?;
                 (id, thread, true)
             }
         };

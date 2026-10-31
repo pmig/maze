@@ -3,24 +3,13 @@
 /// Normalize a host or domain to lowercase ASCII (IDNA/punycode), without a
 /// trailing dot. Returns `None` for empty or invalid names.
 pub fn to_ascii(domain: &str) -> Option<String> {
-    let trimmed = domain.trim().trim_end_matches('.');
-    if trimmed.is_empty() {
-        return None;
-    }
-    let ascii = idna::domain_to_ascii(trimmed).ok()?;
-    let valid = !ascii.is_empty()
-        && !ascii.starts_with('.')
-        && !ascii.contains("..")
-        && ascii
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b':'));
-    valid.then_some(ascii)
+    mazemail_mime::domain::to_ascii(domain)
 }
 
 /// The Unicode form of an ASCII domain (punycode labels decoded). Labels that
 /// don't decode are kept as they are.
 pub fn to_unicode(ascii: &str) -> String {
-    idna::domain_to_unicode(ascii).0
+    mazemail_mime::domain::to_unicode(ascii)
 }
 
 /// The registrable domain ("organizational domain" in DMARC terms) of a lowercase
