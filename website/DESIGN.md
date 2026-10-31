@@ -81,8 +81,8 @@ Nothing is copied: no assets, logos, copy, or CSS from either site.
   the agent column on the right, laid out after `crates/mail_ui` and `crates/agent_ui`
   in Maze's default One Light / One Dark colors (taken from `assets/themes/one.json`,
   following the site's theme) and the system UI font, like the app. It sits directly
-  under the hero text, above the first real screenshot, which now illustrates "Nothing
-  to relearn", so the page never shows two big app images back to back. The window has
+  under the hero text and is the home page's only picture of the app (it replaced the
+  real screenshots there; docs pages may still use them). The window has
   made-up mail; agent tasks play in its agent column (prompt, `mazemail` commands,
   proposal, Accept) and the mailbox reacts: matching rows light up, then leave the list
   or get a star, folder counts change. It renders at a fixed design size (1200 × 720)
