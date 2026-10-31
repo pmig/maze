@@ -29,9 +29,18 @@ every build ad hoc with a new signature, so macOS asks again after each rebuild 
 "Always Allow" doesn't stick. To make it stick, create a code signing identity once:
 Keychain Access → Certificate Assistant → Create a Certificate…, name
 **Maze Development**, identity type *Self-Signed Root*, certificate type *Code
-Signing*. `mise start` then signs the binary with it (`script/dev-codesign`; without
-the identity it does nothing). Allow the storage key "Always" once more after the
-switch, and allow `codesign` to use the identity's key.
+Signing*. `mise start` then signs the dev bundle with it (`script/dev-codesign`;
+without the identity it signs ad hoc). Allow the storage key "Always" once more after
+the switch, and allow `codesign` to use the identity's key.
+
+### Notifications in dev builds (macOS)
+
+Notification Center only works for an app bundle, so `mise start` and
+`mise run start:lite` run the binary from a minimal `Maze Dev.app` next to it
+(`script/dev-bundle`: bundle ID `dev.mazemail.maze-dev`, an APFS clone of the binary,
+signed again only after a rebuild). Logs still go to the terminal and Ctrl-C stops it.
+macOS asks once whether "Maze Dev" may send notifications; System Settings →
+Notifications → Maze Dev changes the answer. A plain `cargo run` shows none.
 
 ## Branches and worktrees
 
@@ -81,8 +90,9 @@ bundles and the signed update manifests. Prereleases (alpha, beta, rc) go to the
   are a possible later option, with the updater disabled by a build flag.
 
 The scripts live in `script/`: `bundle-mac`, `package-mac`, `sign-and-notarize-mac`,
-`bundle-linux`, `generate-manifests`, `semver-gt` and `dev-codesign`. They are plain bash and should
-stay shellcheck-clean.
+`bundle-linux`, `generate-manifests`, `semver-gt`, `dev-bundle` and `dev-codesign`, with
+`lib/mac-bundle.bash` shared by `bundle-mac` and `dev-bundle`. They are plain bash and
+should stay shellcheck-clean.
 
 ## Security
 

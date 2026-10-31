@@ -119,7 +119,7 @@ packages.
 
 ```sh
 mise install          # Rust 1.99.1, cargo-nextest, cargo-deny, cargo-insta
-mise start            # starts a dev build of Maze, with its own data directory
+mise start            # starts a dev build of Maze, with its own data directory (macOS: Maze Dev.app)
 mise run start:lite   # the same without the HTML engine (Servo): much faster first build
 script/bundle-mac     # builds dist/mac-<arch>/Maze.app, the .dmg and the .app.tar.zst
 ```

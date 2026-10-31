@@ -3,22 +3,37 @@
 #
 # Rust's linker signs every build ad hoc, with a new signature each time, so the
 # keychain asks again after every rebuild. If a code signing identity named
-# "Maze Development" exists, this signs the binary with it, which keeps the designated
-# requirement the same across builds. Without that identity (and off macOS) it does
-# nothing. `mise start` runs it.
+# "Maze Development" exists, this signs the binary (or the Maze Dev.app around it, see
+# script/dev-bundle) with it, which keeps the designated requirement the same across
+# builds. Without that identity a bundle is signed ad hoc, which seals its Info.plist,
+# and a plain binary keeps its linker signature. Off macOS it does nothing.
+# `mise start` runs it through script/dev-bundle.
 #
 # One-time setup (optional): Keychain Access > Certificate Assistant > Create a
 # Certificate…, name "Maze Development", identity type "Self-Signed Root", certificate
 # type "Code Signing". The first signing asks to use its key; choose "Always Allow".
 #
-# Usage: script/dev-codesign <binary>
+# Usage: script/dev-codesign <binary or .app>
 set -euo pipefail
 
 identity="Maze Development"
-binary="${1:?usage: script/dev-codesign <binary>}"
+target="${1:?usage: script/dev-codesign <binary or .app>}"
 
 [[ "$(uname -s)" == Darwin ]] || exit 0
 # Lists certificates with their private keys; reads no passwords and asks nothing.
-security find-identity -p codesigning 2>/dev/null | grep -qF "\"$identity\"" || exit 0
+if security find-identity -p codesigning 2>/dev/null | grep -qF "\"$identity\""; then
+  sign_as=$identity
+elif [[ "$target" == *.app ]]; then
+  sign_as=-
+else
+  exit 0
+fi
 
-codesign --force --sign "$identity" --identifier dev.mazemail.maze-dev "$binary"
+# A bundle's identifier is its CFBundleIdentifier.
+identifier=()
+[[ "$target" == *.app ]] || identifier=(--identifier dev.mazemail.maze-dev)
+# Quiet unless it fails ("replacing existing signature" on every build).
+if ! output=$(codesign --force --sign "$sign_as" ${identifier[@]+"${identifier[@]}"} "$target" 2>&1); then
+  printf '%s\n' "$output" >&2
+  exit 1
+fi

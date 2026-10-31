@@ -4,9 +4,10 @@
 //! calls back when the user clicks it:
 //!
 //! - **macOS:** `UNUserNotificationCenter` through `mac-usernotifications`. It needs
-//!   the signed `Maze.app` bundle (a plain `cargo run` has no bundle identifier, so
-//!   notifications are off there) and the user's permission, which macOS asks for
-//!   before the first notification. Banners show while Maze is in front, too.
+//!   an app bundle (`Maze.app`, or the `Maze Dev.app` that `mise start` runs dev
+//!   builds from; a plain `cargo run` has no bundle identifier, so notifications are
+//!   off there) and the user's permission, which macOS asks for before the first
+//!   notification. Banners show while Maze is in front, too.
 //! - **Linux and the BSDs:** the freedesktop notification service over D-Bus
 //!   (`notify-rust` on zbus), with Maze's desktop entry and the `email.arrived`
 //!   category. The icon is Maze's logo, embedded and written once to
@@ -15,10 +16,11 @@
 //!   On macOS Notification Center always shows the icon of `Maze.app`.
 //! - Elsewhere notifications are unavailable.
 //!
-//! Every notice waits for its response on the given Tokio runtime; at most
-//! [`MAX_WAITING`] wait at once, and clicks on older ones are ignored. Unavailable
-//! notifications are logged once and then skipped quietly. Notice text is mail
-//! content and never logged.
+//! [`Notifier::new`] logs at startup whether notifications can be shown, without
+//! asking for permission. Every notice waits for its response on the given Tokio
+//! runtime; at most [`MAX_WAITING`] wait at once, and clicks on older ones are
+//! ignored. Unavailable notifications are logged once and then skipped quietly. Notice
+//! text is mail content and never logged.
 //!
 //! This crate is layer L1 and has no GPUI dependency.
 
@@ -128,15 +130,17 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 impl Notifier {
     /// A notifier for `app` that talks to the notification service on `runtime`.
+    /// Logs whether notifications can be shown (without asking for permission).
     pub fn new(app: AppInfo, runtime: Handle) -> Self {
-        Self {
-            inner: Arc::new(Inner {
-                app,
-                runtime,
-                ready: OnceCell::new(),
-                waiting: Mutex::new(VecDeque::new()),
-            }),
-        }
+        let inner = Arc::new(Inner {
+            app,
+            runtime,
+            ready: OnceCell::new(),
+            waiting: Mutex::new(VecDeque::new()),
+        });
+        let checking = Arc::clone(&inner);
+        inner.runtime.spawn(async move { checking.check().await });
+        Self { inner }
     }
 
     /// Shows `notice` and calls `on_click` (on the runtime) if the user clicks it.
@@ -165,6 +169,20 @@ impl Notifier {
 }
 
 impl Inner {
+    /// Logs whether notifications can be shown; when they can't, skips asking later.
+    async fn check(&self) {
+        match platform::check(&self.app).await {
+            Ok(state) => tracing::info!(app = %self.app.id, state, "notifications are on"),
+            Err(error) => {
+                tracing::info!(%error, "notifications are off");
+                if matches!(error, Error::Unavailable(_)) {
+                    // Already decided (a notice came first) is fine too.
+                    let _ = self.ready.set(false);
+                }
+            }
+        }
+    }
+
     /// Whether notifications can be shown; finds out (and asks) once.
     async fn ready(&self) -> bool {
         *self

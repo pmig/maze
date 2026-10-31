@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Wrap a dev build in a minimal "Maze Dev.app" and print the executable to start.
+#
+# macOS only shows notifications (UNUserNotificationCenter, ADR-021) for a process
+# with a bundle identifier, which a bare target/debug/mazemail doesn't have. This keeps
+# a bundle next to the binary,
+#
+#   <binary's dir>/Maze Dev.app/Contents/Info.plist       dev.mazemail.maze-dev
+#   <binary's dir>/Maze Dev.app/Contents/MacOS/mazemail   a copy of the binary
+#   <binary's dir>/Maze Dev.app/Contents/Resources/Maze.icns
+#
+# signs it (script/dev-codesign: "Maze Development" if that identity exists, else ad
+# hoc) and prints Contents/MacOS/mazemail. Started from there, the binary finds the
+# bundle as its main bundle: notifications work, with their own "Maze Dev" entry in
+# System Settings → Notifications, and the Dock shows Maze's icon. Started directly,
+# not with `open`, it keeps logging to the terminal and Ctrl-C stops it. The channel,
+# and with it the data directory, is compiled into the binary; the bundle doesn't
+# change it.
+#
+# The copy is an APFS clone, and nothing is copied or signed again while the binary,
+# the Info.plist and the signing identity are unchanged. Off macOS it prints the
+# binary as it is. `mise start` and `mise run start:lite` run it.
+#
+# Usage: exec "$(script/dev-bundle <binary>)"
+set -euo pipefail
+
+binary="${1:?usage: script/dev-bundle <binary>}"
+
+if [[ "$(uname -s)" != Darwin ]]; then
+  printf '%s\n' "$binary"
+  exit 0
+fi
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=script/lib/mac-bundle.bash
+source "$repo_root/script/lib/mac-bundle.bash"
+
+channel=$(cd "$repo_root" && mac_release_channel)
+bundle_id=$(mac_bundle_id "$channel")
+name=$(mac_app_name "$channel")
+version=$(tr -d '[:space:]' < "$repo_root/version.txt")
+icon_file="$repo_root/assets/icons/Maze.icns"
+
+app="$(cd "$(dirname "$binary")" && pwd)/$name.app"
+exe="$app/Contents/MacOS/mazemail"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+changed=0
+
+# Build number 0: a dev bundle has no release number, and a constant keeps the
+# Info.plist (and the signature) unchanged from commit to commit.
+plist=$(mac_info_plist "$bundle_id" "$name" "$version" 0 Maze 0)
+if [[ ! -f "$app/Contents/Info.plist" || "$(< "$app/Contents/Info.plist")" != "$plist" ]]; then
+  printf '%s\n' "$plist" > "$app/Contents/Info.plist"
+  printf 'APPL????' > "$app/Contents/PkgInfo"
+  changed=1
+fi
+
+if [[ ! -f "$app/Contents/Resources/Maze.icns" || "$icon_file" -nt "$app/Contents/Resources/Maze.icns" ]]; then
+  cp "$icon_file" "$app/Contents/Resources/Maze.icns"
+  changed=1
+fi
+
+# A copy, not a hardlink or a symlink: signing would change cargo's binary, and with a
+# symlink the process's executable would lie outside the bundle. The stamp next to the bundle
+# records the binary (inode, size, mtime) and whether the "Maze Development" identity
+# exists, so a new build or a new identity is copied and signed again.
+stamp="$(dirname "$app")/.$name.app.stamp"
+identity=$(security find-identity -p codesigning 2> /dev/null | grep -cF '"Maze Development"' || true)
+source_id="$(stat -f '%i %z %Fm' "$binary") identity=$identity"
+if [[ ! -f "$exe" || ! -f "$stamp" || "$(< "$stamp")" != "$source_id" ]]; then
+  rm -f "$exe" "$stamp"
+  cp -c "$binary" "$exe" 2> /dev/null || cp "$binary" "$exe"
+  changed=1
+fi
+
+if [[ "$changed" == 1 ]]; then
+  rm -f "$stamp"
+  "$repo_root/script/dev-codesign" "$app"
+  printf '%s\n' "$source_id" > "$stamp"
+fi
+
+printf '%s\n' "$exe"

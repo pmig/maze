@@ -12,14 +12,16 @@ description = "Build and start Maze (dev build with the original HTML engine: fa
 # Cargo resolves features of shared dependencies differently, so building it in
 # `target/` would make every switch between `mise start` and tests, clippy or
 # rust-analyzer (which build without it) recompile GPUI and much of the tree.
-# script/dev-codesign gives the binary a stable signature if a "Maze Development"
-# identity exists, so keychain "Always Allow" survives rebuilds (else it does nothing).
+# On macOS script/dev-bundle runs the binary from a minimal "Maze Dev.app" next to it,
+# so notifications work, and signs it with the "Maze Development" identity if it exists
+# (script/dev-codesign), so keychain "Always Allow" survives rebuilds. Elsewhere it
+# starts the binary as it is.
 env = { CARGO_TARGET_DIR = "{{config_root}}/target/servo" }
-run = 'cargo build --locked -p mazemail --features original-html && script/dev-codesign "$CARGO_TARGET_DIR/debug/mazemail" && exec "$CARGO_TARGET_DIR/debug/mazemail"'
+run = 'cargo build --locked -p mazemail --features original-html && exe=$(script/dev-bundle "$CARGO_TARGET_DIR/debug/mazemail") && exec "$exe"'
 
 [tasks."start:lite"]
 description = "Build and start Maze without the original HTML engine (fastest builds; shares target/ with tests)"
-run = 'cargo build --locked -p mazemail && script/dev-codesign target/debug/mazemail && exec target/debug/mazemail'
+run = 'cargo build --locked -p mazemail && exe=$(script/dev-bundle target/debug/mazemail) && exec "$exe"'
 
 [tasks.fmt]
 description = "Format all crates"

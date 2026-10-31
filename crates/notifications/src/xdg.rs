@@ -19,6 +19,11 @@ static BODY_MARKUP: OnceCell<bool> = OnceCell::const_new();
 /// The icon notifications name: the logo's file, or the icon theme name.
 static ICON: OnceCell<String> = OnceCell::const_new();
 
+/// Nothing to check without a round trip to the service.
+pub(crate) async fn check(_app: &AppInfo) -> Result<&'static str, Error> {
+    Ok("through the desktop's notification service")
+}
+
 /// Nothing to ask for; a missing service shows up as an error per notice.
 pub(crate) async fn prepare(_app: &AppInfo) -> Result<(), Error> {
     Ok(())

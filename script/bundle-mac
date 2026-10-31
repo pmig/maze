@@ -26,6 +26,8 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo_root"
+# shellcheck source=script/lib/mac-bundle.bash
+source script/lib/mac-bundle.bash
 
 usage() { sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; }
 
@@ -72,21 +74,10 @@ if [ -z "$version" ]; then
   echo "error: version.txt is empty" >&2
   exit 1
 fi
-numeric_version=${version%%-*}
 build_number=${build_number:-$(git rev-list --count HEAD)}
 
-channel_file=${RELEASE_CHANNEL_FILE:-crates/mazemail/RELEASE_CHANNEL}
-channel=dev
-if [ -n "${MAZEMAIL_BUILD_CHANNEL:-}" ]; then
-  channel=$MAZEMAIL_BUILD_CHANNEL
-elif [ -f "$channel_file" ]; then
-  channel=$(tr -d '[:space:]' < "$channel_file")
-fi
-case $channel in
-  dev) bundle_id=dev.mazemail.maze-dev ;;
-  preview | stable) bundle_id=dev.mazemail.maze ;;
-  *) echo "error: unknown release channel '$channel' in $channel_file" >&2; exit 1 ;;
-esac
+channel=$(mac_release_channel)
+bundle_id=$(mac_bundle_id "$channel")
 
 if [ -z "$binary" ]; then
   cargo build --release --locked --target "$target" --package mazemail \
@@ -106,65 +97,17 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$binary" "$app/Contents/MacOS/mazemail"
 chmod 755 "$app/Contents/MacOS/mazemail"
 
-icon_plist=""
+icon=""
 if [ -f assets/icons/Maze.icns ]; then
   cp assets/icons/Maze.icns "$app/Contents/Resources/Maze.icns"
-  icon_plist="  <key>CFBundleIconFile</key>
-  <string>Maze</string>"
+  icon=Maze
 fi
 
 if [ -n "$profile" ]; then
   cp "$profile" "$app/Contents/embedded.provisionprofile"
 fi
 
-cat > "$app/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleDevelopmentRegion</key>
-  <string>en</string>
-  <key>CFBundleExecutable</key>
-  <string>mazemail</string>
-  <key>CFBundleIdentifier</key>
-  <string>${bundle_id}</string>
-  <key>CFBundleInfoDictionaryVersion</key>
-  <string>6.0</string>
-  <key>CFBundleName</key>
-  <string>Maze</string>
-  <key>CFBundleDisplayName</key>
-  <string>Maze</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>CFBundleShortVersionString</key>
-  <string>${numeric_version}</string>
-  <key>CFBundleVersion</key>
-  <string>${build_number}</string>
-  <key>MazeVersion</key>
-  <string>${version}</string>
-${icon_plist}
-  <key>CFBundleURLTypes</key>
-  <array>
-    <dict>
-      <key>CFBundleURLName</key>
-      <string>${bundle_id}.mailto</string>
-      <key>CFBundleURLSchemes</key>
-      <array>
-        <string>mailto</string>
-      </array>
-    </dict>
-  </array>
-  <key>LSApplicationCategoryType</key>
-  <string>public.app-category.productivity</string>
-  <key>LSMinimumSystemVersion</key>
-  <string>13.0</string>
-  <key>NSHighResolutionCapable</key>
-  <true/>
-  <key>NSPrincipalClass</key>
-  <string>NSApplication</string>
-</dict>
-</plist>
-PLIST
+mac_info_plist "$bundle_id" Maze "$version" "$build_number" "$icon" 1 > "$app/Contents/Info.plist"
 printf 'APPL????' > "$app/Contents/PkgInfo"
 
 plutil -lint "$app/Contents/Info.plist" >&2

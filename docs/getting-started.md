@@ -68,7 +68,10 @@ release-fast` uses thin LTO and is far quicker than the fat-LTO `release` profil
 
 A build from source is a **dev** build: it uses its own data directory
 (`mazemail-dev`), its own keychain item and the bundle ID `dev.mazemail.maze-dev`, so it
-never touches the store of an installed Maze.
+never touches the store of an installed Maze. On macOS `mise start` runs it from
+`target/servo/debug/Maze Dev.app` (`script/dev-bundle`), so it shows
+[notifications](#notifications) and the Dock shows Maze's icon; logs still go to the
+terminal.
 
 ## The command line client
 
@@ -657,7 +660,10 @@ From Bob, Carol and Dave"); a click brings Maze to the front.
 - **macOS** uses Notification Center. Maze asks for permission before its first
   notification; change your answer, the banner style and sounds in System Settings →
   Notifications → Maze. Banners show while Maze is in front, too. Notifications need
-  `Maze.app`, so a development build started with `cargo run` doesn't show any.
+  an app bundle: `mise start` runs a development build from a minimal `Maze Dev.app`
+  next to the binary, which shows them under its own entry, System Settings →
+  Notifications → Maze Dev (allow it once). A build started with `cargo run` has no
+  bundle and doesn't show any.
 - **Linux** uses your desktop's notification service (GNOME, KDE, mako, dunst and
   others), with Maze's icon.
 
