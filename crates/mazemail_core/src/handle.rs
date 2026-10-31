@@ -26,6 +26,7 @@ use crate::config::CoreConfig;
 use crate::correspondents::{IdentityEmails, is_outgoing};
 use crate::crash_guard::{CrashGuard, CrashGuardStatus};
 use crate::events::{self, CoreEvent, CoreEventBatch};
+use crate::favicon::FaviconService;
 use crate::folders::{self, FolderNode};
 use crate::global_search::{self as core_search, SearchOpts, SearchResults};
 use crate::indexing::{
@@ -108,6 +109,8 @@ struct Inner {
     outbox_wake: Arc<OutboxWake>,
     /// The last disk usage measurement.
     storage: Arc<StorageMeter>,
+    /// Stored favicons and the background fetcher (see [`crate::favicon`]).
+    pub(crate) favicons: Arc<FaviconService>,
     closed: AtomicBool,
 }
 
@@ -359,6 +362,11 @@ impl CoreHandle {
     /// UI never uses it (AGENTS.md); it goes through the methods of this handle.
     pub fn store(&self) -> &Store {
         &self.inner.store
+    }
+
+    /// Stored favicons and the background fetcher.
+    pub(crate) fn favicons(&self) -> &FaviconService {
+        &self.inner.favicons
     }
 
     /// The sync engine, if this core runs one.
@@ -1252,9 +1260,16 @@ pub(crate) async fn finish(
     let rows = Arc::new(RowCache::new(config.row_cache_capacity));
     let text = Arc::new(TextCache::default());
     let storage = Arc::new(StorageMeter::default());
+    let favicons = Arc::new(FaviconService::new(
+        store.clone(),
+        config.favicons.clone(),
+        settings.clone(),
+    ));
 
     let handle = runtime.handle();
     let tasks = vec![
+        handle.spawn(backfill_domains(store.clone())),
+        handle.spawn(Arc::clone(&favicons).run()),
         handle.spawn(events::run_batcher(
             events_rx,
             events_out.clone(),
@@ -1344,6 +1359,7 @@ pub(crate) async fn finish(
             outbox,
             outbox_wake,
             storage,
+            favicons,
             closed: AtomicBool::new(false),
         }),
     };
@@ -1368,6 +1384,37 @@ pub(crate) async fn finish(
         "core opened"
     );
     Ok(core)
+}
+
+/// Messages a domain backfill write job indexes.
+const DOMAIN_BACKFILL_BATCH: usize = 2_000;
+
+/// Indexes the domains of mail stored before the domain index existed (see
+/// [`crate::domains`]): small write jobs with pauses, so sync and the UI's writes go
+/// first. Resumes where it stopped after a restart.
+async fn backfill_domains(store: Store) {
+    let mut indexed = 0usize;
+    loop {
+        match store
+            .write(|w| w.backfill_domains(DOMAIN_BACKFILL_BATCH))
+            .await
+        {
+            Ok(progress) => {
+                indexed += progress.indexed;
+                if progress.done {
+                    if indexed > 0 {
+                        tracing::info!(indexed, "indexed the domains of existing mail");
+                    }
+                    return;
+                }
+            }
+            Err(err) => {
+                tracing::warn!(%err, "indexing the domains of existing mail");
+                return;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
 }
 
 /// Gives identities of older accounts their SMTP server, then starts the outbox runner

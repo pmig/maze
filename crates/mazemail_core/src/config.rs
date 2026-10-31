@@ -12,6 +12,7 @@ use vault::KeyStore;
 
 use crate::api_handler::{CommandAuthorizer, DenyAgents};
 use crate::events::DEFAULT_EVENT_WINDOW;
+use crate::favicon::FaviconConfig;
 use crate::row_cache::DEFAULT_ROW_CACHE_CAPACITY;
 use crate::sync_bridge::{NoSync, SyncBridge};
 use crate::sync_engine::SyncEngineConfig;
@@ -71,6 +72,10 @@ pub struct CoreConfig {
     pub sync_engine: Option<SyncEngineConfig>,
     /// The permission hook for agent commands (see [`crate::api_handler`]).
     pub authorizer: Arc<dyn CommandAuthorizer>,
+    /// Fetch favicons from each domain's own website, as the `favicons` setting allows
+    /// (see [`crate::favicon`]). `None` (the default): never, whatever the setting
+    /// says; stored favicons are still shown.
+    pub favicons: Option<FaviconConfig>,
 }
 
 impl std::fmt::Debug for CoreConfig {
@@ -89,13 +94,14 @@ impl std::fmt::Debug for CoreConfig {
             .field("sync", &self.sync)
             .field("sync_engine", &self.sync_engine)
             .field("authorizer", &self.authorizer)
+            .field("favicons", &self.favicons)
             .finish_non_exhaustive()
     }
 }
 
 impl CoreConfig {
     /// Defaults for `data_dir` and `key_store`: an owned runtime, no settings file,
-    /// UTC, no sync engine, no agent access.
+    /// UTC, no sync engine, no agent access, no favicon fetching.
     pub fn new(data_dir: impl Into<PathBuf>, key_store: Arc<dyn KeyStore>) -> Self {
         Self {
             data_dir: data_dir.into(),
@@ -116,6 +122,7 @@ impl CoreConfig {
             sync: Arc::new(NoSync),
             sync_engine: None,
             authorizer: Arc::new(DenyAgents),
+            favicons: None,
         }
     }
 
@@ -145,6 +152,13 @@ impl CoreConfig {
     #[must_use]
     pub fn with_sync_engine(mut self, engine: SyncEngineConfig) -> Self {
         self.sync_engine = Some(engine);
+        self
+    }
+
+    /// Fetches favicons (see [`CoreConfig::favicons`]).
+    #[must_use]
+    pub fn with_favicons(mut self, favicons: FaviconConfig) -> Self {
+        self.favicons = Some(favicons);
         self
     }
 

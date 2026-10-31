@@ -13,6 +13,7 @@ mod commands;
 mod common;
 mod compose;
 mod contacts;
+mod domains;
 mod events;
 mod google_contacts;
 mod index;
