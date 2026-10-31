@@ -12,6 +12,7 @@
 
 pub(crate) mod css;
 pub(crate) mod dom;
+mod icons;
 mod nesting;
 mod rewrite;
 mod sanitize;
@@ -20,6 +21,7 @@ pub(crate) mod urls;
 
 use serde::{Deserialize, Serialize};
 
+pub use icons::{IconLink, IconRel, PageIcons, page_icons};
 pub use rewrite::{
     InvalidResourceOrigin, ResourceOrigin, RewrittenHtml, content_security_policy,
     rewrite_for_embedding, rewrite_resources, standalone_document,

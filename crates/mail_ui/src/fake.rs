@@ -1587,6 +1587,25 @@ impl MailSource for FakeMailSource {
         })
     }
 
+    fn domains(
+        &self,
+        filter: &crate::domains::DomainFilter,
+        sort: crate::domains::DomainSort,
+    ) -> Result<Vec<crate::domains::DomainEntry>, SourceError> {
+        Ok(crate::domains::filter_and_sort(
+            crate::domains::fake_domains(self.now),
+            filter,
+            sort,
+        ))
+    }
+
+    fn domain_contacts(
+        &self,
+        domain: &str,
+    ) -> Result<Vec<crate::domains::DomainContactEntry>, SourceError> {
+        Ok(crate::domains::fake_domain_contacts(domain))
+    }
+
     fn allow_remote_content(&self, sender: &str) -> Result<(), SourceError> {
         let mut senders = self
             .remote_senders

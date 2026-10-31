@@ -50,6 +50,9 @@ pub struct Settings {
     pub offline_recent_days: u32,
     /// Overrides per account, keyed by account label.
     pub accounts: BTreeMap<String, AccountOverrides>,
+    /// Which domains Maze fetches a favicon for, from the domain's own website (one
+    /// request per domain, at most every 30 days; never a third-party icon service).
+    pub favicons: FaviconPolicy,
     /// OAuth client registrations for "Sign in with Google" and "Sign in with
     /// Microsoft".
     pub auth: AuthSettings,
@@ -87,6 +90,7 @@ impl Default for Settings {
             offline: OfflinePolicy::default(),
             offline_recent_days: 90,
             accounts: BTreeMap::new(),
+            favicons: FaviconPolicy::default(),
             auth: AuthSettings::default(),
             agent: AgentSettings::default(),
             agent_sandbox: AgentSandboxSettings::default(),
@@ -418,6 +422,21 @@ impl Default for ReaderSettings {
             remote_content: RemoteContentPolicy::default(),
         }
     }
+}
+
+/// Which domains get a favicon, fetched from the domain's own website.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FaviconPolicy {
+    /// Domains of your contacts: in an address book, or among the addresses you wrote
+    /// to.
+    #[default]
+    Contacts,
+    /// Also domains you only received mail from (tells every sender's website that
+    /// Maze looked).
+    All,
+    /// No favicons are fetched; stored ones aren't shown.
+    Off,
 }
 
 /// How a message body is shown.

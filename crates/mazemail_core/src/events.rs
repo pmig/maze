@@ -100,6 +100,9 @@ pub struct CoreEventBatch {
     pub contacts: bool,
     /// Maze's disk usage changed ([`CoreHandle::storage_usage`](crate::CoreHandle::storage_usage)).
     pub storage: bool,
+    /// The domain list may have changed (new domains, counts, contacts, a favicon
+    /// arrived): read [`CoreHandle::domains`](crate::CoreHandle::domains) again.
+    pub domains: bool,
     /// Events were lost; reload everything that is on screen.
     pub reload: bool,
 }
@@ -127,6 +130,7 @@ struct Accumulator {
     contacts: bool,
     settings: bool,
     storage: bool,
+    domains: bool,
     reload: bool,
 }
 
@@ -151,13 +155,19 @@ impl Accumulator {
                 self.outbox |= changes.outbox;
                 self.proposals |= changes.proposals;
                 self.contacts |= changes.contacts;
+                self.domains |=
+                    changes.domains || changes.contacts || !changes.messages_removed.is_empty();
             }
             CoreEvent::StoreLagged => self.reload = true,
             CoreEvent::Sync(status) => {
                 self.sync.insert(status.account, status);
             }
             CoreEvent::Index(progress) => self.index = Some(progress),
-            CoreEvent::Settings => self.settings = true,
+            CoreEvent::Settings => {
+                self.settings = true;
+                // The `favicons` setting decides which favicons are shown.
+                self.domains = true;
+            }
             CoreEvent::MessageUpdated(message) => {
                 self.messages.insert(message);
             }
@@ -193,6 +203,7 @@ impl Accumulator {
             contacts: self.contacts,
             settings: self.settings,
             storage: self.storage,
+            domains: self.domains,
             reload: self.reload,
         }
     }

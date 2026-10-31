@@ -289,6 +289,9 @@ fn insert_message_domains(
     Ok(added)
 }
 
+/// `id, from_addr, to_json, cc_json` of a message to backfill.
+type BackfillRow = (i64, Option<String>, Option<String>, Option<String>);
+
 /// A random id for a favicon's cache entry (so file names don't tell which domain it
 /// belongs to).
 fn random_cache_key() -> BlobId {
@@ -340,7 +343,7 @@ impl WriteTx<'_> {
             });
         }
         let limit = limit.max(1);
-        let rows: Vec<(i64, Option<String>, Option<String>, Option<String>)> = self
+        let rows: Vec<BackfillRow> = self
             .conn
             .prepare_cached(
                 "SELECT id, from_addr, to_json, cc_json FROM message

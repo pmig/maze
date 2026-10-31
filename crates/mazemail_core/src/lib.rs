@@ -27,6 +27,7 @@
 //! | Events   | [`events`](CoreHandle::events), [`settings_watch`](CoreHandle::settings_watch) |
 //! | Sync     | [`accounts_with_status`](CoreHandle::accounts_with_status), [`sync_activity`](CoreHandle::sync_activity) (what each account's sync is doing, see [`activity`]) |
 //! | Disk     | [`storage_usage`](CoreHandle::storage_usage) (cached, measured in the background, see [`storage`]) |
+//! | Domains  | [`domains`](CoreHandle::domains), [`domain_contacts`](CoreHandle::domain_contacts), [`domain_favicon`](CoreHandle::domain_favicon), [`domain_mail_query`] (see [`domains`], [`favicon`]) |
 //! | Settings | [`settings`](CoreHandle::settings), [`set_favorite_folder`](CoreHandle::set_favorite_folder) (writes `settings.json`) |
 //! | Index    | [`index_sink`](CoreHandle::index_sink), [`reindex_all`](CoreHandle::reindex_all), [`check_index`](CoreHandle::check_index) |
 //!
@@ -73,7 +74,9 @@ pub mod contacts;
 pub mod correspondents;
 pub mod crash_guard;
 mod credentials;
+pub mod domains;
 pub mod events;
+pub mod favicon;
 pub mod folders;
 pub mod global_search;
 pub mod indexing;
@@ -107,8 +110,13 @@ pub use contacts::{
     ContactQuery, ContactSort, ContactSummary, ContactVersion,
 };
 pub use crash_guard::{CrashGuardStatus, ROLLBACK_THRESHOLD, SENTINEL_FILE};
+pub use domains::{
+    DomainContact, DomainFilter, DomainInfo, DomainKind, DomainSort, DomainSortField,
+    domain_mail_query,
+};
 pub use error::{Error, Result};
 pub use events::{CoreEventBatch, DEFAULT_EVENT_WINDOW, FolderCounts};
+pub use favicon::{FAVICON_SIZE, FAVICON_TTL, FaviconConfig};
 pub use folders::{FolderNode, FolderNodeKind, UNIFIED_ROLES, folder_path, unified_name};
 pub use global_search::{SearchFacets, SearchOpts, SearchResults, SearchSort, SearchThread};
 pub use handle::CoreHandle;

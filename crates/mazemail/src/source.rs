@@ -41,6 +41,7 @@ use std::time::Duration;
 
 use gpui::SharedString;
 use mail_ui::DataChanges;
+use mail_ui::domains::{DomainContactEntry, DomainEntry, DomainFilter, DomainSort, DomainSortBy};
 use mail_ui::source::{
     AccountActivity, AccountEntry, AccountKind, ActivityState, AttachmentFile, AttachmentInfo,
     BodyLink, Deception, FolderEntry, FolderKey, FolderProgress, FolderStep, FolderTree, ListSort,
@@ -92,6 +93,8 @@ pub struct CoreMailSource {
     tree: Mutex<Option<FolderTree>>,
     /// Account and tag names for the table's columns, read with the folder tree.
     names: RwLock<Names>,
+    /// Favicons by domain (`None`: none stored), until the next domain change.
+    favicons: Mutex<HashMap<String, Option<Arc<gpui::Image>>>>,
 }
 
 /// Account and tag names by id.
@@ -174,6 +177,7 @@ impl CoreMailSource {
             counts: RwLock::new(HashMap::new()),
             tree: Mutex::new(None),
             names: RwLock::new(Names::default()),
+            favicons: Mutex::new(HashMap::new()),
         }
     }
 
@@ -218,7 +222,11 @@ impl CoreMailSource {
             let after = self.folder_tree();
             folders = before.as_ref() != Some(&after);
         }
+        if batch.domains || batch.reload {
+            lock(&self.favicons).clear();
+        }
         DataChanges {
+            domains: batch.domains || batch.reload,
             folders,
             counts: folders_touched,
             threads: !batch.threads_changed.is_empty() || !batch.removed.is_empty(),
@@ -1116,6 +1124,80 @@ impl MailSource for CoreMailSource {
             content_type: part.content_type,
             bytes: part.bytes,
         })
+    }
+
+    fn domains(
+        &self,
+        filter: &DomainFilter,
+        sort: DomainSort,
+    ) -> Result<Vec<DomainEntry>, SourceError> {
+        let core = self.ready()?;
+        let filter = mazemail_core::DomainFilter {
+            text: filter.text.clone(),
+            kind: filter
+                .organizations_only
+                .then_some(mazemail_core::DomainKind::Organization),
+        };
+        let sort = mazemail_core::DomainSort {
+            field: match sort.by {
+                DomainSortBy::Name => mazemail_core::DomainSortField::Name,
+                DomainSortBy::Contacts => mazemail_core::DomainSortField::Contacts,
+                DomainSortBy::Messages => mazemail_core::DomainSortField::Messages,
+                DomainSortBy::LastSeen => mazemail_core::DomainSortField::LastSeen,
+            },
+            descending: sort.descending,
+        };
+        let domains = core.domains(&filter, sort).map_err(unavailable)?;
+        Ok(domains
+            .into_iter()
+            .map(|d| DomainEntry {
+                name: d.name.into(),
+                display_name: d.display_name.into(),
+                organization: d.kind == mazemail_core::DomainKind::Organization,
+                contacts: d.contact_count,
+                messages: d.message_count,
+                last_seen: d
+                    .last_seen
+                    .and_then(|t| OffsetDateTime::from_unix_timestamp(t).ok()),
+                has_favicon: d.has_favicon,
+            })
+            .collect())
+    }
+
+    fn domain_contacts(&self, domain: &str) -> Result<Vec<DomainContactEntry>, SourceError> {
+        let core = self.ready()?;
+        Ok(core
+            .domain_contacts(domain)
+            .map_err(unavailable)?
+            .into_iter()
+            .map(|c| DomainContactEntry {
+                email: Sensitive::new(c.email.into()),
+                name: c.display_name.map(|n| Sensitive::new(n.into())),
+                books: c.books.into_iter().map(SharedString::from).collect(),
+            })
+            .collect())
+    }
+
+    fn domain_mail_query(&self, domain: &str) -> SharedString {
+        mazemail_core::domain_mail_query(domain).into()
+    }
+
+    fn domain_favicon(&self, domain: &str) -> Option<Arc<gpui::Image>> {
+        if let Some(cached) = lock(&self.favicons).get(domain) {
+            return cached.clone();
+        }
+        let core = self.core()?;
+        let image = match core.domain_favicon(domain) {
+            Ok(png) => {
+                png.map(|png| Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, png)))
+            }
+            Err(err) => {
+                tracing::debug!(%err, "reading a favicon");
+                None
+            }
+        };
+        lock(&self.favicons).insert(domain.to_owned(), image.clone());
+        image
     }
 
     fn allow_remote_content(&self, sender: &str) -> Result<(), SourceError> {

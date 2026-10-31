@@ -31,9 +31,12 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 vault = { workspace = true }
 zeroize = { workspace = true }
-# Remote images of the original HTML mode, fetched by Maze (ADR-020).
+# Remote images of the original HTML mode, fetched by Maze (ADR-020), and favicons
+# from each domain's own website (PLAN-contacts §3b).
 reqwest = { workspace = true }
 url = { workspace = true }
+image = { workspace = true, features = ["gif", "ico", "jpeg", "webp"] }
+resvg = { workspace = true }
 
 [dev-dependencies]
 # The agent crate's session tokens, tested against the real core (it never depends on core).
