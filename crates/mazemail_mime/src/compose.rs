@@ -536,7 +536,7 @@ pub fn content_type_for(name: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use mail_parser::{MessageParser, MimeHeaders};
+    use mail_parser::MessageParser;
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -716,9 +716,12 @@ mod tests {
             parsed.message_id(),
             Some("abababababababababababababababab@distr.example")
         );
-        assert_eq!(parsed.in_reply_to().as_text(), Some("orig@example.com"));
         assert_eq!(
-            parsed.references().as_text_list().unwrap(),
+            parsed.in_reply_to().unwrap().iter().collect::<Vec<_>>(),
+            vec!["orig@example.com"]
+        );
+        assert_eq!(
+            parsed.references().unwrap().iter().collect::<Vec<_>>(),
             vec!["root@example.com", "orig@example.com"]
         );
         assert_eq!(parsed.subject(), Some("Re: Q3 offsite – Grüße"));
@@ -741,8 +744,8 @@ mod tests {
         let content_type = root.content_type().unwrap();
         assert_eq!(content_type.ctype(), "multipart");
         assert_eq!(content_type.subtype(), Some("alternative"));
-        assert_eq!(parsed.text_body_count(), 1);
-        assert_eq!(parsed.html_body_count(), 1);
+        assert_eq!(parsed.text_body().len(), 1);
+        assert_eq!(parsed.html_body().len(), 1);
         let plain = parsed.body_text(0).unwrap();
         assert!(plain.contains("see **below**."), "{plain}");
         let html = parsed.body_html(0).unwrap();
@@ -768,12 +771,12 @@ mod tests {
         let parsed = MessageParser::default().parse(&raw).unwrap();
         let root = parsed.root_part().content_type().unwrap();
         assert_eq!(root.subtype(), Some("mixed"));
-        assert_eq!(parsed.attachment_count(), 1);
-        let attachment = parsed.attachment(0).unwrap();
+        assert_eq!(parsed.attachments().len(), 1);
+        let attachment = parsed.attachments().next().unwrap();
         assert_eq!(attachment.attachment_name(), Some("plan v3.pdf"));
-        assert_eq!(attachment.contents(), b"%PDF-1.7 fake");
-        assert_eq!(parsed.text_body_count(), 1);
-        assert_eq!(parsed.html_body_count(), 1);
+        assert_eq!(attachment.decoded().as_ref(), b"%PDF-1.7 fake");
+        assert_eq!(parsed.text_body().len(), 1);
+        assert_eq!(parsed.html_body().len(), 1);
     }
 
     #[test]

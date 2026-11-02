@@ -1,9 +1,14 @@
 //! Message parsing on top of `mail-parser`.
 
 use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use mail_parser::{MessageParser, MessagePart, MimeHeaders, PartType};
+use mail_parser::decoders::charsets::charset_decoder;
+use mail_parser::{
+    AddressList, Charset, Header, HeaderName, MessageParser, MessagePart, MessageRef, PartId,
+    PartKind, TextList,
+};
 use mazemail_types::Address;
 use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, UtcOffset};
@@ -234,32 +239,28 @@ pub fn parse(raw: &[u8]) -> Result<ParsedMessage, ParseError> {
     let message = MessageParser::default()
         .parse(raw)
         .ok_or(ParseError::NoHeaders)?;
-    if message.parts.is_empty() {
-        return Err(ParseError::NoHeaders);
-    }
-    let headers = extract_headers(&message);
-    let paths = part_paths(&message);
+    let root = message.root();
+    let headers = extract_headers(root);
+    let paths = part_paths(root);
 
-    let text_parts: Vec<&MessagePart<'_>> = body_parts(&message, &message.text_body)
-        .filter(|p| matches!(p.body, PartType::Text(_)))
+    let text_parts: Vec<MessagePart<'_>> = root
+        .text_body()
+        .filter(|p| matches!(p.kind(), PartKind::Text))
         .collect();
-    let text_body = (!text_parts.is_empty()).then(|| TextBody {
-        text: join_bodies(&text_parts, message.raw_message.as_ref()).replace("\r\n", "\n"),
-        format: text_format(text_parts[0]),
+    let text_body = text_parts.first().map(|first| TextBody {
+        text: join_bodies(&text_parts).replace("\r\n", "\n"),
+        format: text_format(first),
     });
-    let html_parts: Vec<&MessagePart<'_>> = body_parts(&message, &message.html_body)
-        .filter(|p| matches!(p.body, PartType::Html(_)))
+    let html_parts: Vec<MessagePart<'_>> = root
+        .html_body()
+        .filter(|p| matches!(p.kind(), PartKind::Html))
         .collect();
-    let html_body =
-        (!html_parts.is_empty()).then(|| join_bodies(&html_parts, message.raw_message.as_ref()));
+    let html_body = (!html_parts.is_empty()).then(|| join_bodies(&html_parts));
 
-    let attachments: Vec<AttachmentMeta> = message
-        .attachments
-        .iter()
-        .filter_map(|&id| {
-            let part = message.parts.get(id as usize)?;
-            let path = paths.get(id as usize).cloned().unwrap_or_default();
-            Some(attachment_meta(part, path))
+    let attachments: Vec<AttachmentMeta> = attachment_parts(root)
+        .map(|part| {
+            let path = paths.get(&part.id()).cloned().unwrap_or_default();
+            attachment_meta(&part, path)
         })
         .collect();
     let has_attachments = attachments.iter().any(AttachmentMeta::counts_as_attachment);
@@ -287,10 +288,7 @@ pub fn parse_headers_only(raw: &[u8]) -> Result<MessageHeaders, ParseError> {
     let message = MessageParser::default()
         .parse_headers(raw)
         .ok_or(ParseError::NoHeaders)?;
-    if message.parts.is_empty() {
-        return Err(ParseError::NoHeaders);
-    }
-    Ok(extract_headers(&message))
+    Ok(extract_headers(message.root()))
 }
 
 /// An inline part, decoded (a `cid:` image of an HTML body).
@@ -316,15 +314,15 @@ impl std::fmt::Debug for InlinePart {
 pub fn inline_part(raw: &[u8], content_id: &str) -> Option<InlinePart> {
     let wanted = clean_id(content_id)?;
     let message = MessageParser::default().parse(raw)?;
-    let part = message.parts.iter().find(|part| {
+    let part = message.root().parts().find(|part| {
         part.content_id()
             .and_then(clean_id)
             .is_some_and(|id| id.eq_ignore_ascii_case(wanted))
     })?;
-    let meta = attachment_meta(part, String::new());
+    let meta = attachment_meta(&part, String::new());
     Some(InlinePart {
         content_type: meta.content_type,
-        bytes: part.contents().to_vec(),
+        bytes: part_contents(&part),
     })
 }
 
@@ -353,37 +351,62 @@ impl std::fmt::Debug for AttachmentPart {
 /// decoded. `None` if there is none or the message can't be parsed.
 pub fn attachment_part(raw: &[u8], part_path: &str) -> Option<AttachmentPart> {
     let message = MessageParser::default().parse(raw)?;
-    let paths = part_paths(&message);
-    let id = message
-        .attachments
-        .iter()
-        .copied()
-        .find(|&id| paths.get(id as usize).is_some_and(|p| p == part_path))?;
-    let part = message.parts.get(id as usize)?;
-    let meta = attachment_meta(part, part_path.to_owned());
+    let root = message.root();
+    let paths = part_paths(root);
+    let part = attachment_parts(root)
+        .find(|part| paths.get(&part.id()).is_some_and(|p| p == part_path))?;
+    let meta = attachment_meta(&part, part_path.to_owned());
     Some(AttachmentPart {
         filename: meta.filename,
         content_type: meta.content_type,
-        bytes: part.contents().to_vec(),
+        bytes: part_contents(&part),
     })
 }
 
-fn body_parts<'m>(
-    message: &'m mail_parser::Message<'m>,
-    ids: &'m [u32],
-) -> impl Iterator<Item = &'m MessagePart<'m>> {
-    ids.iter().filter_map(|&id| message.parts.get(id as usize))
+/// The non-body parts of a message, in message order: every leaf part that isn't text
+/// (nested messages included), plus every text or HTML part that isn't in the body of
+/// its own kind. This is the list mail-parser 0.11 built; 1.0 follows RFC 8621 and
+/// leaves out inline images shown in both bodies, which Maze keeps as inline parts.
+fn attachment_parts<'m>(root: MessageRef<'m>) -> impl Iterator<Item = MessagePart<'m>> {
+    root.parts().filter(|part| match part.kind() {
+        PartKind::Multipart => false,
+        PartKind::Text => !part.in_text_body(),
+        PartKind::Html => !part.in_html_body(),
+        _ => true,
+    })
 }
 
-fn join_bodies(parts: &[&MessagePart<'_>], raw: &[u8]) -> String {
+/// The decoded content of a part: the charset-decoded text of a text part, the raw
+/// bytes of a nested message, the transfer-decoded bytes of anything else.
+fn part_contents(part: &MessagePart<'_>) -> Vec<u8> {
+    match part.kind() {
+        PartKind::Text | PartKind::Html => part
+            .text()
+            .map(|text| text.into_owned().into_bytes())
+            .unwrap_or_default(),
+        PartKind::Message(nested) => nested.raw().to_vec(),
+        PartKind::Multipart => Vec::new(),
+        _ => part.decoded().into_owned(),
+    }
+}
+
+/// The decoded size of a part in bytes, measured like [`part_contents`] except that a
+/// nested message counts with its whole body.
+fn part_size(part: &MessagePart<'_>) -> usize {
+    match part.kind() {
+        PartKind::Text | PartKind::Html => part.text().map_or(0, |text| text.len()),
+        PartKind::Multipart => 0,
+        _ => part.decoded_len(),
+    }
+}
+
+fn join_bodies(parts: &[MessagePart<'_>]) -> String {
     let mut out = String::new();
     for part in parts {
-        let text = match &part.body {
-            PartType::Text(t) | PartType::Html(t) => {
-                fallback_decode(part, t, raw).map_or(Cow::Borrowed(t.as_ref()), Cow::Owned)
-            }
-            _ => continue,
+        let Some(text) = part.text() else {
+            continue;
         };
+        let text = fallback_decode(part, &text).map_or(text, Cow::Owned);
         if !out.is_empty() {
             out.push_str("\n\n");
         }
@@ -396,7 +419,7 @@ fn join_bodies(parts: &[&MessagePart<'_>], raw: &[u8]) -> String {
 /// the bytes aren't UTF-8 (old 8-bit mail, mislabeled charsets). mail-parser falls
 /// back to lossy UTF-8 there, which turns every accented letter into U+FFFD;
 /// Thunderbird uses a Western fallback encoding the same way.
-fn fallback_decode(part: &MessagePart<'_>, decoded: &str, raw: &[u8]) -> Option<String> {
+fn fallback_decode(part: &MessagePart<'_>, decoded: &str) -> Option<String> {
     if !decoded.contains('\u{FFFD}') {
         return None;
     }
@@ -405,14 +428,13 @@ fn fallback_decode(part: &MessagePart<'_>, decoded: &str, raw: &[u8]) -> Option<
         .and_then(|ct| ct.attribute("charset"))
         .map(|c| c.trim().to_ascii_lowercase());
     let declared_known = label.as_deref().is_some_and(|label| {
-        matches!(label, "utf-8" | "utf8")
-            || mail_parser::decoders::charsets::map::charset_decoder(label.as_bytes()).is_some()
+        matches!(label, "utf-8" | "utf8") || charset_decoder(label.as_bytes()).is_some()
     });
     if declared_known {
         return None;
     }
-    let body = raw.get(part.offset_body as usize..part.offset_end as usize)?;
-    let bytes: Cow<'_, [u8]> = match part.encoding {
+    let body = part.raw_body();
+    let bytes: Cow<'_, [u8]> = match part.encoding() {
         mail_parser::Encoding::None => Cow::Borrowed(body),
         mail_parser::Encoding::QuotedPrintable => Cow::Owned(decode_quoted_printable(body)),
         mail_parser::Encoding::Base64 => return None,
@@ -420,8 +442,7 @@ fn fallback_decode(part: &MessagePart<'_>, decoded: &str, raw: &[u8]) -> Option<
     if std::str::from_utf8(&bytes).is_ok() {
         return None;
     }
-    let decode = mail_parser::decoders::charsets::map::charset_decoder(b"windows-1252")?;
-    Some(decode(&bytes))
+    Some(Charset::Windows1252.decode(&bytes).into_owned())
 }
 
 /// Lenient quoted-printable decoding (RFC 2045 §6.7) for the charset fallback.
@@ -472,10 +493,9 @@ fn text_format(part: &MessagePart<'_>) -> TextFormat {
     }
 }
 
-fn extract_headers(message: &mail_parser::Message<'_>) -> MessageHeaders {
+fn extract_headers(message: MessageRef<'_>) -> MessageHeaders {
     let raw = |name: &str| -> Vec<String> {
-        message
-            .headers_raw()
+        raw_headers(message)
             .filter(|(n, _)| n.eq_ignore_ascii_case(name))
             .map(|(_, v)| unfold(v))
             .filter(|v| !v.is_empty())
@@ -523,7 +543,26 @@ fn extract_headers(message: &mail_parser::Message<'_>) -> MessageHeaders {
             .collect(),
         list_unsubscribe_post: first_raw("List-Unsubscribe-Post"),
         authentication_results: raw("Authentication-Results"),
-        mail_client: detect_client(message.headers_raw()),
+        mail_client: detect_client(raw_headers(message)),
+    }
+}
+
+/// The header fields of a message as (name, raw value) in message order. Values that
+/// aren't UTF-8 are left out, as mail-parser 0.11's `headers_raw` did.
+fn raw_headers<'m>(message: MessageRef<'m>) -> impl Iterator<Item = (&'m str, &'m str)> {
+    message.headers().iter().filter_map(|header| {
+        let value = std::str::from_utf8(header.raw_value()).ok()?;
+        Some((header_name(&header), value))
+    })
+}
+
+/// The name of a header field as spelled in the message, except `Message-ID`, which
+/// mail-parser 0.11 reported in its canonical spelling. It is the only name that
+/// [`detect_client`] looks at and 0.11 knew, so [`MailClient::header`] stays the same.
+fn header_name<'m>(header: &Header<'m>) -> &'m str {
+    match header.name() {
+        HeaderName::MessageId => HeaderName::MessageId.as_static_str(),
+        _ => header.raw_name(),
     }
 }
 
@@ -554,19 +593,15 @@ fn clean_id(id: &str) -> Option<&str> {
     (!id.is_empty() && !id.contains(char::is_whitespace)).then_some(id)
 }
 
-fn id_list(value: &mail_parser::HeaderValue<'_>) -> Vec<String> {
-    let ids: Vec<&str> = match value {
-        mail_parser::HeaderValue::Text(id) => vec![id.as_ref()],
-        mail_parser::HeaderValue::TextList(ids) => ids.iter().map(Cow::as_ref).collect(),
-        _ => Vec::new(),
-    };
+fn id_list(ids: Option<TextList<'_>>) -> Vec<String> {
     ids.into_iter()
+        .flat_map(|ids| ids.iter())
         .filter_map(clean_id)
         .map(str::to_owned)
         .collect()
 }
 
-fn convert_date(date: &mail_parser::DateTime) -> Option<OffsetDateTime> {
+fn convert_date(date: mail_parser::DateTime) -> Option<OffsetDateTime> {
     if !date.is_valid() {
         return None;
     }
@@ -580,27 +615,22 @@ fn convert_date(date: &mail_parser::DateTime) -> Option<OffsetDateTime> {
     })
 }
 
-fn convert_addresses(address: &mail_parser::Address<'_>) -> Vec<Address> {
-    let convert = |addr: &mail_parser::Addr<'_>| {
-        let email = addr.address.as_deref()?.trim();
-        if email.is_empty() {
-            return None;
-        }
-        let name = addr
-            .name
-            .as_deref()
-            .map(str::trim)
-            .filter(|n| !n.is_empty() && *n != email);
-        Some(Address::new(name, email))
-    };
-    match address {
-        mail_parser::Address::List(list) => list.iter().filter_map(convert).collect(),
-        mail_parser::Address::Group(groups) => groups
-            .iter()
-            .flat_map(|g| g.addresses.iter())
-            .filter_map(convert)
-            .collect(),
-    }
+/// The mailboxes of an address list, groups flattened.
+fn convert_addresses(addresses: AddressList<'_>) -> Vec<Address> {
+    addresses
+        .mailboxes()
+        .filter_map(|mailbox| {
+            let email = mailbox.address()?.trim();
+            if email.is_empty() {
+                return None;
+            }
+            let name = mailbox
+                .name()
+                .map(str::trim)
+                .filter(|n| !n.is_empty() && *n != email);
+            Some(Address::new(name, email))
+        })
+        .collect()
 }
 
 /// Addresses in envelope headers: `a@b`, `<a@b>`, or comma-separated lists.
@@ -648,50 +678,47 @@ fn angle_bracketed(value: &str) -> Vec<String> {
 
 /// IMAP part paths for every part: the root multipart is `""`, its children `1`, `2`,
 /// grandchildren `1.1`, …; a single-part message's only part is `1`.
-fn part_paths(message: &mail_parser::Message<'_>) -> Vec<String> {
-    let mut paths = vec![String::new(); message.parts.len()];
-    let mut visited = vec![false; message.parts.len()];
-    let mut stack = vec![(0usize, String::new())];
-    while let Some((id, path)) = stack.pop() {
-        let Some(part) = message.parts.get(id) else {
-            continue;
-        };
-        if std::mem::replace(&mut visited[id], true) {
+/// Nested messages are leaves: their parts get no path of their own.
+fn part_paths(message: MessageRef<'_>) -> HashMap<PartId, String> {
+    let mut paths = HashMap::new();
+    let mut visited = HashSet::new();
+    let mut stack = vec![(message.root_part(), String::new())];
+    while let Some((part, path)) = stack.pop() {
+        if !visited.insert(part.id()) {
             continue;
         }
-        match &part.body {
-            PartType::Multipart(children) => {
-                for (n, &child) in children.iter().enumerate() {
-                    let child_path = if path.is_empty() {
-                        (n + 1).to_string()
-                    } else {
-                        format!("{path}.{}", n + 1)
-                    };
-                    stack.push((child as usize, child_path));
-                }
-                paths[id] = path;
-            }
-            _ => {
-                paths[id] = if path.is_empty() {
-                    "1".to_owned()
+        if part.is_multipart() {
+            for (n, child) in part.children().enumerate() {
+                let child_path = if path.is_empty() {
+                    (n + 1).to_string()
                 } else {
-                    path
-                }
+                    format!("{path}.{}", n + 1)
+                };
+                stack.push((child, child_path));
             }
+            paths.insert(part.id(), path);
+        } else {
+            let path = if path.is_empty() {
+                "1".to_owned()
+            } else {
+                path
+            };
+            paths.insert(part.id(), path);
         }
     }
     paths
 }
 
 fn attachment_meta(part: &MessagePart<'_>, part_path: String) -> AttachmentMeta {
-    let content_type = match (&part.body, part.content_type()) {
-        (PartType::Message(_), _) => "message/rfc822".to_owned(),
+    let kind = part.kind();
+    let content_type = match (&kind, part.content_type()) {
+        (PartKind::Message(_), _) => "message/rfc822".to_owned(),
         (_, Some(ct)) => match ct.subtype() {
             Some(sub) => format!("{}/{}", ct.ctype(), sub).to_ascii_lowercase(),
             None => ct.ctype().to_ascii_lowercase(),
         },
-        (PartType::Text(_), None) => "text/plain".to_owned(),
-        (PartType::Html(_), None) => "text/html".to_owned(),
+        (PartKind::Text, None) => "text/plain".to_owned(),
+        (PartKind::Html, None) => "text/html".to_owned(),
         _ => "application/octet-stream".to_owned(),
     };
     let content_id = part.content_id().and_then(clean_id).map(str::to_owned);
@@ -713,7 +740,7 @@ fn attachment_meta(part: &MessagePart<'_>, part_path: String) -> AttachmentMeta 
             .filter(|n| !n.is_empty())
             .map(str::to_owned),
         content_type,
-        size: part.body.len(),
+        size: part_size(part),
         content_id,
         disposition,
     }

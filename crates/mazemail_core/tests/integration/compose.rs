@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use auth::MemorySecretStore;
 use imap::fake::{FakeMessage, FakeServer};
-use mail_parser::{MessageParser, MimeHeaders as _};
+use mail_parser::{MessageParser, TextList};
 use mazemail_core::{
     CoreHandle, Draft, DraftAttachment, DraftOrigin, Error, ReplyKind, SendResult, SyncEngineConfig,
 };
@@ -330,12 +330,16 @@ async fn drafts_are_kept_and_sending_delivers_once_with_a_sent_copy() {
     let parsed = MessageParser::default().parse(&sent.raw).unwrap();
     let message_id = parsed.message_id().unwrap().to_owned();
     assert!(message_id.ends_with("@example.org"), "{message_id}");
-    assert_eq!(parsed.in_reply_to().as_text(), Some("q3@example.com"));
+    let ids = |list: Option<TextList<'_>>| -> Vec<String> {
+        list.map(|l| l.iter().map(str::to_owned).collect())
+            .unwrap_or_default()
+    };
+    assert_eq!(ids(parsed.in_reply_to()), ["q3@example.com"]);
     assert_eq!(
-        parsed.references().as_text_list().unwrap(),
+        ids(parsed.references()),
         ["root@example.com", "q3@example.com"]
     );
-    assert!(parsed.header("Bcc").is_none());
+    assert!(!parsed.headers().contains("Bcc"));
     assert!(!String::from_utf8_lossy(&sent.raw).contains("boss@example.org"));
     let root = parsed.root_part().content_type().unwrap();
     assert_eq!(root.subtype(), Some("mixed"));
@@ -347,7 +351,7 @@ async fn drafts_are_kept_and_sending_delivers_once_with_a_sent_copy() {
             .contains("<strong>see you</strong>")
     );
     assert_eq!(
-        parsed.attachment(0).unwrap().attachment_name(),
+        parsed.attachments().next().unwrap().attachment_name(),
         Some("agenda.txt")
     );
 
