@@ -110,7 +110,7 @@ mail-parser = { version = "1.0.1", features = ["full_encoding"] }
 mail-builder = { version = "2.0", default-features = false }
 # HTML quotes of replies become Markdown (PLAN §4.10).
 htmd = "0.5.6"
-pulldown-cmark = { version = "0.13.5", default-features = false, features = ["html"] }
+pulldown-cmark = { version = "0.13.6", default-features = false, features = ["html"] }
 # One crypto provider for all of rustls: aws-lc-rs. Servo, mail-auth and reqwest need it
 # anyway; a second provider (ring) would leave rustls without a process-wide default.
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
