@@ -142,6 +142,7 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
     let theme_paths = paths.clone();
     app.run(move |cx| {
         ui::init(cx);
+        ui::prompt::init(cx);
         theme::apply_from_file(&theme_paths, cx);
         reading::apply_from_file(&theme_paths, cx);
         spellcheck::apply_from_file(&theme_paths, cx);
@@ -233,6 +234,7 @@ fn run_demo(window_options: MailWindowOptions) {
     });
     app.run(move |cx| {
         ui::init(cx);
+        ui::prompt::init(cx);
         if let Err(error) = ui::gpui_tokio::init(cx) {
             tracing::error!(%error, "could not start the Tokio runtime");
         }

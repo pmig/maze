@@ -8,6 +8,7 @@
 //! - [`components`]: small shared components.
 //! - [`panes`]: tabs and splits, the way Zed does them (ADR-018).
 //! - [`names`]: random two-word names (`brave-otter`) for new drafts.
+//! - [`prompt`]: window prompts in Maze's theme where the platform has no native ones.
 //!
 //! The component library is gpui-kit (PLAN ADR-002), re-exported as [`kit`] so crates
 //! above use the same version.
@@ -18,6 +19,7 @@ pub mod gpui_tokio;
 pub mod keymap;
 pub mod names;
 pub mod panes;
+pub mod prompt;
 pub mod theme;
 
 pub use gpui_kit as kit;
