@@ -4,8 +4,10 @@
 //! Every capability needs its own scopes ([`Provider::scopes_for`](crate::Provider::scopes_for)).
 //! Mail is what every OAuth account signs in for; contacts are opt-in per account and
 //! can be granted later with an incremental consent
-//! ([`AuthorizeOptions::incremental_consent`](crate::AuthorizeOptions::incremental_consent)).
-//! A missing contacts grant never affects mail.
+//! ([`AuthorizeOptions::incremental_consent`](crate::AuthorizeOptions::incremental_consent)),
+//! and so are other people's shared contacts (Microsoft only). A missing contacts
+//! grant never affects mail, and a missing shared-contacts grant never affects the
+//! account's own contacts.
 
 use std::fmt;
 
@@ -21,17 +23,22 @@ pub enum Capability {
     /// Reading and writing the account's contacts (Google People API; Microsoft
     /// Graph `Contacts.ReadWrite`).
     Contacts,
+    /// Reading contacts other people shared with the account, or in mailboxes it
+    /// can open (Microsoft Graph `Contacts.Read.Shared`; Google has none).
+    #[serde(rename = "shared_contacts")]
+    SharedContacts,
 }
 
 impl Capability {
     /// Every capability, in the order scopes are requested.
-    pub const ALL: [Self; 2] = [Self::Mail, Self::Contacts];
+    pub const ALL: [Self; 3] = [Self::Mail, Self::Contacts, Self::SharedContacts];
 
-    /// The technical name, `mail` or `contacts`.
+    /// The technical name, `mail`, `contacts` or `shared_contacts`.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Mail => "mail",
             Self::Contacts => "contacts",
+            Self::SharedContacts => "shared_contacts",
         }
     }
 
@@ -40,6 +47,7 @@ impl Capability {
         match self {
             Self::Mail => "Mail",
             Self::Contacts => "Contacts",
+            Self::SharedContacts => "Shared contacts",
         }
     }
 
@@ -47,6 +55,7 @@ impl Capability {
         match self {
             Self::Mail => 1,
             Self::Contacts => 1 << 1,
+            Self::SharedContacts => 1 << 2,
         }
     }
 }
@@ -70,6 +79,8 @@ impl Capabilities {
     pub const MAIL: Self = Self::only(Capability::Mail);
     /// Contacts only, for an incremental consent on an account that has mail.
     pub const CONTACTS: Self = Self::only(Capability::Contacts);
+    /// Shared contacts only (Microsoft).
+    pub const SHARED_CONTACTS: Self = Self::only(Capability::SharedContacts);
 
     /// The set with just `capability`.
     pub const fn only(capability: Capability) -> Self {
@@ -142,23 +153,29 @@ impl fmt::Debug for Capabilities {
 /// [`TokenResource::Primary`]. Microsoft issues one access token per resource: IMAP
 /// and SMTP (`outlook.office.com`) use the primary token, contacts a separate
 /// [`TokenResource::Graph`] token (`graph.microsoft.com`), both from the same
-/// refresh token. See [`Provider::resource_for`](crate::Provider::resource_for).
+/// refresh token. Shared contacts get a Graph token of their own
+/// ([`TokenResource::GraphShared`], asked for with `Contacts.Read.Shared`), so a
+/// permission an administrator hasn't approved can't block the account's own
+/// contacts. See [`Provider::resource_for`](crate::Provider::resource_for).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TokenResource {
     /// The token mail uses: Google's only token, Microsoft's `outlook.office.com`.
     Primary,
-    /// Microsoft Graph (`graph.microsoft.com`).
+    /// Microsoft Graph (`graph.microsoft.com`) for the account's contacts.
     Graph,
+    /// Microsoft Graph for shared contacts (`Contacts.Read.Shared`).
+    GraphShared,
 }
 
 impl TokenResource {
     /// Every resource.
-    pub const ALL: [Self; 2] = [Self::Primary, Self::Graph];
+    pub const ALL: [Self; 3] = [Self::Primary, Self::Graph, Self::GraphShared];
 
     pub(crate) const fn index(self) -> usize {
         match self {
             Self::Primary => 0,
             Self::Graph => 1,
+            Self::GraphShared => 2,
         }
     }
 }

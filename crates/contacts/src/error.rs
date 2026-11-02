@@ -107,7 +107,10 @@ impl ContactError {
 
     /// A token error as a contact error.
     pub fn from_auth(err: auth::AuthError) -> Self {
-        if err.missing_capability() == Some(auth::Capability::Contacts) {
+        if matches!(
+            err.missing_capability(),
+            Some(auth::Capability::Contacts | auth::Capability::SharedContacts)
+        ) {
             Self::MissingScope
         } else if let auth::AuthError::Network { message, .. } = &err {
             Self::Offline {

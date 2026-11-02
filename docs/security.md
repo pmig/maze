@@ -164,10 +164,12 @@ can still learn when you load images: that the message was opened, when, and fro
 which IP address (and roughly where, from that address); which images you loaded if
 their URLs are unique to you. Tracking pixels Maze recognizes are dropped even then.
 
-## Contacts from Google
+## Contacts from Google and Microsoft
 
-When you connect an account's Google contacts ([ADR-024](adr/0024-server-owned-contacts.md),
-[getting started](getting-started.md#google-contacts)), Maze stores other people's data
+When you connect an account's Google or Microsoft contacts
+([ADR-024](adr/0024-server-owned-contacts.md), getting started:
+[Google](getting-started.md#google-contacts),
+[Microsoft](getting-started.md#microsoft-contacts)), Maze stores other people's data
 it didn't have before: names, email and postal addresses, phone numbers,
 organizations, notes and photos. All of it is encrypted like mail: the contacts in the
 database (tables `contact`, `contact_person`, `contact_source`), their photos in the
@@ -183,6 +185,15 @@ What leaves your computer, and to whom:
   names): one request per contact photo, about once a week, without your token,
   cookies or `Referer`, with a generic `User-Agent`. Google learns your IP address and
   which of your contacts' photos Maze loads.
+- **To Microsoft** (`graph.microsoft.com`, with the account's Graph token for
+  `Contacts.ReadWrite`, separate from its mail token): requests for the contacts of the
+  account's Contacts folder and their changes, the contacts you create or edit in
+  Maze, and one request per contact photo, about once a week. Nothing else, and
+  nothing from other accounts.
+- **To Microsoft for shared mailboxes** (`graph.microsoft.com`, with a third token for
+  `Contacts.Read.Shared`, only when the account's `shared_contacts` setting lists
+  mailboxes): read-only requests for the Contacts folder of each listed mailbox and its
+  changes. Maze sends no edits and loads no photos for them.
 
 The contacts scopes are opt-in per account and asked for with a separate consent; an
 account that never connected them sends nothing of this. Restricted local API tokens

@@ -227,6 +227,8 @@ pub struct Provider {
     scopes: Vec<String>,
     /// The scopes for [`Capability::Contacts`].
     contacts_scopes: Vec<String>,
+    /// The scopes for [`Capability::SharedContacts`] (none for Google).
+    shared_contacts_scopes: Vec<String>,
     use_pkce: bool,
     credentials: Option<ClientCredentials>,
     /// Microsoft: the login authority and tenant the endpoints were built from;
@@ -283,6 +285,10 @@ impl Provider {
     /// Microsoft Graph: read and write the user's contacts (resource
     /// `graph.microsoft.com`).
     pub const MICROSOFT_CONTACTS_SCOPE: &str = "https://graph.microsoft.com/Contacts.ReadWrite";
+    /// Microsoft Graph: read contacts shared with the user, or in mailboxes the user
+    /// can open.
+    pub const MICROSOFT_SHARED_CONTACTS_SCOPE: &str =
+        "https://graph.microsoft.com/Contacts.Read.Shared";
     /// Microsoft's scope for refresh tokens. Not a capability of its own.
     pub const OFFLINE_ACCESS_SCOPE: &str = "offline_access";
     /// The prefix of Microsoft Graph scopes; Graph token responses may list them
@@ -291,7 +297,13 @@ impl Provider {
 
     /// The built-in provider, without client credentials.
     pub fn builtin(kind: ProviderKind) -> Self {
-        let (authorization, token, scopes, contacts_scopes): (_, _, &[&str], &[&str]) = match kind {
+        let (authorization, token, scopes, contacts_scopes, shared_contacts_scopes): (
+            _,
+            _,
+            &[&str],
+            &[&str],
+            &[&str],
+        ) = match kind {
             ProviderKind::Google => (
                 Self::GOOGLE_AUTHORIZATION_ENDPOINT,
                 Self::GOOGLE_TOKEN_ENDPOINT,
@@ -300,6 +312,7 @@ impl Provider {
                     Self::GOOGLE_CONTACTS_SCOPE,
                     Self::GOOGLE_OTHER_CONTACTS_SCOPE,
                 ],
+                &[],
             ),
             ProviderKind::Microsoft => (
                 Self::MICROSOFT_AUTHORIZATION_ENDPOINT,
@@ -310,6 +323,10 @@ impl Provider {
                     Self::OFFLINE_ACCESS_SCOPE,
                 ],
                 &[Self::MICROSOFT_CONTACTS_SCOPE, Self::OFFLINE_ACCESS_SCOPE],
+                &[
+                    Self::MICROSOFT_SHARED_CONTACTS_SCOPE,
+                    Self::OFFLINE_ACCESS_SCOPE,
+                ],
             ),
         };
         let owned =
@@ -320,6 +337,7 @@ impl Provider {
             token_endpoint: builtin_url(token),
             scopes: owned(scopes),
             contacts_scopes: owned(contacts_scopes),
+            shared_contacts_scopes: owned(shared_contacts_scopes),
             use_pkce: true,
             credentials: None,
             tenancy: (kind == ProviderKind::Microsoft).then(|| Tenancy {
@@ -404,6 +422,7 @@ impl Provider {
         match capability {
             Capability::Mail => self.scopes = scopes,
             Capability::Contacts => self.contacts_scopes = scopes,
+            Capability::SharedContacts => self.shared_contacts_scopes = scopes,
         }
         self
     }
@@ -442,11 +461,14 @@ impl Provider {
     ///   `https://www.googleapis.com/auth/contacts.other.readonly`.
     /// - Microsoft: mail `https://outlook.office.com/IMAP.AccessAsUser.All`,
     ///   `https://outlook.office.com/SMTP.Send` and `offline_access`; contacts
-    ///   `https://graph.microsoft.com/Contacts.ReadWrite` and `offline_access`.
+    ///   `https://graph.microsoft.com/Contacts.ReadWrite` and `offline_access`;
+    ///   shared contacts `https://graph.microsoft.com/Contacts.Read.Shared` and
+    ///   `offline_access`.
     pub fn scopes_for(&self, capability: Capability) -> &[String] {
         match capability {
             Capability::Mail => &self.scopes,
             Capability::Contacts => &self.contacts_scopes,
+            Capability::SharedContacts => &self.shared_contacts_scopes,
         }
     }
 
@@ -468,10 +490,12 @@ impl Provider {
     }
 
     /// Which access token `capability` needs: Microsoft's contacts live in Graph, a
-    /// resource of their own; everything else uses the primary token.
+    /// resource of their own, and shared contacts get a Graph token of their own;
+    /// everything else uses the primary token.
     pub fn resource_for(&self, capability: Capability) -> TokenResource {
         match (self.kind, capability) {
             (ProviderKind::Microsoft, Capability::Contacts) => TokenResource::Graph,
+            (ProviderKind::Microsoft, Capability::SharedContacts) => TokenResource::GraphShared,
             _ => TokenResource::Primary,
         }
     }

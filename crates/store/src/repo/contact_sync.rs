@@ -523,6 +523,20 @@ impl WriteTx<'_> {
         self.prune_contact_photos()
     }
 
+    /// Removes one synced book with its people and their `contact` rows (a shared
+    /// mailbox taken out of the settings). Returns the photo URLs that no longer
+    /// belong to anyone.
+    pub fn delete_contact_book(&mut self, book: &str) -> Result<Vec<String>> {
+        let removed = self
+            .conn
+            .prepare_cached("DELETE FROM contact_source WHERE book = ?1")?
+            .execute([book])?;
+        if removed > 0 {
+            self.changes.contacts = true;
+        }
+        self.prune_contact_photos()
+    }
+
     /// Forgets photo URLs no person has any more; returns them.
     pub fn prune_contact_photos(&mut self) -> Result<Vec<String>> {
         let urls: Vec<String> = {

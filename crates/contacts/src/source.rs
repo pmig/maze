@@ -14,7 +14,7 @@ use crate::model::{BookKind, ContactFields, Person, Photo};
 
 /// Hands out access tokens for the contacts API. [`OAuthTokenManager`] implements it
 /// with [`Capability::Contacts`] (Google: the account's token, which must carry the
-/// contacts scopes).
+/// contacts scopes); [`SharedContactTokens`] with [`Capability::SharedContacts`].
 #[async_trait]
 pub trait AccessTokens: Send + Sync {
     /// A valid access token.
@@ -32,6 +32,23 @@ impl AccessTokens for OAuthTokenManager {
 
     async fn invalidate(&self) {
         self.invalidate_for(Capability::Contacts).await;
+    }
+}
+
+/// The account's tokens for other people's shared contacts
+/// ([`Capability::SharedContacts`], Microsoft Graph `Contacts.Read.Shared`): a token of
+/// its own, so a missing shared permission never touches the account's contacts.
+#[derive(Debug)]
+pub struct SharedContactTokens(pub std::sync::Arc<OAuthTokenManager>);
+
+#[async_trait]
+impl AccessTokens for SharedContactTokens {
+    async fn token(&self) -> Result<Sensitive<String>, auth::AuthError> {
+        self.0.access_token_for(Capability::SharedContacts).await
+    }
+
+    async fn invalidate(&self) {
+        self.0.invalidate_for(Capability::SharedContacts).await;
     }
 }
 

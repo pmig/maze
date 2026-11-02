@@ -66,8 +66,9 @@ use crate::ui_state::{AddressBookState, UiStateStore};
 const FILTER_DEBOUNCE: Duration = Duration::from_millis(120);
 
 /// What the empty Address Book says.
-pub const NO_CONTACTS: &str = "Addresses you write to appear here, and address books you \
-     import from Thunderbird. Google and Microsoft contacts come in a later version.";
+pub const NO_CONTACTS: &str = "Addresses you write to appear here, address books you import \
+     from Thunderbird and the contacts of Google and Microsoft accounts you connect (Contacts: \
+     Connect Contacts in the command palette).";
 
 /// What the Address Book asks the window for.
 #[derive(Debug, Clone, PartialEq, Eq)]

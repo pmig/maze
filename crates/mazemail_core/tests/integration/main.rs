@@ -19,6 +19,7 @@ mod google_contacts;
 mod index;
 mod lifecycle;
 mod messages;
+mod microsoft_contacts;
 mod queries;
 mod remote_content;
 mod search;

@@ -127,7 +127,7 @@ pub struct OAuthTokenManager {
     secrets: AccountSecrets,
     /// One per [`TokenResource`], by [`TokenResource::index`]. Lock in index order
     /// when holding several.
-    slots: [tokio::sync::Mutex<Slot>; 2],
+    slots: [tokio::sync::Mutex<Slot>; 3],
     refresh_margin: Duration,
 }
 
@@ -218,6 +218,7 @@ impl OAuthTokenManager {
     pub async fn store_tokens(&self, mut tokens: TokenSet) -> Result<(), AuthError> {
         let mut primary = self.slot(TokenResource::Primary).lock().await;
         let mut graph = self.slot(TokenResource::Graph).lock().await;
+        let mut shared = self.slot(TokenResource::GraphShared).lock().await;
         match tokens.refresh_token.take() {
             Some(refresh_token) => {
                 self.secrets
@@ -231,9 +232,11 @@ impl OAuthTokenManager {
         }
         primary.missing_until = None;
         graph.missing_until = None;
+        shared.missing_until = None;
         match tokens.resource {
             TokenResource::Primary => primary.tokens = Some(tokens),
             TokenResource::Graph => graph.tokens = Some(tokens),
+            TokenResource::GraphShared => shared.tokens = Some(tokens),
         }
         Ok(())
     }
@@ -243,8 +246,10 @@ impl OAuthTokenManager {
     pub async fn sign_out(&self) -> Result<(), AuthError> {
         let mut primary = self.slot(TokenResource::Primary).lock().await;
         let mut graph = self.slot(TokenResource::Graph).lock().await;
+        let mut shared = self.slot(TokenResource::GraphShared).lock().await;
         *primary = Slot::default();
         *graph = Slot::default();
+        *shared = Slot::default();
         self.secrets.delete(SecretKind::OAuthRefresh).await?;
         Ok(())
     }

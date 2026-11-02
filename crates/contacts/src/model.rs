@@ -305,17 +305,32 @@ pub enum BookKind {
     /// Google "Other contacts" (`otherContacts.list`): people you wrote to, saved
     /// by Google. Read-only.
     GoogleOther,
+    /// Microsoft's "Contacts" (the default contact folder of Outlook.com or
+    /// Microsoft 365, through Microsoft Graph): readable and writable.
+    Microsoft,
+    /// The default contact folder of another mailbox that shared it with the
+    /// account (Microsoft Graph, `Contacts.Read.Shared`). Read-only. Its book name
+    /// names the mailbox: `microsoft-shared:<account uuid>:<mailbox>`.
+    MicrosoftShared,
 }
 
 impl BookKind {
     /// Every kind.
-    pub const ALL: [Self; 2] = [Self::Google, Self::GoogleOther];
+    pub const ALL: [Self; 4] = [
+        Self::Google,
+        Self::GoogleOther,
+        Self::Microsoft,
+        Self::MicrosoftShared,
+    ];
 
-    /// The prefix of the book's name (`google`, `google-other`).
+    /// The prefix of the book's name (`google`, `google-other`, `microsoft`,
+    /// `microsoft-shared`).
     pub const fn prefix(self) -> &'static str {
         match self {
             Self::Google => "google",
             Self::GoogleOther => "google-other",
+            Self::Microsoft => "microsoft",
+            Self::MicrosoftShared => "microsoft-shared",
         }
     }
 
@@ -324,16 +339,62 @@ impl BookKind {
         match self {
             Self::Google => "My Contacts",
             Self::GoogleOther => "Other Contacts",
+            Self::Microsoft => "Contacts",
+            Self::MicrosoftShared => "Shared Contacts",
         }
     }
 
     /// Whether Maze can create and edit contacts in books of this kind.
     pub const fn is_writable(self) -> bool {
-        matches!(self, Self::Google)
+        matches!(self, Self::Google | Self::Microsoft)
+    }
+
+    /// The provider whose server has books of this kind.
+    pub const fn provider(self) -> Provider {
+        match self {
+            Self::Google | Self::GoogleOther => Provider::Google,
+            Self::Microsoft | Self::MicrosoftShared => Provider::Microsoft,
+        }
     }
 
     fn from_prefix(prefix: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|kind| kind.prefix() == prefix)
+    }
+}
+
+/// A contacts provider: which books an account of it has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Provider {
+    /// Google (People API): My Contacts and Other contacts.
+    Google,
+    /// Microsoft (Graph): the default Contacts folder.
+    Microsoft,
+}
+
+impl Provider {
+    /// The books an account of this provider syncs, in sync order.
+    pub const fn books(self) -> &'static [BookKind] {
+        match self {
+            Self::Google => &[BookKind::Google, BookKind::GoogleOther],
+            Self::Microsoft => &[BookKind::Microsoft],
+        }
+    }
+
+    /// The book new contacts go to.
+    pub const fn writable_book(self) -> BookKind {
+        match self {
+            Self::Google => BookKind::Google,
+            Self::Microsoft => BookKind::Microsoft,
+        }
+    }
+
+    /// The provider's name for people ("Google", "Microsoft").
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Google => "Google",
+            Self::Microsoft => "Microsoft",
+        }
     }
 }
 
@@ -368,12 +429,60 @@ pub struct NotASyncedBook;
 impl FromStr for Book {
     type Err = NotASyncedBook;
 
+    /// Parses a synced book name. A [`BookKind::MicrosoftShared`] name carries the
+    /// mailbox after the account (see [`shared_book_mailbox`]); every other kind has
+    /// nothing after it.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (prefix, uuid) = s.split_once(':').ok_or(NotASyncedBook)?;
+        let (prefix, rest) = s.split_once(':').ok_or(NotASyncedBook)?;
         let kind = BookKind::from_prefix(prefix).ok_or(NotASyncedBook)?;
+        let (uuid, mailbox) = match rest.split_once(':') {
+            Some((uuid, mailbox)) => (uuid, Some(mailbox)),
+            None => (rest, None),
+        };
+        let valid = match (kind, mailbox) {
+            (BookKind::MicrosoftShared, Some(mailbox)) => is_valid_mailbox(mailbox),
+            (BookKind::MicrosoftShared, None) | (_, Some(_)) => false,
+            (_, None) => true,
+        };
+        if !valid {
+            return Err(NotASyncedBook);
+        }
         let account = Uuid::parse_str(uuid).map_err(|_| NotASyncedBook)?;
         Ok(Self { kind, account })
     }
+}
+
+/// The book name of `mailbox`'s shared contacts in `account`
+/// (`microsoft-shared:<account uuid>:<mailbox>`, the mailbox lowercase); `None` for a
+/// mailbox that isn't a plain email address.
+pub fn shared_book_name(account: Uuid, mailbox: &str) -> Option<String> {
+    let mailbox = mailbox.trim().to_ascii_lowercase();
+    is_valid_mailbox(&mailbox)
+        .then(|| format!("{}:{account}:{mailbox}", BookKind::MicrosoftShared.prefix()))
+}
+
+/// The mailbox of a [`BookKind::MicrosoftShared`] book name.
+pub fn shared_book_mailbox(book: &str) -> Option<&str> {
+    let rest = book
+        .strip_prefix(BookKind::MicrosoftShared.prefix())?
+        .strip_prefix(':')?;
+    let (_, mailbox) = rest.split_once(':')?;
+    is_valid_mailbox(mailbox).then_some(mailbox)
+}
+
+/// Whether `mailbox` is a plain email address Maze may put into a Graph URL
+/// (`/users/<mailbox>/…`): letters, digits and `.`, `_`, `+`, `-`, one `@`.
+pub fn is_valid_mailbox(mailbox: &str) -> bool {
+    let Some((local, domain)) = mailbox.split_once('@') else {
+        return false;
+    };
+    let ok = |part: &str| {
+        !part.is_empty()
+            && part
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'+' | b'-'))
+    };
+    mailbox.len() <= 254 && ok(local) && ok(domain) && domain.contains('.')
 }
 
 /// A contact photo.
@@ -426,6 +535,40 @@ mod tests {
             Err(NotASyncedBook)
         );
         assert!(BookKind::Google.is_writable() && !BookKind::GoogleOther.is_writable());
+        let microsoft = Book::new(BookKind::Microsoft, account);
+        assert_eq!(
+            microsoft.to_string(),
+            "microsoft:6f000000-0000-4000-8000-000000000001"
+        );
+        assert_eq!(microsoft.to_string().parse::<Book>(), Ok(microsoft));
+        assert!(BookKind::Microsoft.is_writable());
+        assert_eq!(BookKind::Microsoft.provider(), Provider::Microsoft);
+        assert_eq!(
+            Provider::Google.books(),
+            [BookKind::Google, BookKind::GoogleOther]
+        );
+        assert_eq!(Provider::Microsoft.writable_book(), BookKind::Microsoft);
+        let shared = shared_book_name(account, " Team@Contoso.com ").unwrap();
+        assert_eq!(
+            shared,
+            "microsoft-shared:6f000000-0000-4000-8000-000000000001:team@contoso.com"
+        );
+        let parsed = shared.parse::<Book>().unwrap();
+        assert_eq!(parsed.kind, BookKind::MicrosoftShared);
+        assert_eq!(parsed.account, account);
+        assert!(!parsed.kind.is_writable());
+        assert_eq!(shared_book_mailbox(&shared), Some("team@contoso.com"));
+        assert_eq!(shared_book_name(account, "../me"), None);
+        assert_eq!(shared_book_name(account, "a@b/c.com"), None);
+        // A shared book needs its mailbox; other books take none.
+        assert_eq!(
+            "microsoft-shared:6f000000-0000-4000-8000-000000000001".parse::<Book>(),
+            Err(NotASyncedBook)
+        );
+        assert_eq!(
+            "microsoft:6f000000-0000-4000-8000-000000000001:x@y.com".parse::<Book>(),
+            Err(NotASyncedBook)
+        );
     }
 
     #[test]

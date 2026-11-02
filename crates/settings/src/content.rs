@@ -68,7 +68,7 @@ pub struct Settings {
     pub auto_update_install: AutoUpdateInstall,
     /// Notifications for new mail.
     pub notifications: NotificationSettings,
-    /// Contacts synced from Google accounts that connected their contacts.
+    /// Contacts synced from Google and Microsoft accounts that connected their contacts.
     pub contacts: ContactsSettings,
     /// Log verbosity. The `MAZEMAIL_LOG` environment variable takes precedence.
     pub log_level: LogLevel,
@@ -133,6 +133,21 @@ impl Settings {
                 .and_then(|o| o.contacts_sync)
                 .unwrap_or(self.contacts.sync),
         }
+    }
+
+    /// The mailboxes whose shared contacts the account `label` syncs
+    /// (`accounts.<label>.shared_contacts`), trimmed, without empty entries.
+    pub fn shared_contacts(&self, label: &str) -> Vec<String> {
+        self.accounts
+            .get(label)
+            .map(|o| {
+                o.shared_contacts
+                    .iter()
+                    .map(|m| m.trim().to_owned())
+                    .filter(|m| !m.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// The footer and the "Sent with Maze" default of one account: its overrides over
@@ -772,6 +787,10 @@ pub struct AccountOverrides {
     /// Overrides `contacts.sync`: `false` stops syncing this account's contacts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contacts_sync: Option<bool>,
+    /// Microsoft accounts: other mailboxes (email addresses) whose shared Contacts
+    /// folder Maze syncs, read-only, next to the account's own contacts.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub shared_contacts: Vec<String>,
 }
 
 /// The effective settings of one account, see [`Settings::account`].

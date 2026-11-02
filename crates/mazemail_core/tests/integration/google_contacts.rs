@@ -231,7 +231,7 @@ async fn setup(people_api: &str) -> Setup {
 
 /// Connects the account's contacts and waits for the first sync.
 async fn connect(s: &Setup) {
-    assert!(s.core.connect_google_contacts(s.account.id).await.unwrap());
+    assert!(s.core.connect_contacts(s.account.id).await.unwrap());
     let core = s.core.clone();
     let books = [s.book(), s.other_book()];
     wait_for("the first contact sync", move || {
@@ -584,7 +584,7 @@ async fn edits_reach_the_store_only_after_google_accepted_them() {
 async fn offline_saves_fail_without_storing_anything() {
     // Nothing listens on port 1.
     let s = setup("http://127.0.0.1:1").await;
-    assert!(s.core.connect_google_contacts(s.account.id).await.unwrap());
+    assert!(s.core.connect_contacts(s.account.id).await.unwrap());
     let err = s
         .core
         .create_contact(s.account.id, fields("Eve", &["eve@example.com"]))

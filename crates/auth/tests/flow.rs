@@ -791,6 +791,83 @@ async fn microsoft_without_contacts_consent_keeps_mail_working() {
     assert_eq!(manager.access_token().await.unwrap().expose(), "mail-1");
 }
 
+const GRAPH_SHARED_SCOPE: &str = "https://graph.microsoft.com/Contacts.Read.Shared offline_access";
+
+#[tokio::test]
+async fn shared_contacts_get_their_own_graph_token_and_a_refusal_keeps_contacts_working() {
+    let fake = Fake::start(Consent::Grant).await;
+    token_router(
+        &fake.server,
+        vec![
+            (
+                &refresh_key_for(GRAPH_SHARED_SCOPE),
+                vec![
+                    // Not approved (yet): an administrator has to consent.
+                    ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                        "error": "invalid_grant",
+                        "error_description": "AADSTS65001: The user or administrator has not consented to use the application.",
+                        "error_codes": [65001],
+                    })),
+                    scoped_token_json(
+                        "shared-1",
+                        None,
+                        "Contacts.ReadWrite Contacts.Read.Shared profile openid",
+                    ),
+                ],
+            ),
+            (
+                &refresh_key_for(GRAPH_SCOPE),
+                vec![scoped_token_json("graph-1", None, "Contacts.ReadWrite")],
+            ),
+        ],
+    )
+    .await;
+    let (store, manager) = signed_in(&fake, ProviderKind::Microsoft);
+
+    let err = manager
+        .access_token_for(Capability::SharedContacts)
+        .await
+        .unwrap_err();
+    assert_eq!(err.missing_capability(), Some(Capability::SharedContacts));
+    // The account's own contacts don't care, and the refresh token stays.
+    assert_eq!(
+        manager
+            .access_token_for(Capability::Contacts)
+            .await
+            .unwrap()
+            .expose(),
+        "graph-1"
+    );
+    assert_eq!(stored_refresh(&store).as_deref(), Some("refresh-0"));
+    // Once approved (the remembered answer forgotten), shared contacts have a token of
+    // their own, cached apart from the contacts token.
+    manager.invalidate_for(Capability::SharedContacts).await;
+    assert_eq!(
+        manager
+            .access_token_for(Capability::SharedContacts)
+            .await
+            .unwrap()
+            .expose(),
+        "shared-1"
+    );
+    assert_eq!(
+        manager
+            .access_token_for(Capability::Contacts)
+            .await
+            .unwrap()
+            .expose(),
+        "graph-1"
+    );
+    assert_eq!(
+        token_requests(&fake.server).await,
+        [
+            refresh_key_for(GRAPH_SHARED_SCOPE),
+            refresh_key_for(GRAPH_SCOPE),
+            refresh_key_for(GRAPH_SHARED_SCOPE),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn a_rejected_graph_refresh_doesnt_sign_mail_out() {
     let fake = Fake::start(Consent::Grant).await;

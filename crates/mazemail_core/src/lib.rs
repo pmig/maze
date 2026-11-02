@@ -23,7 +23,7 @@
 //! | Search   | [`search`](CoreHandle::search), [`quick_filter_body`](CoreHandle::quick_filter_body), [`sort_threads`](CoreHandle::sort_threads) / [`sort_messages`](CoreHandle::sort_messages) (search results by any column) |
 //! | Commands | [`apply`](CoreHandle::apply), [`undo`](CoreHandle::undo) |
 //! | Contacts | [`address_books`](CoreHandle::address_books), [`contacts`](CoreHandle::contacts) (All Contacts grouped by address, or one book), [`contact`](CoreHandle::contact) (every book's version), [`contact_book_editable`](CoreHandle::contact_book_editable) / [`save_contact`](CoreHandle::save_contact) (see [`contacts`](mod@contacts)) |
-//! | Google contacts | [`connect_google_contacts`](CoreHandle::connect_google_contacts) / [`disconnect_contacts`](CoreHandle::disconnect_contacts), [`contacts_status`](CoreHandle::contacts_status), [`sync_contacts_now`](CoreHandle::sync_contacts_now), [`create_contact`](CoreHandle::create_contact) / [`update_contact`](CoreHandle::update_contact) (write-through), [`synced_contact`](CoreHandle::synced_contact), [`contact_photo`](CoreHandle::contact_photo) (see [`synced_contacts`]) |
+//! | Google and Microsoft contacts | [`connect_contacts`](CoreHandle::connect_contacts) / [`disconnect_contacts`](CoreHandle::disconnect_contacts), [`contacts_status`](CoreHandle::contacts_status), [`sync_contacts_now`](CoreHandle::sync_contacts_now), [`create_contact`](CoreHandle::create_contact) / [`update_contact`](CoreHandle::update_contact) (write-through), [`synced_contact`](CoreHandle::synced_contact), [`contact_photo`](CoreHandle::contact_photo) (see [`synced_contacts`]) |
 //! | Compose  | [`identities`](CoreHandle::identities), [`new_draft`](CoreHandle::new_draft), [`reply_draft`](CoreHandle::reply_draft), [`forward_draft`](CoreHandle::forward_draft), [`create_draft`](CoreHandle::create_draft)/[`update_draft`](CoreHandle::update_draft)/[`delete_draft`](CoreHandle::delete_draft), [`send_draft`](CoreHandle::send_draft) (see [`compose`], [`outgoing`]) |
 //! | Events   | [`events`](CoreHandle::events), [`settings_watch`](CoreHandle::settings_watch) |
 //! | Sync     | [`accounts_with_status`](CoreHandle::accounts_with_status), [`sync_activity`](CoreHandle::sync_activity) (what each account's sync is doing, see [`activity`]) |
@@ -105,7 +105,7 @@ pub use self::contacts::{
 /// [`ServerContactError`] here ([`Error::Contacts`]).
 pub use ::contacts::{
     Book, BookKind, ContactError as ServerContactError, ContactFields, Labeled, Name, Organization,
-    Person, Photo, PostalAddress,
+    Person, Photo, PostalAddress, Provider as ContactsProvider,
 };
 pub use accounts::{
     AccountAuth, AccountConfig, AccountErrorKind, AccountInfo, AddImapAccount, AddOAuthAccount,

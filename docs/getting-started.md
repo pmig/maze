@@ -266,9 +266,9 @@ Your OAuth client needs two more things in the same Google Cloud project, once:
    contacts"). Both are *sensitive*, not *restricted*: an app in *Testing* can use them
    for its test users without a verification.
 
-Then choose **Contacts: Connect Google Contacts** in the command palette
-(`cmd-shift-p`). Your browser opens Google's consent page for every Google account
-whose contacts aren't connected yet: sign in and allow Maze to see and edit your
+Then choose **Contacts: Connect Contacts** in the command palette (`cmd-shift-p`).
+Your browser opens the consent page for every Google (and [Microsoft](#microsoft-contacts))
+account whose contacts aren't connected yet: sign in and allow Maze to see and edit your
 contacts. Mail keeps working whatever you answer; if you untick the contacts, they stay
 off for that account and the command asks again next time. The first sync follows
 right away.
@@ -373,6 +373,44 @@ doesn't know the tenant contoso.com".
 
 Each account keeps the tenant it signed in with and renews its sign-in there, so
 changing `auth.microsoft.tenant` later only affects new sign-ins.
+
+#### Microsoft contacts
+
+Maze syncs the contacts of a Microsoft account (Outlook.com, Hotmail, Microsoft 365) the
+same way as [Google contacts](#google-contacts): the account's **Contacts** folder,
+encrypted on your computer, first in completion and editable in Maze, with every change
+saved to Microsoft first ([ADR-024](adr/0024-server-owned-contacts.md)).
+
+Your app registration needs one more permission, once: under **API permissions**, add
+the delegated **Microsoft Graph** permission `Contacts.ReadWrite` (and grant admin
+consent if your organization requires it). Then choose **Contacts: Connect Contacts** in
+the command palette: your browser asks you to allow Maze to see and edit your contacts.
+Mail keeps working whatever you answer.
+
+Syncing, photos, editing, offline and turning it off work as for Google contacts.
+Outlook contacts have fixed fields, so Maze keeps up to three email addresses, one
+mobile, two business and two home phone numbers, a home, a business and an other
+address, one web site and one organization; what doesn't fit isn't saved to Microsoft.
+Contacts in subfolders of **Contacts** aren't synced.
+
+Maze can also sync the **Contacts** folder of other mailboxes that share it with you,
+such as a team or support mailbox. Add the delegated **Microsoft Graph** permission
+`Contacts.Read.Shared` to your app registration and list the mailboxes under the
+account in your settings:
+
+```jsonc
+"accounts": {
+  "work": { "shared_contacts": ["team@contoso.com"] }
+}
+```
+
+The next **Contacts: Connect Contacts** asks for this permission on its own, after the
+permission for your own contacts, so your own contacts and mail keep working if your
+organization doesn't allow it. Each mailbox gets its own address book, named
+"Contacts of team@contoso.com", that you can search and complete from but not edit, and
+its contacts have no photos. A mailbox you take out of the list is removed with its
+contacts at the next sync. Microsoft only answers for mailboxes whose owner shared the
+Contacts folder with you (or gave you access to the mailbox).
 
 ## Import mail
 
@@ -766,10 +804,10 @@ Address Book** and **Workspace: Show Mail** are in the command palette too.
 
 Maze remembers the selected book and the order in `ui_state.json`. Contacts are in the
 encrypted database on your computer. The Address Book shows collected addresses, those
-imported from Thunderbird and the [Google contacts](#google-contacts) of accounts that
-connected them (**My Contacts** and **Other Contacts** under the account). Creating and
-editing contacts (which writes to Google first) and Microsoft contacts come in a later
-version ([ADR-024](adr/0024-server-owned-contacts.md)).
+imported from Thunderbird and the [Google](#google-contacts) and
+[Microsoft](#microsoft-contacts) contacts of accounts that connected them (**My
+Contacts** and **Other Contacts**, or **Contacts**, under the account). Changes to them
+are saved to Google or Microsoft first ([ADR-024](adr/0024-server-owned-contacts.md)).
 
 ## Writing mail
 
@@ -843,15 +881,16 @@ chip per address. Text that isn't an address becomes a red chip, and Maze won't 
 autosave until you fix or remove it; double-click any chip to edit it as text.
 
 While you type, Maze suggests addresses after a moment: entries of your address books
-first (your Google contacts and the ones imported from Thunderbird), then addresses you
+first (your Google and Microsoft contacts and the ones imported from Thunderbird), then
+addresses you
 have written to. Every
 address you send a message to (To, Cc and Bcc, your own addresses left out) is
 remembered on your computer, in the encrypted database, with how often you wrote to
 it, so the people you write to most come first. `up` and `down` move through the
 suggestions, `enter` or `tab` takes one, `escape` closes the list; a click works too.
-They are all in the [Address Book](#the-address-book). Google contacts of accounts that
-connected them (see [Google contacts](#google-contacts)) count as address book entries;
-Microsoft contacts come later ([ADR-024](adr/0024-server-owned-contacts.md)).
+They are all in the [Address Book](#the-address-book). Google and Microsoft contacts of
+accounts that connected them (see [Google contacts](#google-contacts) and
+[Microsoft contacts](#microsoft-contacts)) count as address book entries.
 
 Click a chip to select it, then `backspace` or `delete` removes it; `backspace` in the
 empty field selects the last chip, and `left` / `right` move between chips. **Drag a

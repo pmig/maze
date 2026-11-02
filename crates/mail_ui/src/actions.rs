@@ -82,9 +82,9 @@ actions!(
 actions!(
     contacts,
     [
-        /// Connect the Google contacts of your Google accounts: sign in to Google once
-        /// more to allow it; Maze then syncs them and saves edits to Google.
-        ConnectGoogleContacts,
+        /// Connect the contacts of your Google and Microsoft accounts: sign in once more
+        /// to allow it; Maze then syncs them and saves edits to Google or Microsoft.
+        ConnectContacts,
         /// Sync the contacts of every connected account now.
         SyncContacts,
     ]

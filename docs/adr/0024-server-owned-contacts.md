@@ -55,6 +55,10 @@ are in PLAN-contacts.
   again once, and each user has to change their app's setup; an account without the new
   scopes keeps working for mail with contacts off. `auth` needs per-resource tokens
   and a "missing scope" re-consent reason.
+- Shared Microsoft mailboxes (`Contacts.Read.Shared`, listed per account in
+  `shared_contacts` because Graph can't list what is shared with you) get a third token
+  and their own consent, so an organization that refuses the permission doesn't take
+  the account's own contacts with it. Their books are read-only and have no photos.
 - Contacts become data on disk Maze didn't have before: names, addresses, phone numbers
   and photos of other people. They are in the encrypted database and blob cache like
   mail (ADR-012); restricted local API tokens keep seeing only what they see today.

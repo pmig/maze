@@ -1,27 +1,29 @@
-//! Contacts synced from Google (ADR-024): connecting an account's contacts, the
-//! write-through create and edit, details for the Address Book, and photos.
+//! Contacts synced from Google and Microsoft (ADR-024): connecting an account's
+//! contacts, the write-through create and edit, details for the Address Book, and
+//! photos.
 //!
 //! # Books
 //!
 //! Synced contacts are rows of the `contact` table with `book` `google:<account
-//! uuid>` (My Contacts, editable) and `google-other:<account uuid>` (Google's "Other
-//! contacts", read-only), one row per email address; [`SyncedContact`] has the whole
-//! person (parsed from the stored vCard) with its server id and etag.
+//! uuid>` (My Contacts, editable), `google-other:<account uuid>` (Google's "Other
+//! contacts", read-only) or `microsoft:<account uuid>` (Microsoft's Contacts,
+//! editable), one row per email address; [`SyncedContact`] has the whole person
+//! (parsed from the stored vCard) with its server id and etag.
 //!
 //! # Connecting
 //!
-//! Accounts sign in for mail only. [`CoreHandle::connect_google_contacts`] asks
-//! Google for the contacts scopes with an incremental consent in the browser; the
-//! answer is kept in the account's config (`AccountConfig.extra.contacts`, see
-//! [`ContactsOptIn`]) and the first sync starts. [`CoreHandle::disconnect_contacts`]
+//! Accounts sign in for mail only. [`CoreHandle::connect_contacts`] asks Google for
+//! the contacts scopes, or Microsoft for Graph's `Contacts.ReadWrite`, with an
+//! incremental consent in the browser; the answer is kept in the account's config
+//! (`AccountConfig.extra.contacts`, see [`ContactsOptIn`]) and the first sync starts. [`CoreHandle::disconnect_contacts`]
 //! turns it off and deletes the local copy. `contacts.sync` (and an account's
 //! `contacts_sync` override) pause syncing without deleting anything.
 //!
 //! # Writing
 //!
 //! [`CoreHandle::create_contact`] and [`CoreHandle::update_contact`] (or
-//! [`CoreHandle::save_contact`], the Address Book's Save) call Google first and store only Google's
-//! answer: there is no local-only state and no offline queue. Offline is
+//! [`CoreHandle::save_contact`], the Address Book's Save) call the server first and
+//! store only its answer: there is no local-only state and no offline queue. Offline is
 //! [`ContactError::Offline`]; a contact changed elsewhere is
 //! [`ContactError::Conflict`] with the server's current version, which is stored too,
 //! so the UI can show it and let the user edit again.
@@ -29,8 +31,7 @@
 use std::fmt;
 
 use ::contacts::{
-    Book, BookKind, ContactError, ContactFields, ContactSource as _, Labeled, Name, Organization,
-    Photo,
+    Book, BookKind, ContactError, ContactFields, Labeled, Name, Organization, Photo, Provider,
 };
 use auth::{AuthorizeOptions, Capabilities, Capability};
 use mazemail_types::AccountId;
@@ -41,8 +42,8 @@ use crate::accounts::{AccountConfig, AccountErrorKind};
 use crate::contacts::{ContactDetail, ContactEdit};
 use crate::handle::CoreHandle;
 use crate::sync_engine::contacts::{
-    PHOTO_CACHE_KIND, PHOTO_CACHE_VERSION, PHOTO_TTL, decode_photo, fetch_photo, forget_photos,
-    is_google_oauth, now_millis, now_secs, record_capability, server_contact, update_opt_in,
+    PHOTO_CACHE_KIND, PHOTO_CACHE_VERSION, PHOTO_TTL, contacts_provider, decode_photo,
+    forget_photos, now_millis, now_secs, record_capability, server_contact, update_opt_in,
 };
 use crate::{Error, Result};
 
@@ -148,7 +149,7 @@ pub enum ContactBookState {
     /// Synced (or not synced yet).
     Ok,
     /// The account's grant doesn't cover contacts: "Contacts need permission"
-    /// ([`CoreHandle::connect_google_contacts`] fixes it).
+    /// ([`CoreHandle::connect_contacts`] fixes it).
     NeedsPermission,
     /// The last sync failed; see [`ContactBookStatus::error`].
     Error,
@@ -157,7 +158,7 @@ pub enum ContactBookState {
 /// One synced book of an account.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContactBookStatus {
-    /// The book (`google:<uuid>`, `google-other:<uuid>`).
+    /// The book (`google:<uuid>`, `google-other:<uuid>`, `microsoft:<uuid>`).
     pub book: String,
     /// Which book.
     pub kind: BookKind,
@@ -171,17 +172,24 @@ pub struct ContactBookStatus {
     pub error: Option<String>,
 }
 
-/// Contact sync of one Google account ([`CoreHandle::contacts_status`]).
+/// Contact sync of one Google or Microsoft account ([`CoreHandle::contacts_status`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountContacts {
     /// The account.
     pub account: AccountId,
+    /// Where its contacts are.
+    pub provider: Provider,
     /// The user connected its contacts.
     pub connected: bool,
     /// The last known grant covers contacts.
     pub permission: bool,
     /// `contacts.sync` (or the account's override) is on.
     pub sync_enabled: bool,
+    /// Microsoft: the mailboxes in its `shared_contacts` setting (valid addresses,
+    /// lowercase).
+    pub shared_mailboxes: Vec<String>,
+    /// The last known grant covers shared contacts (`Contacts.Read.Shared`).
+    pub shared_permission: bool,
     /// Its synced books (empty before the first sync).
     pub books: Vec<ContactBookStatus>,
 }
@@ -191,8 +199,8 @@ fn contacts_error(err: ContactError) -> Error {
 }
 
 impl CoreHandle {
-    /// The account and config of a synced book's account, if it is a Google OAuth
-    /// account.
+    /// The account and config of a synced book's account, if it is a Google or
+    /// Microsoft OAuth account.
     fn book_account(&self, book: &Book) -> Result<Option<(Account, AccountConfig)>> {
         let Some(account) = self.store().reader()?.account_by_uuid(book.account)? else {
             return Ok(None);
@@ -200,11 +208,13 @@ impl CoreHandle {
         let Some(config) = AccountConfig::parse(&account.config_json) else {
             return Ok(None);
         };
-        Ok(is_google_oauth(&config).then_some((account, config)))
+        Ok(contacts_provider(&config)
+            .is_some()
+            .then_some((account, config)))
     }
 
-    /// Contact sync of every Google account: connected, permission, books with
-    /// their state. For "Contacts need permission" and the Address Book.
+    /// Contact sync of every Google and Microsoft account: connected, permission,
+    /// books with their state. For "Contacts need permission" and the Address Book.
     pub fn contacts_status(&self) -> Result<Vec<AccountContacts>> {
         self.ensure_open()?;
         let reader = self.store().reader()?;
@@ -214,9 +224,9 @@ impl CoreHandle {
             let Some(config) = AccountConfig::parse(&account.config_json) else {
                 continue;
             };
-            if !is_google_oauth(&config) {
+            let Some(provider) = contacts_provider(&config) else {
                 continue;
-            }
+            };
             let opt_in = config.contacts_opt_in();
             let books = reader
                 .contact_sources(account.id)?
@@ -237,8 +247,25 @@ impl CoreHandle {
                     })
                 })
                 .collect();
+            let shared_mailboxes = if provider == Provider::Microsoft {
+                let mut mailboxes: Vec<String> = settings
+                    .settings
+                    .shared_contacts(&account.name)
+                    .iter()
+                    .map(|m| m.to_ascii_lowercase())
+                    .filter(|m| ::contacts::is_valid_mailbox(m))
+                    .collect();
+                mailboxes.sort();
+                mailboxes.dedup();
+                mailboxes
+            } else {
+                Vec::new()
+            };
             out.push(AccountContacts {
+                shared_permission: opt_in.capabilities.contains(Capability::SharedContacts),
+                shared_mailboxes,
                 account: account.id,
+                provider,
                 connected: opt_in.connected,
                 permission: opt_in.has_permission(),
                 sync_enabled: settings.settings.account(&account.name).contacts_sync,
@@ -248,18 +275,19 @@ impl CoreHandle {
         Ok(out)
     }
 
-    /// Connects the contacts of Google account `account`: opens Google's consent page
-    /// for the contacts scopes (an incremental consent: mail stays as it is), keeps
-    /// the answer in the account's config and starts syncing. Returns whether Google
-    /// granted contacts (the user may untick them).
+    /// Connects the contacts of Google or Microsoft account `account`: opens the
+    /// provider's consent page for contacts (Google's contacts scopes, Microsoft
+    /// Graph's `Contacts.ReadWrite`; an incremental consent: mail stays as it is),
+    /// keeps the answer in the account's config and starts syncing. Returns whether
+    /// the provider granted contacts (the user may untick them).
     ///
     /// # Errors
     ///
-    /// [`Error::Account`] for an account that doesn't sign in with Google
+    /// [`Error::Account`] for an account that doesn't sign in with Google or Microsoft
     /// ([`AccountErrorKind::InvalidInput`]), a missing client ID
     /// ([`AccountErrorKind::OAuthNotConfigured`]) or a failed or cancelled sign-in
     /// ([`AccountErrorKind::SignInFailed`]); [`Error::NoSyncEngine`].
-    pub async fn connect_google_contacts(&self, account: AccountId) -> Result<bool> {
+    pub async fn connect_contacts(&self, account: AccountId) -> Result<bool> {
         let core = self.clone();
         self.run(async move {
             let engine = core.engine_or_err()?;
@@ -269,12 +297,15 @@ impl CoreHandle {
                 .account(account)?
                 .ok_or_else(|| Error::not_found("account", account))?;
             let config = AccountConfig::parse(&row.config_json)
-                .filter(is_google_oauth)
+                .filter(|config| contacts_provider(config).is_some())
                 .ok_or_else(|| Error::Account {
                     kind: AccountErrorKind::InvalidInput,
-                    message: "contacts can be connected for accounts that sign in with Google"
+                    message: "contacts can be connected for accounts that sign in with Google \
+                              or Microsoft"
                         .to_owned(),
                 })?;
+            let kind = contacts_provider(&config);
+            let provider = kind.map_or("the", Provider::name);
             let manager =
                 engine
                     .token_manager(&row, &config)
@@ -283,36 +314,64 @@ impl CoreHandle {
                         message,
                     })?;
             let hint = config.email.clone().unwrap_or_else(|| config.login());
-            let granted = manager
-                .grant(
-                    engine.browser().as_ref(),
-                    Capabilities::CONTACTS,
-                    AuthorizeOptions::new().login_hint(hint),
-                )
-                .await
-                .map_err(|err| Error::Account {
-                    kind: AccountErrorKind::SignInFailed,
-                    message: format!("the Google sign-in failed: {err}"),
-                })?;
-            let has = granted.contains(Capability::Contacts);
-            let known = manager
-                .known_capabilities()
-                .await
-                .union(granted)
-                .with(Capability::Mail);
-            update_opt_in(core.store(), account, move |opt_in| {
-                opt_in.connected = has;
-                opt_in.capabilities = if has {
-                    known
-                } else {
-                    known
-                        .iter()
-                        .filter(|c| *c != Capability::Contacts)
-                        .collect()
+            let opt_in = config.contacts_opt_in();
+            // Already connected with permission: only shared contacts may be missing.
+            let mut has = opt_in.connected && opt_in.has_permission();
+            if !has {
+                let granted = manager
+                    .grant(
+                        engine.browser().as_ref(),
+                        Capabilities::CONTACTS,
+                        AuthorizeOptions::new().login_hint(hint.clone()),
+                    )
+                    .await
+                    .map_err(|err| Error::Account {
+                        kind: AccountErrorKind::SignInFailed,
+                        message: format!("the {provider} sign-in failed: {err}"),
+                    })?;
+                has = granted.contains(Capability::Contacts);
+                let known = manager
+                    .known_capabilities()
+                    .await
+                    .union(granted)
+                    .with(Capability::Mail);
+                update_opt_in(core.store(), account, move |opt_in| {
+                    opt_in.connected = has;
+                    opt_in.capabilities = if has {
+                        known
+                    } else {
+                        known
+                            .iter()
+                            .filter(|c| *c != Capability::Contacts)
+                            .collect()
+                    };
+                    opt_in.checked_at = Some(now_secs());
+                })
+                .await?;
+            }
+            // Shared mailboxes: a consent of its own, so an administrator's approval
+            // that is still missing for `Contacts.Read.Shared` can't stop the account's
+            // own contacts. A failure here leaves them connected.
+            let wants_shared = kind == Some(Provider::Microsoft)
+                && !engine.wanted_shared_books(&row).is_empty()
+                && !opt_in.capabilities.contains(Capability::SharedContacts);
+            if has && wants_shared {
+                let shared = match manager
+                    .grant(
+                        engine.browser().as_ref(),
+                        Capabilities::SHARED_CONTACTS,
+                        AuthorizeOptions::new().login_hint(hint),
+                    )
+                    .await
+                {
+                    Ok(granted) => granted.contains(Capability::SharedContacts),
+                    Err(err) => {
+                        tracing::info!(%err, %account, "shared contacts weren't granted");
+                        false
+                    }
                 };
-                opt_in.checked_at = Some(now_secs());
-            })
-            .await?;
+                record_capability(core.store(), account, Capability::SharedContacts, shared).await;
+            }
             engine.start_contacts(&row, &config);
             engine.sync_contacts_now(Some(account));
             tracing::info!(%account, granted = has, "contacts connected");
@@ -322,7 +381,7 @@ impl CoreHandle {
     }
 
     /// Disconnects the contacts of `account`: stops syncing them and deletes the
-    /// local copy (books, people, photos). Nothing changes on Google, and the grant
+    /// local copy (books, people, photos). Nothing changes on the server, and the grant
     /// stays (connecting again needs no new consent).
     pub async fn disconnect_contacts(&self, account: AccountId) -> Result<()> {
         let core = self.clone();
@@ -346,15 +405,16 @@ impl CoreHandle {
         }
     }
 
-    /// Creates a contact in the My Contacts of `account`: sends it to Google and
-    /// stores Google's answer (`google:<uuid>`). Returns the stored contact.
+    /// Creates a contact in the writable book of `account` (Google's My Contacts,
+    /// Microsoft's Contacts): sends it to the server and stores its answer
+    /// (`google:<uuid>`, `microsoft:<uuid>`). Returns the stored contact.
     ///
     /// # Errors
     ///
     /// [`Error::Contacts`] with [`ContactError::Offline`] without a connection (nothing
     /// is queued), [`ContactError::MissingScope`] when the account hasn't connected
     /// its contacts (or the permission is gone), [`ContactError::Empty`],
-    /// [`ContactError::Rejected`] for what Google refuses; [`Error::NotFound`] for an
+    /// [`ContactError::Rejected`] for what the server refuses; [`Error::NotFound`] for an
     /// unknown account; [`Error::NoSyncEngine`].
     pub async fn create_contact(
         &self,
@@ -370,6 +430,8 @@ impl CoreHandle {
                 .account(account)?
                 .ok_or_else(|| Error::not_found("account", account))?;
             let config = writable_config(&row)?;
+            let provider =
+                contacts_provider(&config).ok_or(Error::Contacts(ContactError::ReadOnly))?;
             let source = engine
                 .contact_source(&row, &config)
                 .map_err(contacts_error)?;
@@ -377,7 +439,7 @@ impl CoreHandle {
                 Ok(person) => person,
                 Err(err) => return Err(core.write_failed(account, err).await),
             };
-            let book = Book::new(BookKind::Google, row.uuid).to_string();
+            let book = Book::new(provider.writable_book(), row.uuid).to_string();
             core.store_person(account, &book, &person).await?;
             tracing::info!(%account, "contact created");
             Ok(SyncedContact::from_person(book, person, true))
@@ -386,8 +448,8 @@ impl CoreHandle {
     }
 
     /// Saves changes to synced contact `resource_name` of `book`, which the user
-    /// edited at version `etag`: sends all `fields` to Google (etag-checked) and
-    /// stores Google's answer. Returns the stored contact.
+    /// edited at version `etag`: sends all `fields` to the server (etag-checked) and
+    /// stores its answer. Returns the stored contact.
     ///
     /// # Errors
     ///
@@ -563,43 +625,49 @@ impl CoreHandle {
                     return Ok(None);
                 }
             }
-            Ok(fetch_photo(core.store(), &url).await.unwrap_or(None))
+            Ok(match core.engine() {
+                Some(engine) => engine.fetch_contact_photo(&url).await.unwrap_or(None),
+                None => None,
+            })
         })
         .await
     }
 
-    /// Stores a person Google sent back after a write.
+    /// Stores a person the server sent back after a write.
     async fn store_person(
         &self,
         account: AccountId,
         book: &str,
         person: &::contacts::Person,
     ) -> Result<()> {
+        let kind = book
+            .parse::<Book>()
+            .map_or(BookKind::Google.prefix(), |b| b.kind.prefix());
         let book = book.to_owned();
         let stored = server_contact(person);
         let seen = now_millis();
         self.store()
             .write(move |w| {
-                w.ensure_contact_source(&book, account, BookKind::Google.prefix())?;
+                w.ensure_contact_source(&book, account, kind)?;
                 w.upsert_server_contact(&book, &stored, seen)
             })
             .await?;
         Ok(())
     }
 
-    /// A write that Google refused: a missing permission is remembered.
+    /// A write that the server refused: a missing permission is remembered.
     async fn write_failed(&self, account: AccountId, err: ContactError) -> Error {
         if matches!(err, ContactError::MissingScope) {
-            record_capability(self.store(), account, false).await;
+            record_capability(self.store(), account, Capability::Contacts, false).await;
         }
         Error::Contacts(err)
     }
 }
 
-/// Whether contacts in `book` can be created and edited in Maze: a `google:` book
-/// (My Contacts) of an account (among `accounts`) that signs in with Google, connected
-/// its contacts and whose last known grant covers them. `google-other:` books,
-/// `collected` and imported books are read-only. No network. Backs
+/// Whether contacts in `book` can be created and edited in Maze: a `google:` (My
+/// Contacts) or `microsoft:` book of an account (among `accounts`) that signs in with
+/// that provider, connected its contacts and whose last known grant covers them.
+/// `google-other:` books, `collected` and imported books are read-only. No network. Backs
 /// [`CoreHandle::contact_book_editable`].
 pub(crate) fn synced_book_editable(book: &str, accounts: &[Account]) -> bool {
     let Ok(parsed) = book.parse::<Book>() else {
@@ -612,7 +680,7 @@ pub(crate) fn synced_book_editable(book: &str, accounts: &[Account]) -> bool {
         .iter()
         .find(|a| a.uuid == parsed.account)
         .and_then(|a| AccountConfig::parse(&a.config_json))
-        .filter(is_google_oauth)
+        .filter(|config| contacts_provider(config) == Some(parsed.kind.provider()))
         .is_some_and(|config| {
             let opt_in = config.contacts_opt_in();
             opt_in.connected && opt_in.has_permission()
@@ -690,10 +758,11 @@ fn apply_edit(existing: ContactFields, edit: &ContactEdit) -> ContactFields {
     fields
 }
 
-/// The config of an account whose contacts can be written: Google, connected.
+/// The config of an account whose contacts can be written: Google or Microsoft,
+/// connected.
 fn writable_config(account: &Account) -> Result<AccountConfig> {
     let config = AccountConfig::parse(&account.config_json)
-        .filter(is_google_oauth)
+        .filter(|config| contacts_provider(config).is_some())
         .ok_or(Error::Contacts(ContactError::ReadOnly))?;
     if !config.contacts_opt_in().connected {
         return Err(Error::Contacts(ContactError::MissingScope));
@@ -714,7 +783,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.contacts_opt_in(), ContactsOptIn::default());
-        assert!(is_google_oauth(&config));
+        assert_eq!(contacts_provider(&config), Some(Provider::Google));
+        let microsoft = AccountConfig::parse(
+            r#"{"email":"a@contoso.com","host":"outlook.office365.com","auth":"oauth2","oauth_provider":"microsoft"}"#,
+        )
+        .unwrap();
+        assert_eq!(contacts_provider(&microsoft), Some(Provider::Microsoft));
+        let password =
+            AccountConfig::parse(r#"{"email":"a@example.com","host":"imap.example.com"}"#).unwrap();
+        assert_eq!(contacts_provider(&password), None);
         let opt_in = ContactsOptIn {
             connected: true,
             capabilities: Capabilities::MAIL.with(Capability::Contacts),

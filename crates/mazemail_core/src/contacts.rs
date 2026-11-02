@@ -57,7 +57,8 @@ pub const COLLECTED_BOOK: &str = "collected";
 pub enum ParsedBook<'a> {
     /// `collected`: addresses you wrote to.
     Collected,
-    /// `<provider>[-<kind>]:<account uuid>`: a book of an account's contacts.
+    /// `<provider>[-<kind>]:<account uuid>[:<owner>]`: a book of an account's
+    /// contacts.
     Provider {
         /// `google`, `microsoft`, `carddav`, …
         provider: &'a str,
@@ -65,6 +66,9 @@ pub enum ParsedBook<'a> {
         kind: Option<&'a str>,
         /// The account's UUID.
         account: Uuid,
+        /// Whose contacts, when they aren't the account's own: the mailbox of a
+        /// `microsoft-shared:` book.
+        owner: Option<&'a str>,
     },
     /// Any other id: an imported address book, named by its id.
     Named(&'a str),
@@ -83,7 +87,11 @@ pub fn parse_book(book: &str) -> ParsedBook<'_> {
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         && !prefix.starts_with('-');
-    match (valid_prefix, Uuid::parse_str(rest)) {
+    let (uuid, owner) = match rest.split_once(':') {
+        Some((uuid, owner)) if !owner.is_empty() => (uuid, Some(owner)),
+        _ => (rest, None),
+    };
+    match (valid_prefix, Uuid::parse_str(uuid)) {
         (true, Ok(account)) => {
             let (provider, kind) = match prefix.split_once('-') {
                 Some((provider, kind)) if !kind.is_empty() => (provider, Some(kind)),
@@ -94,6 +102,7 @@ pub fn parse_book(book: &str) -> ParsedBook<'_> {
                 provider,
                 kind,
                 account,
+                owner,
             }
         }
         _ => ParsedBook::Named(book),
@@ -101,8 +110,12 @@ pub fn parse_book(book: &str) -> ParsedBook<'_> {
 }
 
 /// The name of a provider's book: Google's main book is "My Contacts", its
-/// `other` book "Other Contacts", Microsoft's "Contacts".
-pub fn provider_book_name(provider: &str, kind: Option<&str>) -> String {
+/// `other` book "Other Contacts", Microsoft's "Contacts", and a book of someone else's
+/// shared contacts "Contacts of <owner>".
+pub fn provider_book_name(provider: &str, kind: Option<&str>, owner: Option<&str>) -> String {
+    if let Some(owner) = owner {
+        return format!("Contacts of {owner}");
+    }
     match (provider, kind) {
         ("google", None) => "My Contacts".to_owned(),
         (_, None) => "Contacts".to_owned(),
@@ -398,8 +411,9 @@ fn books_of(entries: &[Contact], accounts: &[Account]) -> Vec<AddressBookInfo> {
                     provider,
                     kind,
                     account,
+                    owner,
                 } => {
-                    let name = provider_book_name(provider, kind);
+                    let name = provider_book_name(provider, kind, owner);
                     match accounts.iter().position(|a| a.uuid == account) {
                         Some(ix) => (
                             ix,
@@ -895,7 +909,8 @@ mod tests {
             ParsedBook::Provider {
                 provider: "google",
                 kind: None,
-                account: uuid
+                account: uuid,
+                owner: None,
             }
         );
         assert_eq!(
@@ -903,7 +918,17 @@ mod tests {
             ParsedBook::Provider {
                 provider: "google",
                 kind: Some("other"),
-                account: uuid
+                account: uuid,
+                owner: None,
+            }
+        );
+        assert_eq!(
+            parse_book(&format!("microsoft-shared:{UUID}:team@contoso.com")),
+            ParsedBook::Provider {
+                provider: "microsoft",
+                kind: Some("shared"),
+                account: uuid,
+                owner: Some("team@contoso.com"),
             }
         );
         // Imported books are named by their id, colons and all.
@@ -915,12 +940,16 @@ mod tests {
         ] {
             assert_eq!(parse_book(named), ParsedBook::Named(named));
         }
-        assert_eq!(provider_book_name("google", None), "My Contacts");
+        assert_eq!(provider_book_name("google", None, None), "My Contacts");
         assert_eq!(
-            provider_book_name("google", Some("other")),
+            provider_book_name("google", Some("other"), None),
             "Other Contacts"
         );
-        assert_eq!(provider_book_name("microsoft", None), "Contacts");
+        assert_eq!(provider_book_name("microsoft", None, None), "Contacts");
+        assert_eq!(
+            provider_book_name("microsoft", Some("shared"), Some("team@contoso.com")),
+            "Contacts of team@contoso.com"
+        );
     }
 
     #[test]

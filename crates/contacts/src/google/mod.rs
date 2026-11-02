@@ -80,7 +80,7 @@ impl Default for Backoff {
 }
 
 impl Backoff {
-    fn delay(&self, attempt: u32) -> Duration {
+    pub(crate) fn delay(&self, attempt: u32) -> Duration {
         let factor = 2u32.saturating_pow(attempt.saturating_sub(1));
         self.initial.saturating_mul(factor).min(self.max)
     }
@@ -429,6 +429,7 @@ impl ContactSource for GoogleContacts {
         match book {
             BookKind::Google => self.list_connections(sync_token, page_token).await,
             BookKind::GoogleOther => self.list_other(sync_token, page_token).await,
+            BookKind::Microsoft | BookKind::MicrosoftShared => Err(ContactError::ReadOnly),
         }
     }
 

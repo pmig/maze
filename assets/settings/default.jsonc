@@ -132,7 +132,9 @@
   // Overrides per account, keyed by the account's label, e.g.
   // "work": { "offline": "all", "remote_content": "never", "footer": "Acme Inc." }
   // Supported keys: "offline", "offline_recent_days", "remote_content", "footer",
-  // "support_maze", "contacts_sync".
+  // "support_maze", "contacts_sync" and, for Microsoft accounts, "shared_contacts":
+  // other mailboxes whose shared Contacts folder Maze syncs, read-only, e.g.
+  // "work": { "shared_contacts": ["team@contoso.com"] }.
   "accounts": {},
 
   // OAuth clients for "Sign in with Google" and "Sign in with Microsoft". Maze has no
@@ -220,9 +222,9 @@
     "dock_badge": true
   },
 
-  // Contacts of Google accounts that connected them ("Contacts: Connect Google
+  // Contacts of Google and Microsoft accounts that connected them ("Contacts: Connect
   // Contacts" in the command palette): Maze keeps an encrypted copy for completion and
-  // the Address Book, and saves edits to Google.
+  // the Address Book, and saves edits to Google or Microsoft.
   "contacts": {
     // Sync them. false keeps the copy on this computer but stops syncing; per account:
     // "accounts": { "Work": { "contacts_sync": false } }.

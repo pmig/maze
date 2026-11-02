@@ -1,12 +1,22 @@
 //! Contact sync next to mail sync (ADR-024, PLAN-contacts §3).
 //!
-//! Every Google account with an OAuth sign-in gets a small task. Each round it checks
-//! whether the account connected its contacts (`AccountConfig.extra.contacts`, see
-//! [`ContactsOptIn`]) and whether `contacts.sync` (or the account's `contacts_sync`
-//! override) is on, then syncs My Contacts (`google:<uuid>`) and Other contacts
-//! (`google-other:<uuid>`) with [`contacts::sync_book`]: a full listing the first
-//! time (and when a sync token expired), then only the changes. Each page is one store
-//! write job. Afterwards it fetches due photos into the encrypted blob cache, slowly.
+//! Every Google and Microsoft account with an OAuth sign-in gets a small task. Each
+//! round it checks whether the account connected its contacts
+//! (`AccountConfig.extra.contacts`, see [`ContactsOptIn`]) and whether `contacts.sync`
+//! (or the account's `contacts_sync` override) is on, then syncs the account's books
+//! ([`Provider::books`]: Google's My Contacts `google:<uuid>` and Other contacts
+//! `google-other:<uuid>`, Microsoft's Contacts `microsoft:<uuid>`) with
+//! [`contacts::sync_book`]: a full listing the first time (and when a sync token
+//! expired), then only the changes. Each page is one store write job. Afterwards it
+//! fetches due photos into the encrypted blob cache, slowly: Google's photo URLs
+//! without credentials, Microsoft's photos through Graph with the account's token
+//! ([`SyncEngine::fetch_contact_photo`]).
+//!
+//! A Microsoft account also syncs the mailboxes listed in its
+//! `accounts.<label>.shared_contacts` setting: each one's shared Contacts folder
+//! (`microsoft-shared:<uuid>:<mailbox>`, read-only, no photos) with the account's
+//! shared-contacts token (`Contacts.Read.Shared`). A missing shared permission marks
+//! only that book; a mailbox taken out of the setting loses its local copy.
 //!
 //! A round runs when the core opens, every `contacts.sync_interval_minutes`, after
 //! sleep, and on demand ([`SyncEngine::sync_contacts_now`]). Missing permission marks
@@ -16,7 +26,10 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use ::contacts::{Book, BookKind, ContactError, GoogleContacts, Person};
+use ::contacts::{
+    Book, BookKind, ContactError, ContactSource, GoogleContacts, MicrosoftContacts, Person,
+    Provider, SharedContactTokens, shared_book_mailbox, shared_book_name,
+};
 use auth::{Capabilities, Capability, ProviderKind};
 use mazemail_types::{AccountId, BlobId};
 use store::{Account, Queries as _, ServerContact, Store, WriteTx};
@@ -70,9 +83,14 @@ pub(crate) fn now_secs() -> i64 {
     now_millis() / 1000
 }
 
-/// What a sync round needs to know about an account.
-pub(crate) fn is_google_oauth(config: &AccountConfig) -> bool {
-    config.auth() == Some(AccountAuth::OAuth(ProviderKind::Google))
+/// The contacts provider of an account: Google or Microsoft for accounts that sign
+/// in with them (OAuth), none otherwise (passwords, other servers).
+pub(crate) fn contacts_provider(config: &AccountConfig) -> Option<Provider> {
+    match config.auth() {
+        Some(AccountAuth::OAuth(ProviderKind::Google)) => Some(Provider::Google),
+        Some(AccountAuth::OAuth(ProviderKind::Microsoft)) => Some(Provider::Microsoft),
+        _ => None,
+    }
 }
 
 /// A synced contact as the store keeps it.
@@ -126,13 +144,19 @@ pub(crate) fn forget_photos(store: &Store, urls: &[String]) {
     }
 }
 
-/// Fetches photo `url` into the blob cache and records the answer. `Err` only when
-/// it's worth stopping (offline).
+/// Fetches photo `url` into the blob cache and records the answer: through `source`
+/// (Microsoft, whose photos need the account's token) or without credentials
+/// (Google). `Err` only when it's worth stopping (offline).
 pub(crate) async fn fetch_photo(
     store: &Store,
     url: &str,
+    source: Option<&dyn ContactSource>,
 ) -> Result<Option<::contacts::Photo>, ContactError> {
-    match ::contacts::fetch_photo(url).await {
+    let fetched = match source {
+        Some(source) => source.photo(url).await,
+        None => ::contacts::fetch_photo(url).await,
+    };
+    match fetched {
         Ok(Some(photo)) => {
             if let Err(err) = store.blobs().cache_put(
                 &photo_key(url),
@@ -196,15 +220,21 @@ pub(crate) async fn update_opt_in(
         .await
 }
 
-/// Records whether the account's grant covers contacts, as last seen.
-pub(crate) async fn record_capability(store: &Store, account: AccountId, granted: bool) {
+/// Records whether the account's grant covers `capability` (contacts or shared
+/// contacts), as last seen.
+pub(crate) async fn record_capability(
+    store: &Store,
+    account: AccountId,
+    capability: Capability,
+    granted: bool,
+) {
     let result = update_opt_in(store, account, move |opt_in| {
         let caps = opt_in.capabilities.with(Capability::Mail);
         opt_in.capabilities = if granted {
-            caps.with(Capability::Contacts)
+            caps.with(capability)
         } else {
             caps.iter()
-                .filter(|c| *c != Capability::Contacts)
+                .filter(|c| *c != capability)
                 .collect::<Capabilities>()
         };
         opt_in.checked_at = Some(now_secs());
@@ -255,29 +285,73 @@ fn apply_page(
 }
 
 impl SyncEngine {
-    /// The People API client for a Google account.
+    /// The contacts client of an account: the People API for Google, Microsoft Graph
+    /// for Microsoft.
     pub(crate) fn contact_source(
         &self,
         account: &Account,
         config: &AccountConfig,
-    ) -> Result<GoogleContacts, ContactError> {
-        if !is_google_oauth(config) {
-            return Err(ContactError::ReadOnly);
-        }
+    ) -> Result<Arc<dyn ContactSource>, ContactError> {
+        let provider = contacts_provider(config).ok_or(ContactError::ReadOnly)?;
         let tokens = self
             .token_manager(account, config)
             .map_err(ContactError::NotConfigured)?;
-        let mut source = GoogleContacts::new(tokens)?.with_backoff(self.config.contacts_backoff);
-        if let Some(base) = &self.config.contacts_api {
-            source = source.with_base_url(base);
-        }
-        Ok(source)
+        let backoff = self.config.contacts_backoff;
+        let base = self.config.contacts_api.as_deref();
+        Ok(match provider {
+            Provider::Google => {
+                let mut source = GoogleContacts::new(tokens)?.with_backoff(backoff);
+                if let Some(base) = base {
+                    source = source.with_base_url(base);
+                }
+                Arc::new(source)
+            }
+            Provider::Microsoft => {
+                let mut source =
+                    MicrosoftContacts::new(tokens, account.uuid)?.with_backoff(backoff);
+                if let Some(base) = base {
+                    source = source.with_base_url(base);
+                }
+                Arc::new(source)
+            }
+            _ => return Err(ContactError::ReadOnly),
+        })
     }
 
-    /// Starts the contact sync task of `account` if it is a Google OAuth account and
-    /// has none yet. Whether it syncs is decided each round.
+    /// Fetches the contact photo `url` into the cache: a Microsoft photo through the
+    /// client of the account it belongs to, anything else without credentials.
+    pub(crate) async fn fetch_contact_photo(
+        &self,
+        url: &str,
+    ) -> Result<Option<::contacts::Photo>, ContactError> {
+        let Some((uuid, _)) = ::contacts::microsoft::json::parse_photo_url(url) else {
+            return fetch_photo(&self.store, url, None).await;
+        };
+        let account = self
+            .store
+            .reader()
+            .and_then(|r| r.account_by_uuid(uuid))
+            .ok()
+            .flatten();
+        let Some((account, config)) = account.and_then(|account| {
+            let config = AccountConfig::parse(&account.config_json)?;
+            Some((account, config))
+        }) else {
+            return Ok(None);
+        };
+        match self.contact_source(&account, &config) {
+            Ok(source) => fetch_photo(&self.store, url, Some(source.as_ref())).await,
+            Err(err) => {
+                tracing::debug!(%err, "no client for a contact photo");
+                Ok(None)
+            }
+        }
+    }
+
+    /// Starts the contact sync task of `account` if it is a Google or Microsoft OAuth
+    /// account and has none yet. Whether it syncs is decided each round.
     pub(crate) fn start_contacts(self: &Arc<Self>, account: &Account, config: &AccountConfig) {
-        if !is_google_oauth(config) {
+        if contacts_provider(config).is_none() {
             return;
         }
         let mut tasks = lock(&self.contact_tasks);
@@ -334,10 +408,10 @@ impl SyncEngine {
         }
     }
 
-    /// Whether `account` syncs contacts now: a Google OAuth account that connected
-    /// them, with contact sync on in the settings.
+    /// Whether `account` syncs contacts now: a Google or Microsoft OAuth account that
+    /// connected them, with contact sync on in the settings.
     fn contacts_enabled(&self, account: &Account, config: &AccountConfig) -> bool {
-        is_google_oauth(config)
+        contacts_provider(config).is_some()
             && config.contacts_opt_in().connected
             && self
                 .settings
@@ -363,6 +437,9 @@ impl SyncEngine {
         if !self.contacts_enabled(&account, &config) {
             return;
         }
+        let Some(provider) = contacts_provider(&config) else {
+            return;
+        };
         let source = match self.contact_source(&account, &config) {
             Ok(source) => source,
             Err(err) => {
@@ -371,9 +448,12 @@ impl SyncEngine {
             }
         };
         let mut synced = false;
-        for kind in BookKind::ALL {
+        for &kind in provider.books() {
             let book = Book::new(kind, account.uuid).to_string();
-            match self.sync_contact_book(&source, id, kind, &book).await {
+            match self
+                .sync_contact_book(source.as_ref(), id, kind, &book)
+                .await
+            {
                 Ok(summary) => {
                     synced = true;
                     tracing::debug!(account = %id, ?kind, full = summary.full, restarted = summary.restarted, upserts = summary.upserts, deletes = summary.deletes, "contacts synced");
@@ -383,7 +463,7 @@ impl SyncEngine {
                     self.book_error(&book, "missing_scope", &err.to_string())
                         .await;
                     if matches!(err, ContactError::MissingScope) {
-                        record_capability(&self.store, id, false).await;
+                        record_capability(&self.store, id, Capability::Contacts, false).await;
                     }
                     return;
                 }
@@ -403,9 +483,125 @@ impl SyncEngine {
                 .capabilities
                 .contains(Capability::Contacts)
         {
-            record_capability(&self.store, id, true).await;
+            record_capability(&self.store, id, Capability::Contacts, true).await;
+        }
+        if provider == Provider::Microsoft {
+            self.sync_shared_books(&account, &config).await;
         }
         self.prefetch_photos().await;
+    }
+
+    /// The `microsoft-shared:` books `account` should have: one per valid mailbox in
+    /// its `shared_contacts` setting.
+    pub(crate) fn wanted_shared_books(&self, account: &Account) -> Vec<String> {
+        let mut books: Vec<String> = self
+            .settings
+            .borrow()
+            .settings
+            .shared_contacts(&account.name)
+            .iter()
+            .filter_map(|mailbox| shared_book_name(account.uuid, mailbox))
+            .collect();
+        books.sort();
+        books.dedup();
+        books
+    }
+
+    /// Syncs the shared contacts of the mailboxes in `account`'s `shared_contacts`
+    /// setting and drops the books of mailboxes no longer listed.
+    async fn sync_shared_books(&self, account: &Account, config: &AccountConfig) {
+        let wanted = self.wanted_shared_books(account);
+        match self
+            .store
+            .reader()
+            .and_then(|r| r.contact_sources(account.id))
+        {
+            Ok(sources) => {
+                for source in sources {
+                    let shared = source.book.starts_with(BookKind::MicrosoftShared.prefix());
+                    if shared && !wanted.contains(&source.book) {
+                        let book = source.book.clone();
+                        match self
+                            .store
+                            .write(move |w| w.delete_contact_book(&book))
+                            .await
+                        {
+                            Ok(gone) => forget_photos(&self.store, &gone),
+                            Err(err) => tracing::warn!(%err, "removing a shared contacts book"),
+                        }
+                    }
+                }
+            }
+            Err(err) => tracing::warn!(%err, "listing contact books"),
+        }
+        if wanted.is_empty() {
+            return;
+        }
+        let manager = match self.token_manager(account, config) {
+            Ok(manager) => manager,
+            Err(message) => {
+                tracing::info!(%message, account = %account.id, "no shared contact sync");
+                return;
+            }
+        };
+        let mut granted = None;
+        for book in wanted {
+            let Some(mailbox) = shared_book_mailbox(&book) else {
+                continue;
+            };
+            let tokens = Arc::new(SharedContactTokens(Arc::clone(&manager)));
+            let source = MicrosoftContacts::new(tokens, account.uuid)
+                .map(|s| s.with_backoff(self.config.contacts_backoff))
+                .map(|s| match &self.config.contacts_api {
+                    Some(base) => s.with_base_url(base),
+                    None => s,
+                })
+                .and_then(|s| s.with_mailbox(mailbox));
+            let source = match source {
+                Ok(source) => source,
+                Err(err) => {
+                    self.book_error(&book, "error", &err.to_string()).await;
+                    continue;
+                }
+            };
+            match self
+                .sync_contact_book(&source, account.id, BookKind::MicrosoftShared, &book)
+                .await
+            {
+                Ok(summary) => {
+                    granted = Some(true);
+                    tracing::debug!(account = %account.id, upserts = summary.upserts, deletes = summary.deletes, "shared contacts synced");
+                }
+                Err(RoundError::Contacts(err)) if err.needs_consent() => {
+                    tracing::info!(%err, account = %account.id, "shared contacts need permission");
+                    self.book_error(&book, "missing_scope", &err.to_string())
+                        .await;
+                    if matches!(err, ContactError::MissingScope) {
+                        granted = granted.or(Some(false));
+                    }
+                }
+                Err(RoundError::Contacts(err @ ContactError::Offline { .. })) => {
+                    tracing::debug!(%err, account = %account.id, "offline; shared contacts sync later");
+                    return;
+                }
+                Err(err) => {
+                    // No access to this mailbox (not shared, or no such mailbox) lands
+                    // here too: other mailboxes go on.
+                    tracing::warn!(%err, account = %account.id, "shared contact sync failed");
+                    self.book_error(&book, "error", &err.to_string()).await;
+                }
+            }
+        }
+        if let Some(granted) = granted {
+            let known = config
+                .contacts_opt_in()
+                .capabilities
+                .contains(Capability::SharedContacts);
+            if known != granted {
+                record_capability(&self.store, account.id, Capability::SharedContacts, granted)
+                    .await;
+            }
+        }
     }
 
     async fn book_error(&self, book: &str, state: &'static str, message: &str) {
@@ -422,7 +618,7 @@ impl SyncEngine {
 
     async fn sync_contact_book(
         &self,
-        source: &GoogleContacts,
+        source: &dyn ContactSource,
         account: AccountId,
         kind: BookKind,
         book: &str,
@@ -468,7 +664,7 @@ impl SyncEngine {
             }
         };
         for url in due {
-            if fetch_photo(&self.store, &url).await.is_err() {
+            if self.fetch_contact_photo(&url).await.is_err() {
                 return;
             }
             tokio::time::sleep(PHOTO_PAUSE).await;
