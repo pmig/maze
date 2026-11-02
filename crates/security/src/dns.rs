@@ -2,7 +2,7 @@
 //!
 //! `mail-auth` looks up TXT records (DKIM keys, DMARC policies) through its
 //! [`MessageAuthenticator`] and consults a [`ResolverCache`] first. [`Resolver`]
-//! owns both:
+//! owns both, and hands the caches to the verifiers as one [`DnsCache`]:
 //!
 //! - [`Resolver::system`] / [`Resolver::with_config`] use hickory with its own
 //!   record cache (positive and negative answers, TTL-bounded) plus a bounded cache of
@@ -21,12 +21,15 @@ use std::net::Ipv4Addr;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use mail_auth::common::parse::TxtRecordParser;
-use mail_auth::common::verify::DomainKey;
-use mail_auth::dmarc::Dmarc;
+use mail_auth::dkim::DomainKey;
+use mail_auth::dmarc::DmarcRecord;
+use mail_auth::dns::TxtRecordParser;
 use mail_auth::hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use mail_auth::hickory_resolver::proto::op::ResponseCode;
-use mail_auth::{DnsError, DnssecStatus, MX, MessageAuthenticator, RecordSet, ResolverCache, Txt};
+use mail_auth::{
+    DnsCache, DnsError, DnssecStatus, MessageAuthenticator, Mx, Negative, NoCache, RecordSet,
+    ResolverCache, TxtRecord,
+};
 
 /// Parsed TXT records kept by the production cache.
 const TXT_CACHE_CAPACITY: usize = 4_096;
@@ -44,14 +47,13 @@ pub struct ResolverError(String);
 #[derive(Clone)]
 pub struct Resolver {
     pub(crate) authenticator: MessageAuthenticator,
-    pub(crate) txt: TxtCache,
-    pub(crate) ipv4: Ipv4Cache,
+    pub(crate) caches: Caches,
     mx: MxCache,
 }
 
 impl fmt::Debug for Resolver {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mode = match &self.txt {
+        let mode = match &self.caches.txt {
             TxtCache::Live(_) => "live",
             TxtCache::Static(_) => "static",
         };
@@ -91,17 +93,23 @@ impl Resolver {
         let records = Arc::new(records);
         Ok(Self {
             authenticator,
-            txt: TxtCache::Static(Arc::clone(&records)),
-            ipv4: Ipv4Cache::Static,
+            caches: Caches {
+                txt: TxtCache::Static(Arc::clone(&records)),
+                ipv4: Ipv4Cache::Static,
+            },
             mx: MxCache::Static(records),
         })
     }
 
     fn live(authenticator: MessageAuthenticator) -> Self {
         Self {
-            authenticator,
-            txt: TxtCache::Live(Arc::new(LiveCache::new(TXT_CACHE_CAPACITY))),
-            ipv4: Ipv4Cache::Live,
+            // Negative answers stay in hickory's own cache only: the caches here
+            // keep records that were found, as they always did.
+            authenticator: authenticator.with_max_negative_ttl(Duration::ZERO),
+            caches: Caches {
+                txt: TxtCache::Live(Arc::new(LiveCache::new(TXT_CACHE_CAPACITY))),
+                ipv4: Ipv4Cache::Live,
+            },
             mx: MxCache::Live(Arc::new(LiveCache::new(MX_CACHE_CAPACITY))),
         }
     }
@@ -119,7 +127,7 @@ impl Resolver {
             .await
         {
             Ok(records) => Ok(records
-                .rrset
+                .records
                 .iter()
                 .flat_map(|mx| mx.exchanges.iter())
                 .map(|host| host.trim_end_matches('.').to_ascii_lowercase())
@@ -138,7 +146,7 @@ impl Resolver {
 /// DKIM keys. Every name not in the table is NXDOMAIN.
 #[derive(Clone, Default)]
 pub struct StaticDns {
-    records: HashMap<Box<str>, Txt>,
+    records: HashMap<Box<str>, TxtRecord>,
     mx: HashMap<Box<str>, Vec<String>>,
 }
 
@@ -166,7 +174,7 @@ impl StaticDns {
         let keep_existing = self
             .records
             .get(&name)
-            .is_some_and(|existing| !matches!(existing, Txt::Error(_)));
+            .is_some_and(|existing| !matches!(existing, TxtRecord::Error(_)));
         if !keep_existing {
             self.records.insert(name, parsed);
         }
@@ -179,7 +187,7 @@ impl StaticDns {
     pub fn temp_error(mut self, name: &str) -> Self {
         self.records.insert(
             fqdn(name),
-            Txt::Error(mail_auth::Error::Dns(DnsError::Resolver(
+            TxtRecord::Error(mail_auth::Error::Dns(DnsError::Resolver(
                 "simulated timeout".to_owned(),
             ))),
         );
@@ -198,27 +206,27 @@ impl StaticDns {
         self
     }
 
-    fn get_mx<Q>(&self, name: &Q) -> RecordSet<MX>
+    fn get_mx<Q>(&self, name: &Q) -> RecordSet<Mx>
     where
         Box<str>: std::borrow::Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
         let hosts = self.mx.get(name).cloned().unwrap_or_default();
-        let rrset: Arc<[MX]> = hosts
+        let records: Arc<[Mx]> = hosts
             .into_iter()
             .zip(0u16..)
-            .map(|(host, preference)| MX {
+            .map(|(host, preference)| Mx {
                 exchanges: vec![host.into_boxed_str()].into_boxed_slice(),
                 preference: preference.saturating_mul(10),
             })
             .collect();
         RecordSet {
-            rrset,
+            records,
             dnssec_status: DnssecStatus::Indeterminate,
         }
     }
 
-    fn get<Q>(&self, name: &Q) -> Txt
+    fn get<Q>(&self, name: &Q) -> TxtRecord
     where
         Box<str>: std::borrow::Borrow<Q>,
         Q: Hash + Eq + ?Sized,
@@ -227,8 +235,8 @@ impl StaticDns {
     }
 }
 
-fn nxdomain() -> Txt {
-    Txt::Error(mail_auth::Error::Dns(DnsError::RecordNotFound(
+fn nxdomain() -> TxtRecord {
+    TxtRecord::Error(mail_auth::Error::Dns(DnsError::RecordNotFound(
         ResponseCode::NXDomain,
     )))
 }
@@ -241,13 +249,49 @@ fn fqdn(name: &str) -> Box<str> {
     name.into_boxed_str()
 }
 
-fn parse_txt(name: &str, record: &[u8]) -> Txt {
+fn parse_txt(name: &str, record: &[u8]) -> TxtRecord {
     if name.starts_with("_dmarc.") {
-        Dmarc::parse(record).into()
+        DmarcRecord::parse(record).into()
     } else if name.contains("._domainkey.") {
         DomainKey::parse(record).into()
     } else {
-        Txt::Error(mail_auth::Error::Dns(DnsError::InvalidRecordType))
+        TxtRecord::Error(mail_auth::Error::Dns(DnsError::InvalidRecordType))
+    }
+}
+
+/// The caches handed to the `mail-auth` verifiers: TXT and A records. MX, AAAA and
+/// PTR lookups aren't cached for them.
+#[derive(Clone)]
+pub(crate) struct Caches {
+    txt: TxtCache,
+    ipv4: Ipv4Cache,
+}
+
+impl DnsCache for Caches {
+    type Txt = TxtCache;
+    type Mx = NoCache;
+    type Ipv4 = Ipv4Cache;
+    type Ipv6 = NoCache;
+    type Ptr = NoCache;
+
+    fn txt(&self) -> Option<&Self::Txt> {
+        Some(&self.txt)
+    }
+
+    fn mx(&self) -> Option<&Self::Mx> {
+        None
+    }
+
+    fn ipv4(&self) -> Option<&Self::Ipv4> {
+        Some(&self.ipv4)
+    }
+
+    fn ipv6(&self) -> Option<&Self::Ipv6> {
+        None
+    }
+
+    fn ptr(&self) -> Option<&Self::Ptr> {
+        None
     }
 }
 
@@ -258,8 +302,8 @@ pub(crate) enum TxtCache {
     Static(Arc<StaticDns>),
 }
 
-impl ResolverCache<Box<str>, Txt> for TxtCache {
-    fn get<Q>(&self, name: &Q) -> Option<Txt>
+impl ResolverCache<Box<str>, TxtRecord> for TxtCache {
+    fn get<Q>(&self, name: &Q) -> Option<TxtRecord>
     where
         Box<str>: std::borrow::Borrow<Q>,
         Q: Hash + Eq + ?Sized,
@@ -270,7 +314,7 @@ impl ResolverCache<Box<str>, Txt> for TxtCache {
         }
     }
 
-    fn remove<Q>(&self, name: &Q) -> Option<Txt>
+    fn remove<Q>(&self, name: &Q) -> Option<TxtRecord>
     where
         Box<str>: std::borrow::Borrow<Q>,
         Q: Hash + Eq + ?Sized,
@@ -281,7 +325,7 @@ impl ResolverCache<Box<str>, Txt> for TxtCache {
         }
     }
 
-    fn insert(&self, key: Box<str>, value: Txt, valid_until: Instant) {
+    fn insert(&self, key: Box<str>, value: TxtRecord, valid_until: Instant) {
         if let Self::Live(cache) = self {
             cache.insert(key, value, valid_until);
         }
@@ -297,22 +341,22 @@ pub(crate) enum Ipv4Cache {
     Static,
 }
 
-impl ResolverCache<Box<str>, RecordSet<Ipv4Addr>> for Ipv4Cache {
-    fn get<Q>(&self, _: &Q) -> Option<RecordSet<Ipv4Addr>>
+impl ResolverCache<Box<str>, Answer<Ipv4Addr>> for Ipv4Cache {
+    fn get<Q>(&self, _: &Q) -> Option<Answer<Ipv4Addr>>
     where
         Box<str>: std::borrow::Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
         match self {
-            Self::Static => Some(RecordSet {
-                rrset: Arc::from(Vec::new()),
+            Self::Static => Some(Ok(RecordSet {
+                records: Arc::from(Vec::new()),
                 dnssec_status: DnssecStatus::Indeterminate,
-            }),
+            })),
             Self::Live => None,
         }
     }
 
-    fn remove<Q>(&self, _: &Q) -> Option<RecordSet<Ipv4Addr>>
+    fn remove<Q>(&self, _: &Q) -> Option<Answer<Ipv4Addr>>
     where
         Box<str>: std::borrow::Borrow<Q>,
         Q: Hash + Eq + ?Sized,
@@ -320,30 +364,33 @@ impl ResolverCache<Box<str>, RecordSet<Ipv4Addr>> for Ipv4Cache {
         None
     }
 
-    fn insert(&self, _: Box<str>, _: RecordSet<Ipv4Addr>, _: Instant) {}
+    fn insert(&self, _: Box<str>, _: Answer<Ipv4Addr>, _: Instant) {}
 }
+
+/// A cached A, AAAA or MX answer: the records, or a negative answer.
+type Answer<T> = Result<RecordSet<T>, Negative>;
 
 /// The MX cache handed to `mail-auth`. In static mode every name is answered from
 /// the table (names not in it have no MX hosts).
 #[derive(Clone)]
 enum MxCache {
-    Live(Arc<LiveCache<RecordSet<MX>>>),
+    Live(Arc<LiveCache<Answer<Mx>>>),
     Static(Arc<StaticDns>),
 }
 
-impl ResolverCache<Box<str>, RecordSet<MX>> for MxCache {
-    fn get<Q>(&self, name: &Q) -> Option<RecordSet<MX>>
+impl ResolverCache<Box<str>, Answer<Mx>> for MxCache {
+    fn get<Q>(&self, name: &Q) -> Option<Answer<Mx>>
     where
         Box<str>: std::borrow::Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
         match self {
             Self::Live(cache) => cache.get(name),
-            Self::Static(records) => Some(records.get_mx(name)),
+            Self::Static(records) => Some(Ok(records.get_mx(name))),
         }
     }
 
-    fn remove<Q>(&self, name: &Q) -> Option<RecordSet<MX>>
+    fn remove<Q>(&self, name: &Q) -> Option<Answer<Mx>>
     where
         Box<str>: std::borrow::Borrow<Q>,
         Q: Hash + Eq + ?Sized,
@@ -354,7 +401,7 @@ impl ResolverCache<Box<str>, RecordSet<MX>> for MxCache {
         }
     }
 
-    fn insert(&self, key: Box<str>, value: RecordSet<MX>, valid_until: Instant) {
+    fn insert(&self, key: Box<str>, value: Answer<Mx>, valid_until: Instant) {
         if let Self::Live(cache) = self {
             cache.insert(key, value, valid_until);
         }
@@ -362,7 +409,7 @@ impl ResolverCache<Box<str>, RecordSet<MX>> for MxCache {
 }
 
 /// A bounded TTL cache of parsed records.
-pub(crate) struct LiveCache<V = Txt> {
+pub(crate) struct LiveCache<V = TxtRecord> {
     capacity: usize,
     entries: Mutex<HashMap<Box<str>, (V, Instant)>>,
 }
@@ -432,10 +479,10 @@ impl<V: Clone> LiveCache<V> {
 mod tests {
     use super::*;
 
-    fn is_nxdomain(txt: &Txt) -> bool {
+    fn is_nxdomain(txt: &TxtRecord) -> bool {
         matches!(
             txt,
-            Txt::Error(mail_auth::Error::Dns(DnsError::RecordNotFound(
+            TxtRecord::Error(mail_auth::Error::Dns(DnsError::RecordNotFound(
                 ResponseCode::NXDomain
             )))
         )
@@ -451,15 +498,18 @@ mod tests {
             )
             .txt("other.example.com", "hello")
             .temp_error("_dmarc.slow.example");
-        assert!(matches!(dns.get("_dmarc.example.com."), Txt::Dmarc(_)));
+        assert!(matches!(
+            dns.get("_dmarc.example.com."),
+            TxtRecord::Dmarc(_)
+        ));
         assert!(matches!(
             dns.get("sel._domainkey.example.com."),
-            Txt::DomainKey(_)
+            TxtRecord::DomainKey(_)
         ));
-        assert!(matches!(dns.get("other.example.com."), Txt::Error(_)));
+        assert!(matches!(dns.get("other.example.com."), TxtRecord::Error(_)));
         assert!(matches!(
             dns.get("_dmarc.slow.example."),
-            Txt::Error(mail_auth::Error::Dns(DnsError::Resolver(_)))
+            TxtRecord::Error(mail_auth::Error::Dns(DnsError::Resolver(_)))
         ));
         assert!(is_nxdomain(&dns.get("missing.example.")));
     }
@@ -471,7 +521,7 @@ mod tests {
             .txt("_dmarc.example.com", "v=DMARC1; p=none")
             .txt("_dmarc.example.com", "v=DMARC1; p=reject");
         match dns.get("_dmarc.example.com.") {
-            Txt::Dmarc(record) => assert_eq!(record.p, mail_auth::dmarc::Policy::None),
+            TxtRecord::Dmarc(record) => assert_eq!(record.p, mail_auth::dmarc::Policy::None),
             _ => panic!("expected a DMARC record"),
         }
     }

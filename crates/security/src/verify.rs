@@ -2,7 +2,7 @@
 //! results into an [`AuthReport`].
 
 use mail_auth::arc::ArcError;
-use mail_auth::common::crypto::CryptoError;
+use mail_auth::crypto::CryptoError;
 use mail_auth::dkim::DkimError;
 use mail_auth::dmarc::Policy;
 use mail_auth::dmarc::verify::DmarcParameters;
@@ -149,7 +149,7 @@ impl Verifier {
         let Some(message) = AuthenticatedMessage::parse(raw_message) else {
             return unreadable(provider.status, spf, ctx.now);
         };
-        let from_domain = single_from_domain(&message.from);
+        let from_domain = single_from_domain(message.from_addresses());
         let local = self
             .local_checks(&message, ctx, raw_message, &trusted, from_domain.as_deref())
             .await;
@@ -184,18 +184,10 @@ impl Verifier {
     ) -> LocalChecks {
         let authenticator = &self.resolver.authenticator;
         let dkim_outputs = authenticator
-            .verify_dkim(
-                Parameters::new(message)
-                    .with_txt_cache(&self.resolver.txt)
-                    .with_ipv4_cache(&self.resolver.ipv4),
-            )
+            .verify_dkim(Parameters::new(message).with_cache(&self.resolver.caches))
             .await;
         let arc_output = authenticator
-            .verify_arc(
-                Parameters::new(message)
-                    .with_txt_cache(&self.resolver.txt)
-                    .with_ipv4_cache(&self.resolver.ipv4),
-            )
+            .verify_arc(Parameters::new(message).with_cache(&self.resolver.caches))
             .await;
 
         let mut age = MessageAge::new(ctx, raw_message, self.options.key_rotation_age);
@@ -218,10 +210,10 @@ impl Verifier {
         }
 
         let arc_domain = arc_output
-            .sets()
+            .chain()
             .last()
             .map(|set| set.seal.header.d.to_ascii_lowercase());
-        let arc_signed_at = arc_output.sets().last().map_or(0, |set| set.seal.header.t);
+        let arc_signed_at = arc_output.chain().last().map_or(0, |set| set.seal.header.t);
         let arc = Check::new(
             map_auth_result(arc_output.result(), || age.is_old(arc_signed_at)),
             Source::Local,
@@ -255,12 +247,11 @@ impl Verifier {
                     &spf_domain,
                     &spf_output,
                 ))
-                .with_txt_cache(&self.resolver.txt)
-                .with_ipv4_cache(&self.resolver.ipv4),
+                .with_cache(&self.resolver.caches),
             )
             .await;
 
-        let has_record = dmarc_output.dmarc_record().is_some();
+        let has_record = dmarc_output.record().is_some();
         let dmarc_policy = has_record.then(|| match dmarc_output.policy() {
             Policy::Reject => DmarcPolicy::Reject,
             Policy::Quarantine => DmarcPolicy::Quarantine,
@@ -363,18 +354,18 @@ fn map_auth_result(result: &DkimResult, key_rotated: impl FnOnce() -> bool) -> M
         }
     };
     match err {
-        Error::Dkim(DkimError::FailedBodyHashMatch) | Error::Arc(ArcError::FailedBodyHashMatch) => {
+        Error::Dkim(DkimError::BodyHashMismatch) | Error::Arc(ArcError::BodyHashMismatch) => {
             MechanismResult::fail("the message body was changed after signing")
         }
         Error::Crypto(CryptoError::FailedVerification) => {
             MechanismResult::fail("the signature doesn't match the message")
         }
-        Error::Dkim(DkimError::FailedAuidMatch) => {
+        Error::Dkim(DkimError::AuidMismatch) => {
             MechanismResult::fail("the signer identity doesn't match the signing domain")
         }
         Error::Arc(
             ArcError::BrokenChain
-            | ArcError::InvalidCV
+            | ArcError::InvalidChainValidation
             | ArcError::InvalidInstance(_)
             | ArcError::ChainTooLong,
         ) => MechanismResult::fail("the ARC chain is broken"),
@@ -382,7 +373,7 @@ fn map_auth_result(result: &DkimResult, key_rotated: impl FnOnce() -> bool) -> M
             MechanismResult::Neutral
         }
         Error::Dns(DnsError::RecordNotFound(_) | DnsError::InvalidRecordType)
-        | Error::Dkim(DkimError::RevokedPublicKey) => {
+        | Error::Dkim(DkimError::PublicKeyRevoked) => {
             if key_rotated() {
                 MechanismResult::KeyNoLongerPublished
             } else {
@@ -698,7 +689,7 @@ mod tests {
         );
         assert!(
             map_auth_result(
-                &DkimResult::Neutral(Error::Dkim(DkimError::FailedBodyHashMatch)),
+                &DkimResult::Neutral(Error::Dkim(DkimError::BodyHashMismatch)),
                 never
             )
             .is_fail()
@@ -717,7 +708,7 @@ mod tests {
             ),
             MechanismResult::TempError
         );
-        let gone = DkimResult::PermError(Error::Dkim(DkimError::RevokedPublicKey));
+        let gone = DkimResult::PermError(Error::Dkim(DkimError::PublicKeyRevoked));
         assert_eq!(
             map_auth_result(&gone, || true),
             MechanismResult::KeyNoLongerPublished

@@ -80,7 +80,7 @@ libc = "0.2"
 # every TLS client in Maze) and the platform certificate verifier; messages are built
 # elsewhere.
 lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "tokio1-rustls", "aws-lc-rs", "rustls-platform-verifier"] }
-mail-auth = { version = "0.13.3", default-features = false, features = ["aws-lc-rs", "arc"] }
+mail-auth = { version = "0.14.1", default-features = false, features = ["aws-lc-rs", "arc"] }
 notify = "8"
 # New-mail notifications (ADR-021): the freedesktop D-Bus service on Linux, over zbus
 # on Tokio. On macOS, UNUserNotificationCenter through mac-usernotifications (the
@@ -106,7 +106,7 @@ semver = { version = "1", features = ["serde"] }
 servo = { version = "0.7", default-features = false, features = ["baked-in-resources"] }
 html5ever = "0.40.1"
 linkify = "0.11.0"
-mail-parser = { version = "0.11.9", features = ["full_encoding"] }
+mail-parser = { version = "1.0.1", features = ["full_encoding"] }
 mail-builder = { version = "2.0", default-features = false }
 # HTML quotes of replies become Markdown (PLAN §4.10).
 htmd = "0.5.6"

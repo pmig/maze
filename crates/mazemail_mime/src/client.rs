@@ -18,8 +18,7 @@
 
 use std::fmt;
 
-use mail_parser::HeaderValue;
-use mail_parser::parsers::MessageStream;
+use mail_parser::HeaderForm;
 use serde::{Deserialize, Serialize};
 
 /// The headers clients name themselves in, most authoritative first.
@@ -416,9 +415,9 @@ fn shorten(value: &str, max: usize) -> String {
 fn decode(raw: &str) -> String {
     let decoded = if raw.contains("=?") {
         let line = format!("{}\n", raw.trim_start());
-        match MessageStream::new(line.as_bytes()).parse_unstructured() {
-            HeaderValue::Text(text) => text.into_owned(),
-            _ => raw.to_owned(),
+        match HeaderForm::Text.parse(line.as_bytes()).value().as_text() {
+            Some(text) => text.to_owned(),
+            None => raw.to_owned(),
         }
     } else {
         raw.to_owned()

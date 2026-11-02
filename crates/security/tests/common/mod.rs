@@ -10,9 +10,9 @@ use std::path::Path;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use mail_auth::arc::ArcSealer;
-use mail_auth::common::crypto::{Ed25519Key, RsaKey, Sha256, SigningKey};
-use mail_auth::common::headers::HeaderWriter;
+use mail_auth::crypto::{Ed25519Key, RsaKey, Sha256, SigningKey};
 use mail_auth::dkim::DkimSigner;
+use mail_auth::headers::HeaderWriter;
 use mail_auth::{ArcOutput, AuthenticatedMessage, AuthenticationResults};
 
 pub const SIGNED_HEADERS: [&str; 5] = ["From", "To", "Subject", "Date", "Message-ID"];
