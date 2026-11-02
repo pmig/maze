@@ -1,0 +1,9 @@
+# Sourced by mise for this project ([env] in mise.toml): environment the builds need.
+# shellcheck shell=bash
+
+# Linux: bindgen (clang-sys) finds libclang for Servo's SpiderMonkey bindings in mise's
+# conda:libclang. Left unset on macOS, where clang-sys finds Xcode's libclang itself
+# (a set LIBCLANG_PATH, even an empty one, is the only place it would look).
+if [ "$(uname -s)" = Linux ]; then
+  export LIBCLANG_PATH="${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}/installs/conda-libclang/23/lib"
+fi

@@ -59,8 +59,11 @@ script/bundle-mac       # optional: dist/mac-<arch>/Maze.app, .dmg and .app.tar.
 `mise start` and `script/bundle-mac` include the original HTML engine (Servo, the
 `original-html` feature), and so do the macOS release builds; a plain `cargo build`
 leaves it out. Servo's build scripts need Python 3.11 or newer (`mise install` provides
-it; `uv` works too), its first build takes about three minutes longer, and it downloads
-a prebuilt SpiderMonkey library once. It builds into its own directory, `target/servo`, so
+it; `uv` works too), and its first build takes several minutes longer: Maze builds Servo
+without its JavaScript JIT, so SpiderMonkey is compiled from source, and its bindings
+need clang's `libclang` (Xcode's on macOS; on Linux `mise install` installs clang and
+libclang, and `script/mise-env` points the build at them). It builds into its own
+directory, `target/servo`, so
 switching between `mise start` and tests or your editor's rust-analyzer doesn't rebuild
 half the tree. `mise run start:lite` starts Maze without the engine (the original view
 then falls back to the reader). For a local release build, `cargo build --profile

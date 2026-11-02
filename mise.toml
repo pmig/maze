@@ -5,6 +5,15 @@ rust = { version = "1.99.1", components = "rustfmt,clippy,rust-src", profile = "
 "cargo:cargo-insta" = "latest"
 # Servo's build scripts (the original HTML engine, ADR-020) need Python 3.11 or newer.
 python = "3.13"
+# Linux: Maze builds Servo without its JIT, so mozjs_sys compiles SpiderMonkey from
+# source and generates its Rust bindings with bindgen, which needs libclang (and clang,
+# for its built-in headers). On macOS Xcode provides both. LIBCLANG_PATH is set in
+# script/mise-env.
+"conda:clang" = { version = "23", os = ["linux"] }
+"conda:libclang" = { version = "23", os = ["linux"] }
+
+[env]
+_.source = "{{config_root}}/script/mise-env"
 
 [tasks.start]
 description = "Build and start Maze (dev build with the original HTML engine: fast incremental rebuilds)"

@@ -115,10 +115,11 @@ tar --zstd -xf Maze-*-linux-x86_64.tar.zst -C ~/.local
 
 The toolchain is managed with [mise](https://mise.jdx.dev). On macOS you also need the
 Xcode Command Line Tools; on Debian and Ubuntu, `script/linux-deps` installs the system
-packages.
+packages. On Linux `mise install` also brings clang and libclang, which the HTML engine's
+SpiderMonkey build needs.
 
 ```sh
-mise install          # Rust 1.99.1, cargo-nextest, cargo-deny, cargo-insta
+mise install          # Rust 1.99.1, cargo-nextest, cargo-deny, cargo-insta (Linux: clang, libclang)
 mise start            # starts a dev build of Maze, with its own data directory (macOS: Maze Dev.app)
 mise run start:lite   # the same without the HTML engine (Servo): much faster first build
 script/bundle-mac     # builds dist/mac-<arch>/Maze.app, the .dmg and the .app.tar.zst
