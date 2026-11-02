@@ -913,6 +913,9 @@ pub struct DataChanges {
     pub status: bool,
     /// Address book entries changed: reload the Address Book.
     pub contacts: bool,
+    /// Domains, their counts or favicons changed: re-read the Domains list
+    /// ([`MailSource::domains`]) and favicons.
+    pub domains: bool,
     /// Changes were lost (or the backend just became available): reload everything.
     pub everything: bool,
 }
@@ -939,6 +942,7 @@ impl DataChanges {
         self.everything |= other.everything;
         self.status |= other.status;
         self.contacts |= other.contacts;
+        self.domains |= other.domains;
         for message in other.messages_updated {
             if !self.messages_updated.contains(&message) {
                 self.messages_updated.push(message);
@@ -1401,6 +1405,40 @@ pub trait MailSource: Send + Sync + 'static {
         Err(SourceError::Unavailable(
             "remote content exceptions aren't kept here".into(),
         ))
+    }
+
+    /// The domains of your contacts and mail (the Address Book's Domains list) after
+    /// `filter`, in `sort`'s order. Local reads only; can take a few milliseconds with
+    /// large address books, so call it off the main thread for those.
+    fn domains(
+        &self,
+        _filter: &crate::domains::DomainFilter,
+        _sort: crate::domains::DomainSort,
+    ) -> Result<Vec<crate::domains::DomainEntry>, SourceError> {
+        Ok(Vec::new())
+    }
+
+    /// The contacts at a domain ([`crate::domains::DomainEntry::name`]), one entry per
+    /// address.
+    fn domain_contacts(
+        &self,
+        _domain: &str,
+    ) -> Result<Vec<crate::domains::DomainContactEntry>, SourceError> {
+        Ok(Vec::new())
+    }
+
+    /// The global search query for a domain's mail ("Show Mail"):
+    /// `from:@northwind.example`.
+    fn domain_mail_query(&self, domain: &str) -> SharedString {
+        format!("from:@{domain}").into()
+    }
+
+    /// The domain's favicon (64×64), fetched from the domain's own website as the
+    /// `favicons` setting allows. Never waits for the network: `None` until it is
+    /// there, and [`DataChanges::domains`] says when to ask again. Cheap enough to call
+    /// while rendering.
+    fn domain_favicon(&self, _domain: &str) -> Option<Arc<gpui::Image>> {
+        None
     }
 
     /// Adds and removes flags on threads (mark read, star, …).

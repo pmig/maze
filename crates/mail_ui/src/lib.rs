@@ -25,6 +25,7 @@ pub mod address_book;
 pub mod attachment_files;
 mod chrome;
 pub mod command_palette;
+pub mod domains;
 pub mod fake;
 mod fake_contacts;
 pub mod folder_pane;

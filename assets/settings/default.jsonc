@@ -121,6 +121,14 @@
   "offline": "recent",
   "offline_recent_days": 90,
 
+  // Favicons of the domains in your mail (the Domains list in the Address Book, badges
+  // on contacts), fetched from each domain's own website (https://<domain>/, never a
+  // third-party icon service): one request per domain, at most every 30 days, no
+  // cookies. "contacts": only for domains of your contacts (address books and addresses
+  // you wrote to); "all": also for domains you only received mail from (each of their
+  // websites learns that Maze looked); "off": none.
+  "favicons": "contacts",
+
   // Overrides per account, keyed by the account's label, e.g.
   // "work": { "offline": "all", "remote_content": "never", "footer": "Acme Inc." }
   // Supported keys: "offline", "offline_recent_days", "remote_content", "footer",
