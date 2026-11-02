@@ -75,7 +75,7 @@ use gpui::{
     prelude::FluentBuilder as _, px, uniform_list,
 };
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, Selectable as _, Sizable as _, Size, StyledExt as _,
+    ActiveTheme as _, FocusableExt as _, Icon, Selectable as _, Sizable as _, Size, StyledExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputEvent, InputState},
@@ -2800,7 +2800,7 @@ impl Focusable for ThreadList {
 }
 
 impl Render for ThreadList {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let theme = cx.theme().colors;
         let empty = self.is_empty() && self.loading.is_none();
         let slots = {
@@ -2827,6 +2827,11 @@ impl Render for ThreadList {
             ListMode::Table => {
                 let look = self.look.clone();
                 let table = self.table.clone();
+                // The table's own focus ring would include the column headers; ours
+                // goes around the rows only (and, like the table's, only after
+                // keyboard input, as CSS `:focus-visible` does).
+                let focused = self.table.focus_handle(cx).is_focused(window)
+                    && window.last_input_was_keyboard();
                 div()
                     .size_full()
                     .relative()
@@ -2834,8 +2839,21 @@ impl Render for ThreadList {
                         DataTable::new(&self.table)
                             .with_size(Size::Size(table_row_height(cx)))
                             .stripe(false)
-                            .bordered(false),
+                            .bordered(false)
+                            .focus_ring(false),
                     )
+                    .when(focused, |this| {
+                        this.child(
+                            div()
+                                .absolute()
+                                .top(table_row_height(cx))
+                                .left_0()
+                                .right_0()
+                                .bottom_0()
+                                .border_1()
+                                .border_color(cx.theme().ring),
+                        )
+                    })
                     .child(
                         // Measures the table so the Subject column can flex.
                         canvas(
@@ -3083,7 +3101,19 @@ impl TableDelegate for ThreadTable {
         div()
             .id(("row", row_ix))
             .debug_selector(|| format!("table-row-{row_ix}"))
-            .when(highlighted, |this| this.bg(cx.theme().list_active))
+            // Like the cards: the selection background and an accent bar, so selected
+            // rows don't look like the header (whose background is about as light).
+            .when(highlighted, |this| {
+                this.relative().bg(cx.theme().list_active).child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .top_0()
+                        .bottom_0()
+                        .w(px(2.))
+                        .bg(cx.theme().primary),
+                )
+            })
             // The table selects on plain clicks; shift and cmd clicks are ours.
             .on_click(move |event, _, cx| {
                 let modifiers = event.modifiers();
