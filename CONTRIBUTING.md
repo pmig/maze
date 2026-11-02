@@ -70,6 +70,11 @@ worktrees you're finished with.
 - Pull requests are **squash-merged** with the PR title as the commit message, so each
   branch lands on `main` as a single conventional commit. release-please reads those
   commits to build the changelog and pick the next version.
+- `main` requires the CI checks (`Check (Linux x86_64)`, `Check (macOS arm64)`) and the
+  PR title check, plus signed commits and a linear history. Dependabot's pull requests
+  merge on their own once those are green (`Dependabot auto-merge` turns on GitHub's
+  auto-merge). GitHub's merge queue isn't available for repositories owned by a personal
+  account; Dependabot rebases its pull requests when `Cargo.lock` conflicts.
 - Add dependencies to `[workspace.dependencies]` in the root `Cargo.toml` and check their
   license against `deny.toml`.
 - Architecture decisions are recorded in [`docs/adr/`](docs/adr/README.md). Copy

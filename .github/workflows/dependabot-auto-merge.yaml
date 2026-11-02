@@ -1,0 +1,27 @@
+name: Dependabot auto-merge
+
+# Dependabot's pull requests merge on their own once the required checks are green
+# (the `main` ruleset: CI on Linux and macOS and the PR title check). This only turns
+# on auto-merge; GitHub squash-merges, which signs the commit, and release-please reads
+# the `deps:` / `ci:` title.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    name: Enable auto-merge
+    # The PR's author, not the actor: a maintainer pushing a fix keeps it on.
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Squash-merge when the checks pass
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
