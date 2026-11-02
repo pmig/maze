@@ -256,6 +256,7 @@ fn drafts_round_trip() {
             path: "/tmp/a.pdf".into(),
             name: "a.pdf".into(),
             size: 3,
+            forwarded: None,
         }],
         origin: Some(DraftOrigin::ReplyAll(MessageId(7))),
         name: "brave-otter".into(),

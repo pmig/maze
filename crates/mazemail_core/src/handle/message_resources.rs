@@ -120,24 +120,7 @@ impl CoreHandle {
         part_path: String,
     ) -> Result<Option<AttachmentPart>> {
         self.ensure_open()?;
-        if self.body_state(id)? != BodyState::Full {
-            // Subscribe first, so the batch with the stored body can't be missed.
-            let mut events = self.events();
-            self.inner.sync.fetch_body(id, FetchPriority::Full);
-            let deadline = tokio::time::Instant::now() + ATTACHMENT_DOWNLOAD_TIMEOUT;
-            while self.body_state(id)? != BodyState::Full {
-                match tokio::time::timeout_at(deadline, events.recv()).await {
-                    Ok(Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => {}
-                    Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) | Err(_) => {
-                        return Err(Error::BodyUnavailable(
-                            "The message couldn't be downloaded. Check your connection and \
-                             try again."
-                                .to_owned(),
-                        ));
-                    }
-                }
-            }
-        }
+        self.download_full_body(id).await?;
         let inner = Arc::clone(&self.inner);
         self.inner
             .runtime
@@ -153,6 +136,36 @@ impl CoreHandle {
                 Ok(mazemail_mime::attachment_part(&raw, &part_path))
             })
             .await
+    }
+
+    /// Downloads message `id` in full unless it is stored in full already, waiting up
+    /// to [`ATTACHMENT_DOWNLOAD_TIMEOUT`].
+    ///
+    /// # Errors
+    ///
+    /// [`Error::BodyUnavailable`] when it couldn't be downloaded in time (offline, no
+    /// sync engine).
+    pub(crate) async fn download_full_body(&self, id: MessageId) -> Result<()> {
+        if self.body_state(id)? == BodyState::Full {
+            return Ok(());
+        }
+        // Subscribe first, so the batch with the stored body can't be missed.
+        let mut events = self.events();
+        self.inner.sync.fetch_body(id, FetchPriority::Full);
+        let deadline = tokio::time::Instant::now() + ATTACHMENT_DOWNLOAD_TIMEOUT;
+        while self.body_state(id)? != BodyState::Full {
+            match tokio::time::timeout_at(deadline, events.recv()).await {
+                Ok(Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => {}
+                Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) | Err(_) => {
+                    return Err(Error::BodyUnavailable(
+                        "The message couldn't be downloaded. Check your connection and try \
+                         again."
+                            .to_owned(),
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// How much of message `id`'s body is stored.

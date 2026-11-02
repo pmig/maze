@@ -432,6 +432,7 @@ fn attachments_join_the_draft(cx: &mut TestAppContext) {
         path: "/tmp/plan.pdf".into(),
         name: "plan.pdf".into(),
         size: 2048,
+        forwarded: None,
     };
     view.update_in(cx, |c, window, cx| {
         c.add_attachments(vec![file.clone(), file.clone()], window, cx);

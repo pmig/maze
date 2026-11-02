@@ -858,7 +858,11 @@ footer and a small grey "Sent with Maze" line.
 Reply (`cmd-r`, or `r` in the list and the message), reply all (`cmd-shift-r`, or
 `shift-r`) and forward (`cmd-l`) open the same kind of tab with the recipients, the
 `Re:`/`Fwd:` subject and the quoted message filled in (HTML mail is quoted as
-Markdown).
+Markdown). A forward also carries the original's attachments (not the images inside
+an HTML message); remove the ones you don't want to send with their **×**. If only the
+text of the original was downloaded, Maze downloads the rest first. The attachments
+are read from your encrypted copy of the original when you send, and are never saved
+as files.
 
 Messages are sent right away. When the server can't be reached, the message waits in
 the outbox and goes out by itself when it can; a message the server refuses (a wrong
@@ -869,8 +873,8 @@ sends it twice. The copy in your Sent folder is described under
 [SMTP servers](#smtp-servers).
 
 Drafts are saved on your computer (encrypted, like your mail) a moment after you stop
-typing. Not there yet: drafts in the server's Drafts folder, forwarding the original's
-attachments, signatures switching with the identity, send later and undo send.
+typing. Not there yet: drafts in the server's Drafts folder, signatures switching with
+the identity, send later and undo send.
 
 ### Recipients
 

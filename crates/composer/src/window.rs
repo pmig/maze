@@ -833,6 +833,7 @@ impl Composer {
                         path,
                         name,
                         size: meta.len(),
+                        forwarded: None,
                     })
                 })
                 .collect();
@@ -852,7 +853,11 @@ impl Composer {
     ) {
         let before = self.attachments.len();
         for file in files {
-            if !self.attachments.iter().any(|a| a.path == file.path) {
+            if !self
+                .attachments
+                .iter()
+                .any(|a| a.path == file.path && a.forwarded == file.forwarded)
+            {
                 self.attachments.push(file);
             }
         }

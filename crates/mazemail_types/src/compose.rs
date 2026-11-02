@@ -40,15 +40,29 @@ impl DraftOrigin {
 }
 
 /// A file attached to a draft. The file is read when the message is sent; its content
-/// then goes into the (encrypted) outbox blob.
+/// then goes into the (encrypted) outbox blob. An attachment of a forwarded message
+/// isn't a file: it is read from the stored original ([`DraftAttachment::forwarded`]),
+/// so it never lands on disk in plaintext.
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DraftAttachment {
-    /// Where the file is.
+    /// Where the file is (empty for a forwarded attachment).
     pub path: PathBuf,
     /// The file name the recipient sees.
     pub name: String,
     /// Size in bytes when it was attached.
     pub size: u64,
+    /// The attachment of a forwarded message this is, instead of a file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forwarded: Option<ForwardedPart>,
+}
+
+/// An attachment of a stored message, by its MIME part path.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ForwardedPart {
+    /// The forwarded message.
+    pub message: MessageId,
+    /// The attachment's IMAP-style part path (`2`, `1.3`, …).
+    pub part_path: String,
 }
 
 impl fmt::Debug for DraftAttachment {
@@ -163,6 +177,7 @@ mod tests {
                 path: "/tmp/plan.pdf".into(),
                 name: "plan.pdf".into(),
                 size: 12,
+                forwarded: None,
             }],
             ..Draft::default()
         };

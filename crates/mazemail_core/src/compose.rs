@@ -23,15 +23,18 @@
 //!   **`References`** (the original's chain plus its Message-ID).
 //! - **Quote**: an attribution line and the original as Markdown `>` blocks; HTML
 //!   originals are converted to Markdown (`htmd`), plain text is quoted as is. A
-//!   forward includes the original unquoted below a header block. (The original's
-//!   attachments aren't forwarded yet.)
+//!   forward includes the original unquoted below a header block and the original's
+//!   attachments (not the images inside an HTML body): the full message is downloaded
+//!   first if only its text is stored, and the attachments are read from the stored
+//!   original when the forward is sent, never written to disk.
 //! - **"Sent with Maze"**: added when the `compose.support_maze` setting of the sending
 //!   identity's account ([`settings::Settings::footer_for`]) is on at send time. It's
 //!   only a setting; the draft's `support_maze` field is no longer used for sending.
 //!
 //! # Sending
 //!
-//! [`CoreHandle::send_draft`] checks the draft, reads attached files, builds the MIME
+//! [`CoreHandle::send_draft`] checks the draft, reads attached files (and forwarded
+//! attachments from their stored message), builds the MIME
 //! message (`multipart/alternative`, Message-ID at the identity's domain; the
 //! account's `compose.footer` and, if the draft says so, "Sent with Maze" are added
 //! below the text and above a quoted original, see `mazemail_mime::compose`), stores it as
@@ -57,7 +60,7 @@ use mazemail_mime::compose::{
     reply_subject,
 };
 use mazemail_mime::{MessageHeaders, ParsedMessage};
-use mazemail_types::compose::{Draft, DraftOrigin};
+use mazemail_types::compose::{Draft, DraftAttachment, DraftOrigin, ForwardedPart};
 use mazemail_types::{AccountId, Address, DraftId, IdentityId, MessageId, PublicId as _};
 use settings::FooterSettings;
 use store::{Identity, MessageDetail, OutboxEnvelope, Queries as _, Reader};
@@ -149,6 +152,8 @@ struct Original {
     detail: MessageDetail,
     headers: Option<MessageHeaders>,
     body: Option<String>,
+    /// The attachments a forward carries along (not images inside an HTML body).
+    attachments: Vec<mazemail_mime::AttachmentMeta>,
 }
 
 impl Original {
@@ -487,17 +492,23 @@ impl CoreHandle {
             self.sync_bridge()
                 .fetch_body(message, FetchPriority::Interactive);
         }
-        let (headers, body) = match parsed {
+        let (headers, body, attachments) = match parsed {
             Some(parsed) => {
                 let body = quotable_text(&parsed);
-                (Some(parsed.headers), body)
+                let attachments = parsed
+                    .attachments
+                    .into_iter()
+                    .filter(mazemail_mime::AttachmentMeta::counts_as_attachment)
+                    .collect();
+                (Some(parsed.headers), body, attachments)
             }
-            None => (None, None),
+            None => (None, None, Vec::new()),
         };
         Ok(Original {
             detail,
             headers,
             body,
+            attachments,
         })
     }
 
@@ -559,8 +570,22 @@ impl CoreHandle {
         })
     }
 
-    /// A forward of `message`, inline (see the [module docs](self)).
+    /// A forward of `message`, inline, with its attachments (see the
+    /// [module docs](self)).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::BodyUnavailable`] when the message has attachments that aren't stored
+    /// and it couldn't be downloaded (offline).
     pub async fn forward_draft(&self, message: MessageId) -> Result<Draft> {
+        let detail = self
+            .store()
+            .reader()?
+            .message(message)?
+            .ok_or_else(|| Error::not_found("message", message.to_public()))?;
+        if detail.has_attachments {
+            self.download_full_body(message).await?;
+        }
         let core = self.clone();
         self.run_blocking(move || core.forward_draft_blocking(message))
             .await
@@ -603,9 +628,27 @@ impl CoreHandle {
             body.push_str(text.trim_end());
             body.push('\n');
         }
+        let attachments = original
+            .attachments
+            .iter()
+            .map(|meta| DraftAttachment {
+                path: std::path::PathBuf::new(),
+                name: meta
+                    .filename
+                    .clone()
+                    .filter(|name| !name.trim().is_empty())
+                    .unwrap_or_else(|| "attachment".to_owned()),
+                size: meta.size as u64,
+                forwarded: Some(ForwardedPart {
+                    message,
+                    part_path: meta.part_path.clone(),
+                }),
+            })
+            .collect();
         Ok(Draft {
             identity,
             subject: forward_subject(&original.subject()),
+            attachments,
             body_markdown: body,
             references: original.message_id().into_iter().collect(),
             origin: Some(DraftOrigin::Forward(message)),
@@ -708,6 +751,31 @@ impl CoreHandle {
         Ok(rank_completions(contacts, limit))
     }
 
+    /// A forwarded attachment, decoded from its stored message.
+    fn forwarded_part(
+        &self,
+        reader: &store::Reader,
+        part: &ForwardedPart,
+    ) -> Result<mazemail_mime::AttachmentPart> {
+        let missing = || {
+            compose_error(
+                ComposeErrorKind::Attachment,
+                "a forwarded attachment is no longer available; remove it and attach it again",
+            )
+        };
+        let blob = reader
+            .message(part.message)?
+            .filter(|detail| detail.body_state == store::BodyState::Full)
+            .and_then(|detail| detail.blob)
+            .ok_or_else(missing)?;
+        let raw = match self.store().blobs().read(&blob) {
+            Ok(raw) => raw,
+            Err(store::Error::BlobMissing(_)) => return Err(missing()),
+            Err(err) => return Err(err.into()),
+        };
+        mazemail_mime::attachment_part(&raw, &part.part_path).ok_or_else(missing)
+    }
+
     /// Builds the message of `draft` and queues it: `(outbox item, identity)`.
     fn queue_draft(&self, draft: &Draft) -> Result<(store::OutboxId, IdentityId)> {
         if draft.recipients().next().is_none() {
@@ -736,15 +804,24 @@ impl CoreHandle {
         let mut attachments = Vec::with_capacity(draft.attachments.len());
         let mut total: u64 = draft.body_markdown.len() as u64;
         for attachment in &draft.attachments {
-            let data = std::fs::read(&attachment.path).map_err(|err| {
-                compose_error(
-                    ComposeErrorKind::Attachment,
-                    format!("an attached file can't be read ({})", err.kind()),
-                )
-            })?;
+            let (content_type, data) = match &attachment.forwarded {
+                Some(part) => {
+                    let part = self.forwarded_part(&reader, part)?;
+                    (part.content_type, part.bytes)
+                }
+                None => {
+                    let data = std::fs::read(&attachment.path).map_err(|err| {
+                        compose_error(
+                            ComposeErrorKind::Attachment,
+                            format!("an attached file can't be read ({})", err.kind()),
+                        )
+                    })?;
+                    (content_type_for(&attachment.name).to_owned(), data)
+                }
+            };
             total = total.saturating_add(data.len() as u64);
             attachments.push(OutgoingAttachment {
-                content_type: content_type_for(&attachment.name).to_owned(),
+                content_type,
                 name: attachment.name.clone(),
                 data,
             });
@@ -1052,6 +1129,7 @@ mod tests {
                 tags: Vec::new(),
                 detached_at: None,
             },
+            attachments: Vec::new(),
             headers: Some(MessageHeaders {
                 from: parse(&[from]),
                 reply_to: parse(reply_to),

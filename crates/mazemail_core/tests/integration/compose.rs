@@ -149,7 +149,25 @@ const ORIGINAL: &str = "From: Anna Example <anna@example.com>\r\n\
 
 /// Adds alice's account and waits until the original is synced with its body.
 async fn account_with_original(s: &Setup) -> MessageId {
-    s.server.deliver("INBOX", FakeMessage::new(ORIGINAL));
+    let message = account_with(s, ORIGINAL).await;
+    // Opening it fetches the body.
+    let _ = s.core.message(message).await.unwrap();
+    let core = s.core.clone();
+    wait_for("the body", move || {
+        core.store()
+            .reader()
+            .unwrap()
+            .message(message)
+            .unwrap()
+            .is_some_and(|m| m.blob.is_some())
+    })
+    .await;
+    message
+}
+
+/// An account whose inbox has `raw`, synced (its body may not be stored yet).
+async fn account_with(s: &Setup, raw: &'static str) -> MessageId {
+    s.server.deliver("INBOX", FakeMessage::new(raw));
     let info = s.core.add_imap_account(input(PASSWORD)).await.unwrap();
     let core = s.core.clone();
     let inbox = move || {
@@ -166,20 +184,7 @@ async fn account_with_original(s: &Setup) -> MessageId {
             .next()
     };
     wait_for("the original", || inbox().is_some()).await;
-    let message = inbox().unwrap();
-    // Opening it fetches the body.
-    let _ = s.core.message(message).await.unwrap();
-    let core = s.core.clone();
-    wait_for("the body", move || {
-        core.store()
-            .reader()
-            .unwrap()
-            .message(message)
-            .unwrap()
-            .is_some_and(|m| m.blob.is_some())
-    })
-    .await;
-    message
+    inbox().unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -286,6 +291,79 @@ async fn replies_and_forwards_are_prefilled() {
     s.core.shutdown().await.unwrap();
 }
 
+/// A report with a PDF, and an HTML body with an inline logo.
+const WITH_ATTACHMENTS: &str = "From: Anna Example <anna@example.com>\r\n\
+To: Alice <alice@example.org>\r\n\
+Subject: Q3 report\r\n\
+Message-ID: <report@example.com>\r\n\
+Date: Tue, 20 Oct 2026 09:00:00 +0000\r\n\
+MIME-Version: 1.0\r\n\
+Content-Type: multipart/mixed; boundary=\"outer\"\r\n\
+\r\n\
+--outer\r\n\
+Content-Type: multipart/related; boundary=\"inner\"\r\n\
+\r\n\
+--inner\r\n\
+Content-Type: text/html; charset=utf-8\r\n\
+\r\n\
+<p>The report is attached.</p><img src=\"cid:logo@example.com\">\r\n\
+--inner\r\n\
+Content-Type: image/png\r\n\
+Content-ID: <logo@example.com>\r\n\
+Content-Disposition: inline\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+iVBORw0KGgo=\r\n\
+--inner--\r\n\
+--outer\r\n\
+Content-Type: application/pdf; name=\"report.pdf\"\r\n\
+Content-Disposition: attachment; filename=\"report.pdf\"\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+JVBERi0xLjQgcmVwb3J0\r\n\
+--outer--\r\n";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn forwards_carry_the_attachments_along() {
+    let server = FakeServer::new();
+    let s = open(&server).await;
+    // Not opened: forwarding downloads the full message itself.
+    let message = account_with(&s, WITH_ATTACHMENTS).await;
+
+    let mut forward = s.core.forward_draft(message).await.unwrap();
+    // The PDF, not the logo inside the HTML body.
+    assert_eq!(forward.attachments.len(), 1, "{:?}", forward.attachments);
+    let pdf = &forward.attachments[0];
+    assert_eq!(pdf.name, "report.pdf");
+    assert_eq!(pdf.size, 15);
+    assert_eq!(
+        pdf.path,
+        std::path::PathBuf::new(),
+        "never written to a file"
+    );
+    assert_eq!(pdf.forwarded.as_ref().unwrap().message, message);
+    assert!(forward.body_markdown.contains("The report is attached."));
+
+    // Kept with the draft, and read from the stored original when it is sent.
+    forward.to = vec![Address::new(None::<String>, "bob@example.net")];
+    let id = s.core.create_draft(forward.clone()).await.unwrap();
+    assert_eq!(s.core.draft(id).unwrap(), forward);
+    let result = s.core.send_draft(Some(id), forward).await.unwrap();
+    assert_eq!(result, SendResult::Sent);
+    let submissions = s.mailer.submissions();
+    let parsed = MessageParser::default().parse(&submissions[0].raw).unwrap();
+    let attachments: Vec<_> = parsed.attachments().collect();
+    assert_eq!(attachments.len(), 1);
+    assert_eq!(attachments[0].attachment_name(), Some("report.pdf"));
+    assert_eq!(attachments[0].decoded().as_ref(), b"%PDF-1.4 report");
+    let content_type = attachments[0].content_type().unwrap();
+    assert_eq!(
+        (content_type.ctype(), content_type.subtype()),
+        ("application", Some("pdf"))
+    );
+    s.core.shutdown().await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn drafts_are_kept_and_sending_delivers_once_with_a_sent_copy() {
     let server = FakeServer::new();
@@ -300,6 +378,7 @@ async fn drafts_are_kept_and_sending_delivers_once_with_a_sent_copy() {
         path: attachment,
         name: "agenda.txt".into(),
         size: 10,
+        forwarded: None,
     });
 
     let id = s.core.create_draft(draft.clone()).await.unwrap();

@@ -154,7 +154,7 @@ pub use synced_contacts::{
 
 pub use mazemail_types::DraftId;
 /// Compose types that are part of this API.
-pub use mazemail_types::compose::{Draft, DraftAttachment, DraftOrigin};
+pub use mazemail_types::compose::{Draft, DraftAttachment, DraftOrigin, ForwardedPart};
 /// SMTP types that are part of this API.
 pub use smtp::{Mailer, SmtpError};
 
