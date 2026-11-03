@@ -199,9 +199,12 @@ actions!(
         ToggleTableView,
         /// Turn threads on or off: a thread tree, or one row per message (`cmd-alt-g`).
         ToggleThreads,
-        /// Show an HTML message as the sender designed it (original) or in reader mode
-        /// (`cmd-alt-o`).
+        /// Switch an HTML message between reader mode and the original (`v`).
         ToggleOriginalHtml,
+        /// Show an HTML message in reader mode (`cmd-alt-r`).
+        ShowReader,
+        /// Show an HTML message as the sender designed it (`cmd-alt-o`).
+        ShowOriginal,
         /// Sort the message list by date.
         SortByDate,
         /// Sort the message list by the time the server received the mail.

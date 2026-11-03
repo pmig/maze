@@ -641,7 +641,8 @@ receiving server recorded in the message (`Authentication-Results`), for any IMA
 account.
 
 HTML mail can be shown two ways, and the **Reader / Original** buttons in the message
-header (or `cmd-alt-o`) switch the message you're looking at:
+header switch the message you're looking at, and so do the keys: `cmd-alt-r` for Reader,
+`cmd-alt-o` for Original and `v` to switch between them (in the list and the message):
 
 - **Reader** shows the text of the message in your theme: fast, quiet, the same font
   and colors for every sender, and good for most mail. Layout tables, columns and
@@ -1147,7 +1148,7 @@ at once. These are bound today:
 | Toggle message pane                         | `F8`                                                 |
 | Toggle agent column                         | `cmd-?`                                              |
 | Table view / threads on or off              | `cmd-alt-t` / `cmd-alt-g`                            |
-| Reader / original HTML                      | `cmd-alt-o`                                          |
+| Reader / original HTML / switch              | `cmd-alt-r` / `cmd-alt-o` / `v`                      |
 | Sync all accounts now                       | `cmd-shift-t`, `F5` (or the title bar's sync button) |
 | Hide Maze / hide others / minimize          | `cmd-h` / `cmd-alt-h` / `cmd-m`                      |
 | Quit                                        | `cmd-q`                                              |

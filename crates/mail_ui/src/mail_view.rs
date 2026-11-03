@@ -28,9 +28,9 @@ use time::UtcOffset;
 use ui::assets::IconName;
 use ui::panes::{Item, ItemEvent, SerializedItem};
 
-use crate::actions::ToggleOriginalHtml;
+use crate::actions::{ShowOriginal, ShowReader, ToggleOriginalHtml};
 use crate::layout::{self, LayoutConfig, LayoutPrefs, MessagePlacement};
-use crate::message_view::{MessageView, ViewPlace};
+use crate::message_view::{BodyMode, MessageView, ViewPlace};
 use crate::source::{DataChanges, FolderKey, MailSource, ThreadScope};
 use crate::thread_list::{
     ItemId, ListMode, TABLE_LIST_WIDTH, ThreadList, ThreadListEvent, message_menu,
@@ -439,6 +439,14 @@ impl Render for MailView {
             .on_action(cx.listener(|this, _: &ToggleOriginalHtml, _, cx| {
                 this.message_view
                     .update(cx, |view, cx| view.toggle_mode(cx));
+            }))
+            .on_action(cx.listener(|this, _: &ShowReader, _, cx| {
+                this.message_view
+                    .update(cx, |view, cx| view.show_mode(BodyMode::Reader, cx));
+            }))
+            .on_action(cx.listener(|this, _: &ShowOriginal, _, cx| {
+                this.message_view
+                    .update(cx, |view, cx| view.show_mode(BodyMode::Original, cx));
             }))
             .child(body)
             .child(

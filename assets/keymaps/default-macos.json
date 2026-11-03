@@ -49,8 +49,10 @@
       // single-key and cmd-shift bindings.
       "cmd-alt-t": "view::ToggleTableView",
       "cmd-alt-g": "view::ToggleThreads",
-      // The shown message as the sender designed it, or in reader mode.
-      "cmd-alt-o": "view::ToggleOriginalHtml",
+      // The shown message in reader mode, or as the sender designed it (`v` switches
+      // between them in the list and the message).
+      "cmd-alt-r": "view::ShowReader",
+      "cmd-alt-o": "view::ShowOriginal",
       "cmd-r": "mail::Reply",
       "cmd-shift-r": "mail::ReplyAll",
       "cmd-l": "mail::Forward",
@@ -92,6 +94,7 @@
       "n": "mail::NextUnread",
       "p": "mail::PreviousUnread",
       "m": "mail::ToggleRead",
+      "v": "view::ToggleOriginalHtml",
       "s": "mail::ToggleStar",
       "a": "mail::Archive",
       // Thunderbird's key for marking junk; Maze also moves it to the Junk folder.

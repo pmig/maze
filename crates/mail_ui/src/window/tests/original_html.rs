@@ -69,18 +69,33 @@ fn the_pane_reads_and_a_double_clicked_tab_shows_the_original(cx: &mut TestAppCo
 }
 
 #[gpui::test]
-fn cmd_alt_o_and_the_buttons_switch_the_mode(cx: &mut TestAppContext) {
+fn the_mode_keys_and_the_buttons_switch_the_mode(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
     cx.run_until_parked();
     let tab = open_tab_by_double_click(&view, cx);
     let tab_view = tab.read_with(cx, |t, _| t.view().clone());
     let mode = |cx: &mut VisualTestContext| tab_view.read_with(cx, |v, cx| v.requested_mode(cx));
     assert_eq!(mode(cx), BodyMode::Original);
-    // The tab has the focus: the shortcut switches its message.
-    cx.simulate_keystrokes("cmd-alt-o");
+    // The tab has the focus: the shortcuts switch its message. `cmd-alt-r` and
+    // `cmd-alt-o` pick a mode, `v` switches.
+    cx.simulate_keystrokes("cmd-alt-r");
     assert_eq!(mode(cx), BodyMode::Reader);
+    cx.simulate_keystrokes("cmd-alt-r");
+    assert_eq!(
+        mode(cx),
+        BodyMode::Reader,
+        "picking the shown mode keeps it"
+    );
     cx.simulate_keystrokes("cmd-alt-o");
     assert_eq!(mode(cx), BodyMode::Original);
+    cx.simulate_keystrokes("v");
+    assert_eq!(mode(cx), BodyMode::Reader);
+    cx.simulate_keystrokes("v");
+    assert_eq!(mode(cx), BodyMode::Original);
+    // Only the other mode's button shows the key that switches to it.
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("mode-reader-key").is_some());
+    assert!(cx.debug_bounds("mode-original-key").is_none());
     // The header buttons.
     let reader = cx.debug_bounds("mode-reader").expect("a Reader button");
     cx.simulate_click(reader.center(), Modifiers::none());

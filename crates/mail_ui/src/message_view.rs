@@ -11,7 +11,8 @@
 //! [`html_view::OriginalView`]). The default depends on where the view is
 //! ([`BodyModes`], settings `reader.default_mode` and `reader.tab_mode`): the pane next
 //! to the list uses reader mode, a message tab the original. The Reader/Original
-//! buttons and `cmd-alt-o` ([`ToggleOriginalHtml`]) switch the shown message.
+//! buttons, `cmd-alt-r` ([`ShowReader`]), `cmd-alt-o` ([`ShowOriginal`]) and `v`
+//! ([`ToggleOriginalHtml`]) switch the shown message.
 //! Plain-text mail never uses the engine; a build without it stays in reader mode and
 //! says so.
 
@@ -39,10 +40,11 @@ use html_view::{DocumentOptions, Fetch, OriginalView, OriginalViewEvent, PageCol
 use mazemail_types::{Address, MessageId};
 use time::UtcOffset;
 use ui::assets::IconName;
-use ui::keymap::shortcut_label;
 use ui::theme::scaled;
 
-use crate::actions::{Archive, Forward, Reply, ReplyAll, ReportJunk, ToggleOriginalHtml};
+use crate::actions::{
+    Archive, Forward, Reply, ReplyAll, ReportJunk, ShowOriginal, ShowReader, ToggleOriginalHtml,
+};
 use crate::attachment_files;
 use crate::command_palette::binding_hint;
 use crate::format::{DateFormatter, format_size, format_thousands, initials};
@@ -315,10 +317,17 @@ impl MessageView {
         cx.notify();
     }
 
-    /// `cmd-alt-o`: switches between reader and original (HTML mail only).
+    /// `v`: switches between reader and original (HTML mail only).
     pub fn toggle_mode(&mut self, cx: &mut Context<'_, Self>) {
         if self.has_original() {
             let mode = self.requested_mode(cx).toggled();
+            self.set_mode(mode, cx);
+        }
+    }
+
+    /// `cmd-alt-r` / `cmd-alt-o`: shows the message in `mode` (HTML mail only).
+    pub fn show_mode(&mut self, mode: BodyMode, cx: &mut Context<'_, Self>) {
+        if self.has_original() {
             self.set_mode(mode, cx);
         }
     }
@@ -812,15 +821,30 @@ impl MessageView {
                         ),
                     )
                     .when(doc.original.is_some(), |row| {
-                        row.child(div().flex_1()).child(self.render_mode_toggle(cx))
+                        row.child(div().flex_1())
+                            .child(self.render_mode_toggle(window, cx))
                     }),
             )
     }
 
     /// The Reader/Original switch of an HTML message.
-    fn render_mode_toggle(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render_mode_toggle(&self, window: &Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let mode = self.requested_mode(cx);
+        let show_keys = button_shortcuts(cx);
+        let muted = cx.theme().muted_foreground;
+        // The button of the other mode shows the key that switches to it (`v`).
+        let switch =
+            binding_hint(&ToggleOriginalHtml, Some(&self.focus), window).filter(|_| show_keys);
         let button = |id: &'static str, label: &'static str, target: BodyMode| {
+            let action: &dyn Action = match target {
+                BodyMode::Reader => &ShowReader,
+                BodyMode::Original => &ShowOriginal,
+            };
+            let hint = binding_hint(action, Some(&self.focus), window);
+            let keys = hint
+                .as_ref()
+                .map(|k| format!(" ({})", Kbd::format(k)))
+                .unwrap_or_default();
             div().debug_selector(move || id.to_owned()).child(
                 Button::new(id)
                     .xsmall()
@@ -828,15 +852,20 @@ impl MessageView {
                     .label(label)
                     .selected(mode == target)
                     .tooltip(match target {
-                        BodyMode::Reader => format!(
-                            "Reader mode: simplified, in your theme ({})",
-                            shortcut_label("cmd-alt-o", cx)
-                        ),
-                        BodyMode::Original => format!(
-                            "Original: as the sender designed it ({})",
-                            shortcut_label("cmd-alt-o", cx)
-                        ),
+                        BodyMode::Reader => format!("Reader mode: simplified, in your theme{keys}"),
+                        BodyMode::Original => format!("Original: as the sender designed it{keys}"),
                     })
+                    .when_some(
+                        switch.clone().filter(|_| mode != target),
+                        |button, keystroke| {
+                            button.child(
+                                div()
+                                    .debug_selector(move || format!("{id}-key"))
+                                    .text_color(muted)
+                                    .child(Kbd::new(keystroke).appearance(false)),
+                            )
+                        },
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| this.set_mode(target, cx))),
             )
         };
@@ -1238,6 +1267,12 @@ impl Render for MessageView {
             .key_context(key_context)
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &ToggleOriginalHtml, _, cx| this.toggle_mode(cx)))
+            .on_action(cx.listener(|this, _: &ShowReader, _, cx| {
+                this.show_mode(BodyMode::Reader, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ShowOriginal, _, cx| {
+                this.show_mode(BodyMode::Original, cx);
+            }))
             // Clicking into the message gives it focus, so n/p/f/b keep working.
             .on_mouse_down(
                 MouseButton::Left,
