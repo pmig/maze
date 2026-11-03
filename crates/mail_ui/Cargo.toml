@@ -14,6 +14,7 @@ url = { workspace = true }
 gpui-kit = { workspace = true, features = ["tree-sitter"] }
 html_view = { workspace = true }
 mazemail_types = { workspace = true }
+nucleo-matcher = { workspace = true }
 settings = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

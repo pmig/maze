@@ -4,8 +4,8 @@ use std::ops::Bound;
 
 use tantivy::Term as TantivyTerm;
 use tantivy::query::{
-    AllQuery, BooleanQuery, BoostQuery, EmptyQuery, Occur, PhraseQuery, Query, RangeQuery,
-    TermQuery, TermSetQuery,
+    AllQuery, BooleanQuery, BoostQuery, EmptyQuery, FuzzyTermQuery, Occur, PhraseQuery, Query,
+    RangeQuery, TermQuery, TermSetQuery,
 };
 use tantivy::schema::{Field, IndexRecordOption};
 use tantivy::tokenizer::{Language as StemLanguage, TextAnalyzer};
@@ -13,7 +13,7 @@ use tantivy::tokenizer::{Language as StemLanguage, TextAnalyzer};
 use super::doc::id_to_u64;
 use super::schema::{Fields, neutral, stemmed};
 use super::searcher::Scope;
-use crate::plan::{IndexExpr, IndexTerm, TextScope};
+use crate::plan::{IndexExpr, IndexTerm, Matching, TextScope};
 use crate::query::Text;
 
 /// Which analyzer a field uses.
@@ -68,13 +68,47 @@ impl Analyzers {
 pub(crate) struct Compiler<'a> {
     fields: &'a Fields,
     analyzers: Analyzers,
+    matching: Matching,
 }
 
 impl<'a> Compiler<'a> {
-    pub(crate) fn new(fields: &'a Fields, analyzers: &Analyzers) -> Self {
+    pub(crate) fn new(fields: &'a Fields, analyzers: &Analyzers, matching: &Matching) -> Self {
         Self {
             fields,
             analyzers: analyzers.clone(),
+            matching: matching.clone(),
+        }
+    }
+
+    /// A single-token word beyond its exact form, per [`Matching`]: the typed last word
+    /// as a prefix, else (with `fuzzy`) a long enough word with typos. Only the neutral
+    /// fields: a stem of half a word or of a typo means nothing.
+    fn loose(&self, word: &str, token: &str, target: &Target) -> Option<Box<dyn Query>> {
+        if target.analysis != Analysis::Neutral {
+            return None;
+        }
+        let term = TantivyTerm::from_field_text(target.field, token);
+        let chars = token.chars().count();
+        let mut loose: Vec<(Occur, Box<dyn Query>)> = Vec::new();
+        if self.matching.prefix.as_deref() == Some(word) && chars >= Matching::MIN_PREFIX_CHARS {
+            let prefix = FuzzyTermQuery::new_prefix(term.clone(), 0, true);
+            loose.push((Occur::Should, Box::new(prefix)));
+        }
+        if self.matching.fuzzy && chars >= Matching::MIN_FUZZY_CHARS {
+            let distance = if chars >= Matching::TWO_EDITS_CHARS {
+                2
+            } else {
+                1
+            };
+            loose.push((
+                Occur::Should,
+                Box::new(FuzzyTermQuery::new(term, distance, true)),
+            ));
+        }
+        match loose.len() {
+            0 => None,
+            1 => loose.pop().map(|(_, query)| query),
+            _ => Some(Box::new(BooleanQuery::new(loose))),
         }
     }
 
@@ -201,7 +235,22 @@ impl<'a> Compiler<'a> {
                 .iter()
                 .map(|token| TantivyTerm::from_field_text(target.field, token))
                 .collect();
-            let query: Box<dyn Query> = if terms.len() == 1 {
+            let loose = match (text, tokens.as_slice()) {
+                (Text::Word(word), [token]) => self.loose(word, token, target),
+                _ => None,
+            };
+            let query: Box<dyn Query> = if let Some(loose) = loose {
+                // The exact word scores; the loose match (constant score) widens it.
+                let term = terms
+                    .pop()
+                    .unwrap_or_else(|| TantivyTerm::from_field_text(target.field, ""));
+                let exact: Box<dyn Query> =
+                    Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs));
+                Box::new(BooleanQuery::new(vec![
+                    (Occur::Should, exact),
+                    (Occur::Should, loose),
+                ]))
+            } else if terms.len() == 1 {
                 let term = terms
                     .pop()
                     .unwrap_or_else(|| TantivyTerm::from_field_text(target.field, ""));

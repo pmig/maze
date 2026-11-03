@@ -723,6 +723,13 @@ Both understand free text plus Gmail-style operators, for example
 `from:anna has:attachment after:2026-09-01`, `is:unread tag:todo`,
 `subject:"offsite" -from:noreply`. The same queries work with `mazemail search`.
 
+Words match as whole words, with case, accents and German and English endings folded
+(`muller` finds Müller, `invoices` finds invoice). While you type, the last word also
+matches the words it starts (`invo` finds invoice), and when nothing matches exactly,
+search tries again with a typo or two tolerated (`invocie` finds invoice; one letter
+for words of four to seven letters, two for longer ones). `mazemail search` and agents
+search exactly.
+
 ### Syncing
 
 Maze syncs your accounts in the background. To sync all of them right away, click the

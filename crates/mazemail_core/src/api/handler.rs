@@ -414,6 +414,7 @@ impl CoreCommandHandler {
             facets: false,
             snippets: true,
             utc_offset: None,
+            interactive: false,
         };
         let mut found: Vec<(MessageDetail, Option<Snippet>)> = Vec::new();
         for _ in 0..MAX_SEARCH_PAGES {

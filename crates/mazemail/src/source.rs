@@ -309,6 +309,7 @@ impl CoreMailSource {
                 SearchSort::NewestFirst
             },
             snippets: false,
+            interactive: true,
             ..SearchOpts::default()
         };
         let runner = core.clone();

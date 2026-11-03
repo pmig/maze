@@ -304,3 +304,38 @@ async fn the_quick_filter_adds_body_matches_from_the_index() {
             .unwrap();
     assert!(elsewhere.is_empty(), "bob's message is in another folder");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn typed_searches_finish_the_last_word_and_tolerate_typos() {
+    let c = corpus().await;
+    let interactive = SearchOpts {
+        interactive: true,
+        ..SearchOpts::default()
+    };
+    let search = |query: &'static str, opts: SearchOpts| {
+        let core = c.t.core.clone();
+        async move { core.search(query, opts).await.unwrap() }
+    };
+
+    // The word being typed matches as a prefix; exact searches don't.
+    let typed = search("invo", interactive.clone()).await;
+    assert_eq!(typed.total_messages, 2);
+    assert!(!typed.approximate);
+    assert_eq!(
+        search("invo", SearchOpts::default()).await.total_messages,
+        0
+    );
+
+    // A typo: nothing exact, so the search tolerates it and says so.
+    let typo = search("invocie", interactive.clone()).await;
+    assert_eq!(typo.total_messages, 2);
+    assert!(typo.approximate);
+    let exact = search("invocie", SearchOpts::default()).await;
+    assert_eq!(exact.total_messages, 0, "the CLI and agents search exactly");
+    assert!(!exact.approximate);
+
+    // Exact matches win: no typo tolerance when something matches.
+    let budget = search("budget", interactive).await;
+    assert_eq!(threads(&budget.threads), vec![c.anna.1]);
+    assert!(!budget.approximate);
+}

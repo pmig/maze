@@ -218,7 +218,8 @@ impl IndexSearcher {
     }
 
     fn compile(&self, part: &TantivyPart, scope: &Scope) -> Box<dyn Query> {
-        Compiler::new(&self.fields, &self.analyzers).compile_scoped(part.expr(), scope)
+        Compiler::new(&self.fields, &self.analyzers, part.matching())
+            .compile_scoped(part.expr(), scope)
     }
 
     /// Counts matching messages.

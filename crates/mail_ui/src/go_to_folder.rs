@@ -6,7 +6,7 @@
 //! other folder of every account, each as its path with the account first
 //! ("Work / Archives / 2025"). With an empty filter the folders opened from here last
 //! come first (this session). Typing ranks the paths like Quick Move
-//! ([`rank_paths`]): every term must occur, as a substring or as a subsequence.
+//! ([`rank_paths`], fzf-style through nucleo): every term must occur, its letters in order.
 //!
 //! Like Quick Move it renders inside the main window's element tree; the window opens
 //! the folder when the picker reports [`GoToFolderEvent::Confirmed`].

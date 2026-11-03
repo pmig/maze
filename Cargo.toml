@@ -108,6 +108,8 @@ html5ever = "0.40.1"
 linkify = "0.11.0"
 mail-parser = { version = "1.0.1", features = ["full_encoding"] }
 mail-builder = { version = "2.0", default-features = false }
+# fzf-style fuzzy matching for the folder pickers (Helix's matcher).
+nucleo-matcher = "0.3"
 # HTML quotes of replies become Markdown (PLAN §4.10).
 htmd = "0.5.6"
 pulldown-cmark = { version = "0.13.6", default-features = false, features = ["html"] }

@@ -110,6 +110,95 @@ fn stemming_matches_inflections_per_language() {
     assert_eq!(ids(&index, "\"invoices\""), Vec::<i64>::new());
 }
 
+fn ids_matching(index: &SearchIndex, input: &str, matching: crate::Matching) -> Vec<i64> {
+    let options = SearchOptions {
+        limit: 1000,
+        ..SearchOptions::default()
+    };
+    let mut ids: Vec<i64> = index
+        .searcher()
+        .search(&part(input).with_matching(matching), &options)
+        .unwrap()
+        .into_iter()
+        .map(|hit| hit.message_id.0)
+        .collect();
+    ids.sort_unstable();
+    ids
+}
+
+#[test]
+fn the_word_being_typed_matches_as_a_prefix() {
+    let index = build(&[
+        with_body(1, "Please find the invoice attached", Some(Language::En)),
+        with_body(2, "Anbei Ihre Rechnung", Some(Language::De)),
+        with_body(3, "Invoicing starts Monday", Some(Language::En)),
+        with_body(4, "The inventory is done", None),
+    ]);
+    let typing = crate::Matching::typing;
+    assert_eq!(ids(&index, "invo"), Vec::<i64>::new(), "whole words only");
+    assert_eq!(ids_matching(&index, "invo", typing("invo")), [1, 3]);
+    assert_eq!(ids_matching(&index, "in", typing("in")), [1, 3, 4]);
+    // Earlier words stay whole words; only the last one is unfinished.
+    assert_eq!(
+        ids_matching(&index, "invo attac", typing("invo attac")),
+        Vec::<i64>::new()
+    );
+    assert_eq!(
+        ids_matching(&index, "invoice attac", typing("invoice attac")),
+        [1]
+    );
+    // A space after it: the word is complete.
+    assert_eq!(
+        ids_matching(&index, "invo", typing("invo ")),
+        Vec::<i64>::new()
+    );
+    // Accents fold like everywhere else.
+    assert_eq!(ids_matching(&index, "rechn", typing("rechn")), [2]);
+}
+
+#[test]
+fn fuzzy_matching_tolerates_typos_in_longer_words() {
+    let index = build(&[
+        with_body(1, "Please find the invoice attached", Some(Language::En)),
+        with_body(2, "The quarterly numbers", None),
+        with_body(3, "See you at the cat cafe", None),
+    ]);
+    let fuzzy = crate::Matching::default().with_fuzzy();
+    assert_eq!(ids(&index, "invocie"), Vec::<i64>::new());
+    assert_eq!(
+        ids_matching(&index, "invocie", fuzzy.clone()),
+        [1],
+        "a swap"
+    );
+    assert_eq!(
+        ids_matching(&index, "invoce", fuzzy.clone()),
+        [1],
+        "a missing letter"
+    );
+    assert_eq!(ids_matching(&index, "quartrely", fuzzy.clone()), [2]);
+    assert_eq!(
+        ids_matching(&index, "quatrerly", fuzzy.clone()),
+        [2],
+        "two edits, long word"
+    );
+    // Short words stay exact: `car` doesn't find "cat".
+    assert_eq!(ids_matching(&index, "car", fuzzy), Vec::<i64>::new());
+}
+
+#[test]
+fn last_typed_word_skips_operators_quotes_and_finished_words() {
+    use crate::last_typed_word as last;
+    assert_eq!(last("from:anna invo").as_deref(), Some("invo"));
+    assert_eq!(last("invo "), None);
+    assert_eq!(last("from:anna"), None);
+    assert_eq!(last("-spam"), None);
+    assert_eq!(last("\"q3 off"), None);
+    assert_eq!(last("\"q3 offsite\""), None);
+    assert_eq!(last("a OR"), None);
+    assert_eq!(last("x"), None, "too short");
+    assert_eq!(last(""), None);
+}
+
 #[test]
 fn exact_matches_rank_above_stemmed_ones() {
     let index = build(&[

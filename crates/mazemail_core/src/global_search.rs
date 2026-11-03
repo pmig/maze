@@ -13,8 +13,8 @@ use mazemail_types::{FolderId, MessageId, TagId, ThreadId};
 use search::plan::IndexExpr;
 use search::query::{ParseWarning, parse};
 use search::{
-    ExecuteOptions, FacetOptions, Highlighter, IndexSearcher, PlanContext, QueryPlan, Scope,
-    SearchIndex, SearchOptions, Snippet, TantivyPart,
+    ExecuteOptions, FacetOptions, Highlighter, IndexSearcher, Matching, PlanContext, QueryPlan,
+    Scope, SearchIndex, SearchOptions, Snippet, TantivyPart,
 };
 use store::{ListScope, MessageScope, Queries, Reader, Store};
 use time::{OffsetDateTime, UtcOffset};
@@ -57,6 +57,11 @@ pub struct SearchOpts {
     /// The time zone dates in the query refer to; `None`: the core's
     /// [`CoreConfig::utc_offset`](crate::CoreConfig::utc_offset).
     pub utc_offset: Option<UtcOffset>,
+    /// Typed by a person into a search box: the last word may be unfinished and also
+    /// matches the words that start with it, and when nothing matches exactly the
+    /// search tries again with typos tolerated ([`SearchResults::approximate`]). The
+    /// CLI and agents search exactly.
+    pub interactive: bool,
 }
 
 impl Default for SearchOpts {
@@ -69,6 +74,7 @@ impl Default for SearchOpts {
             facets: false,
             snippets: true,
             utc_offset: None,
+            interactive: false,
         }
     }
 }
@@ -150,6 +156,9 @@ pub struct SearchResults {
     pub facets: Option<SearchFacets>,
     /// Parser warnings to show under the search box.
     pub warnings: Vec<ParseWarning>,
+    /// Nothing matched exactly, so these are matches with typos tolerated
+    /// (`invocie` finding "invoice").
+    pub approximate: bool,
 }
 
 /// Runs a search. Blocking: call it on a blocking thread.
@@ -165,11 +174,27 @@ pub(crate) fn run(
         OffsetDateTime::now_utc(),
         opts.utc_offset.unwrap_or(utc_offset),
     );
-    let plan = QueryPlan::new(&parsed.query, &context).map_err(search::Error::Plan)?;
+    let matching = if opts.interactive {
+        Matching::typing(query)
+    } else {
+        Matching::default()
+    };
+    let mut plan = QueryPlan::new(&parsed.query, &context)
+        .map_err(search::Error::Plan)?
+        .with_matching(&matching);
     let searcher = index.searcher();
     let reader = store.reader()?;
     let metadata = StoreMetadata::new(&reader)?;
-    let executed = searcher.execute(&plan, &metadata, &ExecuteOptions::default())?;
+    let mut executed = searcher.execute(&plan, &metadata, &ExecuteOptions::default())?;
+    // Nothing exact: try again with typos tolerated.
+    let mut approximate = false;
+    if opts.interactive && executed.hits.is_empty() && plan.uses_index() {
+        let fuzzy = plan.with_matching(&matching.with_fuzzy());
+        let again = searcher.execute(&fuzzy, &metadata, &ExecuteOptions::default())?;
+        approximate = !again.hits.is_empty();
+        plan = fuzzy;
+        executed = again;
+    }
 
     let mut hits = executed.hits;
     if let Some(scope) = opts.scope {
@@ -229,6 +254,7 @@ pub(crate) fn run(
         truncated: executed.truncated,
         facets,
         warnings: parsed.warnings,
+        approximate,
     })
 }
 
@@ -408,7 +434,7 @@ pub(crate) fn body_matching_threads(
         return Ok(BTreeSet::new());
     }
     let hits = index.searcher().search(
-        &TantivyPart::text(text),
+        &TantivyPart::text(text).with_matching(Matching::typing(text)),
         &SearchOptions {
             limit: search::RESULT_WINDOW,
             scope: Scope {

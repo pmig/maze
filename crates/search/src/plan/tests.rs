@@ -191,10 +191,7 @@ fn dates_resolve_against_the_context() {
     );
 
     let p = plan("newer_than:1y larger:1k smaller:2M");
-    let Some(TantivyPart {
-        expr: IndexExpr::And(items),
-    }) = p.text
-    else {
+    let Some(IndexExpr::And(items)) = p.text.as_ref().map(TantivyPart::expr) else {
         panic!("expected a conjunction")
     };
     assert_eq!(

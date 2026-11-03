@@ -169,16 +169,85 @@ pub enum IndexExpr {
     Term(IndexTerm),
 }
 
+/// How free-text words match beyond whole words (which always match, with the
+/// analyzers' case and accent folding and stemming).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Matching {
+    /// This word, the last one of a query being typed, also matches the words that
+    /// start with it (`invo` finds "invoice").
+    pub prefix: Option<String>,
+    /// Words of [`Matching::MIN_FUZZY_CHARS`] letters or more also match words with one
+    /// letter wrong, missing, extra or swapped (two from
+    /// [`Matching::TWO_EDITS_CHARS`] letters): `invocie` finds "invoice".
+    pub fuzzy: bool,
+}
+
+impl Matching {
+    /// The shortest word that matches as a prefix (one letter would match half the
+    /// dictionary).
+    pub const MIN_PREFIX_CHARS: usize = 2;
+    /// The shortest word that matches with a typo.
+    pub const MIN_FUZZY_CHARS: usize = 4;
+    /// From this length a word may be two letters off.
+    pub const TWO_EDITS_CHARS: usize = 8;
+
+    /// For a query typed into a search box: its last word may be unfinished (see
+    /// [`last_typed_word`]).
+    pub fn typing(query: &str) -> Self {
+        Self {
+            prefix: last_typed_word(query),
+            fuzzy: false,
+        }
+    }
+
+    /// The same, with typos tolerated.
+    #[must_use]
+    pub fn with_fuzzy(mut self) -> Self {
+        self.fuzzy = true;
+        self
+    }
+}
+
+/// The last word of `query` while it's being typed: a bare word at the very end (no
+/// space after it), not quoted, not an operator (`from:`, `-word`, `OR`), at least
+/// [`Matching::MIN_PREFIX_CHARS`] letters long.
+pub fn last_typed_word(query: &str) -> Option<String> {
+    if query.ends_with(char::is_whitespace) || query.matches('"').count() % 2 == 1 {
+        return None;
+    }
+    let word = query.split_whitespace().next_back()?;
+    let bare = !word.contains([':', '"', '(', ')'])
+        && !word.starts_with('-')
+        && !matches!(word, "OR" | "AND" | "NOT");
+    (bare && word.chars().count() >= Matching::MIN_PREFIX_CHARS).then(|| word.to_owned())
+}
+
 /// The part of a plan that runs against the Tantivy index.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TantivyPart {
     expr: IndexExpr,
+    matching: Matching,
 }
 
 impl TantivyPart {
     /// Wraps an expression, for callers that build index queries directly (Quick Filter).
     pub fn new(expr: IndexExpr) -> Self {
-        Self { expr }
+        Self {
+            expr,
+            matching: Matching::default(),
+        }
+    }
+
+    /// The same part, with words matching per `matching`.
+    #[must_use]
+    pub fn with_matching(mut self, matching: Matching) -> Self {
+        self.matching = matching;
+        self
+    }
+
+    /// How its words match.
+    pub fn matching(&self) -> &Matching {
+        &self.matching
     }
 
     /// Free text searched everywhere, as typed into a search box: whitespace separates
@@ -305,6 +374,18 @@ pub struct QueryPlan {
 }
 
 impl QueryPlan {
+    /// The same plan, with every index part's words matching per `matching`.
+    #[must_use]
+    pub fn with_matching(mut self, matching: &Matching) -> Self {
+        if let Some(text) = self.text.take() {
+            self.text = Some(text.with_matching(matching.clone()));
+        }
+        for clause in &mut self.mixed {
+            clause.index = clause.index.clone().with_matching(matching.clone());
+        }
+        self
+    }
+
     /// Plans `query`, resolving dates and ages against `context`.
     pub fn new(query: &Query, context: &PlanContext) -> Result<Self, PlanError> {
         let nnf = to_nnf(query, false, context)?;

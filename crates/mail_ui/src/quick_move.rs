@@ -9,8 +9,8 @@
 //! with the account's name in front (`Home / Archives`). With an empty filter the
 //! folders mail was moved to last come first (per account, remembered in
 //! `ui_state.json`), then the rest in folder pane order. Typing ranks the folders by
-//! [`rank`]: every whitespace-separated term must occur in the path, as a substring or,
-//! failing that, as a subsequence (`arc25` finds `Archives / 2025`, `home arc` finds
+//! [`rank`], fzf-style: every whitespace-separated term must occur in the path with its
+//! letters in order (`arc25` finds `Archives / 2025`, `home arc` finds
 //! `Home / Archives`).
 //!
 //! Like the command palette it renders inside the main window's element tree; the
@@ -26,6 +26,8 @@ use gpui_kit::component::{
     command::{Command, CommandItem, CommandState},
 };
 use mazemail_types::{AccountId, FolderId, FolderRole};
+use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
+use nucleo_matcher::{Config, Matcher, Utf32Str};
 
 use ui::theme::scaled;
 
@@ -118,33 +120,11 @@ pub fn source_folder(scope: &ThreadScope, account: &AccountEntry) -> Option<Fold
     }
 }
 
-/// How well `term` (lowercase) matches a folder: 0 if its name starts with it, 1 if a
-/// word of the path does, 2 for a substring anywhere, 3 for a subsequence; `None` if it
-/// doesn't match.
-fn term_score(path: &str, name: &str, term: &str) -> Option<u32> {
-    if name.starts_with(term) {
-        return Some(0);
-    }
-    if let Some(at) = path.find(term) {
-        let word_start = path.match_indices(term).any(|(ix, _)| {
-            path[..ix]
-                .chars()
-                .next_back()
-                .is_none_or(|c| !c.is_alphanumeric())
-        });
-        return Some(if word_start || at == 0 { 1 } else { 2 });
-    }
-    let mut rest = path.chars();
-    term.chars()
-        .all(|wanted| rest.any(|c| c == wanted))
-        .then_some(3)
-}
-
 /// The order the picker shows `choices` in for `query`, as indexes into `choices`.
 ///
 /// An empty query lists the `recent` targets (newest first) before the rest, in their
 /// given order. Otherwise only folders matching every term are listed, best first (see
-/// [`term_score`]), ties broken by recency and then by the given order.
+/// [`rank_paths`]), ties broken by recency and then by the given order.
 pub fn rank(choices: &[FolderChoice], query: &str, recent: &[FolderId]) -> Vec<usize> {
     rank_paths(
         choices.iter().map(|choice| choice.path.as_ref()),
@@ -160,23 +140,29 @@ pub fn rank(choices: &[FolderChoice], query: &str, recent: &[FolderId]) -> Vec<u
 
 /// [`rank`] over folder paths ("Archives / 2025"): the indexes of the paths that match
 /// `query`, best first. `recency(ix)` is the place of path `ix` among the recent
-/// targets (`usize::MAX` if it isn't one); it breaks ties.
+/// targets (`usize::MAX` if it isn't one); it breaks ties, then the given order.
+///
+/// Matching is fzf's, through nucleo (Helix's matcher): every whitespace-separated term
+/// must occur, its letters in order, case- and accent-insensitive; consecutive letters,
+/// word starts and the start of the path score higher.
 pub fn rank_paths<'a>(
     paths: impl Iterator<Item = &'a str>,
     query: &str,
     recency: impl Fn(usize) -> usize,
 ) -> Vec<usize> {
-    let terms: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
-    let mut ranked: Vec<(u32, usize, usize)> = paths
+    let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
+    let pattern = Pattern::new(
+        query,
+        CaseMatching::Ignore,
+        Normalization::Smart,
+        AtomKind::Fuzzy,
+    );
+    let mut buffer = Vec::new();
+    let mut ranked: Vec<(std::cmp::Reverse<u32>, usize, usize)> = paths
         .enumerate()
         .filter_map(|(ix, path)| {
-            let path = path.to_lowercase();
-            let name = path.rsplit(" / ").next().unwrap_or(&path);
-            let mut score = 0;
-            for term in &terms {
-                score += term_score(&path, name, term)?;
-            }
-            Some((score, recency(ix), ix))
+            let score = pattern.score(Utf32Str::new(path, &mut buffer), &mut matcher)?;
+            Some((std::cmp::Reverse(score), recency(ix), ix))
         })
         .collect();
     ranked.sort_unstable();
@@ -430,9 +416,12 @@ mod tests {
             ["Home / Archives"]
         );
         // The own account's archive ranks before the other account's.
-        assert_eq!(
-            paths(&choices, &rank(&choices, "archives", &[]))[..2],
-            ["Archives", "Home / Archives"]
+        let archives = paths(&choices, &rank(&choices, "archives", &[]));
+        assert_eq!(archives[0], "Archives");
+        let at = |path: &str| archives.iter().position(|p| p == path).unwrap();
+        assert!(
+            at("Archives / 2026") < at("Home / Archives"),
+            "{archives:?}"
         );
     }
 
@@ -511,18 +500,10 @@ mod tests {
             ["Archives", "Archives / 2025", "Archives / 2026"]
         );
         assert_eq!(ranked("202", &[]), ["Archives / 2025", "Archives / 2026"]);
-        // A substring beats a subsequence.
-        assert_eq!(
-            ranked("rs", &[]),
-            [
-                "Customers",
-                "Customers / Acme",
-                "Archives",
-                "Archives / 2025",
-                "Archives / 2026",
-                "Receipts"
-            ]
-        );
+        // Letters at word starts count most: `rs` is R(eceipt)s before the substrings.
+        let rs = ranked("rs", &[]);
+        assert_eq!(rs[0], "Receipts");
+        assert_eq!(rs.len(), 6);
         // Every term must match.
         assert_eq!(ranked("arch 26", &[]), ["Archives / 2026"]);
         // Fuzzy: a subsequence of the path.

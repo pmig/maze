@@ -31,4 +31,4 @@ pub use index::{
     IndexDoc, IndexOptions, IndexSearcher, Indexer, Language, MetadataSource, RESULT_WINDOW, Scope,
     SearchIndex, SearchOptions, Snippet, SortOrder, ThreadHit,
 };
-pub use plan::{MetadataFilter, PlanContext, QueryPlan, TantivyPart};
+pub use plan::{Matching, MetadataFilter, PlanContext, QueryPlan, TantivyPart, last_typed_word};
