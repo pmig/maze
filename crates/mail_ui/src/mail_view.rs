@@ -18,7 +18,8 @@ use gpui::{
     Styled as _, Subscription, Window, canvas, div, px, relative,
 };
 use gpui_kit::component::{
-    ActiveTheme as _, h_flex,
+    ActiveTheme as _, WindowExt as _, h_flex,
+    notification::Notification,
     resizable::{HandleEdge, resize_handle},
     v_flex,
 };
@@ -315,10 +316,16 @@ impl MailView {
         &mut self,
         _: &Entity<ThreadList>,
         event: &ThreadListEvent,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         match event {
+            ThreadListEvent::Failed(message) => {
+                window.push_notification(
+                    Notification::error(message.clone()).title(mazemail_types::PRODUCT_NAME),
+                    cx,
+                );
+            }
             ThreadListEvent::Selected(_) => {
                 self.show_selected(cx);
                 cx.emit(MailViewEvent::SelectionChanged);

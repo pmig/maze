@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use mazemail_types::{FolderId, MessageId, TagId, ThreadId};
+use mazemail_types::{FolderId, FolderRole, MessageId, TagId, ThreadId};
 use search::plan::IndexExpr;
 use search::query::{ParseWarning, parse};
 use search::{
@@ -179,11 +179,17 @@ pub(crate) fn run(
     } else {
         Matching::default()
     };
-    let mut plan = QueryPlan::new(&parsed.query, &context)
+    let reader = store.reader()?;
+    // Deleted and junk mail stays out, unless the query or the scope asks for it.
+    let query_ast = if searches_trash_or_junk(&reader, opts.scope)? {
+        parsed.query.clone()
+    } else {
+        parsed.query.clone().without_trash_and_junk()
+    };
+    let mut plan = QueryPlan::new(&query_ast, &context)
         .map_err(search::Error::Plan)?
         .with_matching(&matching);
     let searcher = index.searcher();
-    let reader = store.reader()?;
     let metadata = StoreMetadata::new(&reader)?;
     let mut executed = searcher.execute(&plan, &metadata, &ExecuteOptions::default())?;
     // Nothing exact: try again with typos tolerated.
@@ -255,6 +261,20 @@ pub(crate) fn run(
         facets,
         warnings: parsed.warnings,
         approximate,
+    })
+}
+
+/// Whether a search in `scope` is a search of a Trash or Junk folder (or of all of
+/// them), where their mail is what's wanted.
+fn searches_trash_or_junk(reader: &Reader, scope: Option<ListScope>) -> Result<bool> {
+    let trash_or_junk =
+        |role: Option<FolderRole>| matches!(role, Some(FolderRole::Trash | FolderRole::Junk));
+    Ok(match scope {
+        Some(ListScope::Unified(role)) => trash_or_junk(Some(role)),
+        Some(ListScope::Folder(folder)) => {
+            trash_or_junk(reader.folder(folder)?.and_then(|f| f.role))
+        }
+        Some(ListScope::Account(_)) | None => false,
     })
 }
 

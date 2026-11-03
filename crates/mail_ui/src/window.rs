@@ -2810,6 +2810,9 @@ mod tests {
             Some(2),
             "the message view says how many are selected"
         );
+        // …and which keys act on them, drawn as keys.
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(cx.debug_bounds("selection-keys").is_some());
         // A plain arrow collapses; cmd-a selects everything.
         cx.simulate_keystrokes("down");
         assert_eq!(items(cx).len(), 1);

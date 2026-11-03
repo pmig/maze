@@ -49,6 +49,31 @@ impl Query {
         Self::Term(term)
     }
 
+    /// Whether the query names a folder with `role` (`in:trash`, `-in:spam`, …).
+    pub fn mentions_role(&self, role: FolderRole) -> bool {
+        match self {
+            Self::And(items) | Self::Or(items) => items.iter().any(|q| q.mentions_role(role)),
+            Self::Not(inner) => inner.mentions_role(role),
+            Self::Term(Term::In(Mailbox::Role(found))) => *found == role,
+            Self::Term(_) => false,
+        }
+    }
+
+    /// The query without mail that is only in Trash or Junk, unless it names one of
+    /// them itself (Gmail's default: deleted and junk mail stays out of searches).
+    #[must_use]
+    pub fn without_trash_and_junk(self) -> Self {
+        let mut items = vec![self];
+        for role in [FolderRole::Trash, FolderRole::Junk] {
+            if !items[0].mentions_role(role) {
+                items.push(Self::Not(Box::new(Self::Term(Term::In(Mailbox::Role(
+                    role,
+                ))))));
+            }
+        }
+        Self::and(items)
+    }
+
     /// Returns the canonical shape of this query: nested `And`/`Or` of the same kind are
     /// flattened, single-item groups are unwrapped, empty `And`s inside an `And` are
     /// dropped, and an `Or` containing a match-everything branch becomes match-everything.

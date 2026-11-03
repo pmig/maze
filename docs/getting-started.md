@@ -730,6 +730,10 @@ search tries again with a typo or two tolerated (`invocie` finds invoice; one le
 for words of four to seven letters, two for longer ones). `mazemail search` and agents
 search exactly.
 
+Like Gmail, search leaves out mail that is only in Trash or Junk, so what you delete
+from the results is gone from them. Add `in:trash` or `in:spam` to the query, or search
+in the Trash or Junk folder, to find it there.
+
 ### Syncing
 
 Maze syncs your accounts in the background. To sync all of them right away, click the
@@ -1138,8 +1142,9 @@ With Ctrl as the main modifier, shortcuts that already use Ctrl next to `cmd` (s
 with `cmd-ctrl-<arrow>`) use Ctrl and Super. Tooltips and hints in Maze show the keys
 you chose.
 
-The buttons above a message (Reply, All, Fwd, Archive, Junk) show their shortcut next
-to the label. To hide them, set `"keymap": { "show_on_buttons": false }`; this applies
+Shortcuts in Maze are drawn as keyboard keys. The buttons above a message (Reply,
+All, Fwd, Archive, Junk) show theirs next to the label, and with several messages
+selected the message pane lists the keys that act on all of them. To hide them, set `"keymap": { "show_on_buttons": false }`; this applies
 at once. These are bound today:
 
 | Action                                      | Key                                                  |

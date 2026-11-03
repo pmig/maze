@@ -248,3 +248,49 @@ mod tests {
         assert_eq!(format_count(1_500_000).as_ref(), "1.5M");
     }
 }
+
+/// A keyboard shortcut drawn as keyboard keys, like `<kbd>` on Maze's website: a
+/// bordered cap with a thicker bottom edge, in the monospace font. Every shortcut shown
+/// in Maze looks like this (button hints, the multi-selection help, the palette).
+#[derive(Debug, IntoElement)]
+pub struct KeyCap {
+    label: SharedString,
+}
+
+impl KeyCap {
+    /// A cap for `keystroke`, written for the platform (`⌘R`, `Ctrl+R`).
+    pub fn new(keystroke: &gpui::Keystroke) -> Self {
+        Self {
+            label: gpui_kit::component::kbd::Kbd::format(keystroke).into(),
+        }
+    }
+
+    /// A cap with this text.
+    pub fn label(label: impl Into<SharedString>) -> Self {
+        Self {
+            label: label.into(),
+        }
+    }
+}
+
+impl RenderOnce for KeyCap {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = cx.theme();
+        div()
+            .flex_none()
+            .min_w(gpui::rems(1.25))
+            .px(gpui::rems(0.3))
+            .border_1()
+            .border_b_2()
+            .border_color(theme.border)
+            .rounded(gpui::px(4.))
+            .bg(theme.secondary)
+            .text_color(theme.foreground)
+            .font_family(theme.mono_font_family.clone())
+            .text_xs()
+            .line_height(gpui::relative(1.5))
+            .text_center()
+            .whitespace_nowrap()
+            .child(self.label)
+    }
+}

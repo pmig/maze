@@ -568,6 +568,8 @@ pub enum ThreadListEvent {
     ColumnsChanged,
     /// A row was double-clicked: open its message in a tab of its own.
     Open(ItemId),
+    /// Archiving, reporting junk or deleting failed: tell the user why.
+    Failed(SharedString),
 }
 
 /// What "expand all" or individual expansions keep.
@@ -1501,6 +1503,9 @@ impl ThreadList {
         );
         if let Err(error) = result {
             tracing::warn!(%error, "archiving failed");
+            cx.emit(ThreadListEvent::Failed(
+                format!("The mail couldn't be archived: {error}").into(),
+            ));
         }
     }
 
@@ -1521,6 +1526,9 @@ impl ThreadList {
         );
         if let Err(error) = result {
             tracing::warn!(%error, "reporting junk failed");
+            cx.emit(ThreadListEvent::Failed(
+                format!("The mail couldn't be reported as junk: {error}").into(),
+            ));
         }
     }
 
@@ -1542,6 +1550,9 @@ impl ThreadList {
         );
         if let Err(error) = result {
             tracing::warn!(%error, "deleting failed");
+            cx.emit(ThreadListEvent::Failed(
+                format!("The mail couldn't be deleted: {error}").into(),
+            ));
         }
     }
 

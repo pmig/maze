@@ -40,10 +40,12 @@ use html_view::{DocumentOptions, Fetch, OriginalView, OriginalViewEvent, PageCol
 use mazemail_types::{Address, MessageId};
 use time::UtcOffset;
 use ui::assets::IconName;
+use ui::components::KeyCap;
 use ui::theme::scaled;
 
 use crate::actions::{
-    Archive, Forward, Reply, ReplyAll, ReportJunk, ShowOriginal, ShowReader, ToggleOriginalHtml,
+    Archive, Delete, Forward, MarkRead, MoveToFolder, Reply, ReplyAll, ReportJunk, ShowOriginal,
+    ShowReader, ToggleOriginalHtml, ToggleRead, ToggleStar,
 };
 use crate::attachment_files;
 use crate::command_palette::binding_hint;
@@ -722,8 +724,7 @@ impl MessageView {
                     button.child(
                         div()
                             .debug_selector(move || format!("{id}-key"))
-                            .text_color(theme.muted_foreground)
-                            .child(Kbd::new(keystroke).appearance(false)),
+                            .child(KeyCap::new(&keystroke)),
                     )
                 })
         };
@@ -831,7 +832,6 @@ impl MessageView {
     fn render_mode_toggle(&self, window: &Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let mode = self.requested_mode(cx);
         let show_keys = button_shortcuts(cx);
-        let muted = cx.theme().muted_foreground;
         // The button of the other mode shows the key that switches to it (`v`).
         let switch =
             binding_hint(&ToggleOriginalHtml, Some(&self.focus), window).filter(|_| show_keys);
@@ -861,8 +861,7 @@ impl MessageView {
                             button.child(
                                 div()
                                     .debug_selector(move || format!("{id}-key"))
-                                    .text_color(muted)
-                                    .child(Kbd::new(keystroke).appearance(false)),
+                                    .child(KeyCap::new(&keystroke)),
                             )
                         },
                     )
@@ -1135,9 +1134,28 @@ impl MessageView {
         })
     }
 
-    fn render_empty(&self, cx: &App) -> impl IntoElement {
+    fn render_empty(&self, window: &Window, cx: &App) -> impl IntoElement {
         let theme = cx.theme();
         if let Some(count) = self.selection {
+            // What the keys do to the selection, with the keys as the keymap binds them.
+            let keys: [(&dyn Action, &str); 6] = [
+                (&Archive, "archive"),
+                (&MoveToFolder, "move"),
+                (&Delete, "delete"),
+                (&MarkRead, "mark read"),
+                (&ToggleRead, "toggle read"),
+                (&ToggleStar, "star"),
+            ];
+            let hints = keys.into_iter().filter_map(|(action, label)| {
+                let keystroke = binding_hint(action, Some(&self.focus), window)?;
+                Some(
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .child(KeyCap::new(&keystroke))
+                        .child(label),
+                )
+            });
             return v_flex()
                 .size_full()
                 .items_center()
@@ -1151,7 +1169,16 @@ impl MessageView {
                         .text_color(theme.foreground)
                         .child(format!("{} selected", format_thousands(count as u64))),
                 )
-                .child("a archives them, ⇧M moves them, m marks them read, s stars them.");
+                .child(
+                    h_flex()
+                        .debug_selector(|| "selection-keys".to_owned())
+                        .flex_wrap()
+                        .justify_center()
+                        .gap_x_3()
+                        .gap_y_1()
+                        .px_6()
+                        .children(hints),
+                );
         }
         v_flex()
             .size_full()
@@ -1280,7 +1307,7 @@ impl Render for MessageView {
             )
             .bg(theme.background);
         let Some(doc) = self.document.clone() else {
-            return root.child(self.render_empty(cx)).into_any_element();
+            return root.child(self.render_empty(window, cx)).into_any_element();
         };
         let sender = doc.from.expose().email.clone();
         let builder = self.context_menu.clone();

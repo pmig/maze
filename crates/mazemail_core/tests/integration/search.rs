@@ -339,3 +339,45 @@ async fn typed_searches_finish_the_last_word_and_tolerate_typos() {
     assert_eq!(threads(&budget.threads), vec![c.anna.1]);
     assert!(!budget.approximate);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn deleted_mail_leaves_the_results_unless_trash_is_searched() {
+    let c = corpus().await;
+    let search = |query: &'static str, scope: Option<ListScope>| {
+        let core = c.t.core.clone();
+        async move {
+            core.search(
+                query,
+                SearchOpts {
+                    scope,
+                    ..SearchOpts::default()
+                },
+            )
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(search("invoice", None).await.total_messages, 2);
+
+    // Deleting the results (to Trash) takes them out of the search.
+    c.t.core
+        .apply(
+            mazemail_core::MailCommand::Delete {
+                ids: vec![c.anna.0, c.bob.0],
+                permanent: false,
+            },
+            mazemail_core::Origin::User,
+        )
+        .await
+        .unwrap();
+    assert_eq!(search("invoice", None).await.total_messages, 0);
+
+    // They're found when Trash is asked for: by the query or by the scope.
+    assert_eq!(search("invoice in:trash", None).await.total_messages, 2);
+    assert_eq!(
+        search("invoice", Some(ListScope::Folder(c.f.trash)))
+            .await
+            .total_messages,
+        2
+    );
+}

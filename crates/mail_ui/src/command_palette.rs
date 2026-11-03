@@ -16,9 +16,9 @@ use gpui_kit::component::{
     ActiveTheme as _,
     command::{Command, CommandItem, CommandState},
     h_flex,
-    kbd::Kbd,
 };
 
+use ui::components::KeyCap;
 use ui::theme::scaled;
 
 use crate::actions::{PALETTE_NAMESPACES, humanize_action_name};
@@ -90,7 +90,7 @@ impl CommandPalette {
                                 .gap_2()
                                 .items_center()
                                 .child(entry.label.clone())
-                                .child(Kbd::new(keystroke.clone()).ml_auto())
+                                .child(div().ml_auto().child(KeyCap::new(&keystroke)))
                         })
                         .action(action),
                     None => item.action(action),
