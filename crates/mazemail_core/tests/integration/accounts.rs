@@ -1253,3 +1253,214 @@ async fn keychain_secrets_move_into_the_store_when_the_core_opens() {
     );
     core.shutdown().await.unwrap();
 }
+
+/// One [`FakeServer`] per IMAP host, for accounts on different servers.
+#[derive(Debug, Clone)]
+struct HostConnector {
+    servers: std::collections::HashMap<String, FakeServer>,
+}
+
+struct HostSessions {
+    server: FakeServer,
+    credentials: Arc<dyn CredentialProvider>,
+}
+
+#[async_trait]
+impl SessionFactory for HostSessions {
+    async fn connect(&self) -> sync::Result<BoxSession> {
+        match self.credentials.credentials().await? {
+            ImapAuth::Password { password, .. } if password.expose() == PASSWORD => {
+                Ok(Box::new(self.server.connect()))
+            }
+            _ => Err(SyncError::Imap(ImapError::Auth(
+                "[AUTHENTICATIONFAILED] invalid credentials".into(),
+            ))),
+        }
+    }
+}
+
+impl ImapConnector for HostConnector {
+    fn sessions(
+        &self,
+        server: &ImapServer,
+        credentials: Arc<dyn CredentialProvider>,
+    ) -> Arc<dyn SessionFactory> {
+        Arc::new(HostSessions {
+            server: self.servers[&server.host].clone(),
+            credentials,
+        })
+    }
+}
+
+/// Two accounts on two servers; `work`'s inbox has an old message (only its headers
+/// are stored, so a move reads it from the server).
+struct TwoAccounts {
+    core: CoreHandle,
+    work: FakeServer,
+    home: FakeServer,
+    from: mazemail_core::AccountInfo,
+    to: mazemail_core::AccountInfo,
+    inbox: store::Folder,
+    archive: store::Folder,
+    message: mazemail_types::MessageId,
+    _dir: tempfile::TempDir,
+}
+
+async fn two_accounts() -> TwoAccounts {
+    let work = FakeServer::new();
+    let home = FakeServer::new();
+    work.deliver("INBOX", mail(1, OLD));
+    let dir = tempfile::tempdir().unwrap();
+    let keys = Arc::new(MemoryKeyStore::new());
+    let engine = SyncEngineConfig::new(Arc::new(MemorySecretStore::new()))
+        .with_connector(Arc::new(HostConnector {
+            servers: [
+                ("imap.example.org".to_owned(), work.clone()),
+                ("imap.example.com".to_owned(), home.clone()),
+            ]
+            .into(),
+        }))
+        .with_timing(timing());
+    let core = CoreHandle::open(common::config(dir.path(), &keys).with_sync_engine(engine))
+        .await
+        .unwrap();
+    let from = core.add_imap_account(input(PASSWORD)).await.unwrap();
+    let to = core
+        .add_imap_account(AddImapAccount {
+            display_name: Some("Home".into()),
+            email: "alice@example.com".into(),
+            server: ImapServer::new("imap.example.com", ImapSecurity::Tls),
+            ..input(PASSWORD)
+        })
+        .await
+        .unwrap();
+    wait_for("the message", || inbox_count(&core) == 1).await;
+    let reader = core.store().reader().unwrap();
+    let inbox = reader
+        .folders_with_role(FolderRole::Inbox, Some(from.id))
+        .unwrap()
+        .remove(0);
+    let message = reader.message_by_uid(inbox.id, 1).unwrap().unwrap();
+    let archive = reader
+        .folders_with_role(FolderRole::Archive, Some(to.id))
+        .unwrap()
+        .remove(0);
+    drop(reader);
+    TwoAccounts {
+        core,
+        work,
+        home,
+        from,
+        to,
+        inbox,
+        archive,
+        message,
+        _dir: dir,
+    }
+}
+
+impl TwoAccounts {
+    async fn move_to_archive(&self) -> mazemail_core::CommandReceipt {
+        self.core
+            .apply(
+                MailCommand::Move {
+                    ids: vec![self.message],
+                    to: self.archive.id,
+                    from: Some(self.inbox.id),
+                },
+                Origin::User,
+            )
+            .await
+            .unwrap()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn moving_to_another_account_uploads_there_before_deleting_here() {
+    let s = two_accounts().await;
+    let original = s.work.raw("INBOX", 1).unwrap();
+    // Starred: the copy keeps the flag.
+    s.core
+        .apply(
+            MailCommand::SetFlags {
+                ids: vec![s.message],
+                add: Flags::FLAGGED,
+                remove: Flags::empty(),
+            },
+            Origin::User,
+        )
+        .await
+        .unwrap();
+
+    let receipt = s.move_to_archive().await;
+    assert!(
+        !receipt.undoable,
+        "a move to another account can't be undone"
+    );
+    // Gone from the source folder at once.
+    assert_eq!(inbox_count_in(&s.core, s.inbox.id), 0);
+
+    // Uploaded to the other server with the same bytes, then deleted on this one.
+    wait_for("the copy on the other server", || {
+        s.home.messages("Archive").len() == 1
+    })
+    .await;
+    let copy = &s.home.messages("Archive")[0];
+    assert!(copy.flags.contains(Flags::FLAGGED));
+    assert_eq!(s.home.raw("Archive", copy.uid).unwrap(), original);
+    wait_for("the original to be deleted", || {
+        s.work.messages("INBOX").is_empty()
+    })
+    .await;
+    wait_for("both queues to drain", || {
+        let reader = s.core.store().reader().unwrap();
+        reader.pending_ops(s.from.id).unwrap().is_empty()
+            && reader.pending_ops(s.to.id).unwrap().is_empty()
+    })
+    .await;
+    s.core.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_upload_keeps_the_original() {
+    let s = two_accounts().await;
+    s.home.fail_command(
+        "APPEND",
+        imap::fake::FakeFailure::No("[OVERQUOTA] mailbox is full".into()),
+    );
+    s.move_to_archive().await;
+    wait_for("the refused upload", || {
+        s.core
+            .store()
+            .reader()
+            .unwrap()
+            .pending_ops(s.to.id)
+            .unwrap()
+            .first()
+            .is_some_and(|op| op.attempts == 1)
+    })
+    .await;
+    // The upload waits for its retry; nothing was deleted on the source server.
+    assert_eq!(s.work.messages("INBOX").len(), 1);
+    assert!(s.home.messages("Archive").is_empty());
+    assert!(
+        s.core
+            .store()
+            .reader()
+            .unwrap()
+            .pending_ops(s.from.id)
+            .unwrap()
+            .is_empty(),
+        "no delete queued"
+    );
+    s.core.shutdown().await.unwrap();
+}
+
+fn inbox_count_in(core: &CoreHandle, folder: mazemail_types::FolderId) -> usize {
+    core.store()
+        .reader()
+        .unwrap()
+        .message_ids_in_scope(&store::MessageScope::Folder(folder))
+        .unwrap()
+        .len()
+}

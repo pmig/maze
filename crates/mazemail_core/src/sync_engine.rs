@@ -253,7 +253,7 @@ pub struct SyncEngine {
     events: mpsc::UnboundedSender<CoreEvent>,
     new_mail: broadcast::Sender<NewMailBatch>,
     runtime: tokio::runtime::Handle,
-    actors: Mutex<HashMap<AccountId, Running>>,
+    actors: Arc<Mutex<HashMap<AccountId, Running>>>,
     /// One OAuth token manager per account, shared by sync and sending, so a refresh
     /// (which may rotate the refresh token) never races.
     tokens: Mutex<HashMap<AccountId, Arc<OAuthTokenManager>>>,
@@ -322,7 +322,7 @@ impl SyncEngine {
             events,
             new_mail: new_mail::channel(),
             runtime,
-            actors: Mutex::new(HashMap::new()),
+            actors: Arc::new(Mutex::new(HashMap::new())),
             tokens: Mutex::new(HashMap::new()),
             statuses: Arc::new(Mutex::new(HashMap::new())),
             watchdog: Mutex::new(None),
@@ -524,6 +524,7 @@ impl SyncEngine {
                 new_mail: self.new_mail.clone(),
                 settings: self.settings.clone(),
                 handle: handle.clone(),
+                actors: Arc::clone(&self.actors),
             },
         ));
         actors.insert(account.id, Running { handle, forwarder });
@@ -616,6 +617,8 @@ struct Forward {
     settings: watch::Receiver<Arc<LoadedSettings>>,
     /// The actor, told which folders to watch.
     handle: AccountHandle,
+    /// Every account's actor: a move between accounts queues ops in another account.
+    actors: Arc<Mutex<HashMap<AccountId, Running>>>,
 }
 
 /// Forwards an actor's status into the core's events, logs alerts and stuck ops,
@@ -634,6 +637,7 @@ async fn forward_status(
         new_mail,
         mut settings,
         handle,
+        actors,
     } = forward;
     let mut filter = NewMailFilter::new(account, unix_now());
     let mut favorites = BTreeSet::new();
@@ -695,8 +699,17 @@ async fn forward_status(
                         tracing::warn!(%account, alert = %alert, "IMAP server alert");
                     }
                     for op in &batch.ops {
-                        if let sync::OpEvent::Stuck { op, error } = op {
-                            tracing::warn!(%account, %op, %error, "a pending op is stuck");
+                        match op {
+                            sync::OpEvent::Stuck { op, error } => {
+                                tracing::warn!(%account, %op, %error, "a pending op is stuck");
+                            }
+                            sync::OpEvent::Queued { account: next, op } => {
+                                let peer = lock(&actors).get(next).map(|r| r.handle.clone());
+                                if let Some(peer) = peer {
+                                    let _ = peer.apply_op(*op);
+                                }
+                            }
+                            _ => {}
                         }
                     }
                     if !batch.added.is_empty() {

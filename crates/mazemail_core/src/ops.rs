@@ -24,7 +24,8 @@ use mazemail_types::Flags;
 use store::{Location, MessageDetail};
 
 pub use sync::ops::{
-    ArchiveTarget, FlagTarget, LocationRef, OP_PAYLOAD_VERSION, OpPayload, OpPayloadError,
+    ArchiveTarget, FlagTarget, LocationRef, MovedMessage, OP_PAYLOAD_VERSION, OpPayload,
+    OpPayloadError,
 };
 
 /// The server copy `location` of `detail`, with its UID as it is now.

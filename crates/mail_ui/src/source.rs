@@ -1483,7 +1483,7 @@ pub trait MailSource: Send + Sync + 'static {
     /// The account a message belongs to.
     fn message_account(&self, message: MessageId) -> Option<AccountId>;
 
-    /// Moves threads into `to`, a folder of their account. `from` is the folder they
+    /// Moves threads into `to`, a folder of any account. `from` is the folder they
     /// are moved out of (the one shown); `None` moves every copy except Gmail's All
     /// Mail. Undoable like [`MailSource::archive`].
     fn move_threads(

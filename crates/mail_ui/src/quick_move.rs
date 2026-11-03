@@ -1,14 +1,17 @@
 //! Quick Move (`shift-m`), like Thunderbird's Quick Folder Move: a small picker over the
-//! folders of the selected mail's account. Type part of a folder's path, pick one with
-//! the arrow keys, and Enter moves the selected rows (or thread, after `cmd-shift-a`)
-//! there; Escape cancels. Mail moves within its account only.
+//! folders of every account. Type part of a folder's path, pick one with the arrow keys,
+//! and Enter moves the selected rows (or thread, after `cmd-shift-a`) there; Escape
+//! cancels. A folder of another account moves the mail there (the core uploads it and
+//! then deletes the original, ADR-026).
 //!
-//! The picker lists every folder of the account as its path (`Archives / 2025`), except
-//! the folder the mail is moved out of. With an empty filter the folders mail was moved
-//! to last come first (per account, remembered in `ui_state.json`), then the rest in
-//! folder pane order. Typing ranks the folders by [`rank`]: every whitespace-separated
-//! term must occur in the path, as a substring or, failing that, as a subsequence
-//! (`arc25` finds `Archives / 2025`).
+//! The picker lists every folder of the mail's account as its path (`Archives / 2025`),
+//! except the folder the mail is moved out of, then the folders of the other accounts
+//! with the account's name in front (`Home / Archives`). With an empty filter the
+//! folders mail was moved to last come first (per account, remembered in
+//! `ui_state.json`), then the rest in folder pane order. Typing ranks the folders by
+//! [`rank`]: every whitespace-separated term must occur in the path, as a substring or,
+//! failing that, as a subsequence (`arc25` finds `Archives / 2025`, `home arc` finds
+//! `Home / Archives`).
 //!
 //! Like the command palette it renders inside the main window's element tree; the
 //! window does the move when the picker reports [`QuickMoveEvent::Confirmed`].
@@ -35,10 +38,36 @@ use crate::thread_list::ItemId;
 pub struct FolderChoice {
     /// The folder.
     pub id: FolderId,
-    /// Its path from the account's top level: "Archives / 2025".
+    /// Its path from the account's top level: "Archives / 2025"; for a folder of
+    /// another account with the account's name in front: "Home / Archives".
     pub path: SharedString,
     /// Special-use role (decides the icon).
     pub role: Option<FolderRole>,
+}
+
+/// The folders a move from `account` can go to: its own (see [`folder_choices`]), then
+/// those of the other `accounts` in their order, with the account's name in front.
+pub fn move_choices(
+    accounts: &[AccountEntry],
+    account: AccountId,
+    exclude: Option<FolderId>,
+) -> Vec<FolderChoice> {
+    let mut out: Vec<FolderChoice> = accounts
+        .iter()
+        .filter(|a| a.id == account)
+        .flat_map(|a| folder_choices(a, exclude))
+        .collect();
+    for other in accounts.iter().filter(|a| a.id != account) {
+        out.extend(
+            folder_choices(other, None)
+                .into_iter()
+                .map(|choice| FolderChoice {
+                    path: format!("{} / {}", other.name, choice.path).into(),
+                    ..choice
+                }),
+        );
+    }
+    out
 }
 
 /// The folders of `account` in folder pane order (parents before their children), as
@@ -159,7 +188,7 @@ pub fn rank_paths<'a>(
 pub struct MoveTarget {
     /// The selected rows, or the whole thread.
     pub items: Vec<ItemId>,
-    /// Their account; the picker offers this account's folders.
+    /// Their account; the picker offers this account's folders first.
     pub account: AccountId,
     /// The folder they are moved out of (see [`source_folder`]).
     pub from: Option<FolderId>,
@@ -178,7 +207,6 @@ pub enum QuickMoveEvent {
 pub struct QuickMove {
     state: Entity<CommandState>,
     target: MoveTarget,
-    account_name: SharedString,
     choices: Vec<FolderChoice>,
     recent: Vec<FolderId>,
     /// The folders for the current query, as indexes into `choices`.
@@ -198,21 +226,20 @@ impl std::fmt::Debug for QuickMove {
 }
 
 impl QuickMove {
-    /// A picker over `account`'s folders for moving `target`; `recent` are the
-    /// account's last move targets, newest first.
+    /// A picker over the folders of `accounts` (see [`move_choices`]) for moving
+    /// `target`; `recent` are the last move targets of its account, newest first.
     pub fn new(
         target: MoveTarget,
-        account: &AccountEntry,
+        accounts: &[AccountEntry],
         recent: Vec<FolderId>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Self {
-        let choices = folder_choices(account, target.from);
+        let choices = move_choices(accounts, target.account, target.from);
         let matches = rank(&choices, "", &recent);
         Self {
             state: cx.new(|cx| CommandState::new(window, cx)),
             target,
-            account_name: account.name.clone(),
             choices,
             recent,
             matches,
@@ -298,7 +325,7 @@ impl Render for QuickMove {
                         Command::new(&self.state)
                             .bordered(false)
                             .filterable(false)
-                            .placeholder(format!("Move to a folder in {}…", self.account_name))
+                            .placeholder("Move to a folder…")
                             .max_h(scaled(290., cx))
                             .items(items)
                             .empty(|_, _, cx| {
@@ -367,6 +394,46 @@ mod tests {
                 folder(8, "Receipts", None, Vec::new()),
             ],
         }
+    }
+
+    #[test]
+    fn other_accounts_follow_with_their_name_in_front() {
+        let home = AccountEntry {
+            id: AccountId(2),
+            name: "Home".into(),
+            kind: AccountKind::Imap,
+            folders: vec![
+                folder(20, "Inbox", Some(FolderRole::Inbox), Vec::new()),
+                folder(21, "Archives", Some(FolderRole::Archive), Vec::new()),
+            ],
+        };
+        let accounts = [home, account()];
+        let choices = move_choices(&accounts, AccountId(1), Some(FolderId(1)));
+        let all: Vec<usize> = (0..choices.len()).collect();
+        assert_eq!(
+            paths(&choices, &all),
+            [
+                "Sent",
+                "Archives",
+                "Archives / 2025",
+                "Archives / 2026",
+                "Customers",
+                "Customers / Acme",
+                "Receipts",
+                "Home / Inbox",
+                "Home / Archives",
+            ],
+            "the mail's own account first, its source folder left out"
+        );
+        assert_eq!(
+            paths(&choices, &rank(&choices, "home arc", &[])),
+            ["Home / Archives"]
+        );
+        // The own account's archive ranks before the other account's.
+        assert_eq!(
+            paths(&choices, &rank(&choices, "archives", &[]))[..2],
+            ["Archives", "Home / Archives"]
+        );
     }
 
     fn paths(choices: &[FolderChoice], order: &[usize]) -> Vec<String> {

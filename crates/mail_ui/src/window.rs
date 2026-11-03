@@ -1258,8 +1258,8 @@ impl MailWindow {
         } else {
             return;
         };
-        // Mail moves within its account. The first rows tell (checking a huge selection
-        // row by row would stall; the core refuses a move across accounts anyway).
+        // The picker moves mail of one account (it moves out of that account's folder).
+        // The first rows tell: checking a huge selection row by row would stall.
         let mut accounts = items
             .iter()
             .take(ACCOUNT_CHECK_ROWS)
@@ -1279,7 +1279,7 @@ impl MailWindow {
             return;
         }
         let tree = self.source.folder_tree();
-        let Some(account) = tree.accounts.into_iter().find(|a| a.id == account) else {
+        let Some(account) = tree.accounts.iter().find(|a| a.id == account).cloned() else {
             tracing::warn!("quick move: the selected mail's account is gone");
             return;
         };
@@ -1298,7 +1298,7 @@ impl MailWindow {
         };
         self.quick_move_return_focus = return_focus;
         self.quick_move_owner = Some(owner);
-        let picker = cx.new(|cx| QuickMove::new(target, &account, recent, window, cx));
+        let picker = cx.new(|cx| QuickMove::new(target, &tree.accounts, recent, window, cx));
         let focus = picker.focus_handle(cx);
         self._subscriptions
             .push(cx.subscribe_in(&picker, window, Self::on_quick_move_event));
@@ -2500,7 +2500,10 @@ mod tests {
         assert!(all.contains(&trash));
         // Single-key shortcuts type into the filter.
         cx.simulate_input("trash");
-        assert_eq!(offered(cx).unwrap(), [trash]);
+        // The account's own Trash first, then the other accounts' (their name in front).
+        let trashes = offered(cx).unwrap();
+        assert_eq!(trashes[0], trash);
+        assert!(trashes.len() > 1, "other accounts' folders are offered too");
         cx.simulate_keystrokes("enter");
         cx.run_until_parked();
         assert!(offered(cx).is_none(), "the picker closed");

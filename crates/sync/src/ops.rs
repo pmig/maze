@@ -47,6 +47,10 @@
 //! {"v":1,"op":"append_draft","folder":4,"blob":"<64 hex chars>","flags":["\\Seen","\\Draft"],
 //!  "message":88,"replaces":{"message":87,"folder":4,"uid":31}}
 //! {"v":1,"op":"append","folder":5,"blob":"<64 hex chars>","flags":["\\Seen"],"keywords":["todo"]}
+//! {"v":1,"op":"move_to_account","account":2,"folder":40,"messages":[
+//!   {"message":17,"items":[{"message":17,"folder":3,"uid":4711}],"flags":["\\Seen"],"keywords":[]}]}
+//! {"v":1,"op":"append_moved","folder":40,"blob":"<64 hex chars>","flags":["\\Seen"],
+//!  "source_account":1,"items":[{"message":17,"folder":3,"uid":4711}]}
 //! ```
 //!
 //! # Semantics per op
@@ -66,9 +70,21 @@
 //! | `subscribe` | `SUBSCRIBE` / `UNSUBSCRIBE` | same |
 //! | `append_draft` | `APPEND` the blob with the flags; APPENDUID sets the UID; then expunges `replaces` | same |
 //! | `append` | `APPEND` the blob with exactly the flags and keywords (the Sent copy of a sent message, PLAN §4.5, or an imported message, ADR-019); the folder's next sync picks it up | same |
+//! | `move_to_account` | in the **source** account's queue: reads each message (the stored full body, else `UID FETCH BODY.PEEK[]` from its first location) and, when it's done, queues an `append_moved` per message in the target `account`'s queue | same |
+//! | `append_moved` | in the **target** account's queue: `APPEND` like `append`; when it's done, queues a permanent `delete` of `items` in `source_account`'s queue | same |
 //!
-//! `append_draft` and `append` are the only ops that are not idempotent: if Maze dies
-//! between the server's `OK` and removing the op, the message is appended twice.
+//! `append_draft`, `append` and `append_moved` are the only ops that are not idempotent:
+//! if Maze dies between the server's `OK` and removing the op, the message is appended
+//! twice.
+//!
+//! # Moving between accounts
+//!
+//! IMAP moves only within one server, so a move to another account is a chain of ops
+//! in two queues (ADR-026): `move_to_account` (source) reads the messages,
+//! `append_moved` (target) uploads one, then a permanent `delete` (source) removes the
+//! original. Each op queues the next one in the same store write that removes it, and
+//! the original is deleted only after the target's server accepted the copy: a crash or
+//! a failure can leave a message in both accounts, never in neither.
 
 use std::fmt;
 
@@ -124,6 +140,22 @@ impl FlagTarget {
     pub fn location(&self) -> LocationRef {
         LocationRef::new(self.message, self.folder, self.uid)
     }
+}
+
+/// One message of a [`OpPayload::MoveToAccount`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MovedMessage {
+    /// The message.
+    pub message: MessageId,
+    /// Its copies in the source account that the move removes; the first one is read
+    /// when the full body isn't stored.
+    pub items: Vec<LocationRef>,
+    /// Flags for the copy in the target account.
+    #[serde(with = "flag_names")]
+    pub flags: Flags,
+    /// Keywords (tags) for the copy in the target account.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keywords: Vec<String>,
 }
 
 /// Where archived messages go.
@@ -263,6 +295,37 @@ pub enum OpPayload {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         keywords: Vec<String>,
     },
+    /// The first step of a move to another account, in the source account's queue (see
+    /// the module docs): read the messages, then queue an [`OpPayload::AppendMoved`]
+    /// for each in `account`'s queue.
+    MoveToAccount {
+        /// The target account.
+        account: AccountId,
+        /// The target folder (of `account`).
+        folder: FolderId,
+        /// The messages.
+        messages: Vec<MovedMessage>,
+    },
+    /// The second step, in the target account's queue: upload one message like
+    /// [`OpPayload::Append`], then queue the permanent deletion of `items` in
+    /// `source_account`'s queue. The op holds its blob.
+    AppendMoved {
+        /// The target folder.
+        folder: FolderId,
+        /// The raw message in the blob store.
+        #[serde(with = "blob_hex")]
+        blob: BlobId,
+        /// Flags to store it with.
+        #[serde(with = "flag_names")]
+        flags: Flags,
+        /// Keywords (tags) to store it with.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        keywords: Vec<String>,
+        /// The account the message comes from.
+        source_account: AccountId,
+        /// The message's copies there, deleted once the upload is done.
+        items: Vec<LocationRef>,
+    },
 }
 
 /// A payload that can't be decoded.
@@ -322,6 +385,8 @@ impl OpPayload {
             Self::Subscribe { .. } => "subscribe",
             Self::AppendDraft { .. } => "append_draft",
             Self::Append { .. } => "append",
+            Self::MoveToAccount { .. } => "move_to_account",
+            Self::AppendMoved { .. } => "append_moved",
         }
     }
 
@@ -429,7 +494,12 @@ impl OpPayload {
             | Self::Junk { items, .. }
             | Self::NotJunk { items, .. } => items.clone(),
             Self::AppendDraft { replaces, .. } => replaces.iter().copied().collect(),
+            Self::MoveToAccount { messages, .. } => messages
+                .iter()
+                .flat_map(|m| m.items.iter().copied())
+                .collect(),
             Self::Labels { .. }
+            | Self::AppendMoved { .. }
             | Self::CreateFolder { .. }
             | Self::RenameFolder { .. }
             | Self::DeleteFolder { .. }
@@ -467,6 +537,11 @@ impl OpPayload {
             Self::AppendDraft {
                 replaces: Some(r), ..
             } => fill(r.message, r.folder, &mut r.uid),
+            Self::MoveToAccount { messages, .. } => {
+                for i in messages.iter_mut().flat_map(|m| m.items.iter_mut()) {
+                    fill(i.message, i.folder, &mut i.uid);
+                }
+            }
             _ => {}
         }
         changed
@@ -627,6 +702,24 @@ mod tests {
                 blob: BlobId([0xef; 32]),
                 flags: Flags::FLAGGED,
                 keywords: vec!["$label1".to_owned(), "todo".to_owned()],
+            },
+            OpPayload::MoveToAccount {
+                account: AccountId(2),
+                folder: FolderId(40),
+                messages: vec![MovedMessage {
+                    message: MessageId(17),
+                    items: vec![loc(17, 3, Some(4711)), loc(17, 9, None)],
+                    flags: Flags::SEEN,
+                    keywords: vec!["todo".to_owned()],
+                }],
+            },
+            OpPayload::AppendMoved {
+                folder: FolderId(40),
+                blob: BlobId([0x12; 32]),
+                flags: Flags::SEEN | Flags::FLAGGED,
+                keywords: Vec::new(),
+                source_account: AccountId(1),
+                items: vec![loc(17, 3, Some(4711))],
             },
         ]
     }

@@ -119,6 +119,14 @@ pub enum OpEvent {
         /// The last error text.
         error: String,
     },
+    /// A done op queued the next step of a move between accounts in `account`'s queue
+    /// (maybe another account's): that account's engine should replay it.
+    Queued {
+        /// The account whose queue got the op.
+        account: AccountId,
+        /// The op.
+        op: OpId,
+    },
 }
 
 /// Message and folder counts of a folder after a pass.

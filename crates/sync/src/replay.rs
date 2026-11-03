@@ -6,15 +6,15 @@ use std::future::Future;
 use std::time::Duration;
 
 use imap::{FlagOp, GmailLabel, LabelOp, UidSet};
-use mazemail_types::{BlobId, Flags, FolderId, MessageId};
-use store::{OpState, PendingOp, Queries};
+use mazemail_types::{AccountId, BlobId, Flags, FolderId, MessageId};
+use store::{BodyState, OpId, OpState, PendingOp, Queries, StagedBlob};
 
 use crate::backoff::jitter;
 use crate::connect::Conn;
 use crate::error::{Result, SyncError};
 use crate::events::{OpEvent, SyncEvent};
 use crate::gmail::GmailFolders;
-use crate::ops::{ArchiveTarget, FlagTarget, LocationRef, OpPayload};
+use crate::ops::{ArchiveTarget, FlagTarget, LocationRef, MovedMessage, OpPayload};
 use crate::shared::{Shared, YieldFlag};
 
 /// What a replay round did.
@@ -38,6 +38,17 @@ struct OpOutcome {
     touched: BTreeSet<FolderId>,
     unresolved: BTreeSet<FolderId>,
     folders_changed: bool,
+    /// Ops of a move between accounts to queue once this one is done.
+    followups: Vec<FollowUp>,
+}
+
+/// The next op of a move between accounts (see [`crate::ops`]).
+#[derive(Debug)]
+struct FollowUp {
+    account: AccountId,
+    payload: OpPayload,
+    /// The message the op uploads; the queued op holds it.
+    blob: Option<StagedBlob>,
 }
 
 /// Replays the account's due ops in order until the queue is empty, the oldest op
@@ -67,8 +78,14 @@ pub(crate) async fn replay_ops(
             break;
         }
         match replay_one(shared, conn, &op).await {
-            Ok(outcome) => {
-                finish_op(shared, &op, &outcome).await?;
+            Ok(mut outcome) => {
+                let followups = std::mem::take(&mut outcome.followups);
+                let queued = finish_op(shared, &op, &outcome, followups).await?;
+                for (account, op) in queued {
+                    shared
+                        .events
+                        .emit(SyncEvent::Op(OpEvent::Queued { account, op }));
+                }
                 report.touched.extend(outcome.touched);
                 report.unresolved.extend(outcome.unresolved);
                 report.folders_changed |= outcome.folders_changed;
@@ -125,16 +142,33 @@ fn is_store_closed(err: &SyncError) -> bool {
     matches!(err, SyncError::Store(store::Error::Closed))
 }
 
-/// Removes the op, records learned UIDs locally and in later ops.
-async fn finish_op(shared: &Shared, op: &PendingOp, outcome: &OpOutcome) -> Result<()> {
+/// Removes the op, records learned UIDs locally and in later ops, and queues the ops a
+/// move between accounts continues with (returned as `(account, op)`).
+async fn finish_op(
+    shared: &Shared,
+    op: &PendingOp,
+    outcome: &OpOutcome,
+    followups: Vec<FollowUp>,
+) -> Result<Vec<(AccountId, OpId)>> {
     let id = op.id;
     let account = shared.account();
+    let origin = op.origin.clone();
     let uids = outcome.uids.clone();
     shared
-        .write(1 + uids.len(), move |w| {
+        .write(1 + uids.len() + followups.len(), move |w| {
             w.op_done(id)?;
+            let mut queued = Vec::with_capacity(followups.len());
+            for next in &followups {
+                let op = match &next.blob {
+                    Some(blob) => next
+                        .payload
+                        .enqueue_with_blob(w, next.account, &origin, blob)?,
+                    None => next.payload.enqueue(w, next.account, &origin)?,
+                };
+                queued.push((next.account, op));
+            }
             if uids.is_empty() {
-                return Ok(());
+                return Ok(queued);
             }
             for (message, folder, uid) in &uids {
                 match w.set_location_uid(*message, *folder, *uid) {
@@ -154,7 +188,7 @@ async fn finish_op(shared: &Shared, op: &PendingOp, outcome: &OpOutcome) -> Resu
                     w.op_update_payload(later.id, &payload.to_json()?)?;
                 }
             }
-            Ok(())
+            Ok(queued)
         })
         .await
 }
@@ -255,7 +289,79 @@ impl<'a> Replayer<'a> {
                 self.append(folder, blob, flags, &keywords, None, None)
                     .await
             }
+            OpPayload::MoveToAccount {
+                account,
+                folder,
+                messages,
+            } => self.read_for_move(account, folder, messages).await,
+            OpPayload::AppendMoved {
+                folder,
+                blob,
+                flags,
+                keywords,
+                source_account,
+                items,
+            } => {
+                self.append(folder, blob, flags, &keywords, None, None)
+                    .await?;
+                // Only now that the target has the copy: remove the original.
+                self.out.followups.push(FollowUp {
+                    account: source_account,
+                    payload: OpPayload::delete_permanently(items),
+                    blob: None,
+                });
+                Ok(())
+            }
         }
+    }
+
+    /// `move_to_account`: reads each message (the stored full body, else from the
+    /// server) and has the target account upload it.
+    async fn read_for_move(
+        &mut self,
+        account: AccountId,
+        folder: FolderId,
+        messages: Vec<MovedMessage>,
+    ) -> Result<()> {
+        let source_account = self.shared.account();
+        for moved in messages {
+            let items: Vec<LocationRef> = self
+                .resolve(&moved.items)
+                .await?
+                .into_iter()
+                .map(|(message, folder, uid)| LocationRef::new(message, folder, Some(uid)))
+                .collect();
+            let Some(first) = items.first().copied() else {
+                tracing::debug!(message = %moved.message, "nothing of a moved message is on the server");
+                continue;
+            };
+            let raw = match stored_body(self.shared, moved.message).await? {
+                Some(raw) => raw,
+                None => {
+                    self.select(first.folder).await?;
+                    let uid = first.uid.unwrap_or_default();
+                    let result = self.conn.session.fetch_raw(uid).await;
+                    self.conn.track(result)?.to_vec()
+                }
+            };
+            let store = self.shared.store.clone();
+            let staged = tokio::task::spawn_blocking(move || store.blobs().stage(&raw))
+                .await
+                .map_err(|e| SyncError::Internal(format!("blob stage task: {e}")))??;
+            self.out.followups.push(FollowUp {
+                account,
+                payload: OpPayload::AppendMoved {
+                    folder,
+                    blob: staged.id(),
+                    flags: moved.flags,
+                    keywords: moved.keywords,
+                    source_account,
+                    items,
+                },
+                blob: Some(staged),
+            });
+        }
+        Ok(())
     }
 
     // ---- lookups ------------------------------------------------------------------
@@ -908,6 +1014,26 @@ impl<'a> Replayer<'a> {
             }
         }
         Ok(())
+    }
+}
+
+/// The full raw message, if it is stored.
+async fn stored_body(shared: &Shared, message: MessageId) -> Result<Option<Vec<u8>>> {
+    let detail = shared.read(move |r| r.message(message)).await?;
+    let Some(blob) = detail
+        .filter(|d| d.body_state == BodyState::Full)
+        .and_then(|d| d.blob)
+    else {
+        return Ok(None);
+    };
+    let store = shared.store.clone();
+    let read = tokio::task::spawn_blocking(move || store.blobs().read(&blob))
+        .await
+        .map_err(|e| SyncError::Internal(format!("blob read task: {e}")))?;
+    match read {
+        Ok(raw) => Ok(Some(raw)),
+        Err(store::Error::BlobMissing(_)) => Ok(None),
+        Err(err) => Err(err.into()),
     }
 }
 

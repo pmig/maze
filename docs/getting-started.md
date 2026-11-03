@@ -607,10 +607,18 @@ the account's Trash; `cmd-z` brings it back. On Gmail that removes every label. 
 Trash folder, deleting removes the mail from the server for good, so Maze asks first.
 
 **Quick Move** (`shift-m`), like Thunderbird's Quick Folder Move: a small picker lists
-the folders of the selected mail's account (`Archives / 2026`). Type part of a folder's
-name to filter, pick one with the arrow keys and press `enter` to move the selection
-there; `escape` cancels. With an empty filter the folders you moved mail to last come
-first. Moves stay within an account.
+the folders of the selected mail's account (`Archives / 2026`), then those of your other
+accounts with the account's name in front (`Home / Archives`). Type part of a folder's
+name to filter (`home arc` finds `Home / Archives`), pick one with the arrow keys and
+press `enter` to move the selection there; `escape` cancels. With an empty filter the
+folders you moved mail to last come first. The selection has to be mail of one account.
+
+A move into another account's folder uploads the messages to that account's server and
+deletes them on this one only once the other server accepted them, so a failure leaves
+a message in both accounts rather than in neither ([ADR-026](adr/0026-moving-mail-between-accounts.md)).
+The messages leave the folder at once and show up in the other account's folder after
+its next sync, also when you were offline. Such a move can't be undone with `cmd-z`;
+move the messages back instead. On Gmail, moving out of a label removes the label.
 
 Cards or table, threads, sort order, columns and widths are the same in every folder.
 Maze remembers them in `ui_state.json` in the data directory, together with your recent

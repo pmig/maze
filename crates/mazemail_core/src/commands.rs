@@ -11,7 +11,9 @@
 //!
 //! - **Flags** are set on every location of a message (marking read writes all copies).
 //! - **Move** moves each message's copy out of `from` (or out of every folder except
-//!   Gmail's All Mail when `from` is `None`) into `to`, within one account.
+//!   Gmail's All Mail when `from` is `None`) into `to`. Into a folder of another account
+//!   it uploads the message there and then deletes the copies it takes out (ADR-026);
+//!   such a move can't be undone.
 //! - **Archive** moves to the identity's archive folder (the message's identity, else
 //!   the account's default identity, else the account's Archive folder), into a year or
 //!   year/month subfolder per the identity's granularity, creating it if needed. On
@@ -44,7 +46,8 @@ use store::{
 use time::{OffsetDateTime, UtcOffset};
 
 use crate::ops::{
-    ArchiveTarget, FlagTarget, LocationRef, OpPayload, edit_keywords, flag_target, location_ref,
+    ArchiveTarget, FlagTarget, LocationRef, MovedMessage, OpPayload, edit_keywords, flag_target,
+    location_ref,
 };
 use crate::sync_bridge::RefreshScope;
 
@@ -653,9 +656,11 @@ impl<'a, 'w> Tx<'a, 'w> {
         let mut undo = Vec::new();
         let mut planned = Vec::new();
         let mut items = Vec::new();
+        let mut elsewhere: BTreeMap<AccountId, Vec<MessageDetail>> = BTreeMap::new();
         for detail in details {
             if detail.account != target.account {
-                return Err(invalid("moving messages between accounts is not supported"));
+                elsewhere.entry(detail.account).or_default().push(detail);
+                continue;
             }
             let sources = self.move_sources(&detail, to, from)?;
             if sources.is_empty() {
@@ -671,7 +676,76 @@ impl<'a, 'w> Tx<'a, 'w> {
             undo.push((detail.id, detail.locations.clone()));
             self.relocate(&detail, &sources, to)?;
         }
-        self.applied.undo = Some(UndoAction::Locations(undo));
+        let across = !elsewhere.is_empty();
+        for (account, details) in elsewhere {
+            self.move_to_account(account, details, &target, from)?;
+        }
+        // A move to another account can't be undone: the copy there is a new message.
+        self.applied.undo = (!across).then_some(UndoAction::Locations(undo));
+        Ok(())
+    }
+
+    /// Moves messages of `account` into `target`, a folder of another account
+    /// (ADR-026): queues the chain of ops (see [`crate::ops`]) and takes the copies out
+    /// of `from` (or every copy) locally; the target folder's next sync shows the
+    /// message there.
+    fn move_to_account(
+        &mut self,
+        account: AccountId,
+        details: Vec<MessageDetail>,
+        target: &Folder,
+        from: Option<FolderId>,
+    ) -> store::Result<()> {
+        let mut messages = Vec::new();
+        let mut planned = Vec::new();
+        for detail in details {
+            let mut sources = self.move_sources(&detail, target.id, from)?;
+            if sources.is_empty() && from.is_none() {
+                // Only in Gmail's All Mail (archived): that copy goes.
+                sources.clone_from(&detail.locations);
+            }
+            if sources.is_empty() {
+                continue;
+            }
+            if sources.iter().any(|source| source.uid.is_none()) {
+                return Err(invalid(
+                    "a message isn't on the server yet; move it once it has synced",
+                ));
+            }
+            let mut keywords: Vec<String> = sources
+                .iter()
+                .flat_map(|l| l.keywords.iter().cloned())
+                .collect();
+            keywords.sort();
+            keywords.dedup();
+            messages.push(MovedMessage {
+                message: detail.id,
+                items: sources
+                    .iter()
+                    .map(|source| location_ref(&detail, source))
+                    .collect(),
+                flags: detail.effective_flags(),
+                keywords,
+            });
+            planned.push((detail, sources));
+        }
+        if messages.is_empty() {
+            return Ok(());
+        }
+        self.enqueue(
+            account,
+            &OpPayload::MoveToAccount {
+                account: target.account,
+                folder: target.id,
+                messages,
+            },
+        )?;
+        for (detail, sources) in planned {
+            for source in &sources {
+                self.w.remove_location(detail.id, source.folder)?;
+            }
+            self.touch(&detail);
+        }
         Ok(())
     }
 
