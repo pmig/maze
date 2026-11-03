@@ -1444,6 +1444,14 @@ impl ThreadList {
         }
     }
 
+    /// `r`: marks the selected rows (or thread, after `cmd-shift-a`) read.
+    pub fn mark_read_selected(&mut self, cx: &mut Context<'_, Self>) {
+        let items = self.command_items();
+        if !items.is_empty() {
+            self.change_flags(&items, Flags::SEEN, Flags::empty(), cx);
+        }
+    }
+
     /// A click on a row's dot in the table's Unread column: toggles that row's read
     /// state without selecting it, as in Thunderbird (a thread row: all its messages).
     /// Goes the same way as `m`, so `cmd-z` undoes it and it syncs.

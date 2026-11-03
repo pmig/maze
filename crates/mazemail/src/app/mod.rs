@@ -405,6 +405,7 @@ pub(crate) fn core_ready(core: &CoreHandle, cx: &mut App) {
     theme::follow_core_settings(core, cx);
     reading::follow_core_settings(core, cx);
     spellcheck::follow_core_settings(core, cx);
+    keyboard::follow_core_settings(core, cx);
     compose::register_restore(core, cx);
     agents::start(core, &authorizer, cx);
     let window = cx

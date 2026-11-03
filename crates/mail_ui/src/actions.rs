@@ -129,6 +129,8 @@ actions!(
         PageUp,
         /// Toggle read/unread (`m`).
         ToggleRead,
+        /// Mark the selected mail read (`r`).
+        MarkRead,
         /// Toggle the star (`s`).
         ToggleStar,
         /// Archive the selected threads (`a`).

@@ -19,7 +19,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    App, AppContext as _, ClipboardItem, Context, Entity, FocusHandle, Focusable, Global,
+    Action, App, AppContext as _, ClipboardItem, Context, Entity, FocusHandle, Focusable, Global,
     HighlightStyle, Hsla, InteractiveElement, InteractiveText, IntoElement, KeyContext,
     MouseButton, MouseMoveEvent, ParentElement, Pixels, Point, PromptLevel, Render, Rgba,
     SharedString, StatefulInteractiveElement as _, Styled, StyledText, Subscription,
@@ -29,6 +29,7 @@ use gpui_kit::component::{
     ActiveTheme as _, Icon, Selectable as _, Sizable as _, StyledExt as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex, input,
+    kbd::Kbd,
     menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
     notification::Notification,
     text::TextView,
@@ -43,6 +44,7 @@ use ui::theme::scaled;
 
 use crate::actions::{Archive, Forward, Reply, ReplyAll, ReportJunk, ToggleOriginalHtml};
 use crate::attachment_files;
+use crate::command_palette::binding_hint;
 use crate::format::{DateFormatter, format_size, format_thousands, initials};
 use crate::links::{HoveredLink, LinkPreview, TextViewLinkProbe, detect_links, open_link};
 use crate::source::{
@@ -115,6 +117,25 @@ impl BodyModes {
             ViewPlace::Tab => self.tab,
         }
     }
+}
+
+/// `keymap.show_on_buttons`: whether the buttons above a message show their shortcut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ButtonShortcuts(pub bool);
+
+impl Global for ButtonShortcuts {}
+
+/// Shows or hides the shortcuts on the buttons (after a settings change).
+pub fn set_button_shortcuts(show: bool, cx: &mut App) {
+    if cx.try_global::<ButtonShortcuts>() != Some(&ButtonShortcuts(show)) {
+        cx.set_global(ButtonShortcuts(show));
+        cx.refresh_windows();
+    }
+}
+
+/// Whether buttons show their shortcut (on until the setting says otherwise).
+fn button_shortcuts(cx: &App) -> bool {
+    cx.try_global::<ButtonShortcuts>().is_none_or(|g| g.0)
 }
 
 /// Applies new default modes (after a settings change); views the user switched keep
@@ -661,7 +682,12 @@ impl MessageView {
             .child(div().truncate().child(text))
     }
 
-    fn render_header(&self, doc: &MessageDocument, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render_header(
+        &self,
+        doc: &MessageDocument,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme();
         let dates = DateFormatter::new(self.offset);
         let from = doc.from.expose();
@@ -670,8 +696,27 @@ impl MessageView {
             .clone()
             .unwrap_or_else(|| from.email.clone())
             .into();
-        let action = |id: &'static str, label: &'static str, icon: IconName| {
-            Button::new(id).outline().xsmall().icon(icon).label(label)
+        // The shortcut where this view's focus is (`a` here, `cmd-r` anywhere), as the
+        // keymap binds it.
+        let show_keys = button_shortcuts(cx);
+        let focus = self.focus.clone();
+        let action = |id: &'static str, label: &'static str, icon: IconName, key: &dyn Action| {
+            let hint = show_keys
+                .then(|| binding_hint(key, Some(&focus), window))
+                .flatten();
+            Button::new(id)
+                .outline()
+                .xsmall()
+                .icon(icon)
+                .label(label)
+                .when_some(hint, |button, keystroke| {
+                    button.child(
+                        div()
+                            .debug_selector(move || format!("{id}-key"))
+                            .text_color(theme.muted_foreground)
+                            .child(Kbd::new(keystroke).appearance(false)),
+                    )
+                })
         };
         v_flex()
             .flex_none()
@@ -739,27 +784,27 @@ impl MessageView {
                 h_flex()
                     .gap_1()
                     .child(
-                        action("reply", "Reply", IconName::Reply)
+                        action("reply", "Reply", IconName::Reply, &Reply)
                             .on_click(|_, window, cx| window.dispatch_action(Box::new(Reply), cx)),
                     )
                     .child(
-                        action("reply-all", "All", IconName::ReplyAll).on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(ReplyAll), cx)
-                        }),
+                        action("reply-all", "All", IconName::ReplyAll, &ReplyAll).on_click(
+                            |_, window, cx| window.dispatch_action(Box::new(ReplyAll), cx),
+                        ),
                     )
                     .child(
-                        action("forward", "Fwd", IconName::Forward).on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(Forward), cx)
-                        }),
+                        action("forward", "Fwd", IconName::Forward, &Forward).on_click(
+                            |_, window, cx| window.dispatch_action(Box::new(Forward), cx),
+                        ),
                     )
                     .child(
-                        action("archive", "Archive", IconName::Archive).on_click(
+                        action("archive", "Archive", IconName::Archive, &Archive).on_click(
                             |_, window, cx| window.dispatch_action(Box::new(Archive), cx),
                         ),
                     )
                     .child(
                         div().debug_selector(|| "report-junk".to_owned()).child(
-                            action("junk", "Junk", IconName::OctagonAlert)
+                            action("junk", "Junk", IconName::OctagonAlert, &ReportJunk)
                                 .tooltip("Report as junk and move to the Junk folder (J)")
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(Box::new(ReportJunk), cx)
@@ -1246,7 +1291,7 @@ impl Render for MessageView {
             None => self.render_body(&doc, cx).into_any_element(),
         };
         let attachments = (!doc.attachments.is_empty()).then(|| self.render_attachments(&doc, cx));
-        root.child(self.render_header(&doc, cx))
+        root.child(self.render_header(&doc, window, cx))
             .children(attachments)
             .when_some(note, |this, note| {
                 this.child(

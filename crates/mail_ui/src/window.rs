@@ -1102,6 +1102,14 @@ impl MailWindow {
         }
     }
 
+    fn mark_read(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.active_message_tab(cx).is_some() {
+            self.with_message_tab(window, cx, |tab, _| tab.mark_read());
+        } else {
+            self.with_list(cx, |list, cx| list.mark_read_selected(cx));
+        }
+    }
+
     fn toggle_star(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         if self.active_message_tab(cx).is_some() {
             self.with_message_tab(window, cx, |tab, _| tab.toggle_star());
@@ -1881,6 +1889,7 @@ impl MailWindow {
             this.with_list(cx, |list, cx| list.page(false, cx));
         }))
         .on_action(cx.listener(|this, _: &ToggleRead, window, cx| this.toggle_read(window, cx)))
+        .on_action(cx.listener(|this, _: &MarkRead, window, cx| this.mark_read(window, cx)))
         .on_action(cx.listener(|this, _: &ToggleStar, window, cx| this.toggle_star(window, cx)))
         .on_action(cx.listener(|this, _: &Archive, window, cx| this.archive(window, cx)))
         .on_action(cx.listener(|this, _: &ReportJunk, window, cx| this.report_junk(window, cx)))
@@ -2681,6 +2690,35 @@ mod tests {
     }
 
     #[gpui::test]
+    fn buttons_show_their_shortcuts_unless_turned_off(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            ui::init(cx);
+            crate::init(cx);
+        });
+        let source: Arc<dyn MailSource> =
+            Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
+        let (_view, cx) = cx.add_window_view(|window, cx| {
+            MailWindow::new(source, &MailWindowOptions::default(), window, cx)
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        for key in [
+            "reply-key",
+            "reply-all-key",
+            "forward-key",
+            "archive-key",
+            "junk-key",
+        ] {
+            assert!(cx.debug_bounds(key).is_some(), "{key} is shown");
+        }
+        cx.update(|_, cx| crate::message_view::set_button_shortcuts(false, cx));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(cx.debug_bounds("reply-key").is_none());
+        assert!(cx.debug_bounds("archive-key").is_none());
+    }
+
+    #[gpui::test]
     fn an_attachment_is_saved_where_the_user_picks(cx: &mut TestAppContext) {
         cx.update(|cx| {
             ui::init(cx);
@@ -3455,7 +3493,7 @@ mod tests {
             ]
         );
 
-        // In the list, `r` replies and `shift-r` replies to all, without cmd.
+        // In the list, a plain `r` marks read instead of replying.
         requests.borrow_mut().clear();
         let list = view
             .read_with(cx, |w, cx| w.thread_list(cx))
@@ -3465,18 +3503,9 @@ mod tests {
         cx.run_until_parked();
         cx.simulate_keystrokes("r shift-r");
         cx.run_until_parked();
-        assert_eq!(
-            *requests.borrow(),
-            vec![
-                ComposeRequest::Reply {
-                    message: shown,
-                    all: false
-                },
-                ComposeRequest::Reply {
-                    message: shown,
-                    all: true
-                },
-            ]
+        assert!(
+            requests.borrow().is_empty(),
+            "no reply without the modifier"
         );
     }
 

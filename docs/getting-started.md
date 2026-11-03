@@ -868,10 +868,9 @@ your own text ends), not at the very bottom below the quote. The plain-text part
 blank line, the footer, a blank line and the Maze line; the HTML part the rendered
 footer and a small grey "Sent with Maze" line.
 
-Reply (`cmd-r`, or `r` in the list and the message), reply all (`cmd-shift-r`, or
-`shift-r`) and forward (`cmd-l`) open the same kind of tab with the recipients, the
-`Re:`/`Fwd:` subject and the quoted message filled in (HTML mail is quoted as
-Markdown). A forward also carries the original's attachments (not the images inside
+Reply (`cmd-r`), reply all (`cmd-shift-r`) and forward (`cmd-l`) open the same kind of
+tab with the recipients, the `Re:`/`Fwd:` subject and the quoted message filled in (HTML
+mail is quoted as Markdown). A forward also carries the original's attachments (not the images inside
 an HTML message); remove the ones you don't want to send with their **×**. If only the
 text of the original was downloaded, Maze downloads the rest first. The attachments
 are read from your encrypted copy of the original when you send, and are never saved
@@ -1129,7 +1128,11 @@ Mac or the Super key on Linux, set it in `settings.json` and restart Maze:
 
 With Ctrl as the main modifier, shortcuts that already use Ctrl next to `cmd` (splitting
 with `cmd-ctrl-<arrow>`) use Ctrl and Super. Tooltips and hints in Maze show the keys
-you chose. These are bound today:
+you chose.
+
+The buttons above a message (Reply, All, Fwd, Archive, Junk) show their shortcut next
+to the label. To hide them, set `"keymap": { "show_on_buttons": false }`; this applies
+at once. These are bound today:
 
 | Action                                      | Key                                                  |
 | ------------------------------------------- | ---------------------------------------------------- |
@@ -1157,7 +1160,7 @@ you chose. These are bound today:
 | Open / close all threads                    | `*` / `\`                                            |
 | Select the whole thread                     | `cmd-shift-a`                                        |
 | Open the message in a tab                   | `enter`, `cmd-o`, double-click                       |
-| Toggle read                                 | `m`                                                  |
+| Toggle read / mark read                     | `m` / `r`                                            |
 | Star                                        | `s`                                                  |
 | Archive                                     | `a`                                                  |
 | Report junk (mark and move to Junk)         | `j`                                                  |
@@ -1170,7 +1173,6 @@ you chose. These are bound today:
 | **Writing**                                 |                                                      |
 | New message                                 | `cmd-n`                                              |
 | Reply / reply all / forward                 | `cmd-r` / `cmd-shift-r` / `cmd-l`                    |
-| Reply / reply all (list and message)        | `r` / `shift-r`                                      |
 | Send                                        | `cmd-enter`                                          |
 | Save draft / attach / Cc and Bcc            | `cmd-s` / `cmd-shift-a` / `cmd-shift-c`              |
 | Recipient: make a chip / take a suggestion   | `,` `;` `enter` `tab` / `enter`, `tab`               |

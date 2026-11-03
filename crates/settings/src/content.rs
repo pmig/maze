@@ -199,11 +199,22 @@ impl Default for ThemeSettings {
 }
 
 /// Keyboard shortcuts.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct KeymapSettings {
     /// The key shortcuts written with `cmd` use. Applies after a restart.
     pub primary_modifier: PrimaryModifier,
+    /// Show each button's shortcut on the button (Reply, Archive, … above a message).
+    pub show_on_buttons: bool,
+}
+
+impl Default for KeymapSettings {
+    fn default() -> Self {
+        Self {
+            primary_modifier: PrimaryModifier::default(),
+            show_on_buttons: true,
+        }
+    }
 }
 
 /// The key shortcuts written with `cmd` use.

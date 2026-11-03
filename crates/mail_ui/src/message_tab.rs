@@ -184,6 +184,12 @@ impl MessageTab {
         }
     }
 
+    /// `r`: marks the message read.
+    pub fn mark_read(&mut self) -> Result<(), SourceError> {
+        self.source
+            .set_message_flags(&[self.message], Flags::SEEN, Flags::empty())
+    }
+
     /// `s`: stars or unstars the message.
     pub fn toggle_star(&mut self) -> Result<(), SourceError> {
         if self.flags().contains(Flags::FLAGGED) {

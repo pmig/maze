@@ -23,7 +23,10 @@
     // The key that shortcuts like cmd-k use: "platform" (Command on macOS, Ctrl on
     // Linux), "ctrl" or "super" (Command on macOS, the Super key on Linux). Applies
     // after a restart.
-    "primary_modifier": "platform"
+    "primary_modifier": "platform",
+    // Show each button's shortcut on the button (Reply ⌘R, Archive A, … above a
+    // message). false: only in the tooltips and the command palette.
+    "show_on_buttons": true
   },
 
   // Window layout: "four_column" (folders | list | message | agent),
