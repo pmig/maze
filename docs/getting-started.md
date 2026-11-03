@@ -208,6 +208,11 @@ copy into the identity's Sent folder (`APPEND`) right after sending. This follow
 SMTP server's `saves_sent` setting (`auto`, `yes`, `no`), which is `auto` for servers
 Maze sets up.
 
+**A copy in the Inbox:** with `"compose": { "copy_sent_to_inbox": true }` Maze also
+uploads every message you send into the account's Inbox, marked read, so your replies
+sit next to the mail they answer there (also on your phone). Like other settings it can
+be set per account: `"accounts": { "Work": { "copy_sent_to_inbox": true } }`.
+
 ### Gmail and Google Workspace
 
 The quickest way is an **app password**: turn on 2-Step Verification for the Google
@@ -877,8 +882,8 @@ the outbox and goes out by itself when it can; a message the server refuses (a w
 password, a rejected recipient, Microsoft 365's *SendAsDenied* for an address you
 aren't allowed to send from) keeps the draft open with the explanation. Maze records
 every message the server accepted, so even a crash in the middle of sending never
-sends it twice. The copy in your Sent folder is described under
-[SMTP servers](#smtp-servers).
+sends it twice. The copy in your Sent folder, and the optional copy in your Inbox
+(`compose.copy_sent_to_inbox`), are described under [SMTP servers](#smtp-servers).
 
 Drafts are saved on your computer (encrypted, like your mail) a moment after you stop
 typing. Not there yet: drafts in the server's Drafts folder, signatures switching with

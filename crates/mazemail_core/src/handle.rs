@@ -1426,6 +1426,7 @@ fn start_sending(core: &CoreHandle, engine: Arc<SyncEngine>, outbox: smtp::Outbo
     });
     let wake = Arc::clone(&core.inner.outbox_wake);
     let store = core.inner.store.clone();
+    let settings = core.settings_watch();
     // Weak, so the runner doesn't keep the core alive.
     let weak = Arc::downgrade(&core.inner);
     let task = core.inner.runtime.handle().spawn(async move {
@@ -1434,7 +1435,7 @@ fn start_sending(core: &CoreHandle, engine: Arc<SyncEngine>, outbox: smtp::Outbo
             Ok(assigned) => tracing::info!(assigned, "derived SMTP servers for identities"),
             Err(err) => tracing::warn!(%err, "deriving SMTP servers"),
         }
-        crate::outgoing::run_outbox(outbox, routes, wake, move |identities| {
+        crate::outgoing::run_outbox(outbox, routes, wake, settings, move |identities| {
             if let Some(inner) = weak.upgrade() {
                 CoreHandle { inner }.after_sent(identities);
             }

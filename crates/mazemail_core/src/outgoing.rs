@@ -39,12 +39,13 @@ use crate::ops::OpPayload;
 use async_trait::async_trait;
 use auth::{AccountSecrets, TokenProvider as _};
 use mazemail_types::{AccountId, Flags, FolderId, FolderRole, IdentityId};
+use settings::LoadedSettings;
 use smtp::{Credentials, Route, Routes, Security, SentHook, SmtpConfig, SmtpError};
 use store::{
     Account, AccountKind, Identity, OutboxItem, Queries as _, SavesSent, SmtpAuth, SmtpSecurity,
     SmtpServerInput, Store, WriteTx,
 };
-use tokio::sync::Notify;
+use tokio::sync::{Notify, watch};
 
 use crate::accounts::{AccountAuth, AccountConfig, ImapSecurity};
 use crate::sync_engine::SyncEngine;
@@ -475,9 +476,46 @@ impl Routes for CoreRoutes {
     }
 }
 
-/// After a delivery: queue the Sent copy's `APPEND` unless the server files it itself.
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct SentCopy;
+/// After a delivery: queue the Sent copy's `APPEND` unless the server files it itself,
+/// and the Inbox copy's if the account's `compose.copy_sent_to_inbox` is on.
+#[derive(Clone)]
+pub(crate) struct SentCopy {
+    settings: watch::Receiver<Arc<LoadedSettings>>,
+}
+
+impl SentCopy {
+    /// The hook, reading the settings at each delivery.
+    pub(crate) fn new(settings: watch::Receiver<Arc<LoadedSettings>>) -> Self {
+        Self { settings }
+    }
+}
+
+impl std::fmt::Debug for SentCopy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SentCopy").finish_non_exhaustive()
+    }
+}
+
+/// The Inbox of the identity's account, if messages it sends get a copy there.
+fn inbox_copy_target(
+    w: &WriteTx<'_>,
+    identity: IdentityId,
+    settings: &LoadedSettings,
+) -> store::Result<Option<(AccountId, FolderId)>> {
+    let Some(identity) = w.identity(identity)? else {
+        return Ok(None);
+    };
+    let Some(account) = w.account(identity.account)? else {
+        return Ok(None);
+    };
+    if !settings.settings.copy_sent_to_inbox(&account.name) {
+        return Ok(None);
+    }
+    Ok(w.folders(Some(account.id))?
+        .into_iter()
+        .find(|f| f.role == Some(FolderRole::Inbox) && f.remote_name.is_some())
+        .map(|f| (account.id, f.id)))
+}
 
 /// Where the Sent copy goes, if Maze has to upload one: the identity's Sent folder,
 /// else the account's.
@@ -529,6 +567,16 @@ impl SentHook for SentCopy {
             }
             None => tracing::debug!(outbox = %item.id, "no Sent copy to upload"),
         }
+        let settings = Arc::clone(&self.settings.borrow());
+        if let Some((account, folder)) = inbox_copy_target(w, identity, &settings)? {
+            OpPayload::Append {
+                folder,
+                blob,
+                flags: Flags::SEEN,
+                keywords: Vec::new(),
+            }
+            .enqueue(w, account, "user")?;
+        }
         Ok(())
     }
 }
@@ -562,9 +610,10 @@ pub(crate) async fn run_outbox(
     outbox: smtp::Outbox,
     routes: Arc<CoreRoutes>,
     wake: Arc<OutboxWake>,
+    settings: watch::Receiver<Arc<LoadedSettings>>,
     after_sent: impl Fn(&[IdentityId]) + Send + Sync + 'static,
 ) {
-    let hook: Arc<dyn SentHook> = Arc::new(SentCopy);
+    let hook: Arc<dyn SentHook> = Arc::new(SentCopy::new(settings));
     match outbox.recover(Arc::clone(&hook)).await {
         Ok(recovery) if recovery.marked_sent + recovery.requeued > 0 => tracing::info!(
             marked_sent = recovery.marked_sent,

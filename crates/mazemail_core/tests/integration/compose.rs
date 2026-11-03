@@ -702,3 +702,40 @@ async fn addresses_you_write_to_are_offered_for_completion() {
     assert_eq!(contacts.len(), 4, "anna, bob, carol and the boss");
     s.core.shutdown().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn copy_sent_to_inbox_puts_a_read_copy_into_the_inbox() {
+    let server = FakeServer::new();
+    let s = open_with_settings(
+        &server,
+        Some(r#"{ "compose": { "copy_sent_to_inbox": true } }"#),
+    )
+    .await;
+    let message = account_with_original(&s).await;
+    let mut reply = s
+        .core
+        .reply_draft(message, ReplyKind::Sender)
+        .await
+        .unwrap();
+    reply.body_markdown = format!("Thursday works.{}", reply.body_markdown);
+    assert_eq!(
+        s.core.send_draft(None, reply).await.unwrap(),
+        SendResult::Sent
+    );
+
+    // The Sent copy, and the same message in the Inbox next to the original, read.
+    wait_for("the Sent copy", || server.messages("Sent").len() == 1).await;
+    wait_for("the Inbox copy", || server.messages("INBOX").len() == 2).await;
+    let sent = &server.messages("Sent")[0];
+    let copy = server
+        .messages("INBOX")
+        .into_iter()
+        .find(|m| m.uid != 1)
+        .unwrap();
+    assert_eq!(copy.flags, Flags::SEEN);
+    assert_eq!(
+        server.raw("INBOX", copy.uid).unwrap(),
+        server.raw("Sent", sent.uid).unwrap()
+    );
+    s.core.shutdown().await.unwrap();
+}

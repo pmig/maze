@@ -165,6 +165,15 @@ impl Settings {
                 .unwrap_or(self.compose.support_maze),
         }
     }
+
+    /// Whether messages sent from the account labelled `label` get a copy in its Inbox:
+    /// its override over `compose.copy_sent_to_inbox`.
+    pub fn copy_sent_to_inbox(&self, label: &str) -> bool {
+        self.accounts
+            .get(label)
+            .and_then(|o| o.copy_sent_to_inbox)
+            .unwrap_or(self.compose.copy_sent_to_inbox)
+    }
 }
 
 /// Theme selection.
@@ -503,6 +512,9 @@ pub struct ComposeSettings {
     /// Add "Sent with Maze (https://mazemail.dev)" below your messages (the default of
     /// the composer's checkbox). Can be overridden per account.
     pub support_maze: bool,
+    /// Also put a copy of every message you send into the account's Inbox (marked
+    /// read), next to the Sent copy. Can be overridden per account.
+    pub copy_sent_to_inbox: bool,
 }
 
 impl Default for ComposeSettings {
@@ -513,6 +525,7 @@ impl Default for ComposeSettings {
             undo_send_seconds: UndoSendSeconds::default(),
             footer: String::new(),
             support_maze: true,
+            copy_sent_to_inbox: false,
         }
     }
 }
@@ -784,6 +797,9 @@ pub struct AccountOverrides {
     /// Overrides `compose.support_maze`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub support_maze: Option<bool>,
+    /// Overrides `compose.copy_sent_to_inbox`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub copy_sent_to_inbox: Option<bool>,
     /// Overrides `contacts.sync`: `false` stops syncing this account's contacts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contacts_sync: Option<bool>,
@@ -1275,5 +1291,21 @@ mod tests {
         let personal = settings.footer_for("personal");
         assert_eq!(personal.footer, "Philip · *Maze*");
         assert!(personal.support_maze);
+    }
+
+    #[test]
+    fn copies_of_sent_mail_in_the_inbox_per_account() {
+        let mut settings = Settings::default();
+        assert!(!settings.copy_sent_to_inbox("work"), "off by default");
+        settings.compose.copy_sent_to_inbox = true;
+        settings.accounts.insert(
+            "work".to_owned(),
+            AccountOverrides {
+                copy_sent_to_inbox: Some(false),
+                ..AccountOverrides::default()
+            },
+        );
+        assert!(!settings.copy_sent_to_inbox("work"));
+        assert!(settings.copy_sent_to_inbox("personal"));
     }
 }

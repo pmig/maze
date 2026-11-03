@@ -940,7 +940,11 @@ impl CoreHandle {
             engine,
         };
         let delivery = outbox
-            .send(item, &routes, Arc::new(SentCopy))
+            .send(
+                item,
+                &routes,
+                Arc::new(SentCopy::new(self.settings_watch())),
+            )
             .await
             .map_err(|err| match err {
                 smtp::OutboxError::Store(err) => Error::Store(err),

@@ -105,7 +105,10 @@
     // while you write; it isn't part of the text you edit.
     "footer": "",
     // Adds "Sent with Maze (https://mazemail.dev)" below your messages. Thank you!
-    "support_maze": true
+    "support_maze": true,
+    // Also puts a copy of every message you send into the account's Inbox (marked
+    // read), next to the copy in Sent.
+    "copy_sent_to_inbox": false
   },
 
   // Spell checking in the composer: the languages as BCP 47 tags, best first, e.g.
@@ -132,7 +135,8 @@
   // Overrides per account, keyed by the account's label, e.g.
   // "work": { "offline": "all", "remote_content": "never", "footer": "Acme Inc." }
   // Supported keys: "offline", "offline_recent_days", "remote_content", "footer",
-  // "support_maze", "contacts_sync" and, for Microsoft accounts, "shared_contacts":
+  // "support_maze", "copy_sent_to_inbox", "contacts_sync" and, for Microsoft accounts,
+  // "shared_contacts":
   // other mailboxes whose shared Contacts folder Maze syncs, read-only, e.g.
   // "work": { "shared_contacts": ["team@contoso.com"] }.
   "accounts": {},
