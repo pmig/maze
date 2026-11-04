@@ -792,6 +792,13 @@ impl CoreHandle {
         Ok(out)
     }
 
+    /// The folders each of `ids` is in, as `(message, folder)` pairs (the table's
+    /// Folder column).
+    pub fn message_folders(&self, ids: &[MessageId]) -> Result<Vec<(MessageId, FolderId)>> {
+        self.ensure_open()?;
+        Ok(self.inner.store.reader()?.message_folders(ids)?)
+    }
+
     /// All tags, by ordinal.
     pub fn tags(&self) -> Result<Vec<store::Tag>> {
         self.ensure_open()?;

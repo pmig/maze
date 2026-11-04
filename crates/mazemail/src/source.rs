@@ -61,7 +61,9 @@ use mazemail_core::{
     SearchSort, SortField, StorageUsage as CoreStorageUsage, SyncState as CoreSyncState,
     reader_text,
 };
-use mazemail_types::{AccountId, Address, Flags, FolderId, MessageId, Sensitive, TagId, ThreadId};
+use mazemail_types::{
+    AccountId, Address, Flags, FolderId, FolderRole, MessageId, Sensitive, TagId, ThreadId,
+};
 use security::phishing::WarningKind;
 use time::OffsetDateTime;
 
@@ -101,11 +103,13 @@ pub struct CoreMailSource {
     favicons: Mutex<HashMap<String, Option<Arc<gpui::Image>>>>,
 }
 
-/// Account and tag names by id.
+/// Account, tag and folder names by id.
 #[derive(Debug, Default)]
 struct Names {
     accounts: HashMap<AccountId, SharedString>,
     tags: HashMap<TagId, SharedString>,
+    /// Folder paths ("Archives / 2025") and roles, for the Folder column.
+    folders: HashMap<FolderId, (SharedString, Option<FolderRole>)>,
 }
 
 impl std::fmt::Debug for CoreMailSource {
@@ -427,10 +431,62 @@ impl Names {
             .filter_map(|id| self.tags.get(id).cloned())
             .collect()
     }
+
+    /// The Folder column's text for a message in `folders`: their paths, without
+    /// Gmail's All Mail when the message also has a real label.
+    fn folder(&self, folders: &[FolderId]) -> SharedString {
+        let known: Vec<&(SharedString, Option<FolderRole>)> =
+            folders.iter().filter_map(|f| self.folders.get(f)).collect();
+        let labelled = known.iter().any(|(_, role)| *role != Some(FolderRole::All));
+        known
+            .iter()
+            .filter(|(_, role)| !(labelled && *role == Some(FolderRole::All)))
+            .map(|(path, _)| path.as_ref())
+            .collect::<Vec<_>>()
+            .join(", ")
+            .into()
+    }
+}
+
+/// Folder paths by id from the account trees.
+fn folder_names(
+    entries: &[FolderEntry],
+    parent: Option<&str>,
+    out: &mut HashMap<FolderId, (SharedString, Option<FolderRole>)>,
+) {
+    for entry in entries {
+        let path = match parent {
+            Some(parent) => format!("{parent} / {}", entry.name),
+            None => entry.name.to_string(),
+        };
+        if let FolderKey::Folder(id) = entry.key {
+            out.insert(id, (path.clone().into(), entry.role));
+        }
+        folder_names(&entry.children, Some(&path), out);
+    }
+}
+
+/// The folders of each of `ids`, from the core.
+fn folders_of(core: &CoreHandle, ids: &[MessageId]) -> HashMap<MessageId, Vec<FolderId>> {
+    let mut out: HashMap<MessageId, Vec<FolderId>> = HashMap::new();
+    match core.message_folders(ids) {
+        Ok(pairs) => {
+            for (message, folder) in pairs {
+                out.entry(message).or_default().push(folder);
+            }
+        }
+        Err(error) => tracing::debug!(%error, "cannot read the folders of rows"),
+    }
+    out
 }
 
 /// A thread row, with what its newest message adds (Correspondents, recipients, size).
-fn row(row: mazemail_core::ThreadRow, newest: Option<&MessageListRow>, names: &Names) -> ThreadRow {
+fn row(
+    row: mazemail_core::ThreadRow,
+    newest: Option<&MessageListRow>,
+    folder: SharedString,
+    names: &Names,
+) -> ThreadRow {
     // Participants are the distinct senders, oldest first: the last is the newest.
     let participant = row
         .participants
@@ -464,6 +520,7 @@ fn row(row: mazemail_core::ThreadRow, newest: Option<&MessageListRow>, names: &N
         message_count: row.message_count,
         size: newest.and_then(|m| m.row.size).unwrap_or(0),
         account: names.account(row.account),
+        folder,
         tags: names.tags(&row.tags),
     }
 }
@@ -484,7 +541,7 @@ impl RecipientsText for MessageListRow {
     }
 }
 
-fn message_row(row: MessageListRow, names: &Names) -> MessageRow {
+fn message_row(row: MessageListRow, folder: SharedString, names: &Names) -> MessageRow {
     let recipients_text = row.correspondents_or_recipients();
     let outgoing = row.outgoing;
     let m = row.row;
@@ -500,6 +557,7 @@ fn message_row(row: MessageListRow, names: &Names) -> MessageRow {
         has_attachments: m.has_attachments,
         size: m.size.unwrap_or(0),
         account: names.account(m.account),
+        folder,
         tags: names.tags(&m.tags),
     }
 }
@@ -897,6 +955,10 @@ impl MailSource for CoreMailSource {
         *write(&self.counts) = counts;
         *lock(&self.tree) = Some(tree.clone());
         let tags = core.tags().unwrap_or_default();
+        let mut folders = HashMap::new();
+        for account in &tree.accounts {
+            folder_names(&account.folders, None, &mut folders);
+        }
         *write(&self.names) = Names {
             accounts: accounts
                 .iter()
@@ -906,6 +968,7 @@ impl MailSource for CoreMailSource {
                 .into_iter()
                 .map(|t| (t.id, SharedString::from(t.name)))
                 .collect(),
+            folders,
         };
         tree
     }
@@ -961,11 +1024,17 @@ impl MailSource for CoreMailSource {
             .into_iter()
             .map(|m| (m.row.id, m))
             .collect();
+        let folders = folders_of(&core, &newest_ids);
         let names = read(&self.names);
         rows.into_iter()
             .map(|r| {
                 let last = r.last_message.and_then(|id| newest.get(&id));
-                row(r, last, &names)
+                let folder = r
+                    .last_message
+                    .and_then(|id| folders.get(&id))
+                    .map(|f| names.folder(f))
+                    .unwrap_or_default();
+                row(r, last, folder, &names)
             })
             .collect()
     }
@@ -1016,8 +1085,17 @@ impl MailSource for CoreMailSource {
         let context = *lock(&self.context);
         match core.message_rows(keys, context) {
             Ok(rows) => {
+                let folders = folders_of(&core, keys);
                 let names = read(&self.names);
-                rows.into_iter().map(|r| message_row(r, &names)).collect()
+                rows.into_iter()
+                    .map(|r| {
+                        let folder = folders
+                            .get(&r.row.id)
+                            .map(|f| names.folder(f))
+                            .unwrap_or_default();
+                        message_row(r, folder, &names)
+                    })
+                    .collect()
             }
             Err(error) => {
                 tracing::warn!(%error, "cannot read message rows");
@@ -1506,5 +1584,34 @@ impl MailSource for CoreMailSource {
                 Err(error) => Some(format!("Mail can't be read: {error}").into()),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod folder_column_tests {
+    use super::*;
+
+    #[test]
+    fn the_folder_column_leaves_out_all_mail_next_to_a_label() {
+        let names = Names {
+            folders: [
+                (FolderId(1), ("Inbox".into(), Some(FolderRole::Inbox))),
+                (
+                    FolderId(2),
+                    ("[Gmail] / All Mail".into(), Some(FolderRole::All)),
+                ),
+                (FolderId(3), ("Customers / Acme".into(), None)),
+            ]
+            .into(),
+            ..Names::default()
+        };
+        assert_eq!(names.folder(&[FolderId(1), FolderId(2)]).as_ref(), "Inbox");
+        assert_eq!(
+            names.folder(&[FolderId(1), FolderId(3)]).as_ref(),
+            "Inbox, Customers / Acme"
+        );
+        // Archived on Gmail: only in All Mail, which is then its folder.
+        assert_eq!(names.folder(&[FolderId(2)]).as_ref(), "[Gmail] / All Mail");
+        assert_eq!(names.folder(&[]).as_ref(), "");
     }
 }

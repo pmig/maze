@@ -443,6 +443,8 @@ pub struct ThreadRow {
     pub size: u64,
     /// The account's name.
     pub account: SharedString,
+    /// The folders it is in (a thread: its newest message's), names joined with ", ".
+    pub folder: SharedString,
     /// Tag names.
     pub tags: Vec<SharedString>,
 }
@@ -484,6 +486,8 @@ pub struct MessageRow {
     pub size: u64,
     /// The account's name.
     pub account: SharedString,
+    /// The folders it is in (a thread: its newest message's), names joined with ", ".
+    pub folder: SharedString,
     /// Tag names.
     pub tags: Vec<SharedString>,
 }

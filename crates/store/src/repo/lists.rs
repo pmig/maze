@@ -449,6 +449,24 @@ pub(crate) fn message_ids_in_scope(
     }
 }
 
+/// The folders of `ids`, as `(message, folder)` pairs ordered by folder.
+pub(crate) fn message_folders(
+    conn: &Connection,
+    ids: &[MessageId],
+) -> Result<Vec<(MessageId, FolderId)>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT ml.message_id, ml.folder_id FROM rarray(?1) x
+         CROSS JOIN message_location ml ON ml.message_id = x.value
+         JOIN folder f ON f.id = ml.folder_id
+         ORDER BY ml.message_id, f.ordinal, f.id",
+    )?;
+    Ok(stmt
+        .query_map([int_array(ids.iter().map(|m| m.0))], |row| {
+            Ok((MessageId(row.get(0)?), FolderId(row.get(1)?)))
+        })?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
 /// How many of `ids` are in each folder (search facets over mutable fields).
 pub(crate) fn folder_counts(conn: &Connection, ids: &[MessageId]) -> Result<Vec<(FolderId, u64)>> {
     let mut stmt = conn.prepare_cached(

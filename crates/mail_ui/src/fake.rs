@@ -804,6 +804,7 @@ impl FakeMailSource {
             message_count: live.len() as u32,
             size,
             account: Self::account_name(folder),
+            folder: FOLDERS[folder].name.into(),
             tags: Self::tags(h),
         })
     }
@@ -841,6 +842,7 @@ impl FakeMailSource {
                     0
                 },
             account: Self::account_name(folder),
+            folder: FOLDERS[folder].name.into(),
             tags: if index + 1 == count {
                 Self::tags(Self::hash(folder, row))
             } else {

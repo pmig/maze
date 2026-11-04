@@ -457,6 +457,12 @@ pub trait Queries: sealed::Sealed {
         lists::message_ids_in_scope(self.connection(sealed::Token), scope)
     }
 
+    /// The folders each of `ids` is in, as `(message, folder)` pairs in folder order
+    /// (the table's Folder column).
+    fn message_folders(&self, ids: &[MessageId]) -> Result<Vec<(MessageId, FolderId)>> {
+        lists::message_folders(self.connection(sealed::Token), ids)
+    }
+
     /// How many of `ids` are in each folder (folder facet).
     fn folder_counts(&self, ids: &[MessageId]) -> Result<Vec<(FolderId, u64)>> {
         lists::folder_counts(self.connection(sealed::Token), ids)

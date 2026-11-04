@@ -106,6 +106,8 @@ pub enum ColumnId {
     Tags,
     /// The account.
     Account,
+    /// The folder (useful in unified folders and search results).
+    Folder,
     /// Size.
     Size,
     /// Date.
@@ -115,7 +117,7 @@ pub enum ColumnId {
 impl ColumnId {
     /// Every column in display order (columns aren't reordered; the picker only turns
     /// them on and off).
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Star,
         Self::Unread,
         Self::Attachment,
@@ -125,6 +127,7 @@ impl ColumnId {
         Self::Recipients,
         Self::Tags,
         Self::Account,
+        Self::Folder,
         Self::Size,
         Self::Date,
     ];
@@ -150,6 +153,7 @@ impl ColumnId {
             Self::Recipients => "Recipients",
             Self::Tags => "Tags",
             Self::Account => "Account",
+            Self::Folder => "Folder",
             Self::Size => "Size",
             Self::Date => "Date",
         }
@@ -158,13 +162,13 @@ impl ColumnId {
     /// The width a column starts with.
     pub fn default_width(self) -> f32 {
         match self {
-            // Room for the icon and the sort arrow next to it.
-            Self::Star | Self::Unread | Self::Attachment => 44.,
+            // Just the icon: sorting by them colors it instead of adding an arrow.
+            Self::Star | Self::Unread | Self::Attachment => 24.,
             Self::Subject => 280.,
             Self::Correspondents => 150.,
             Self::Sender | Self::Recipients => 150.,
             Self::Tags => 90.,
-            Self::Account => 120.,
+            Self::Account | Self::Folder => 120.,
             Self::Size => 64.,
             Self::Date => 80.,
         }
@@ -183,9 +187,10 @@ impl ColumnId {
         self != Self::Subject
     }
 
-    /// What clicking the column's header sorts by.
-    pub fn sort_by(self) -> SortBy {
-        match self {
+    /// What clicking the column's header sorts by; `None` for the Folder column (the
+    /// list doesn't sort by folder).
+    pub fn sort_by(self) -> Option<SortBy> {
+        Some(match self {
             Self::Star => SortBy::Star,
             Self::Unread => SortBy::Unread,
             Self::Attachment => SortBy::Attachment,
@@ -195,9 +200,10 @@ impl ColumnId {
             Self::Recipients => SortBy::Recipients,
             Self::Tags => SortBy::Tags,
             Self::Account => SortBy::Account,
+            Self::Folder => return None,
             Self::Size => SortBy::Size,
             Self::Date => SortBy::Date,
-        }
+        })
     }
 
     /// The JSON name.
@@ -212,6 +218,7 @@ impl ColumnId {
             Self::Recipients => "recipients",
             Self::Tags => "tags",
             Self::Account => "account",
+            Self::Folder => "folder",
             Self::Size => "size",
             Self::Date => "date",
         }
@@ -315,6 +322,11 @@ impl ListPrefs {
 
     /// The width of a column.
     pub fn width(&self, column: ColumnId) -> f32 {
+        // Columns that can't be resized always have their own width (an older, wider
+        // one in the file doesn't stick).
+        if !column.resizable() {
+            return column.default_width();
+        }
         self.widths
             .get(&column)
             .copied()
@@ -621,9 +633,12 @@ mod tests {
         let store = UiStateStore::load(&path, ListDefaults::default());
         assert_eq!(store.prefs().sort, ListSort::OLDEST_FIRST);
         assert_eq!(store.prefs().mode, ListMode::Table);
-        // Every column sorts by itself.
+        // Every column but Folder sorts by itself.
         for column in ColumnId::ALL {
-            assert_eq!(column.sort_by().key(), column.key());
+            match column.sort_by() {
+                Some(by) => assert_eq!(by.key(), column.key()),
+                None => assert_eq!(column, ColumnId::Folder),
+            }
         }
     }
 

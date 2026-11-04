@@ -579,12 +579,16 @@ Unread mail is bold and has a blue dot, in the cards next to the sender and in t
 table's Unread column; a collapsed thread has it while any of its messages is unread.
 Click the dot (or the empty spot where a read message's dot would be) to mark that
 message or thread read or unread without selecting it, like `m`; `cmd-z` undoes it.
-More columns (Attachment, Size, Tags, Account, Sender, Recipients) come from the
+The star, unread and attachment columns are narrow, headed by their icon only. More
+columns (Attachment, Size, Tags, Account, Folder, Sender, Recipients) come from the
 columns button in the list header or by right-clicking a column header, which also
-turns columns off; drag a header's edge to resize it.
+turns columns off; drag a header's edge to resize it. **Folder** shows where each
+message is (a thread: its newest message), which helps in the unified folders and in
+search results; on Gmail, All Mail is left out when the message also has a label.
 
 Click any column header to sort by it, and again to reverse the order; an arrow shows
-the sorted column. Dates and sizes start newest and largest first, the star, unread and
+the sorted column (an icon column turns its icon blue instead). The Folder column
+doesn't sort. Dates and sizes start newest and largest first, the star, unread and
 attachment columns put those messages first, text columns go A to Z. The sort button
 in the list header (cards and table) and **Sort By…** in the command palette or the
 View menu offer every order, including the received time. Subjects sort without `Re:`,

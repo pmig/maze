@@ -225,6 +225,7 @@ pub struct RowView {
     date: SharedString,
     size: SharedString,
     account: SharedString,
+    folder: SharedString,
     tags: SharedString,
     count: Option<SharedString>,
     flags: Flags,
@@ -248,6 +249,7 @@ impl RowView {
             date: dates.short(row.date),
             size: format_size(row.size),
             account: row.account.clone(),
+            folder: row.folder.clone(),
             tags: join_tags(&row.tags),
             count: (row.message_count > 1).then(|| row.message_count.to_string().into()),
             flags: row.flags,
@@ -268,6 +270,7 @@ impl RowView {
             date: dates.short(row.date),
             size: format_size(row.size),
             account: row.account.clone(),
+            folder: row.folder.clone(),
             tags: join_tags(&row.tags),
             count: None,
             flags: row.flags,
@@ -2051,7 +2054,9 @@ impl ThreadList {
     /// A click on a column header: sorts by the column, or the other way round if the
     /// list is sorted by it already.
     pub fn sort_by_column(&mut self, column: ColumnId, cx: &mut Context<'_, Self>) {
-        self.set_sort(self.prefs.sort.clicked(column.sort_by()), cx);
+        if let Some(by) = column.sort_by() {
+            self.set_sort(self.prefs.sort.clicked(by), cx);
+        }
     }
 
     /// `view::ReverseSortOrder`.
@@ -3009,7 +3014,10 @@ impl TableDelegate for ThreadTable {
             .width(px(width))
             .resizable(id.resizable());
         match id {
-            ColumnId::Star | ColumnId::Unread | ColumnId::Attachment => column.text_center(),
+            // Just the icon, without the cell padding.
+            ColumnId::Star | ColumnId::Unread | ColumnId::Attachment => {
+                column.text_center().p_0().min_width(px(id.default_width()))
+            }
             ColumnId::Size => column.text_right(),
             ColumnId::Subject => column.min_width(px(MIN_SUBJECT)),
             _ => column.min_width(px(48.)),
@@ -3051,7 +3059,7 @@ impl TableDelegate for ThreadTable {
         let look = self.look.clone();
         let list = self.list.clone();
         let sort = self.look.borrow().sort;
-        let sorted = sort.by == id.sort_by();
+        let sorted = Some(sort.by) == id.sort_by();
         let arrow = |color| {
             Icon::new(if sort.descending {
                 IconName::ChevronDown
@@ -3076,11 +3084,16 @@ impl TableDelegate for ThreadTable {
             .gap_1()
             .cursor_pointer()
             .map(|this| match icon {
-                // Icon columns keep their icon and add the arrow while sorted.
-                Some(icon) => this
-                    .justify_center()
-                    .child(Icon::new(icon).xsmall().text_color(muted))
-                    .when(sorted, |this| this.child(arrow(theme.foreground))),
+                // Icon columns show only their icon, in the accent color while the
+                // list is sorted by it (no room for an arrow).
+                Some(icon) => {
+                    this.justify_center()
+                        .child(Icon::new(icon).xsmall().text_color(if sorted {
+                            theme.primary
+                        } else {
+                            muted
+                        }))
+                }
                 None => this
                     .child(div().min_w_0().truncate().text_xs().child(id.label()))
                     .when(sorted, |this| this.child(arrow(muted))),
@@ -3238,7 +3251,7 @@ impl TableDelegate for ThreadTable {
                     RowKind::Thread { .. } if expandable => h_flex()
                         .id(("twisty", row_ix))
                         .flex_none()
-                        .w(scaled(16., cx))
+                        .w(scaled(12., cx))
                         .h_full()
                         .justify_center()
                         .text_color(theme.muted_foreground)
@@ -3257,7 +3270,7 @@ impl TableDelegate for ThreadTable {
                         })
                         .into_any_element(),
                     RowKind::Thread { .. } => {
-                        div().flex_none().w(scaled(16., cx)).into_any_element()
+                        div().flex_none().w(scaled(12., cx)).into_any_element()
                     }
                     RowKind::Message => div().into_any_element(),
                 };
@@ -3315,6 +3328,10 @@ impl TableDelegate for ThreadTable {
             ColumnId::Account => cell
                 .text_color(theme.muted_foreground)
                 .child(row.account.clone())
+                .into_any_element(),
+            ColumnId::Folder => cell
+                .text_color(theme.muted_foreground)
+                .child(row.folder.clone())
                 .into_any_element(),
             ColumnId::Size => cell
                 .w_full()
@@ -3708,6 +3725,38 @@ mod tests {
         assert_eq!(prefs.mode, ListMode::Table);
         assert_eq!(prefs.sort, ListSort::OLDEST_FIRST);
         assert!(prefs.columns.contains(&ColumnId::Size));
+    }
+
+    #[gpui::test]
+    fn the_folder_column_is_optional_and_shows_each_row_s_folder(cx: &mut gpui::TestAppContext) {
+        let source = source();
+        let (list, cx) = open_list(
+            cx,
+            &source,
+            inbox(),
+            UiStateStore::in_memory(ListDefaults::default()),
+        );
+        list.update_in(cx, |list, window, cx| {
+            list.toggle_mode(window, cx);
+            assert!(
+                !list.prefs.columns.contains(&ColumnId::Folder),
+                "off by default"
+            );
+            list.toggle_column(ColumnId::Folder, cx);
+            assert!(list.prefs.columns.contains(&ColumnId::Folder));
+        });
+        cx.run_until_parked();
+        let folder = list.update(cx, |list, _| {
+            list.model()
+                .borrow_mut()
+                .row(0)
+                .map(|row| row.folder.clone())
+        });
+        assert_eq!(folder.as_deref(), Some("Inbox"));
+        // Clicking its header doesn't sort: the list can't sort by folder.
+        let sort = list.read_with(cx, |list, _| list.prefs.sort);
+        list.update(cx, |list, cx| list.sort_by_column(ColumnId::Folder, cx));
+        assert_eq!(list.read_with(cx, |list, _| list.prefs.sort), sort);
     }
 
     /// The subject as the fake sorts it (no `Re:`/`AW:`… prefix, lowercase).

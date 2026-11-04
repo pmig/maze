@@ -342,4 +342,10 @@ fn scope_id_sets_and_facets() {
     );
     let counts = reader.folder_counts(&both).unwrap();
     assert_eq!(counts, vec![(f.inbox, 12), (f.sent, 1)]);
+    // The folders of messages (the Folder column).
+    assert_eq!(
+        reader.message_folders(&[extra.message, inbox[0]]).unwrap(),
+        vec![(inbox[0], f.inbox), (extra.message, f.sent)]
+    );
+    assert!(reader.message_folders(&[]).unwrap().is_empty());
 }
