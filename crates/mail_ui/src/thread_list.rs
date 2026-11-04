@@ -3177,7 +3177,11 @@ impl TableDelegate for ThreadTable {
             .truncate()
             .when(unread, |this| this.font_semibold());
         match id {
-            ColumnId::Star => cell
+            // Centered like the unread dot: the icon columns have no cell padding.
+            ColumnId::Star => h_flex()
+                .debug_selector(move || format!("star-{row_ix}"))
+                .size_full()
+                .justify_center()
                 .when(row.starred(), |this| {
                     this.child(
                         Icon::new(IconName::StarFill)
@@ -3230,7 +3234,9 @@ impl TableDelegate for ThreadTable {
                     })
                     .into_any_element()
             }
-            ColumnId::Attachment => cell
+            ColumnId::Attachment => h_flex()
+                .size_full()
+                .justify_center()
                 .when(row.attachment, |this| {
                     this.child(
                         Icon::new(IconName::Paperclip)
@@ -3881,6 +3887,19 @@ mod tests {
             .unwrap_or_else(|| panic!("row {ix} has an unread cell"));
         cx.simulate_click(cell.center(), gpui::Modifiers::none());
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn the_star_cell_fills_its_cell_like_the_unread_dot(cx: &mut gpui::TestAppContext) {
+        let source = source();
+        let (_list, cx) = open_list(cx, &source, inbox(), table_memory());
+        cx.run_until_parked();
+        let star = cx.debug_bounds("star-0").expect("a star cell");
+        let unread = cx.debug_bounds("unread-0").expect("an unread cell");
+        // Same row, same height: the icon centers in it, not in its top-left corner.
+        assert_eq!(star.origin.y, unread.origin.y);
+        assert_eq!(star.size.height, unread.size.height);
+        assert!(f32::from(star.size.width) >= 20.0, "{star:?}");
     }
 
     #[gpui::test]
