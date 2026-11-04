@@ -292,6 +292,22 @@ impl RowView {
     }
 }
 
+/// How a selected row looks, in the cards and in the table: the selection background
+/// and a 2 px accent bar on the left, however it was selected (click, shift, cmd or
+/// Select All). `row` must be positioned (`relative`) for the bar.
+fn selected_row<E: Styled + ParentElement>(row: E, background: Hsla, accent: Hsla) -> E {
+    row.bg(background).child(
+        div()
+            .debug_selector(|| "selected-row".to_owned())
+            .absolute()
+            .left_0()
+            .top_0()
+            .bottom_0()
+            .w(px(2.))
+            .bg(accent),
+    )
+}
+
 fn join_tags(tags: &[SharedString]) -> SharedString {
     if tags.is_empty() {
         SharedString::default()
@@ -2210,15 +2226,7 @@ impl ThreadList {
             })
             .map(|this| {
                 if highlighted {
-                    this.bg(theme.list_active).child(
-                        div()
-                            .absolute()
-                            .left_0()
-                            .top_0()
-                            .bottom_0()
-                            .w(px(2.))
-                            .bg(theme.primary),
-                    )
+                    selected_row(this, theme.list_active, theme.primary)
                 } else if hovered {
                     this.bg(theme.list_hover)
                 } else {
@@ -2819,7 +2827,7 @@ impl Focusable for ThreadList {
 }
 
 impl Render for ThreadList {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let theme = cx.theme().colors;
         let empty = self.is_empty() && self.loading.is_none();
         let slots = {
@@ -2846,14 +2854,6 @@ impl Render for ThreadList {
             ListMode::Table => {
                 let look = self.look.clone();
                 let table = self.table.clone();
-                // The table's own focus ring would include the column headers; ours
-                // goes around the rows only (and, like the table's, only after
-                // keyboard input, as CSS `:focus-visible` does).
-                let focused = self.table.focus_handle(cx).is_focused(window)
-                    && window.last_input_was_keyboard();
-                // …and only as tall as the rows: in a short list the empty space below
-                // them isn't framed as if it were selected.
-                let rows_height = table_row_height(cx) * self.len() as f32;
                 div()
                     .size_full()
                     .relative()
@@ -2862,22 +2862,11 @@ impl Render for ThreadList {
                             .with_size(Size::Size(table_row_height(cx)))
                             .stripe(false)
                             .bordered(false)
+                            // Selected rows show the selection, in the table as in the
+                            // cards; a frame around the table would make Select All
+                            // look different from a shift selection.
                             .focus_ring(false),
                     )
-                    .when(focused, |this| {
-                        this.child(
-                            div()
-                                .debug_selector(|| "table-focus-ring".to_owned())
-                                .absolute()
-                                .top(table_row_height(cx))
-                                .left_0()
-                                .right_0()
-                                .bottom_0()
-                                .max_h(rows_height)
-                                .border_1()
-                                .border_color(cx.theme().ring),
-                        )
-                    })
                     .child(
                         // Measures the table so the Subject column can flex.
                         canvas(
@@ -3125,18 +3114,10 @@ impl TableDelegate for ThreadTable {
         div()
             .id(("row", row_ix))
             .debug_selector(|| format!("table-row-{row_ix}"))
-            // Like the cards: the selection background and an accent bar, so selected
-            // rows don't look like the header (whose background is about as light).
+            // Like the cards (the accent bar also keeps selected rows from looking like
+            // the header, whose background is about as light).
             .when(highlighted, |this| {
-                this.relative().bg(cx.theme().list_active).child(
-                    div()
-                        .absolute()
-                        .left_0()
-                        .top_0()
-                        .bottom_0()
-                        .w(px(2.))
-                        .bg(cx.theme().primary),
-                )
+                selected_row(this.relative(), cx.theme().list_active, cx.theme().primary)
             })
             // The table selects on plain clicks; shift and cmd clicks are ours.
             .on_click(move |event, _, cx| {

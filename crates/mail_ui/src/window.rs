@@ -2839,7 +2839,9 @@ mod tests {
     }
 
     #[gpui::test]
-    fn the_focus_ring_of_a_short_table_frames_only_its_rows(cx: &mut TestAppContext) {
+    fn select_all_in_a_short_table_marks_only_the_rows_like_a_shift_selection(
+        cx: &mut TestAppContext,
+    ) {
         cx.update(|cx| {
             ui::init(cx);
             crate::init(cx);
@@ -2862,16 +2864,18 @@ mod tests {
         cx.simulate_keystrokes("cmd-alt-t cmd-a");
         cx.run_until_parked();
         cx.update(|window, cx| window.draw(cx).clear(cx));
-        let ring = cx
-            .debug_bounds("table-focus-ring")
-            .expect("the focus ring after keyboard input");
-        let rows = view.read_with(cx, |w, cx| w.thread_list(cx).unwrap().read(cx).len());
-        assert_eq!(rows, 2);
+        // Each selected row carries the accent bar, one row high; nothing frames the
+        // table (or the empty space below the rows).
+        let bar = cx
+            .debug_bounds("selected-row")
+            .expect("selected rows are marked");
         let row = cx.update(|_, cx| crate::thread_list::table_row_height(cx));
         assert!(
-            (f32::from(ring.size.height) - f32::from(row) * rows as f32).abs() < 1.0,
-            "{ring:?} for {rows} rows of {row:?}"
+            f32::from(bar.size.height) <= f32::from(row) + 1.0,
+            "{bar:?}"
         );
+        assert!(cx.debug_bounds("table-focus-ring").is_none());
+        assert!(cx.debug_bounds("focus-ring").is_none());
     }
 
     #[gpui::test]
