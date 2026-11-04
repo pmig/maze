@@ -2851,6 +2851,9 @@ impl Render for ThreadList {
                 // keyboard input, as CSS `:focus-visible` does).
                 let focused = self.table.focus_handle(cx).is_focused(window)
                     && window.last_input_was_keyboard();
+                // …and only as tall as the rows: in a short list the empty space below
+                // them isn't framed as if it were selected.
+                let rows_height = table_row_height(cx) * self.len() as f32;
                 div()
                     .size_full()
                     .relative()
@@ -2864,11 +2867,13 @@ impl Render for ThreadList {
                     .when(focused, |this| {
                         this.child(
                             div()
+                                .debug_selector(|| "table-focus-ring".to_owned())
                                 .absolute()
                                 .top(table_row_height(cx))
                                 .left_0()
                                 .right_0()
                                 .bottom_0()
+                                .max_h(rows_height)
                                 .border_1()
                                 .border_color(cx.theme().ring),
                         )

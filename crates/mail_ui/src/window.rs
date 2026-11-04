@@ -2839,6 +2839,42 @@ mod tests {
     }
 
     #[gpui::test]
+    fn the_focus_ring_of_a_short_table_frames_only_its_rows(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            ui::init(cx);
+            crate::init(cx);
+        });
+        let source: Arc<dyn MailSource> =
+            Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            MailWindow::new(source, &MailWindowOptions::default(), window, cx)
+        });
+        cx.run_until_parked();
+        // Gmail (club) / Drafts: two threads, far fewer than fit.
+        view.update_in(cx, |w, window, cx| {
+            let pane = w.folder_pane.clone();
+            let selected = FolderPaneEvent::Selected {
+                key: FolderKey::Folder(mazemail_types::FolderId(10)),
+                title: "Drafts".into(),
+            };
+            w.on_folder_pane_event(&pane, &selected, window, cx);
+        });
+        cx.simulate_keystrokes("cmd-alt-t cmd-a");
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let ring = cx
+            .debug_bounds("table-focus-ring")
+            .expect("the focus ring after keyboard input");
+        let rows = view.read_with(cx, |w, cx| w.thread_list(cx).unwrap().read(cx).len());
+        assert_eq!(rows, 2);
+        let row = cx.update(|_, cx| crate::thread_list::table_row_height(cx));
+        assert!(
+            (f32::from(ring.size.height) - f32::from(row) * rows as f32).abs() < 1.0,
+            "{ring:?} for {rows} rows of {row:?}"
+        );
+    }
+
+    #[gpui::test]
     fn shift_arrows_select_rows_that_quick_move_moves_together(cx: &mut TestAppContext) {
         use crate::fake::MoveItem;
 
