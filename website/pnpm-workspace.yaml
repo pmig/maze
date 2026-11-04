@@ -4,3 +4,8 @@ allowBuilds:
   esbuild: false
   workerd: false
   sharp: false
+
+# undici below 7.30.1 has known vulnerabilities (cache poisoning on redirects, TLS
+# validation bypass, denial of service); miniflare (wrangler) pins an older 7.x.
+overrides:
+  "undici@>=7.0.0 <7.30.1": 7.30.1
