@@ -1159,9 +1159,9 @@ With Ctrl as the main modifier, shortcuts that already use Ctrl next to `cmd` (s
 with `cmd-ctrl-<arrow>`) use Ctrl and Super. Tooltips and hints in Maze show the keys
 you chose.
 
-Shortcuts in Maze are drawn as keyboard keys. The buttons above a message (Reply,
-All, Fwd, Archive, Junk) show theirs next to the label, and with several messages
-selected the message pane lists the keys that act on all of them. To hide them, set `"keymap": { "show_on_buttons": false }`; this applies
+The buttons above a message (Reply, All, Fwd, Archive, Junk) show their shortcut next
+to the label, in the monospace font. With several messages selected, the message pane
+lists the keys that act on all of them, drawn as keyboard keys. To hide them, set `"keymap": { "show_on_buttons": false }`; this applies
 at once. These are bound today:
 
 | Action                                      | Key                                                  |

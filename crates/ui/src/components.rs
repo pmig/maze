@@ -250,11 +250,12 @@ mod tests {
 }
 
 /// A keyboard shortcut drawn as keyboard keys, like `<kbd>` on Maze's website: a
-/// bordered cap with a thicker bottom edge, in the monospace font. Every shortcut shown
-/// in Maze looks like this (button hints, the multi-selection help, the palette).
+/// bordered cap with a thicker bottom edge, in the monospace font (the multi-selection
+/// help, the palette). Inside a button, [`KeyCap::plain`] is only the monospace text.
 #[derive(Debug, IntoElement)]
 pub struct KeyCap {
     label: SharedString,
+    plain: bool,
 }
 
 impl KeyCap {
@@ -262,13 +263,22 @@ impl KeyCap {
     pub fn new(keystroke: &gpui::Keystroke) -> Self {
         Self {
             label: gpui_kit::component::kbd::Kbd::format(keystroke).into(),
+            plain: false,
         }
+    }
+
+    /// Only the monospace text, muted, without the cap: for hints inside buttons.
+    #[must_use]
+    pub fn plain(mut self) -> Self {
+        self.plain = true;
+        self
     }
 
     /// A cap with this text.
     pub fn label(label: impl Into<SharedString>) -> Self {
         Self {
             label: label.into(),
+            plain: false,
         }
     }
 }
@@ -276,6 +286,19 @@ impl KeyCap {
 impl RenderOnce for KeyCap {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
+        if self.plain {
+            // The monospace font sits higher in the line than the UI font of the label
+            // next to it: nudged down to the label's baseline.
+            return div()
+                .flex_none()
+                .relative()
+                .top(gpui::px(1.))
+                .text_color(theme.muted_foreground)
+                .font_family(theme.mono_font_family.clone())
+                .text_xs()
+                .whitespace_nowrap()
+                .child(self.label);
+        }
         div()
             .flex_none()
             .min_w(gpui::rems(1.25))

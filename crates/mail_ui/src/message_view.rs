@@ -473,7 +473,7 @@ impl MessageView {
                 .map(|keystroke| {
                     div()
                         .debug_selector(move || format!("{id}-key"))
-                        .child(KeyCap::new(&keystroke))
+                        .child(KeyCap::new(&keystroke).plain())
                 })
         };
         let load_key = key(&LoadImages, "load-images");
@@ -760,7 +760,7 @@ impl MessageView {
                     button.child(
                         div()
                             .debug_selector(move || format!("{id}-key"))
-                            .child(KeyCap::new(&keystroke)),
+                            .child(KeyCap::new(&keystroke).plain()),
                     )
                 })
         };
@@ -827,7 +827,9 @@ impl MessageView {
             })
             .child(Self::render_verification(&doc.verification, cx))
             .child(
+                // Wraps in a narrow pane instead of pushing Reader/Original out of view.
                 h_flex()
+                    .flex_wrap()
                     .gap_1()
                     .child(
                         action("reply", "Reply", IconName::Reply, &Reply)
@@ -897,7 +899,7 @@ impl MessageView {
                             button.child(
                                 div()
                                     .debug_selector(move || format!("{id}-key"))
-                                    .child(KeyCap::new(&keystroke)),
+                                    .child(KeyCap::new(&keystroke).plain()),
                             )
                         },
                     )
