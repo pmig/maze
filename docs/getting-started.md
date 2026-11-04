@@ -529,6 +529,12 @@ Archive, All Mail, Starred, Important, Junk and Trash, even where the server kee
 deeper in its tree (Gmail's `[Gmail]/Sent Mail`, `INBOX.Trash`). A thin line separates
 them from your other folders, which follow in the server's order.
 
+The right-click menu of a folder also has **Mark All as Read** (also on the unified
+folders) and **Delete All Messages…**, which moves the folder's mail to its account's
+Trash after asking (`cmd-z` brings it back). On a Trash folder it is **Empty Trash…**:
+the messages in it are deleted from the server for good, after asking; a message that
+also sits in another folder stays.
+
 Right-click a folder and choose **Add to Favorites** to list it under Favorites at the
 top; **Remove from Favorites** (on the folder or on its favorite) takes it out again.
 **Mail: Toggle Favorite Folder** in the command palette does the same for the open
@@ -736,7 +742,10 @@ in the Trash or Junk folder, to find it there.
 
 ### Syncing
 
-Maze syncs your accounts in the background. To sync all of them right away, click the
+Maze syncs your accounts in the background, every folder except the Trash: a Trash is
+synced while you have it open (deleting still moves mail there on the server). To sync
+the Trash folders in the background too, set `"sync_trash": true` (or per account,
+`"accounts": { "Work": { "sync_trash": true } }`) and restart Maze. To sync all of them right away, click the
 sync button in the title bar, next to **+** (New Message), press `cmd-shift-t`
 (Thunderbird's "Get All New Messages"; `F5` works too), or run "Mail: Sync Now" from the
 command palette. The icon turns while a sync runs. When sync has a problem (offline, the

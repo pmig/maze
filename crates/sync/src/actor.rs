@@ -438,6 +438,9 @@ impl Actor {
             .collect();
         let open = self.open_folder.and_then(|f| self.mailbox_for(f));
         for meta in metas {
+            if !self.background_sync(meta.id, meta.role, open) {
+                continue;
+            }
             let priority = if Some(meta.id) == open {
                 P_OPEN_FOLDER
             } else {
@@ -449,6 +452,17 @@ impl Actor {
             };
             self.enqueue_pass(meta.id, priority, opts);
         }
+    }
+
+    /// Whether rounds and op results sync `folder`: everything but the Trash when
+    /// `sync_trash` is off, unless it is the open folder.
+    fn background_sync(
+        &self,
+        folder: FolderId,
+        role: Option<FolderRole>,
+        open: Option<FolderId>,
+    ) -> bool {
+        self.shared.config.sync_trash || role != Some(FolderRole::Trash) || open == Some(folder)
     }
 
     /// The mailboxes polled every 30 s: the open folder and the watched ones, without
@@ -1039,9 +1053,13 @@ impl Actor {
             Instant::now() + Duration::from_secs(wait)
         });
         self.unresolved.extend(report.unresolved.iter().copied());
+        let open = self.open_folder.and_then(|f| self.mailbox_for(f));
         for folder in report.touched {
             if let Some(target) = self.mailbox_for(folder) {
-                self.enqueue_pass(target, P_CHANGED, PassOptions::default());
+                let role = self.folders.get(&target).and_then(|m| m.role);
+                if self.background_sync(target, role, open) {
+                    self.enqueue_pass(target, P_CHANGED, PassOptions::default());
+                }
             }
         }
         if report.folders_changed {

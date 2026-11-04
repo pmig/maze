@@ -127,6 +127,10 @@
   "offline": "recent",
   "offline_recent_days": 90,
 
+  // Sync the Trash folders in the background too. false: a Trash is synced only while
+  // it is open. Can be overridden per account; applies after a restart.
+  "sync_trash": false,
+
   // Favicons of the domains in your mail (the Domains list in the Address Book, badges
   // on contacts), fetched from each domain's own website (https://<domain>/, never a
   // third-party icon service): one request per domain, at most every 30 days, no
@@ -137,11 +141,10 @@
 
   // Overrides per account, keyed by the account's label, e.g.
   // "work": { "offline": "all", "remote_content": "never", "footer": "Acme Inc." }
-  // Supported keys: "offline", "offline_recent_days", "remote_content", "footer",
-  // "support_maze", "copy_sent_to_inbox", "contacts_sync" and, for Microsoft accounts,
-  // "shared_contacts":
-  // other mailboxes whose shared Contacts folder Maze syncs, read-only, e.g.
-  // "work": { "shared_contacts": ["team@contoso.com"] }.
+  // Supported keys: "offline", "offline_recent_days", "sync_trash", "remote_content",
+  // "footer", "support_maze", "copy_sent_to_inbox", "contacts_sync" and, for Microsoft
+  // accounts, "shared_contacts": other mailboxes whose shared Contacts folder Maze
+  // syncs, read-only, e.g. "work": { "shared_contacts": ["team@contoso.com"] }.
   "accounts": {},
 
   // OAuth clients for "Sign in with Google" and "Sign in with Microsoft". Maze has no

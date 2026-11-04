@@ -31,6 +31,9 @@ pub struct AccountSyncConfig {
     pub timing: SyncTiming,
     /// Wall clock for pending-op retry times and the offline-policy cutoff.
     pub clock: Clock,
+    /// Sync the Trash in the background rounds. Off: only while it is the open folder
+    /// (ops still move mail into it).
+    pub sync_trash: bool,
 }
 
 impl AccountSyncConfig {
@@ -47,7 +50,15 @@ impl AccountSyncConfig {
             large_message_bytes: 256 * 1024,
             timing: SyncTiming::default(),
             clock: Clock::system(),
+            sync_trash: true,
         }
+    }
+
+    /// Whether the Trash is synced in the background.
+    #[must_use]
+    pub fn with_sync_trash(mut self, sync_trash: bool) -> Self {
+        self.sync_trash = sync_trash;
+        self
     }
 
     /// Sets the offline policy (and the days for [`OfflinePolicy::Recent`]).

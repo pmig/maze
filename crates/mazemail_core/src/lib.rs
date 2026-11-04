@@ -78,6 +78,7 @@ mod credentials;
 pub mod domains;
 pub mod events;
 pub mod favicon;
+pub mod folder_actions;
 pub mod folders;
 pub mod global_search;
 pub mod indexing;

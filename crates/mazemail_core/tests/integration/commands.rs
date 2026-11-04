@@ -718,3 +718,54 @@ async fn agent_commands_go_through_the_authorizer() {
     assert_eq!(last_audit(&core).0, format!("agent:{allow}"));
     core.shutdown().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn folder_actions_mark_all_read_delete_all_and_empty_the_trash() {
+    let (t, f, a, b) = setup().await;
+    let unread = |id| !detail(&t.core, id).effective_flags().contains(Flags::SEEN);
+    assert!(unread(a) && unread(b));
+
+    // Mark All as Read: every message of the folder, undoable.
+    let receipt = t
+        .core
+        .mark_all_read(store::ListScope::Folder(f.inbox))
+        .await
+        .unwrap()
+        .expect("a command");
+    assert!(receipt.undoable);
+    assert!(!unread(a) && !unread(b));
+    assert_eq!(ops(&t.core, f.work).pop().unwrap().0, "set_flags");
+
+    // Delete All: the folder's copies go to Trash.
+    t.core.delete_all_in_folder(f.inbox).await.unwrap().unwrap();
+    assert_eq!(folders_of(&t.core, a), vec![f.trash]);
+    assert_eq!(folders_of(&t.core, b), vec![f.trash]);
+    // An empty folder: nothing to do.
+    assert!(
+        t.core
+            .delete_all_in_folder(f.inbox)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    // Empty Trash: deleted for good, except a message that is also elsewhere.
+    t.core
+        .apply(
+            MailCommand::Copy {
+                ids: vec![b],
+                to: f.archive,
+            },
+            Origin::User,
+        )
+        .await
+        .unwrap();
+    let receipt = t.core.delete_all_in_folder(f.trash).await.unwrap().unwrap();
+    assert!(!receipt.undoable);
+    let reader = t.core.store().reader().unwrap();
+    assert!(reader.message(a).unwrap().is_none(), "gone for good");
+    assert_eq!(folders_of(&t.core, b), vec![f.archive, f.trash]);
+    let (kind, payload) = ops(&t.core, f.work).pop().unwrap();
+    assert_eq!(kind, "delete");
+    assert_eq!(payload["permanent"], true);
+}

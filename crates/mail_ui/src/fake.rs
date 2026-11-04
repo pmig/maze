@@ -408,6 +408,17 @@ pub struct FakeMailSource {
     remote_senders: Mutex<Vec<String>>,
     /// [`FakeMailSource::clear_contacts`] was called: no address books.
     no_contacts: std::sync::atomic::AtomicBool,
+    /// Folder actions asked for, in order.
+    folder_actions: Mutex<Vec<FolderAction>>,
+}
+
+/// A folder action the fake was asked for (see [`FakeMailSource::folder_actions`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FolderAction {
+    /// Mark All as Read.
+    MarkAllRead(FolderKey),
+    /// Delete All or Empty Trash.
+    DeleteAll(FolderId),
 }
 
 impl std::fmt::Debug for FakeMailSource {
@@ -465,6 +476,7 @@ impl FakeMailSource {
             account_syncs: Mutex::new(Vec::new()),
             remote_senders: Mutex::new(Vec::new()),
             no_contacts: std::sync::atomic::AtomicBool::new(false),
+            folder_actions: Mutex::new(Vec::new()),
         }
     }
 
@@ -525,6 +537,14 @@ impl FakeMailSource {
     /// The folder a thread or message was moved to, if it was.
     pub fn moved_to(&self, item: MoveItem) -> Option<FolderId> {
         self.read_state().moves.get(&item).copied()
+    }
+
+    /// The folder actions asked for so far, in order.
+    pub fn folder_actions(&self) -> Vec<FolderAction> {
+        self.folder_actions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Whether a thread or message was reported as junk.
@@ -1302,6 +1322,22 @@ impl MailSource for FakeMailSource {
             unified,
             accounts,
         }
+    }
+
+    fn mark_all_read(&self, folder: &FolderKey) -> Result<(), SourceError> {
+        self.folder_actions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(FolderAction::MarkAllRead(folder.clone()));
+        Ok(())
+    }
+
+    fn delete_all(&self, folder: FolderId) -> Result<(), SourceError> {
+        self.folder_actions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(FolderAction::DeleteAll(folder));
+        Ok(())
     }
 
     fn set_favorite(&self, folder: FolderId, favorite: bool) -> Result<(), SourceError> {

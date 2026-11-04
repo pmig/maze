@@ -80,6 +80,20 @@ pub enum FolderPaneEvent {
         /// Its title for the list header.
         title: SharedString,
     },
+    /// "Mark All as Read" from a folder's context menu.
+    MarkAllRead {
+        /// The folder (or unified folder).
+        key: FolderKey,
+    },
+    /// "Delete All Messages", or "Empty Trash" on a Trash folder: the window asks first.
+    DeleteAll {
+        /// The folder.
+        folder: FolderId,
+        /// Its title, for the question.
+        title: SharedString,
+        /// Whether it is a Trash folder (its mail is deleted for good).
+        trash: bool,
+    },
 }
 
 /// The folder pane view.
@@ -536,8 +550,9 @@ impl FolderPane {
         }
     }
 
-    /// The context menu of a row: "Open in New Tab" on folders, and "Add to Favorites"
-    /// or "Remove from Favorites" on folders of an account.
+    /// The context menu of a row: "Open in New Tab" and "Mark All as Read" on folders,
+    /// "Delete All Messages" (or "Empty Trash") and "Add to Favorites" or "Remove from
+    /// Favorites" on folders of an account.
     fn context_menu(
         menu: PopupMenu,
         node: Option<&Node>,
@@ -545,19 +560,49 @@ impl FolderPane {
         pane: &WeakEntity<Self>,
     ) -> PopupMenu {
         let menu = match node {
-            Some(Node::Folder { key, title, .. }) => {
-                let (key, title, pane) = (key.clone(), title.clone(), pane.clone());
-                menu.item(
-                    PopupMenuItem::new("Open in New Tab").on_click(move |_, _, cx| {
-                        pane.update(cx, |_, cx| {
-                            cx.emit(FolderPaneEvent::OpenInNewTab {
-                                key: key.clone(),
-                                title: title.clone(),
-                            });
-                        })
-                        .ok();
-                    }),
-                )
+            Some(Node::Folder {
+                key, title, role, ..
+            }) => {
+                let emit = |event: FolderPaneEvent| {
+                    let pane = pane.clone();
+                    move |_: &gpui::ClickEvent, _: &mut Window, cx: &mut App| {
+                        pane.update(cx, |_, cx| cx.emit(event.clone())).ok();
+                    }
+                };
+                let menu = menu
+                    .item(PopupMenuItem::new("Open in New Tab").on_click(emit(
+                        FolderPaneEvent::OpenInNewTab {
+                            key: key.clone(),
+                            title: title.clone(),
+                        },
+                    )))
+                    .separator()
+                    .item(
+                        PopupMenuItem::new("Mark All as Read")
+                            .icon(Icon::new(IconName::MailOpen))
+                            .on_click(emit(FolderPaneEvent::MarkAllRead { key: key.clone() })),
+                    );
+                match key {
+                    FolderKey::Folder(folder) => {
+                        let trash = *role == Some(FolderRole::Trash);
+                        let label = if trash {
+                            "Empty Trash…"
+                        } else {
+                            "Delete All Messages…"
+                        };
+                        menu.item(
+                            PopupMenuItem::new(label)
+                                .icon(Icon::new(IconName::Trash))
+                                .on_click(emit(FolderPaneEvent::DeleteAll {
+                                    folder: *folder,
+                                    title: title.clone(),
+                                    trash,
+                                })),
+                        )
+                        .separator()
+                    }
+                    FolderKey::Unified(_) => menu,
+                }
             }
             _ => menu,
         };

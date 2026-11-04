@@ -1028,6 +1028,75 @@ impl MailWindow {
                 );
                 MailView::focus_list(&view, window, cx);
             }
+            FolderPaneEvent::MarkAllRead { key } => {
+                let result = self.source.mark_all_read(key);
+                self.after_folder_action(result, "marked read", window, cx);
+            }
+            FolderPaneEvent::DeleteAll {
+                folder,
+                title,
+                trash,
+            } => {
+                let (question, detail, button) = if *trash {
+                    (
+                        "Empty the Trash?".to_owned(),
+                        "Its messages are deleted from the server for good. This can't be undone.",
+                        "Empty Trash",
+                    )
+                } else {
+                    (
+                        format!("Delete all messages in {title}?"),
+                        "They are moved to the Trash.",
+                        "Delete All",
+                    )
+                };
+                let answer = window.prompt(
+                    PromptLevel::Warning,
+                    &question,
+                    Some(detail),
+                    &["Cancel", button],
+                    cx,
+                );
+                let folder = *folder;
+                cx.spawn_in(window, async move |this, cx| {
+                    if answer.await == Ok(1) {
+                        this.update_in(cx, |this, window, cx| {
+                            let result = this.source.delete_all(folder);
+                            this.after_folder_action(result, "deleted", window, cx);
+                        })
+                        .ok();
+                    }
+                })
+                .detach();
+            }
+        }
+    }
+
+    /// Refreshes the lists and counts after a folder action, or says why it failed.
+    fn after_folder_action(
+        &mut self,
+        result: Result<(), crate::source::SourceError>,
+        what: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match result {
+            Ok(()) => {
+                let changes = DataChanges {
+                    counts: true,
+                    threads: true,
+                    ..DataChanges::default()
+                };
+                self.apply_changes(&changes, window, cx);
+            }
+            Err(error) => {
+                tracing::warn!(%error, "a folder action failed");
+                window.push_notification(
+                    Notification::error(format!("The mail couldn't be {what}: {error}"))
+                        .title(PRODUCT_NAME),
+                    cx,
+                );
+            }
         }
     }
 

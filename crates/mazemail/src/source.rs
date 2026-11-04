@@ -68,6 +68,10 @@ use time::OffsetDateTime;
 /// How long a UI call waits for the core.
 pub const WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How long a whole-folder action (Mark All as Read, Delete All) may take: a folder can
+/// hold 100,000 messages.
+const FOLDER_ACTION_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Threads a global search shows at most.
 pub const SEARCH_LIMIT: usize = 2_000;
 
@@ -1329,6 +1333,37 @@ impl MailSource for CoreMailSource {
             },
             messages,
         )
+    }
+
+    fn mark_all_read(&self, folder: &FolderKey) -> Result<(), SourceError> {
+        let core = self.ready()?;
+        let scope = match folder {
+            FolderKey::Folder(id) => ListScope::Folder(*id),
+            FolderKey::Unified(role) => ListScope::Unified(*role),
+        };
+        let runner = core.clone();
+        wait_for(
+            &core,
+            async move { runner.mark_all_read(scope).await },
+            FOLDER_ACTION_TIMEOUT,
+        )?
+        .map(drop)
+        .map_err(unavailable)
+    }
+
+    fn delete_all(&self, folder: FolderId) -> Result<(), SourceError> {
+        let core = self.ready()?;
+        let runner = core.clone();
+        wait_for(
+            &core,
+            async move { runner.delete_all_in_folder(folder).await },
+            FOLDER_ACTION_TIMEOUT,
+        )?
+        .map(drop)
+        .map_err(|error| match error {
+            mazemail_core::Error::NotFound { .. } => SourceError::FolderNotFound,
+            other => unavailable(other),
+        })
     }
 
     fn set_favorite(&self, folder: FolderId, favorite: bool) -> Result<(), SourceError> {

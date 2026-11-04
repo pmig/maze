@@ -492,10 +492,12 @@ impl SyncEngine {
             return;
         }
         let account_settings = self.settings.borrow().settings.account(&account.name);
-        let mut sync_config = AccountSyncConfig::new(account.id).with_offline(
-            account_settings.offline,
-            account_settings.offline_recent_days,
-        );
+        let mut sync_config = AccountSyncConfig::new(account.id)
+            .with_offline(
+                account_settings.offline,
+                account_settings.offline_recent_days,
+            )
+            .with_sync_trash(account_settings.sync_trash);
         sync_config.timing = self.config.timing;
         let deps = SyncDeps {
             store: self.store.clone(),

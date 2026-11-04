@@ -48,6 +48,9 @@ pub struct Settings {
     pub offline: OfflinePolicy,
     /// Days of message bodies kept when `offline` is `recent`.
     pub offline_recent_days: u32,
+    /// Sync the Trash folders in the background too. Off: a Trash is synced only while
+    /// it is open. Can be overridden per account; applies after a restart.
+    pub sync_trash: bool,
     /// Overrides per account, keyed by account label.
     pub accounts: BTreeMap<String, AccountOverrides>,
     /// Which domains Maze fetches a favicon for, from the domain's own website (one
@@ -91,6 +94,7 @@ impl Default for Settings {
             spellcheck: Spellcheck::default(),
             offline: OfflinePolicy::default(),
             offline_recent_days: 90,
+            sync_trash: false,
             accounts: BTreeMap::new(),
             favicons: FaviconPolicy::default(),
             auth: AuthSettings::default(),
@@ -125,6 +129,9 @@ impl Settings {
             offline_recent_days: overrides
                 .and_then(|o| o.offline_recent_days)
                 .unwrap_or(self.offline_recent_days),
+            sync_trash: overrides
+                .and_then(|o| o.sync_trash)
+                .unwrap_or(self.sync_trash),
             remote_content: overrides
                 .and_then(|o| o.remote_content)
                 .unwrap_or(self.reader.remote_content),
@@ -799,6 +806,9 @@ pub struct AccountOverrides {
     /// Overrides `offline_recent_days`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offline_recent_days: Option<u32>,
+    /// Overrides `sync_trash`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sync_trash: Option<bool>,
     /// Overrides `reader.remote_content`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_content: Option<RemoteContentPolicy>,
@@ -827,6 +837,8 @@ pub struct AccountSettings {
     pub offline: OfflinePolicy,
     /// Days kept with [`OfflinePolicy::Recent`].
     pub offline_recent_days: u32,
+    /// Whether the Trash is synced in the background.
+    pub sync_trash: bool,
     /// Remote content policy.
     pub remote_content: RemoteContentPolicy,
     /// What agents may do with this account.

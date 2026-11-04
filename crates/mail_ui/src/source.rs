@@ -1505,6 +1505,23 @@ pub trait MailSource: Send + Sync + 'static {
     /// [`MailSource::folder_tree`] shows the change.
     fn set_favorite(&self, folder: FolderId, favorite: bool) -> Result<(), SourceError>;
 
+    /// Marks every message in `folder` read (the folder pane's Mark All as Read).
+    fn mark_all_read(&self, folder: &FolderKey) -> Result<(), SourceError> {
+        let _ = folder;
+        Err(SourceError::Unavailable(
+            "folder actions aren't available".into(),
+        ))
+    }
+
+    /// Deletes the mail of `folder`: into its account's Trash, or, in a Trash folder,
+    /// for good (the folder pane's Delete All and Empty Trash).
+    fn delete_all(&self, folder: FolderId) -> Result<(), SourceError> {
+        let _ = folder;
+        Err(SourceError::Unavailable(
+            "folder actions aren't available".into(),
+        ))
+    }
+
     /// Connection, sync and outbox state.
     fn status(&self) -> SourceStatus;
 

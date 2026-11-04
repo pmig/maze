@@ -420,3 +420,24 @@ async fn activity_shows_folder_progress_and_the_last_round() {
     assert!(done.last_synced >= first.last_synced);
     handle.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_trash_is_synced_only_while_open_when_sync_trash_is_off() {
+    let server = FakeServer::new();
+    server.deliver("INBOX", mail(1));
+    server.deliver("Trash", mail(2));
+    let h = Harness::new(server.clone()).await;
+    let handle = h.spawn(h.config().with_sync_trash(false));
+    wait_idle(&handle).await;
+    assert_eq!(h.folder("INBOX").total, 1);
+    assert_eq!(
+        h.folder("Trash").total,
+        0,
+        "the Trash isn't synced in the background"
+    );
+    assert!(h.uids("Trash").is_empty());
+
+    // Opened, it syncs like any folder.
+    handle.open_folder(Some(h.folder_id("Trash"))).unwrap();
+    wait_for("the Trash to sync", || h.folder("Trash").total == 1).await;
+}
