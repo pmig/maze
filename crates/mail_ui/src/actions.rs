@@ -205,6 +205,10 @@ actions!(
         ShowReader,
         /// Show an HTML message as the sender designed it (`cmd-alt-o`).
         ShowOriginal,
+        /// Load the blocked remote images of the shown message, this time (`i`).
+        LoadImages,
+        /// Always load remote images from the shown message's sender (`shift-i`).
+        AlwaysLoadImagesFromSender,
         /// Sort the message list by date.
         SortByDate,
         /// Sort the message list by the time the server received the mail.

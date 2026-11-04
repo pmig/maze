@@ -217,6 +217,30 @@ fn ask_shows_the_banner_until_load_images_or_always_for_this_sender(cx: &mut Tes
     });
     assert!(banner(cx).is_some());
     assert!(!tab_view.read_with(cx, |v, _| v.remote_loaded_once()));
+    // The banner (drawn with the original engine) shows the buttons' keys; `i` loads
+    // the images like the button.
+    if OriginalView::AVAILABLE {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(cx.debug_bounds("load-images-key").is_some());
+        assert!(cx.debug_bounds("always-for-sender-key").is_some());
+    }
+    cx.simulate_keystrokes("i");
+    assert!(banner(cx).is_none());
+    assert!(tab_view.read_with(cx, |v, _| v.remote_loaded_once()));
+    // From the reader, `i` switches to the original, where the images show.
+    tab_view.update(cx, |v, cx| {
+        let mut doc = v.document().unwrap().clone();
+        doc.message = MessageId(doc.message.0 + 1);
+        with_remote(&mut doc, false, true);
+        v.show(Some(doc), cx);
+        v.set_mode(BodyMode::Reader, cx);
+    });
+    cx.simulate_keystrokes("i");
+    assert_eq!(
+        tab_view.read_with(cx, |v, cx| v.requested_mode(cx)),
+        BodyMode::Original
+    );
+    assert!(tab_view.read_with(cx, |v, _| v.remote_loaded_once()));
 
     // "Never" and allowed senders: no banner.
     tab_view.update(cx, |v, cx| {

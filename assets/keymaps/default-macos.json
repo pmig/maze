@@ -95,6 +95,9 @@
       "p": "mail::PreviousUnread",
       "m": "mail::ToggleRead",
       "v": "view::ToggleOriginalHtml",
+      // Remote images of the shown message: this time, or always from its sender.
+      "i": "view::LoadImages",
+      "shift-i": "view::AlwaysLoadImagesFromSender",
       "s": "mail::ToggleStar",
       "a": "mail::Archive",
       // Thunderbird's key for marking junk; Maze also moves it to the Junk folder.

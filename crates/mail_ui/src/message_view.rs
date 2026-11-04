@@ -44,8 +44,9 @@ use ui::components::KeyCap;
 use ui::theme::scaled;
 
 use crate::actions::{
-    Archive, Delete, Forward, MarkRead, MoveToFolder, Reply, ReplyAll, ReportJunk, ShowOriginal,
-    ShowReader, ToggleOriginalHtml, ToggleRead, ToggleStar,
+    AlwaysLoadImagesFromSender, Archive, Delete, Forward, LoadImages, MarkRead, MoveToFolder,
+    Reply, ReplyAll, ReportJunk, ShowOriginal, ShowReader, ToggleOriginalHtml, ToggleRead,
+    ToggleStar,
 };
 use crate::attachment_files;
 use crate::command_palette::binding_hint;
@@ -394,6 +395,25 @@ impl MessageView {
         cx.notify();
     }
 
+    /// `i`: loads the shown message's images, switching to the original (where images
+    /// are shown) if the reader is showing it.
+    pub fn load_images(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.has_original() {
+            return;
+        }
+        self.set_mode(BodyMode::Original, cx);
+        self.load_remote_once(cx);
+    }
+
+    /// `shift-i`: always loads images from the sender, and shows them now.
+    pub fn always_load_images(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.has_original() {
+            return;
+        }
+        self.set_mode(BodyMode::Original, cx);
+        self.allow_remote_for_sender(cx);
+    }
+
     /// "Always for this sender": kept by the source; the message is read again.
     pub fn allow_remote_for_sender(&mut self, cx: &mut Context<'_, Self>) {
         let (Some(source), Some(doc)) = (self.source.clone(), self.document.as_ref()) else {
@@ -442,8 +462,22 @@ impl MessageView {
     fn render_remote_banner(
         &self,
         banner: RemoteBanner,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
+        let show_keys = button_shortcuts(cx);
+        let key = |action: &dyn Action, id: &'static str| {
+            show_keys
+                .then(|| binding_hint(action, Some(&self.focus), window))
+                .flatten()
+                .map(|keystroke| {
+                    div()
+                        .debug_selector(move || format!("{id}-key"))
+                        .child(KeyCap::new(&keystroke))
+                })
+        };
+        let load_key = key(&LoadImages, "load-images");
+        let always_key = key(&AlwaysLoadImagesFromSender, "always-for-sender");
         let theme = cx.theme();
         let mut detail = format!(
             "{} blocked",
@@ -481,6 +515,7 @@ impl MessageView {
                         .xsmall()
                         .outline()
                         .label("Load images")
+                        .children(load_key)
                         .on_click(cx.listener(|this, _, _, cx| this.load_remote_once(cx))),
                 ),
             )
@@ -492,6 +527,7 @@ impl MessageView {
                             .xsmall()
                             .ghost()
                             .label("Always for this sender")
+                            .children(always_key)
                             .on_click(
                                 cx.listener(|this, _, _, cx| this.allow_remote_for_sender(cx)),
                             ),
@@ -1294,6 +1330,10 @@ impl Render for MessageView {
             .key_context(key_context)
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &ToggleOriginalHtml, _, cx| this.toggle_mode(cx)))
+            .on_action(cx.listener(|this, _: &LoadImages, _, cx| this.load_images(cx)))
+            .on_action(cx.listener(|this, _: &AlwaysLoadImagesFromSender, _, cx| {
+                this.always_load_images(cx);
+            }))
             .on_action(cx.listener(|this, _: &ShowReader, _, cx| {
                 this.show_mode(BodyMode::Reader, cx);
             }))
@@ -1326,7 +1366,10 @@ impl Render for MessageView {
             });
         let muted = cx.theme().muted_foreground;
         let banner = original.is_some().then(|| self.remote_banner(cx)).flatten();
-        let banner = banner.map(|banner| self.render_remote_banner(banner, cx).into_any_element());
+        let banner = banner.map(|banner| {
+            self.render_remote_banner(banner, window, cx)
+                .into_any_element()
+        });
         let body = match original.clone() {
             Some(view) if view.read(cx).is_ready() => div()
                 .id("message-body")

@@ -674,8 +674,10 @@ release builds for now) shows the reader and says so.
 show. Images a message loads from the web can tell the sender that, when and from which
 IP address you opened it, so `reader.remote_content` decides: `"ask"` (the default)
 blocks them and shows a slim banner with how many were blocked and how many tracking
-pixels Maze removed; **Load images** loads them for this message, **Always for this
-sender** remembers the sender (in the encrypted database) and loads them from then on.
+pixels Maze removed; **Load images** (`i`) loads them for this message, **Always for
+this sender** (`shift-i`) remembers the sender (in the encrypted database) and loads them
+from then on. Both keys work from the list too, and in the reader they switch to the
+original, where the images show.
 `"never"` blocks them without asking, even for remembered senders; `"always"` loads
 them. Each account can override it (`"accounts": { "work": { "remote_content":
 "never" } }`). Maze downloads the images itself, never the engine, and known tracking
@@ -1176,6 +1178,7 @@ at once. These are bound today:
 | Toggle agent column                         | `cmd-?`                                              |
 | Table view / threads on or off              | `cmd-alt-t` / `cmd-alt-g`                            |
 | Reader / original HTML / switch              | `cmd-alt-r` / `cmd-alt-o` / `v`                      |
+| Load images / always from this sender        | `i` / `shift-i`                                      |
 | Sync all accounts now                       | `cmd-shift-t`, `F5` (or the title bar's sync button) |
 | Hide Maze / hide others / minimize          | `cmd-h` / `cmd-alt-h` / `cmd-m`                      |
 | Quit                                        | `cmd-q`                                              |

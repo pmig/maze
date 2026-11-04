@@ -29,7 +29,9 @@ use time::UtcOffset;
 use ui::assets::IconName;
 use ui::panes::{Item, ItemEvent, SerializedItem};
 
-use crate::actions::{ShowOriginal, ShowReader, ToggleOriginalHtml};
+use crate::actions::{
+    AlwaysLoadImagesFromSender, LoadImages, ShowOriginal, ShowReader, ToggleOriginalHtml,
+};
 use crate::layout::{self, LayoutConfig, LayoutPrefs, MessagePlacement};
 use crate::message_view::{BodyMode, MessageView, ViewPlace};
 use crate::source::{DataChanges, FolderKey, MailSource, ThreadScope};
@@ -446,6 +448,14 @@ impl Render for MailView {
             .on_action(cx.listener(|this, _: &ToggleOriginalHtml, _, cx| {
                 this.message_view
                     .update(cx, |view, cx| view.toggle_mode(cx));
+            }))
+            .on_action(cx.listener(|this, _: &LoadImages, _, cx| {
+                this.message_view
+                    .update(cx, |view, cx| view.load_images(cx));
+            }))
+            .on_action(cx.listener(|this, _: &AlwaysLoadImagesFromSender, _, cx| {
+                this.message_view
+                    .update(cx, |view, cx| view.always_load_images(cx));
             }))
             .on_action(cx.listener(|this, _: &ShowReader, _, cx| {
                 this.message_view
