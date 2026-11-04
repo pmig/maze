@@ -173,6 +173,9 @@ actions!(
         ExtendSelectionUp,
         /// Select every row of the list (`cmd-a`).
         SelectAll,
+        /// Keep only the cursor's row selected, after a multi-selection or a selected
+        /// thread (`escape`).
+        ClearSelection,
         /// Add the open folder to the favorites, or remove it.
         ToggleFavoriteFolder,
         /// Open the selected message in a tab of its own (`enter`, `cmd-o`, a

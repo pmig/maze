@@ -1229,6 +1229,21 @@ impl ThreadList {
         self.selection_changed(cx);
     }
 
+    /// `escape`: keeps only the cursor's row selected after a multi-selection (or a
+    /// thread selected with `cmd-shift-a`). Returns whether there was anything to cancel.
+    pub fn clear_selection(&mut self, cx: &mut Context<'_, Self>) -> bool {
+        let thread = self.look.borrow().selected_thread.is_some();
+        if !self.selection.is_multiple() && !thread {
+            return false;
+        }
+        let Some(cursor) = self.selection.selected() else {
+            return false;
+        };
+        self.selection.select(cursor);
+        self.update_selection(false, cx);
+        true
+    }
+
     /// `cmd-a`: selects every row.
     pub fn select_all(&mut self, cx: &mut Context<'_, Self>) {
         self.selection.select_all();

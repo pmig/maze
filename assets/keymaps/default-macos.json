@@ -121,6 +121,7 @@
       "shift-down": "mail::ExtendSelectionDown",
       "shift-up": "mail::ExtendSelectionUp",
       "cmd-a": "mail::SelectAll",
+      "escape": "mail::ClearSelection",
       "enter": "mail::OpenMessage",
       "home": "mail::FirstMessage",
       "end": "mail::LastMessage",

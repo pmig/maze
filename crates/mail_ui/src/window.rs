@@ -2031,6 +2031,15 @@ impl MailWindow {
         .on_action(cx.listener(|this, _: &ExtendSelectionUp, _, cx| {
             this.with_list(cx, |list, cx| list.extend(-1, cx));
         }))
+        .on_action(cx.listener(|this, _: &ClearSelection, _, cx| {
+            let cleared = this
+                .thread_list(cx)
+                .is_some_and(|list| list.update(cx, |list, cx| list.clear_selection(cx)));
+            // Nothing to cancel: escape is someone else's (closing a picker, a tab, …).
+            if !cleared {
+                cx.propagate();
+            }
+        }))
         .on_action(cx.listener(|this, _: &SelectAll, _, cx| {
             this.with_list(cx, |list, cx| list.select_all(cx));
         }))
@@ -2935,6 +2944,27 @@ mod tests {
                 .selected_count()),
             all
         );
+        // Escape cancels it: only the cursor's row stays selected.
+        let cursor = view.read_with(cx, |w, cx| {
+            w.thread_list(cx).unwrap().read(cx).selected_thread()
+        });
+        cx.simulate_keystrokes("escape");
+        let count = |cx: &mut VisualTestContext| {
+            view.read_with(cx, |w, cx| {
+                w.thread_list(cx).unwrap().read(cx).selected_count()
+            })
+        };
+        assert_eq!(count(cx), 1);
+        assert_eq!(
+            view.read_with(cx, |w, cx| w
+                .thread_list(cx)
+                .unwrap()
+                .read(cx)
+                .selected_thread()),
+            cursor
+        );
+        cx.simulate_keystrokes("cmd-a");
+        assert_eq!(count(cx), all);
         cx.simulate_keystrokes("up shift-up");
         let selected = items(cx);
         assert_eq!(selected.len(), 2);

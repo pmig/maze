@@ -607,9 +607,9 @@ and `\` closes them, `cmd-shift-a` selects a whole thread. The threads button (o
 `cmd-alt-g`) turns threads off and lists every message on its own.
 
 `shift-down` / `shift-up` (or shift-click) select several rows, cmd-click adds or
-removes one, `cmd-a` selects them all. Archive, Report Junk, Delete, Quick Move,
-toggle read and star then act on every selected row at once, and the message pane says
-how many are selected.
+removes one, `cmd-a` selects them all and `escape` cancels the selection. Archive,
+Report Junk, Delete, Quick Move, toggle read and star then act on every selected row at
+once, and the message pane says how many are selected.
 
 **Report Junk** (`j`, Thunderbird's key, or the **Junk** button next to **Archive** in
 the message header) marks the mail as junk on your server (the `$Junk` keyword spam
@@ -1187,6 +1187,7 @@ at once. These are bound today:
 | Next / previous unread                      | `n` / `p`                                            |
 | First / last message, page down / up        | `home` / `end`, `pagedown` / `pageup`                |
 | Select several rows / all rows              | `shift-down` / `shift-up`, `cmd-a`                   |
+| Cancel the selection (keep the cursor's row) | `escape`                                             |
 | Open / close a thread                       | `right` / `left`                                     |
 | Open / close all threads                    | `*` / `\`                                            |
 | Select the whole thread                     | `cmd-shift-a`                                        |
