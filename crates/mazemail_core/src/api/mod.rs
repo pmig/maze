@@ -25,7 +25,7 @@
 //! let config = CoreConfig::from_paths(&paths, key_store)
 //!     .with_authorizer(Arc::new(authorizer.clone()));
 //! let core = CoreHandle::open(config).await?;
-//! let services = api::services(&core, &authorizer, Arc::new(local_api::DenyAllApprover));
+//! let services = api::services(&core, &authorizer, Arc::new(local_api::DenyAllApprover), None);
 //! let server = local_api::LocalApiServer::bind(&paths, services, Default::default()).await?;
 //! server.serve(std::future::pending()).await;
 //! # Ok(()) }
@@ -68,6 +68,7 @@ pub fn services(
     core: &CoreHandle,
     authorizer: &TokenAuthorizer,
     approver: Arc<dyn Approver>,
+    opener: Option<Arc<dyn local_api::UrlOpener>>,
 ) -> Services {
     let cache = Arc::clone(authorizer.cache());
     Services {
@@ -76,5 +77,6 @@ pub fn services(
         approver,
         audit: Arc::new(StoreAuditSink::new(core, cache)),
         policy: Arc::new(SettingsAccountPolicy::new(core.clone())),
+        opener,
     }
 }

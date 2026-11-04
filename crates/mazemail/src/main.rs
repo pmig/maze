@@ -1,6 +1,8 @@
 //! `mazemail`: starts Maze, serves it headless, or runs a CLI subcommand (PLAN §4.11).
 //!
 //! - `mazemail` opens the app (`MAZEMAIL_DEMO=1`: with synthetic mail, no core).
+//! - `mazemail <mailto:…>` (what the system runs for a `mailto:` link) opens a new
+//!   message for the link in the running Maze, or starts Maze with it.
 //! - `mazemail --headless` opens the core without a window and serves the local API
 //!   socket until SIGINT or SIGTERM.
 //! - Debug builds only: `mazemail --check-update-once [--update-base-url <url>]
@@ -23,7 +25,7 @@ use std::time::Instant;
 use clap::{Args, FromArgMatches as _};
 
 /// Options before (or instead of) a subcommand.
-#[derive(Debug, Clone, Copy, Args)]
+#[derive(Debug, Clone, Args)]
 struct Global {
     /// Run without a window: open the mail data and serve the local API socket until
     /// interrupted (scripts, servers, tests).
@@ -32,6 +34,21 @@ struct Global {
     /// Print the command's result as JSON (see `mazemail help agents` for the shapes).
     #[arg(long, global = true)]
     json: bool,
+    /// A `mailto:` link to write to (the system passes it when Maze handles mail links).
+    #[arg(value_name = "URL", value_parser = mailto_link)]
+    url: Option<String>,
+}
+
+/// Accepts only `mailto:` links as the app's argument.
+fn mailto_link(value: &str) -> Result<String, String> {
+    let is_mailto = value
+        .get(..7)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("mailto:"));
+    if is_mailto {
+        Ok(value.to_owned())
+    } else {
+        Err("only mailto: links (or a command, see `mazemail help`)".to_owned())
+    }
 }
 
 /// The clap command: the global options plus every registry subcommand.
@@ -98,12 +115,19 @@ fn main() -> ExitCode {
             };
         }
     }
+    if let Some(url) = &global.url
+        && !global.headless
+        && let Some(code) = hand_to_running(url)
+    {
+        return code;
+    }
     let result = if global.headless {
         headless::run(local_offset)
     } else {
         app::run(app::AppOptions {
             process_start,
             local_offset,
+            open_url: global.url,
         })
     };
     match result {
@@ -111,6 +135,29 @@ fn main() -> ExitCode {
         Err(error) => {
             tracing::error!("{error:#}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+/// Hands `url` to the Maze that is already running (`mazemail open`). `None` if none
+/// is: this process starts Maze with the link.
+fn hand_to_running(url: &str) -> Option<ExitCode> {
+    let paths = settings::Paths::current().ok()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()?;
+    let answer = runtime.block_on(async {
+        let endpoint = local_api::Endpoint::discover(&paths);
+        let mut client = local_api::LocalApiClient::connect(&endpoint).await?;
+        client.call("open", serde_json::json!({ "url": url })).await
+    });
+    match answer {
+        Ok(_) => Some(ExitCode::SUCCESS),
+        Err(local_api::ClientError::NotRunning { .. }) => None,
+        Err(error) => {
+            tracing::error!(%error, "the running Maze didn't open the link");
+            Some(ExitCode::FAILURE)
         }
     }
 }
@@ -146,6 +193,26 @@ mod tests {
             .unwrap();
         let global = Global::from_arg_matches(&matches).unwrap();
         assert!(global.headless && matches.subcommand().is_none());
+
+        // A mailto: link (what the system runs for one), but nothing else, as the URL.
+        let matches = command()
+            .try_get_matches_from(["mazemail", "mailto:anna@example.com?subject=Hi"])
+            .unwrap();
+        let global = Global::from_arg_matches(&matches).unwrap();
+        assert_eq!(
+            global.url.as_deref(),
+            Some("mailto:anna@example.com?subject=Hi")
+        );
+        assert!(matches.subcommand().is_none());
+        assert!(
+            command()
+                .try_get_matches_from(["mazemail", "https://example.com"])
+                .is_err()
+        );
+        let matches = command()
+            .try_get_matches_from(["mazemail", "status"])
+            .unwrap();
+        assert!(matches.subcommand().is_some(), "commands still win");
 
         #[cfg(debug_assertions)]
         {

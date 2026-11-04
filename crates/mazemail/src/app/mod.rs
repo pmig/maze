@@ -39,6 +39,7 @@ mod keyboard;
 mod legacy_local;
 mod lost_key;
 mod new_mail;
+mod open_url;
 mod reading;
 mod spellcheck;
 mod theme;
@@ -70,10 +71,12 @@ pub(crate) const DEMO_ENV: &str = "MAZEMAIL_DEMO";
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// What the GUI needs from `main`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct AppOptions {
     pub(crate) process_start: Instant,
     pub(crate) local_offset: UtcOffset,
+    /// A `mailto:` link to open once the mail is open (`mazemail <url>`).
+    pub(crate) open_url: Option<String>,
 }
 
 /// The app's state, a GPUI global.
@@ -84,6 +87,10 @@ struct AppState {
     window: Option<(AnyWindowHandle, Entity<MailWindow>)>,
     core: Option<CoreHandle>,
     server: Option<RunningServer>,
+    /// `mailto:` links from other apps, for [`open_url::listen`].
+    links: async_channel::Sender<String>,
+    /// Links that arrived before the mail was open.
+    pending_links: Vec<mail_ui::links::MailTo>,
 }
 
 impl Global for AppState {}
@@ -139,6 +146,20 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
             open_window(cx);
         }
     });
+    // `mailto:` links: from the system (macOS's open-URL event), from the command line,
+    // and from `mazemail open` once the local API runs.
+    let (links, incoming) = async_channel::unbounded::<String>();
+    app.on_open_urls({
+        let links = links.clone();
+        move |urls| {
+            for url in urls {
+                let _ = links.try_send(url);
+            }
+        }
+    });
+    if let Some(url) = options.open_url {
+        let _ = links.try_send(url);
+    }
     let theme_paths = paths.clone();
     app.run(move |cx| {
         ui::init(cx);
@@ -183,7 +204,10 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
             window: None,
             core: None,
             server: None,
+            links,
+            pending_links: Vec::new(),
         });
+        open_url::listen(incoming, cx);
         open_window(cx);
         cx.activate(true);
         updates::start(&paths, cx);
@@ -367,17 +391,22 @@ fn fail(message: impl Into<gpui::SharedString>, cx: &mut App) {
 pub(crate) fn core_ready(core: &CoreHandle, cx: &mut App) {
     tracing::info!(data_dir = %core.data_dir().display(), "mail data opened");
     ui::gpui_tokio::init_from_handle(cx, core.runtime());
-    let (source, authorizer) = {
+    let (source, authorizer, links) = {
         let state = cx.global_mut::<AppState>();
         state.core = Some(core.clone());
-        (state.source.clone(), state.authorizer.clone())
+        (
+            state.source.clone(),
+            state.authorizer.clone(),
+            state.links.clone(),
+        )
     };
     source.attach(core.clone());
     apply_changes(&DataChanges::everything(), cx);
     follow_events(core.events(), source, cx);
 
     let approver = approve::test_auto_approver().unwrap_or_else(|| approval::start(cx));
-    let services = api::services(core, &authorizer, approver);
+    let services = api::services(core, &authorizer, approver, Some(open_url::opener(links)));
+    open_url::open_pending(cx);
     let (stop, stopped) = oneshot::channel::<()>();
     let paths = Paths::current();
     let task = core.runtime().spawn(async move {

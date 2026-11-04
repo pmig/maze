@@ -6457,6 +6457,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ui",
+ "url",
  "vault",
 ]
 

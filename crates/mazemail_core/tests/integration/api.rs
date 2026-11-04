@@ -842,7 +842,7 @@ async fn socket_round_trip() {
         .tempdir_in("/tmp")
         .unwrap();
     let socket = settings::SocketPath::InDataDir(socket_dir.path().join("m.sock"));
-    let services = api::services(&t.core, &t.authorizer, Arc::new(Approve));
+    let services = api::services(&t.core, &t.authorizer, Arc::new(Approve), None);
     let server = LocalApiServer::bind_socket(&socket, None, services, ServerConfig::default())
         .await
         .unwrap();

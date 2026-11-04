@@ -38,7 +38,7 @@ async fn serve(paths: Paths, utc_offset: UtcOffset) -> anyhow::Result<()> {
         Err(error) => anyhow::bail!(startup::describe_open_error(&error)),
     };
 
-    let services = api::services(&core, &authorizer, approve::headless_approver());
+    let services = api::services(&core, &authorizer, approve::headless_approver(), None);
     let server = match LocalApiServer::bind(&paths, services, startup::server_config()).await {
         Ok(server) => server,
         Err(error) => {

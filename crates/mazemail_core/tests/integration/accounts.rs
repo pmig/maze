@@ -1001,7 +1001,13 @@ async fn the_local_api_adds_lists_syncs_and_removes_accounts() {
     )
     .await
     .unwrap();
-    let handler = api::services(&core, &TokenAuthorizer::new(), Arc::new(DenyAllApprover)).handler;
+    let handler = api::services(
+        &core,
+        &TokenAuthorizer::new(),
+        Arc::new(DenyAllApprover),
+        None,
+    )
+    .handler;
     let ctx = || {
         let policy: std::collections::BTreeSet<_> = core
             .accounts()

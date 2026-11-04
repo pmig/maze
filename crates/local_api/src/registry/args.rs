@@ -56,6 +56,16 @@ pub struct HelpArgs {
     pub topic: Vec<String>,
 }
 
+/// `mazemail open`.
+#[derive(Debug, Clone, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OpenArgs {
+    /// The link: `mailto:anna@example.com?subject=Hi` (only `mailto:` links).
+    #[arg(value_name = "URL")]
+    #[schemars(with = "String")]
+    pub url: Sensitive<String>,
+}
+
 /// `mazemail login` and `mazemail token create`.
 #[derive(Debug, Clone, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

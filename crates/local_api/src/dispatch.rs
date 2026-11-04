@@ -22,8 +22,10 @@ use crate::peer::PeerInfo;
 use crate::permission::Access;
 use crate::policy::{AccountPolicy, EffectiveScope, excluded_accounts};
 use crate::protocol::{ApiError, ErrorCode, PROTOCOL_VERSION, Progress, Request, Response};
-use crate::registry::args::{LoginArgs, TokenRevokeArgs};
-use crate::registry::output::{HelpEntry, HelpOutput, LoginOutput, RevokeOutput, StatusOutput};
+use crate::registry::args::{LoginArgs, OpenArgs, TokenRevokeArgs};
+use crate::registry::output::{
+    HelpEntry, HelpOutput, LoginOutput, OpenOutput, RevokeOutput, StatusOutput,
+};
 use crate::registry::{Command, CommandSpec, find, registry};
 use crate::token::{
     CreatedBy, Grant, SESSION_ENV, TokenId, TokenRecord, TokenRejection, TokenScope, TokenStore,
@@ -44,6 +46,15 @@ pub struct Services {
     pub audit: Arc<dyn AuditSink>,
     /// The per-account AI policy.
     pub policy: Arc<dyn AccountPolicy>,
+    /// Opens `mailto:` links in the GUI (`mazemail open`); `None` without a window
+    /// (`--headless`).
+    pub opener: Option<Arc<dyn UrlOpener>>,
+}
+
+/// Opens a link in Maze's window: a `mailto:` link becomes a new message to review.
+pub trait UrlOpener: Send + Sync {
+    /// Opens `url` (a `mailto:` link). Returns whether a message was opened.
+    fn open(&self, url: &str) -> bool;
 }
 
 impl fmt::Debug for Services {
@@ -298,6 +309,7 @@ impl Dispatcher {
                 self.login(peer, spec, args, token.as_ref(), &progress, trace)
                     .await
             }
+            "open" => self.open(args),
             "token.list" => self.list_tokens().await,
             "token.revoke" => {
                 // Checked above: the command requires a token.
@@ -526,6 +538,31 @@ impl Dispatcher {
             ApiError::new(ErrorCode::Internal, "cannot store the token")
         })?;
         output_with(&output, [id.to_string()])
+    }
+
+    /// `open`: hands a `mailto:` link to the window. No token needed: it only opens a
+    /// message the user reviews; nothing is read or sent.
+    fn open(&self, args: Value) -> Outcome {
+        let args: OpenArgs = parse(args)?;
+        let url = args.url.expose().trim();
+        let is_mailto = url
+            .get(..7)
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("mailto:"));
+        if !is_mailto {
+            return Err(ApiError::new(
+                ErrorCode::InvalidArgs,
+                "Maze opens only mailto: links",
+            ));
+        }
+        let opener = self.services.opener.as_ref().ok_or_else(|| {
+            ApiError::new(
+                ErrorCode::Unavailable,
+                "Maze runs without a window (--headless) and can't open links",
+            )
+        })?;
+        output(&OpenOutput {
+            opened: opener.open(url),
+        })
     }
 
     async fn list_tokens(&self) -> Outcome {

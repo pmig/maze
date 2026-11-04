@@ -36,6 +36,7 @@ expression: agents_md()
 | `status` | allow (no token needed) | allow (no token needed) | allow (no token needed) |
 | `help` | allow (no token needed) | allow (no token needed) | allow (no token needed) |
 | `login` | ask (no token needed) | ask (no token needed) | ask (no token needed) |
+| `open` | allow (no token needed) | allow (no token needed) | allow (no token needed) |
 | `token create` | ask (no token needed) | ask (no token needed) | ask (no token needed) |
 | `token list` | allow | allow | allow |
 | `token revoke` | deny | ask | ask |
@@ -206,6 +207,37 @@ Examples:
 eval "$(mazemail login --profile read-only --ttl 8h)"
 # A triage token for one account
 mazemail login --profile triage --account a_b --label claude
+```
+
+### `mazemail open`
+
+Open a mailto: link in Maze.
+
+Opens a new message in the running Maze with the link's recipients, subject and body filled in, as when you click a mailto: link in a browser. Nothing is sent: you review and send the message yourself. Works without a token; only mailto: links are accepted.
+
+Permission: `read` (works without a token)
+
+```sh
+mazemail open <URL>
+```
+
+| Argument | Description |
+| -------- | ----------- |
+| `<URL>` | The link: `mailto:anna@example.com?subject=Hi` (only `mailto:` links). |
+
+Output (`--json`):
+
+```ts
+{
+  opened: boolean,  // Whether Maze opened a new message for the link.
+}
+```
+
+Examples:
+
+```sh
+# Write to Anna
+mazemail open 'mailto:anna@example.com?subject=Offsite'
 ```
 
 ### `mazemail token create`

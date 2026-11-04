@@ -20,6 +20,9 @@ alongside it.
 2. Open the `.dmg` and drag **Maze** onto **Applications**.
 3. Start Maze from Applications or Spotlight.
 
+To have `mailto:` links open in Maze, choose Maze as the **Default email reader** in
+Apple Mail's settings (General).
+
 Release builds are signed with a Developer ID and notarized by Apple. If you download a
 build that isn't (for example a CI artifact), macOS refuses to open it the first time:
 try to open it once, then click **Open Anyway** in System Settings → Privacy & Security.
@@ -41,8 +44,8 @@ tar --zstd -xf Maze-*-linux-x86_64.tar.zst -C ~/.local
 
 `mazemail.app/share/` holds a desktop entry (`dev.mazemail.maze.desktop`) and the icon;
 copy them to `~/.local/share/` to get Maze into your launcher. The desktop entry
-registers Maze for `mailto:` links, but Maze doesn't open links handed to it by other
-apps yet. On Linux, Maze keeps its key in the Secret Service (GNOME Keyring, KWallet),
+registers Maze for `mailto:` links; to make Maze the app that opens them, run
+`xdg-mime default dev.mazemail.maze.desktop x-scheme-handler/mailto`. On Linux, Maze keeps its key in the Secret Service (GNOME Keyring, KWallet),
 which must be running, and runs agents in bubblewrap (`bwrap`), which must be installed
 if you use them. Linux builds don't include the original HTML engine yet; they show
 every message in the [reader](#reading-mail-reader-and-original).
@@ -847,7 +850,10 @@ are saved to Google or Microsoft first ([ADR-024](adr/0024-server-owned-contacts
 
 Press `cmd-n`, click **+** in the title bar, or choose **Message → New Message**. The
 draft opens in a tab of its own (see [Tabs and splits](#tabs-and-splits)), named with
-two random words such as `brave-otter`; split the window to keep the Inbox next to it:
+two random words such as `brave-otter`; split the window to keep the Inbox next to it.
+A `mailto:` link clicked in a message, or anywhere else once Maze is your system's mail
+app (see [Install](#install)), opens such a draft with its recipients, subject and
+body filled in; `mazemail open 'mailto:…'` does the same from a script:
 
 - **From** picks the identity you send as. Replies pick it for you: the identity whose
   address the message was sent to (To, Cc or `Delivered-To`), else the account's default.

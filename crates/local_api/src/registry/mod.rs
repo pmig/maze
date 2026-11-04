@@ -200,6 +200,25 @@ static REGISTRY: &[CommandSpec] = &[
         human: Human::Field("export"),
     },
     CommandSpec {
+        name: "open",
+        path: &["open"],
+        summary: "Open a mailto: link in Maze",
+        help: "Opens a new message in the running Maze with the link's recipients, subject \
+               and body filled in, as when you click a mailto: link in a browser. Nothing \
+               is sent: you review and send the message yourself. Works without a token; \
+               only mailto: links are accepted.",
+        permission: Permission::Read,
+        requires_token: false,
+        touches_mail: false,
+        examples: &[ex(
+            "mazemail open 'mailto:anna@example.com?subject=Offsite'",
+            "Write to Anna",
+        )],
+        args_schema: schema::<OpenArgs>,
+        output_schema: schema::<OpenOutput>,
+        human: Human::Fields,
+    },
+    CommandSpec {
         name: "token.create",
         path: &["token", "create"],
         summary: "Ask Maze for a session token (same as `mazemail login`)",
@@ -799,13 +818,17 @@ mod tests {
     }
 
     #[test]
-    fn only_help_status_and_login_are_tokenless() {
+    fn only_help_status_login_and_open_are_tokenless() {
         let tokenless: Vec<_> = registry()
             .iter()
             .filter(|spec| !spec.requires_token)
             .map(|spec| spec.name)
             .collect();
-        assert_eq!(tokenless, ["status", "help", "login", "token.create"]);
+        // `open` only shows a new message for a mailto: link: nothing is read or sent.
+        assert_eq!(
+            tokenless,
+            ["status", "help", "login", "open", "token.create"]
+        );
     }
 
     #[test]

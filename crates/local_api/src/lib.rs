@@ -52,7 +52,7 @@ pub use approval::{
 pub use audit::{AuditEvent, AuditOutcome, AuditSink, MemoryAuditSink, TracingAuditSink};
 pub use client::{API_ADDR_ENV, ClientError, Endpoint, LocalApiClient};
 pub use codec::{Frame, FrameCodec};
-pub use dispatch::{DispatchConfig, Dispatcher, Services};
+pub use dispatch::{DispatchConfig, Dispatcher, Services, UrlOpener};
 pub use handler::{CommandError, CommandHandler, CommandOutput, ExecutionMode, RequestContext};
 pub use peer::{ParentProcess, PeerInfo, PeerRejected, ProcessInfo, check_peer_uid, current_uid};
 pub use permission::{Access, Permission, access};

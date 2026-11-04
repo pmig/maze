@@ -33,6 +33,8 @@ pub enum CliCommand {
     Help(HelpArgs),
     /// `mazemail login`.
     Login(LoginArgs),
+    /// `mazemail open`.
+    Open(OpenArgs),
     /// `mazemail token …`.
     #[command(subcommand)]
     Token(TokenCommand),
@@ -372,6 +374,7 @@ impl CliCommand {
             Self::Status(_) => &["status"],
             Self::Help(_) => &["help"],
             Self::Login(_) => &["login"],
+            Self::Open(_) => &["open"],
             Self::Token(TokenCommand::Create(_)) => &["token", "create"],
             Self::Token(TokenCommand::List(_)) => &["token", "list"],
             Self::Token(TokenCommand::Revoke(_)) => &["token", "revoke"],
@@ -413,6 +416,7 @@ impl CliCommand {
             Self::Login(args) | Self::Token(TokenCommand::Create(args)) => {
                 Invocation::new(name, &args)
             }
+            Self::Open(args) => Invocation::new(name, &args),
             Self::Token(TokenCommand::List(args)) => Invocation::new(name, &args),
             Self::Token(TokenCommand::Revoke(args)) => Invocation::new(name, &args),
             Self::Search(args) => {

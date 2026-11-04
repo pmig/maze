@@ -263,7 +263,11 @@ directory (mode 0600, outside `mail/`). Details are in [cli.md](cli.md); the sec
 rules are:
 
 - **Every request that touches mail needs a token.** There is no tokenless access.
-  Without one, only `help`, `status` and `login` work.
+  Without one, only `help`, `status`, `login` and `open` work. `open` takes only a
+  `mailto:` link and shows a new message filled from it in the window: it reads no
+  mail and sends nothing ([ADR-027](adr/0027-mailto-handler.md)). A program running as
+  you could use it to put a prefilled message in front of you, the same as a
+  `mailto:` link on a web page can.
 - **You approve every token** in a dialog that shows the requesting program (path and
   parent process, from the socket's peer credentials), the profile, the scope and the
   lifetime. Tokens can't mint tokens: a program that already holds one still goes

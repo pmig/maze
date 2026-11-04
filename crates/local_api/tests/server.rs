@@ -167,6 +167,7 @@ impl Harness {
             approver: approver.clone(),
             audit: audit.clone(),
             policy: policy.clone(),
+            opener: None,
         };
         let mut config = ServerConfig::default();
         config.dispatch.approval_timeout = Duration::from_secs(5);
@@ -323,6 +324,7 @@ async fn second_server_refuses_and_stale_socket_is_replaced() {
         approver: Arc::new(DenyAllApprover),
         audit: Arc::new(MemoryAuditSink::new()),
         policy: Arc::new(StaticAccountPolicy::default()),
+        opener: None,
     };
     let error = LocalApiServer::bind(&h.paths, services(), ServerConfig::default())
         .await
@@ -351,6 +353,7 @@ async fn fallback_socket_for_long_data_dirs() {
         approver: Arc::new(DenyAllApprover),
         audit: Arc::new(MemoryAuditSink::new()),
         policy: Arc::new(StaticAccountPolicy::default()),
+        opener: None,
     };
     let server = LocalApiServer::bind(&paths, services, ServerConfig::default())
         .await
@@ -383,7 +386,7 @@ async fn fallback_socket_for_long_data_dirs() {
 }
 
 #[tokio::test]
-async fn tokenless_requests_are_limited_to_help_status_and_login() {
+async fn tokenless_requests_are_limited_to_help_status_login_and_open() {
     let mut h = Harness::start(ScriptedApprover::new(|_| Some(Decision::Deny))).await;
     let mut client = h.client(None).await;
 
@@ -1111,5 +1114,74 @@ async fn account_management_needs_a_writer_token_and_approval() {
     let seen = h.seen();
     assert_eq!(seen.last().unwrap().name, "account.add");
     assert!(seen.last().unwrap().approved);
+    h.stop().await;
+}
+
+/// Records the links `open` hands over.
+#[derive(Default)]
+struct RecordingOpener(std::sync::Mutex<Vec<String>>);
+
+impl local_api::UrlOpener for RecordingOpener {
+    fn open(&self, url: &str) -> bool {
+        self.0.lock().unwrap().push(url.to_owned());
+        true
+    }
+}
+
+#[tokio::test]
+async fn open_hands_mailto_links_to_the_window_without_a_token() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::from_dirs(dir.path().join("data"), dir.path().join("config"));
+    let opener = Arc::new(RecordingOpener::default());
+    let services = Services {
+        handler: Arc::new(FakeCore::default()),
+        tokens: Arc::new(MemoryTokenStore::new()),
+        approver: Arc::new(DenyAllApprover),
+        audit: Arc::new(MemoryAuditSink::new()),
+        policy: Arc::new(StaticAccountPolicy::default()),
+        opener: Some(opener.clone()),
+    };
+    let server = LocalApiServer::bind(&paths, services, ServerConfig::default())
+        .await
+        .unwrap();
+    let (tx, rx) = oneshot::channel::<()>();
+    let task = tokio::spawn(server.serve(async move {
+        let _ = rx.await;
+    }));
+    let mut client = LocalApiClient::connect(&Endpoint::discover_with(&paths, None))
+        .await
+        .unwrap();
+
+    let link = "mailto:anna@example.com?subject=Offsite";
+    let opened = client.call("open", json!({ "url": link })).await.unwrap();
+    assert_eq!(opened["opened"], true);
+    assert_eq!(*opener.0.lock().unwrap(), [link]);
+
+    // Only mailto: links.
+    let error = api_error(
+        client
+            .call("open", json!({ "url": "file:///etc/passwd" }))
+            .await
+            .unwrap_err(),
+    );
+    assert_eq!(error.code, ErrorCode::InvalidArgs);
+    assert_eq!(opener.0.lock().unwrap().len(), 1);
+
+    drop(client);
+    tx.send(()).unwrap();
+    task.await.unwrap();
+}
+
+#[tokio::test]
+async fn open_without_a_window_is_unavailable() {
+    let mut h = Harness::start(ScriptedApprover::approve_all()).await;
+    let mut client = h.client(None).await;
+    let error = api_error(
+        client
+            .call("open", json!({ "url": "mailto:anna@example.com" }))
+            .await
+            .unwrap_err(),
+    );
+    assert_eq!(error.code, ErrorCode::Unavailable);
     h.stop().await;
 }

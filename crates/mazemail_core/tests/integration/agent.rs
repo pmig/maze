@@ -118,7 +118,12 @@ async fn an_off_account_is_never_in_an_agent_session() {
         .tempdir_in("/tmp")
         .unwrap();
     let socket = settings::SocketPath::InDataDir(socket_dir.path().join("m.sock"));
-    let services = api::services(&t.core, &t.authorizer, Arc::new(local_api::DenyAllApprover));
+    let services = api::services(
+        &t.core,
+        &t.authorizer,
+        Arc::new(local_api::DenyAllApprover),
+        None,
+    );
     let server = LocalApiServer::bind_socket(&socket, None, services, ServerConfig::default())
         .await
         .unwrap();

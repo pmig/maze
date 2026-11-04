@@ -78,6 +78,13 @@ pub struct LoginOutput {
     pub expires_at: Option<OffsetDateTime>,
 }
 
+/// `open`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct OpenOutput {
+    /// Whether Maze opened a new message for the link.
+    pub opened: bool,
+}
+
 /// `token revoke`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RevokeOutput {

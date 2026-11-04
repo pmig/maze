@@ -36,3 +36,4 @@ to the index below.
 | [024](0024-server-owned-contacts.md)        | Server-owned contacts          | Accepted                    |
 | [025](0025-update-manifests-on-cloudflare.md) | Update manifests on a Cloudflare Worker | Accepted              |
 | [026](0026-moving-mail-between-accounts.md) | Moving mail between accounts | Accepted                    |
+| [027](0027-mailto-handler.md)              | Maze as the system's mailto: handler | Accepted              |

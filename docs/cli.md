@@ -37,8 +37,10 @@ mazemail folders --json | jq .
 Every command that touches mail needs a **session token** in the environment variable
 `MAZEMAIL_SESSION`. There is no tokenless access: otherwise any program running as you
 could read your decrypted mail through the socket, and encryption at rest would be
-pointless. Without a token only `mazemail help`, `mazemail status` and
-`mazemail login` work.
+pointless. Without a token only `mazemail help`, `mazemail status`, `mazemail login`
+and `mazemail open` work. `open` reads nothing: it shows a new message for a
+`mailto:` link (what your system runs when you click one), which you review and send
+yourself.
 
 Get a token with `mazemail login` (or its alias `mazemail token create`):
 
