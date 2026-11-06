@@ -96,9 +96,10 @@ Nothing is copied: no assets, logos, copy, or CSS from either site.
 - **Weight.** No client-side framework. JavaScript is one small file for the theme
   toggle, keyboard shortcuts and naming the visitor's computer (copy says "device" and
   becomes "Mac", "Linux PC" or "Windows PC"; nothing is sent anywhere), plus `dots.js`
-  (about 15 KB, 5 KB compressed, home page only) for the hero animation: one canvas,
-  paused off screen and in background tabs, a still logo under
-  `prefers-reduced-motion`, hidden below 1000 px. And `maze-window.js` (about 12 KB, 4 KB
+  (about 22 KB, 8 KB compressed, home page only) for the hero animation: one WebGL2
+  canvas (two draw calls a frame, whatever the number of dots), paused off screen and in
+  background tabs, redrawn at 30 fps once the dots have settled, a still logo under
+  `prefers-reduced-motion`, hidden below 1000 px and where WebGL2 is unavailable. And `maze-window.js` (about 12 KB, 4 KB
   compressed, home page only) for the HTML Maze window under the hero: four made-up
   agent tasks, typed out, run, proposed and accepted step by step while the mailbox
   reacts, paused off screen, in background tabs and with its Pause button. Under

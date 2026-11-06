@@ -1,17 +1,26 @@
 // mazemail.dev: the dot animation in the hero (progressive enhancement, home page only).
-// A few thousand dots form the Maze logo, then morph through icons for what Maze does
-// and back. One canvas, no dependencies. Shapes are drawn once into a small offscreen
-// canvas and sampled on a grid; each dot is a damped spring toward its target.
-// Dots near the pointer glow and move aside. Respects prefers-reduced-motion (a still
-// logo that still glows), pauses when off screen or in a background tab, and stays
-// hidden without JavaScript.
+// About a thousand dots form the Maze logo, then morph through icons for what Maze does
+// and back. Shapes are drawn once into a small offscreen canvas and sampled on a grid;
+// each dot is a damped spring toward its target. The springs run on the CPU (well under
+// a tenth of a millisecond a frame); drawing is WebGL2: every dot is an instanced quad,
+// so a frame is one buffer upload and two draw calls (halos, then dots) whatever the count.
+// That buys exact alpha, a soft glow, dots that stretch along their motion and paths
+// that curve on the way to the next shape. Dots near the pointer glow and move aside;
+// a click or tap sends a ripple. Respects prefers-reduced-motion (a still logo that
+// still glows), pauses when off screen or in a background tab, redraws at 30 fps once
+// every dot has settled and stays hidden without JavaScript or WebGL2.
 (function () {
   var figure = document.querySelector("[data-dots]");
   if (!figure || !window.Path2D) return;
   var canvas = figure.querySelector("canvas");
   var label = figure.querySelector("[data-dots-label]");
-  var ctx = canvas.getContext("2d");
   var reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
+  // low-power: a decoration must not wake the discrete GPU of a dual-GPU laptop
+  var gl = canvas.getContext("webgl2", {
+    alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false,
+    powerPreference: "low-power",
+  });
+  if (!gl) return;
 
   // Shapes on a 1024 x 1024 board. Each layer: [kind, path, tone] where kind is
   // "fill" or a stroke width, and tone is the dot strength (1 = full ink, "goal" = amber).
@@ -71,9 +80,105 @@
   ];
 
   var HOLD = 2600, MORPH = 1300; // ms a shape stays, ms the hand-over is staggered over
-  var dots = [], targets = [], shape = 0, nextAt = 0, size = 0, step = 0, radius = 0;
-  var ink = "#000", halo = "#000", amber = "#FFB86B", running = false, visible = false, raf = 0, last = 0;
+  var SWIRL = 2.4; // sideways kick when a dot leaves for a new target (1/s): paths curve
+  var STREAK = 0.0024; // stretch per px/s of speed (capped in the shader)
+  var RIPPLE = 1100; // ms a click ripple lives
+  var IDLE = 1000 / 30; // ms between redraws once every dot has settled
+  var dots = [], targets = [], ripples = [], shape = 0, nextAt = 0, size = 0, step = 0, radius = 0;
+  var dpr = 1, offX = 0, offY = 0, cssW = 1, cssH = 1, drawnAt = 0, moved = false, glowing = false;
+  var running = false, visible = false, raf = 0, last = 0;
   var pointer = { x: -1e4, y: -1e4 };
+  var ink = [0, 0, 0], halo = [0, 0, 0], amber = [1, 0.72, 0.42], tint = 1;
+
+  // Each dot is a quad around its centre. The vertex shader places it (wobble, stretch
+  // along the velocity, the dot's radius growing with its glow) and skips dots with
+  // nothing to draw; the fragment shader draws an antialiased disc (pass 1) or a
+  // gaussian halo (pass 0). Output is premultiplied alpha, blended "over".
+  var VERT = [
+    "#version 300 es",
+    "layout(location = 0) in vec4 a_move;  // x, y on the board (CSS px), velocity (px/s)",
+    "layout(location = 1) in vec4 a_look;  // alpha, glow, wobble phase, goal (0 or 1)",
+    "uniform vec4 u_view;  // board origin in the canvas (CSS px), 2 / canvas size (CSS px)",
+    "uniform vec4 u_dot;   // radius (CSS px), device px per CSS px, wobble (CSS px), streak",
+    "uniform float u_time;",
+    "uniform float u_pass; // 0 halos, 1 dots",
+    "out vec2 v_p;         // position in the quad, in radii, with the stretch taken out",
+    "flat out vec4 v_look; // alpha, glow, core radius (radii), goal",
+    "flat out vec2 v_px;   // one device pixel (radii), fade for the stretch",
+    "void main() {",
+    "  float a = a_look.x, g = a_look.y * min(1.0, a * 3.0); // hidden dots don't glow",
+    "  float core = 1.0 + 0.45 * g, px = 1.0 / (u_dot.x * u_dot.y);",
+    "  float ext = u_pass < 0.5 ? (g > 0.01 ? 4.2 : 0.0) : (max(a, g) > 0.003 ? core + px : 0.0);",
+    "  if (ext == 0.0) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); return; } // clipped",
+    "  vec2 q = (vec2(gl_VertexID & 1, gl_VertexID >> 1) * 2.0 - 1.0) * ext;",
+    "  float speed = length(a_move.zw), s = min(speed * u_dot.w, 2.2);",
+    "  vec2 dir = speed > 1.0 ? a_move.zw / speed : vec2(1.0, 0.0);",
+    "  vec2 off = (dir * q.x * (1.0 + s) + vec2(-dir.y, dir.x) * q.y) * u_dot.x;",
+    "  vec2 wob = vec2(sin(u_time * 1.3 + a_look.z), cos(u_time * 1.1 + a_look.z)) * u_dot.z;",
+    "  vec2 p = u_view.xy + a_move.xy + wob + off;",
+    "  gl_Position = vec4(p.x * u_view.z - 1.0, 1.0 - p.y * u_view.w, 0.0, 1.0);",
+    "  v_p = q;",
+    "  v_look = vec4(a, g, core, a_look.w);",
+    "  v_px = vec2(px, 1.0 / (1.0 + 0.6 * s)); // a streak spreads the same ink thinner",
+    "}",
+  ].join("\n");
+  var FRAG = [
+    "#version 300 es",
+    "precision mediump float;",
+    "in vec2 v_p;",
+    "flat in vec4 v_look;",
+    "flat in vec2 v_px;",
+    "uniform vec3 u_ink, u_halo, u_amber;",
+    "uniform float u_tint; // 1: glowing dots turn amber (light theme, where dark ink can't glow)",
+    "uniform highp float u_pass; // shared with the vertex shader, so the same precision",
+    "out vec4 o;",
+    "void main() {",
+    "  float d = length(v_p), a = v_look.x, g = v_look.y, k;",
+    "  bool goal = v_look.w > 0.5;",
+    "  vec3 c;",
+    "  if (u_pass < 0.5) {",
+    "    k = (0.34 + 0.22 * u_tint) * g * exp(-0.2 * d * d); // amber on white needs more",
+    "    c = goal ? u_amber : u_halo;",
+    "  } else {",
+    "    k = clamp((v_look.z - d) / v_px.x + 0.5, 0.0, 1.0) * (a + (1.0 - a) * g);",
+    "    c = goal ? u_amber : mix(u_ink, u_amber, u_tint * g);",
+    "  }",
+    "  k *= v_px.y;",
+    "  o = vec4(c * k, k);",
+    "}",
+  ].join("\n");
+
+  var loc = {}, data = new Float32Array(0), cap = 0, glOk = false;
+  function setup() {
+    glOk = false;
+    var p = gl.createProgram();
+    [[gl.VERTEX_SHADER, VERT], [gl.FRAGMENT_SHADER, FRAG]].forEach(function (s) {
+      var sh = gl.createShader(s[0]);
+      gl.shaderSource(sh, s[1]);
+      gl.compileShader(sh);
+      gl.attachShader(p, sh);
+    });
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) return false;
+    gl.useProgram(p);
+    ["u_view", "u_dot", "u_time", "u_pass", "u_ink", "u_halo", "u_amber", "u_tint"].forEach(function (n) {
+      loc[n] = gl.getUniformLocation(p, n);
+    });
+    // one interleaved buffer, 8 floats per dot, advanced once per quad (instanced)
+    gl.bindVertexArray(gl.createVertexArray());
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    for (var i = 0; i < 2; i++) {
+      gl.enableVertexAttribArray(i);
+      gl.vertexAttribPointer(i, 4, gl.FLOAT, false, 32, i * 16);
+      gl.vertexAttribDivisor(i, 1);
+    }
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.clearColor(0, 0, 0, 0);
+    cap = 0;
+    glOk = true;
+    return true;
+  }
 
   // Morton (Z-order) code: sorting by it keeps neighbouring dots together, so dot i
   // lands in a similar region of every shape and the morph reads as a flow.
@@ -87,7 +192,7 @@
     var grid = Math.floor(size / step), sup = 3, px = grid * sup;
     var off = document.createElement("canvas");
     off.width = off.height = px;
-    var o = off.getContext("2d");
+    var o = off.getContext("2d", { willReadFrequently: true });
     o.scale(px / 1024, px / 1024);
     o.lineCap = o.lineJoin = "round";
     s.layers.forEach(function (l) {
@@ -110,13 +215,17 @@
   }
 
   function layout() {
-    var rect = canvas.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var rect = canvas.getBoundingClientRect();
     if (!rect.width) return false;
     var old = size;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
     size = Math.min(rect.width, rect.height);
+    cssW = rect.width;
+    cssH = rect.height;
+    offX = (rect.width - size) / 2;
+    offY = (rect.height - size) / 2;
     canvas.width = Math.round(rect.width * dpr);
     canvas.height = Math.round(rect.height * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, (rect.width - size) / 2 * dpr, (rect.height - size) / 2 * dpr);
     step = Math.max(5, size / 64);
     radius = step * 0.34;
     targets = SHAPES.map(sample);
@@ -128,7 +237,7 @@
       var d = dots[i];
       if (!d) {
         // new dots start scattered and invisible, resting where they are until assigned
-        d = { x: Math.random() * size, y: Math.random() * size, vx: 0, vy: 0, a: 0, ta: 0,
+        d = { x: Math.random() * size, y: Math.random() * size, vx: 0, vy: 0, a: 0, ta: 0, g: 0,
           k: 0.75 + Math.random() * 0.5, ph: Math.random() * 6.283 };
         d.tx = d.x;
         d.ty = d.y;
@@ -161,14 +270,30 @@
     });
   }
 
+  // CSS colours in any syntax (hex, rgb(), oklch(), …) to 0..1 sRGB, through a
+  // one-pixel 2D canvas so the browser does the parsing.
+  var probe = document.createElement("canvas");
+  probe.width = probe.height = 1;
+  var pctx = probe.getContext("2d", { willReadFrequently: true });
+  function rgb(css, fallback) {
+    if (!css) return fallback;
+    pctx.clearRect(0, 0, 1, 1);
+    pctx.fillStyle = "#000";
+    pctx.fillStyle = css;
+    pctx.fillRect(0, 0, 1, 1);
+    var p = pctx.getImageData(0, 0, 1, 1).data;
+    return [p[0] / 255, p[1] / 255, p[2] / 255];
+  }
+
   function colors() {
     var cs = getComputedStyle(figure);
-    ink = cs.color;
-    amber = cs.getPropertyValue("--amber").trim() || amber;
+    ink = rgb(cs.color, ink);
+    amber = rgb(cs.getPropertyValue("--amber").trim(), amber);
     // light dots (dark theme) glow in their own colour; dark dots would only smudge, so
-    // in the light theme the glow is amber
-    var rgb = (ink.match(/\d+(\.\d+)?/g) || [0, 0, 0]).map(Number);
-    halo = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2] > 128 ? ink : amber;
+    // in the light theme the glow is amber and glowing dots turn amber
+    var light = 0.2126 * ink[0] + 0.7152 * ink[1] + 0.0722 * ink[2] > 0.5;
+    halo = light ? ink : amber;
+    tint = light ? 0 : 1;
     if (ready && !running) frame(performance.now());
   }
 
@@ -186,102 +311,102 @@
         setTimeout(function () { label.textContent = SHAPES[shape].label; label.classList.remove("is-out"); }, 220);
       }
     }
+    // click ripples: a ring that grows from the click, pushing dots outward and lighting
+    // them as it passes
+    var rings = [];
+    for (var r = ripples.length - 1; r >= 0; r--) {
+      var age = (now - ripples[r].t) / RIPPLE;
+      if (age >= 1 || still) { ripples.splice(r, 1); continue; }
+      rings.push({ x: ripples[r].x, y: ripples[r].y, at: age * size * 0.9, w: size * 0.07, f: (1 - age) * (1 - age) });
+    }
+    var busy = rings.length > 0 || moved;
+    moved = false;
+    glowing = false;
     for (var i = 0; i < dots.length; i++) {
       var d = dots[i];
-      if (d.next && (still || now >= d.at)) { d.tx = d.next.x; d.ty = d.next.y; d.ta = d.next.a; d.next = null; }
+      if (d.next && (still || now >= d.at)) {
+        d.tx = d.next.x; d.ty = d.next.y; d.ta = d.next.a; d.next = null;
+        // a sideways kick, always the same way round: each dot curves to its new place
+        // and the whole morph turns like a slow vortex
+        if (!still) { d.vx -= (d.ty - d.y) * SWIRL; d.vy += (d.tx - d.x) * SWIRL; }
+      }
       // glow: visible dots near the pointer light up (eased in and out)
       var gx = d.x - pointer.x, gy = d.y - pointer.y, gd = Math.sqrt(gx * gx + gy * gy) / (size * 0.2), gt = 0;
       if (gd < 1) gt = (1 - gd) * (1 - gd) * (1 + 2 * gd);
-      d.g = still ? gt : (d.g || 0) + (gt - (d.g || 0)) * Math.min(1, dt * 10);
-      if (still) { d.x = d.tx; d.y = d.ty; d.a = d.ta; continue; }
+      var ax = 0, ay = 0, rg = 0;
+      for (var q = 0; q < rings.length; q++) {
+        var R = rings[q], rx = d.x - R.x, ry = d.y - R.y, rd = Math.sqrt(rx * rx + ry * ry) || 1;
+        var band = 1 - Math.abs(rd - R.at) / R.w;
+        if (band <= 0) continue;
+        band *= band * R.f;
+        rg = Math.max(rg, band);
+        ax += (rx / rd) * band * 2400;
+        ay += (ry / rd) * band * 2400;
+      }
+      // the pointer's glow eases in and out; a ripple lights dots at once, then fades
+      var g0 = d.g;
+      d.g = still ? gt : Math.max(rg, g0 + (gt - g0) * Math.min(1, dt * 10));
+      if (d.g > 0.01) glowing = true;
+      if (still) { d.x = d.tx; d.y = d.ty; d.a = d.ta; d.vx = d.vy = 0; continue; }
       var K = 70 * d.k, D = 13;
-      var ax = (d.tx - d.x) * K - d.vx * D, ay = (d.ty - d.y) * K - d.vy * D;
-      var px = d.x - pointer.x, py = d.y - pointer.y, r2 = px * px + py * py, R = size * 0.12;
-      if (r2 < R * R && r2 > 0.01) {
-        var f = (1 - Math.sqrt(r2) / R) * 9000 / Math.sqrt(r2);
+      ax += (d.tx - d.x) * K - d.vx * D;
+      ay += (d.ty - d.y) * K - d.vy * D;
+      var px = d.x - pointer.x, py = d.y - pointer.y, r2 = px * px + py * py, RP = size * 0.12;
+      if (r2 < RP * RP && r2 > 0.01) {
+        var f = (1 - Math.sqrt(r2) / RP) * 9000 / Math.sqrt(r2);
         ax += px * f * 0.02; ay += py * f * 0.02;
       }
       d.vx += ax * dt; d.vy += ay * dt;
       d.x += d.vx * dt; d.y += d.vy * dt;
       d.a += (d.ta - d.a) * Math.min(1, dt * 7);
+      if (!busy && (d.next || Math.abs(d.g - g0) > 0.001 || Math.abs(d.vx) + Math.abs(d.vy) > 2 || Math.abs(d.ta - d.a) > 0.004)) busy = true;
     }
-    draw(now);
+    // once everything has settled (a resting pointer included) only the sub-pixel wobble
+    // moves: 30 fps is plenty
+    if (busy || still || !running || now - drawnAt >= IDLE - 2) {
+      draw(now);
+      drawnAt = now;
+    }
     if (running && !still) raf = requestAnimationFrame(frame);
     else running = false; // reduced motion: one still frame, the next start() redraws
   }
 
-  // Dots are batched by colour and by alpha (8 levels): one path and one fill per bucket.
-  // Glowing dots first get a soft halo (4 levels), then a brighter, slightly larger core;
-  // in the light theme they also turn amber.
   function draw(now) {
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.restore();
-    var t = now / 1000, wob = reduce.matches ? 0 : step * 0.08;
-    for (var i = 0; i < dots.length; i++) {
-      var d = dots[i], g = (d.g || 0) * Math.min(1, d.a * 3); // hidden dots don't glow
-      d.px = d.x + Math.sin(t * 1.3 + d.ph) * wob;
-      d.py = d.y + Math.cos(t * 1.1 + d.ph) * wob;
-      d.ga = g;
-      d.ea = d.a + (1 - d.a) * g;
-      d.r = radius * (1 + 0.45 * g);
+    if (!glOk) return;
+    var n = dots.length;
+    if (cap < n) {
+      cap = n;
+      data = new Float32Array(n * 8);
+      gl.bufferData(gl.ARRAY_BUFFER, data.byteLength, gl.DYNAMIC_DRAW);
     }
-    [false, true].forEach(function (goal) {
-      ctx.fillStyle = goal ? amber : halo;
-      for (var level = 1; level <= 4; level++) {
-        var lo = level === 1 ? 0.02 : (level - 1) / 4, hi = level / 4;
-        ctx.globalAlpha = 0.22 * hi;
-        ctx.beginPath();
-        var any = false;
-        for (var i = 0; i < dots.length; i++) {
-          var d = dots[i];
-          if (d.goal !== goal || d.ga <= lo || d.ga > hi) continue;
-          var hr = radius * (1.9 + 1.5 * d.ga);
-          ctx.moveTo(d.px + hr, d.py);
-          ctx.arc(d.px, d.py, hr, 0, 6.2832);
-          any = true;
-        }
-        if (any) ctx.fill();
-      }
-      ctx.fillStyle = goal ? amber : ink;
-      for (var level = 1; level <= 8; level++) {
-        var lo = (level - 1) / 8, hi = level / 8;
-        ctx.globalAlpha = hi;
-        ctx.beginPath();
-        var any = false;
-        for (var i = 0; i < dots.length; i++) {
-          var d = dots[i];
-          if (d.goal !== goal || d.ea <= lo || d.ea > hi) continue;
-          ctx.moveTo(d.px + d.r, d.py);
-          ctx.arc(d.px, d.py, d.r, 0, 6.2832);
-          any = true;
-        }
-        if (any) ctx.fill();
-      }
-      // light theme: glowing dots turn amber instead of only getting a halo
-      if (goal || halo !== amber) return;
-      ctx.fillStyle = amber;
-      for (var level = 1; level <= 4; level++) {
-        var lo = level === 1 ? 0.02 : (level - 1) / 4, hi = level / 4;
-        ctx.globalAlpha = hi;
-        ctx.beginPath();
-        var any = false;
-        for (var i = 0; i < dots.length; i++) {
-          var d = dots[i];
-          if (d.goal || d.ga <= lo || d.ga > hi) continue;
-          ctx.moveTo(d.px + d.r, d.py);
-          ctx.arc(d.px, d.py, d.r, 0, 6.2832);
-          any = true;
-        }
-        if (any) ctx.fill();
-      }
-    });
-    ctx.globalAlpha = 1;
+    for (var i = 0, o = 0; i < n; i++, o += 8) {
+      var d = dots[i];
+      data[o] = d.x; data[o + 1] = d.y; data[o + 2] = d.vx; data[o + 3] = d.vy;
+      data[o + 4] = d.a; data[o + 5] = d.g; data[o + 6] = d.ph; data[o + 7] = d.goal ? 1 : 0;
+    }
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, data, 0, n * 8);
+    var still = reduce.matches;
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.uniform4f(loc.u_view, offX, offY, 2 / cssW, 2 / cssH);
+    gl.uniform4f(loc.u_dot, radius, dpr, still ? 0 : step * 0.08, still ? 0 : STREAK);
+    gl.uniform1f(loc.u_time, (now / 1000) % 3600);
+    gl.uniform3fv(loc.u_ink, ink);
+    gl.uniform3fv(loc.u_halo, halo);
+    gl.uniform3fv(loc.u_amber, amber);
+    gl.uniform1f(loc.u_tint, tint);
+    // halos first, so no halo veils a neighbouring dot; goal dots come last in the buffer
+    // and so sit on top
+    if (glowing) {
+      gl.uniform1f(loc.u_pass, 0);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, n);
+    }
+    gl.uniform1f(loc.u_pass, 1);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, n);
   }
 
   function start() {
-    if (running || !visible || document.hidden) return;
+    if (running || !visible || document.hidden || !glOk) return;
     running = true;
     last = 0;
     raf = requestAnimationFrame(frame);
@@ -306,9 +431,19 @@
     return true;
   }
 
+  if (!setup()) return; // shaders didn't build: keep the figure hidden
   figure.hidden = false;
   colors();
   ensure();
+
+  // The GPU can drop the context (driver reset, too many contexts in other tabs): stop,
+  // and rebuild the program and buffer when the browser hands it back.
+  canvas.addEventListener("webglcontextlost", function (e) { e.preventDefault(); glOk = false; stop(); });
+  canvas.addEventListener("webglcontextrestored", function () {
+    if (!setup()) return;
+    start();
+    if (!running && ready) frame(performance.now());
+  });
 
   new IntersectionObserver(function (entries) {
     visible = entries[0].isIntersecting;
@@ -332,11 +467,22 @@
   function still() {
     if (reduce.matches && ready && !raf) raf = requestAnimationFrame(frame);
   }
-  canvas.addEventListener("pointermove", function (e) {
+  function local(e) {
     var r = canvas.getBoundingClientRect();
-    pointer.x = e.clientX - r.left - (r.width - size) / 2;
-    pointer.y = e.clientY - r.top - (r.height - size) / 2;
+    return { x: e.clientX - r.left - (r.width - size) / 2, y: e.clientY - r.top - (r.height - size) / 2 };
+  }
+  canvas.addEventListener("pointermove", function (e) {
+    var p = local(e);
+    pointer.x = p.x;
+    pointer.y = p.y;
+    moved = true;
     still();
   });
-  canvas.addEventListener("pointerleave", function () { pointer.x = pointer.y = -1e4; still(); });
+  canvas.addEventListener("pointerleave", function () { pointer.x = pointer.y = -1e4; moved = true; still(); });
+  canvas.addEventListener("pointerdown", function (e) {
+    if (reduce.matches || !ready) return;
+    var p = local(e);
+    ripples.push({ x: p.x, y: p.y, t: last || performance.now() }); // on the frames' clock
+    if (ripples.length > 3) ripples.shift();
+  });
 })();
