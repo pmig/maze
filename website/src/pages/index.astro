@@ -381,7 +381,8 @@ const TERMINAL = [
     padding: clamp(3rem, 8vw, 5.5rem) var(--gutter) clamp(2rem, 4vw, 3rem);
   }
 
-  /* The dot animation (public/dots.js): only on wide screens, next to the hero text. */
+  /* The dot animation (public/dots.js, WebGL2): only on wide screens, next to the hero
+     text. The script unhides the figure, so without WebGL2 the text keeps the full width. */
   .hero-dots {
     display: none;
   }
