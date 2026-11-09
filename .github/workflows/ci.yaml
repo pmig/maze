@@ -50,6 +50,9 @@ jobs:
 
       - name: Test
         run: mise run test
+        env:
+          # .config/nextest.toml: fewer tests at once, retries for flaky ones.
+          NEXTEST_PROFILE: ci
 
       - name: Licenses and advisories
         run: mise run deny
