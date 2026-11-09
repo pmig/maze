@@ -731,6 +731,7 @@ impl FolderPane {
             ),
             Some(Node::Account(kind, _)) => row.child(
                 h_flex()
+                    .debug_selector(|| format!("folder-pane-row:{}", item.id))
                     .gap_1p5()
                     .pl(indent)
                     .text_sm()

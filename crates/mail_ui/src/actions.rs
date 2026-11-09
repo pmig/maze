@@ -24,6 +24,8 @@ actions!(
         Zoom,
         /// Add a mail account (IMAP, Gmail or Microsoft).
         AddAccount,
+        /// Add a From address (alias) to the account of the shown mail or folder.
+        AddAlias,
         /// Edit your settings (`settings.json`) in a tab (`cmd-,`).
         OpenSettings,
         /// Show Maze's default settings, read-only, in a tab.

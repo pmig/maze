@@ -1084,6 +1084,48 @@ impl MailWindow {
         }
     }
 
+    /// "Mail: Add Alias" in the palette: the dialog for the account of the selected
+    /// mail, else of the open folder, else the only account.
+    fn add_alias_for_current_account(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let tree = self.source.folder_tree();
+        let from_selection =
+            self.thread_list(cx)
+                .and_then(|list| match list.read(cx).selected_item()? {
+                    ItemId::Thread(thread) => self.source.thread_account(thread),
+                    ItemId::Message(message) => self.source.message_account(message),
+                });
+        let from_folder = || {
+            let list = self.thread_list(cx)?;
+            let ThreadScope::Folder(FolderKey::Folder(folder)) = list.read(cx).scope() else {
+                return None;
+            };
+            let folder = *folder;
+            tree.accounts
+                .iter()
+                .find(|account| contains_folder(&account.folders, folder))
+                .map(|account| account.id)
+        };
+        let only = (tree.accounts.len() == 1).then(|| tree.accounts[0].id);
+        let Some(account) = from_selection.or_else(from_folder).or(only) else {
+            window.push_notification(
+                Notification::info(
+                    "Open a folder of the account first, or right-click the account in the \
+                     folder pane and choose Add Alias…",
+                )
+                .title(PRODUCT_NAME),
+                cx,
+            );
+            return;
+        };
+        let name = tree
+            .accounts
+            .iter()
+            .find(|a| a.id == account)
+            .map(|a| a.name.clone())
+            .unwrap_or_default();
+        self.open_alias_dialog(account, name, window, cx);
+    }
+
     /// "Add Alias…": asks for the address (and an optional name) and saves it in the
     /// settings, which adds it to the composer's From.
     fn open_alias_dialog(
@@ -2101,6 +2143,9 @@ impl MailWindow {
         .on_action(cx.listener(|this, _: &ExtendSelectionUp, _, cx| {
             this.with_list(cx, |list, cx| list.extend(-1, cx));
         }))
+        .on_action(cx.listener(|this, _: &AddAlias, window, cx| {
+            this.add_alias_for_current_account(window, cx);
+        }))
         .on_action(cx.listener(|this, _: &ClearSelection, _, cx| {
             let cleared = this
                 .thread_list(cx)
@@ -2287,6 +2332,16 @@ impl Render for MailWindow {
                 this
             })
     }
+}
+
+/// Whether `folder` is in `entries` (or below them).
+fn contains_folder(
+    entries: &[crate::source::FolderEntry],
+    folder: mazemail_types::FolderId,
+) -> bool {
+    entries.iter().any(|entry| {
+        entry.key == FolderKey::Folder(folder) || contains_folder(&entry.children, folder)
+    })
 }
 
 #[cfg(test)]
@@ -3186,6 +3241,29 @@ mod tests {
         cx.simulate_mouse_up(bounds.center(), gpui::MouseButton::Right, modifiers);
         cx.run_until_parked();
         cx.update(|window, cx| window.draw(cx).clear(cx));
+    }
+
+    #[gpui::test]
+    fn right_clicking_an_account_offers_its_aliases(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            ui::init(cx);
+            crate::init(cx);
+        });
+        let fake = Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
+        let source: Arc<dyn MailSource> = fake.clone();
+        let (_view, cx) = cx.add_window_view(|window, cx| {
+            MailWindow::new(source, &MailWindowOptions::default(), window, cx)
+        });
+        cx.run_until_parked();
+        let account = mazemail_types::AccountId(1);
+        fake.set_alias(account, "sales@example.com", None, true)
+            .unwrap();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        // Add Alias…, then Remove alias sales@example.com.
+        right_click(cx, format!("folder-pane-row:account:{account}"));
+        cx.simulate_keystrokes("down down enter");
+        cx.run_until_parked();
+        assert!(fake.aliases(account).is_empty(), "removed from the menu");
     }
 
     /// Menu items: Reply, Reply All, Forward, —, Mark as Read/Unread, Star/Unstar, …
