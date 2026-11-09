@@ -44,7 +44,7 @@ imap = { path = "crates/imap" }
 
 # External crates, pinned here and inherited with `workspace = true`
 # The ACP client SDK (Apache-2.0, ADR-006); the reference clone is 3.3.0.
-agent-client-protocol = "3.5"
+agent-client-protocol = "5.0"
 ammonia = "4.2.4"
 anyhow = "1"
 # GPUI comes from Zed's `gpui-pre-*` snapshots. gpui-kit pins the exact snapshot it was
