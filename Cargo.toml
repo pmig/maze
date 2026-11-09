@@ -80,7 +80,7 @@ libc = "0.2"
 # every TLS client in Maze) and the platform certificate verifier; messages are built
 # elsewhere.
 lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "tokio1-rustls", "aws-lc-rs", "rustls-platform-verifier"] }
-mail-auth = { version = "0.14.1", default-features = false, features = ["aws-lc-rs", "arc"] }
+mail-auth = { version = "0.15.1", default-features = false, features = ["aws-lc-rs", "arc"] }
 notify = "8"
 # New-mail notifications (ADR-021): the freedesktop D-Bus service on Linux, over zbus
 # on Tokio. On macOS, UNUserNotificationCenter through mac-usernotifications (the
