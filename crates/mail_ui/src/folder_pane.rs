@@ -32,7 +32,7 @@ use gpui_kit::component::{
     tree::{TreeEntry, TreeEvent, TreeItem, TreeState, tree},
     v_flex,
 };
-use mazemail_types::{FolderId, FolderRole, PRODUCT_NAME};
+use mazemail_types::{AccountId, FolderId, FolderRole, PRODUCT_NAME};
 use ui::assets::IconName;
 use ui::components::CountBadge;
 use ui::theme::scaled;
@@ -46,7 +46,7 @@ enum Node {
     /// "FAVORITES", "UNIFIED FOLDERS", "ACCOUNTS".
     Section,
     /// An account root.
-    Account(AccountKind),
+    Account(AccountKind, AccountId),
     /// An account's name above its favorites (with more than one account).
     FavoritesAccount,
     /// The empty state of Favorites: "No favorite folders yet" and how to add one.
@@ -84,6 +84,20 @@ pub enum FolderPaneEvent {
     MarkAllRead {
         /// The folder (or unified folder).
         key: FolderKey,
+    },
+    /// "Add Alias…" on an account: the window asks for the address.
+    AddAlias {
+        /// The account.
+        account: AccountId,
+        /// Its name, for the dialog.
+        name: SharedString,
+    },
+    /// "Remove alias …" on an account.
+    RemoveAlias {
+        /// The account.
+        account: AccountId,
+        /// The alias's address.
+        email: SharedString,
     },
     /// "Delete All Messages", or "Empty Trash" on a Trash folder: the window asks first.
     DeleteAll {
@@ -372,7 +386,7 @@ fn build(
             .expanded(is_expanded(&section, true))
             .children(tree.accounts.iter().enumerate().map(|(ix, account)| {
                 let id: SharedString = format!("account:{}", account.id).into();
-                nodes.insert(id.clone(), Node::Account(account.kind));
+                nodes.insert(id.clone(), Node::Account(account.kind, account.id));
                 let (special, others) = arrange_account_folders(&account.folders);
                 let mut children: Vec<TreeItem> = special
                     .iter()
@@ -627,6 +641,46 @@ impl FolderPane {
         )
     }
 
+    /// The context menu of an account: "Add Alias…" and one "Remove alias …" per alias
+    /// (`accounts.<label>.aliases`, more From addresses).
+    fn account_menu(
+        menu: PopupMenu,
+        node: Option<&Node>,
+        name: &SharedString,
+        source: &dyn MailSource,
+        pane: &WeakEntity<Self>,
+    ) -> PopupMenu {
+        let Some(Node::Account(_, account)) = node else {
+            return menu;
+        };
+        let account = *account;
+        let emit = |event: FolderPaneEvent| {
+            let pane = pane.clone();
+            move |_: &gpui::ClickEvent, _: &mut Window, cx: &mut App| {
+                pane.update(cx, |_, cx| cx.emit(event.clone())).ok();
+            }
+        };
+        let mut menu = menu.item(
+            PopupMenuItem::new("Add Alias…")
+                .icon(Icon::new(IconName::MailPlus))
+                .on_click(emit(FolderPaneEvent::AddAlias {
+                    account,
+                    name: name.clone(),
+                })),
+        );
+        for alias in source.aliases(account) {
+            menu = menu.item(
+                PopupMenuItem::new(format!("Remove alias {}", alias.email))
+                    .icon(Icon::new(IconName::Trash))
+                    .on_click(emit(FolderPaneEvent::RemoveAlias {
+                        account,
+                        email: alias.email,
+                    })),
+            );
+        }
+        menu
+    }
+
     fn render_item(
         nodes: &HashMap<SharedString, Node>,
         source: &dyn MailSource,
@@ -675,7 +729,7 @@ impl FolderPane {
                     .truncate()
                     .child(item.label.clone()),
             ),
-            Some(Node::Account(kind)) => row.child(
+            Some(Node::Account(kind, _)) => row.child(
                 h_flex()
                     .gap_1p5()
                     .pl(indent)
@@ -740,6 +794,7 @@ impl Render for FolderPane {
         let favorites = self.favorites.clone();
         let pane = cx.weak_entity();
         let source = self.source.clone();
+        let menu_source = self.source.clone();
         let theme = cx.theme();
         v_flex()
             .size_full()
@@ -753,6 +808,13 @@ impl Render for FolderPane {
                     })
                     .context_menu(move |_, entry, menu, _, _| {
                         let node = menu_nodes.get(&entry.item().id);
+                        let menu = FolderPane::account_menu(
+                            menu,
+                            node,
+                            &entry.item().label,
+                            menu_source.as_ref(),
+                            &pane,
+                        );
                         FolderPane::context_menu(menu, node, &favorites, &pane)
                     }),
                 ),

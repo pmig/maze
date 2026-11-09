@@ -410,6 +410,8 @@ pub struct FakeMailSource {
     no_contacts: std::sync::atomic::AtomicBool,
     /// Folder actions asked for, in order.
     folder_actions: Mutex<Vec<FolderAction>>,
+    /// Aliases per account, as [`MailSource::set_alias`] left them.
+    aliases: Mutex<HashMap<AccountId, Vec<crate::source::AliasEntry>>>,
 }
 
 /// A folder action the fake was asked for (see [`FakeMailSource::folder_actions`]).
@@ -477,6 +479,7 @@ impl FakeMailSource {
             remote_senders: Mutex::new(Vec::new()),
             no_contacts: std::sync::atomic::AtomicBool::new(false),
             folder_actions: Mutex::new(Vec::new()),
+            aliases: Mutex::new(HashMap::new()),
         }
     }
 
@@ -1324,6 +1327,37 @@ impl MailSource for FakeMailSource {
             unified,
             accounts,
         }
+    }
+
+    fn aliases(&self, account: AccountId) -> Vec<crate::source::AliasEntry> {
+        self.aliases
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&account)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn set_alias(
+        &self,
+        account: AccountId,
+        email: &str,
+        name: Option<&str>,
+        add: bool,
+    ) -> Result<(), SourceError> {
+        let mut aliases = self
+            .aliases
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let list = aliases.entry(account).or_default();
+        list.retain(|a| !a.email.eq_ignore_ascii_case(email));
+        if add {
+            list.push(crate::source::AliasEntry {
+                email: email.to_owned().into(),
+                name: name.map(|n| n.to_owned().into()),
+            });
+        }
+        Ok(())
     }
 
     fn mark_all_read(&self, folder: &FolderKey) -> Result<(), SourceError> {

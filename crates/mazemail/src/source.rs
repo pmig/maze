@@ -1413,6 +1413,32 @@ impl MailSource for CoreMailSource {
         )
     }
 
+    fn aliases(&self, account: AccountId) -> Vec<mail_ui::source::AliasEntry> {
+        let Ok(core) = self.ready() else {
+            return Vec::new();
+        };
+        core.aliases(account)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|alias| mail_ui::source::AliasEntry {
+                email: alias.email.into(),
+                name: alias.name.map(Into::into),
+            })
+            .collect()
+    }
+
+    fn set_alias(
+        &self,
+        account: AccountId,
+        email: &str,
+        name: Option<&str>,
+        add: bool,
+    ) -> Result<(), SourceError> {
+        let core = self.ready()?;
+        core.set_alias(account, email, name, add)
+            .map_err(unavailable)
+    }
+
     fn mark_all_read(&self, folder: &FolderKey) -> Result<(), SourceError> {
         let core = self.ready()?;
         let scope = match folder {

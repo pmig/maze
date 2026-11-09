@@ -816,3 +816,59 @@ async fn aliases_from_the_settings_become_identities_to_send_from() {
     assert_eq!(emails(&s.core), ["alice@example.org", "sales@example.org"]);
     s.core.shutdown().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn aliases_can_be_added_and_removed_in_the_settings_file() {
+    let server = FakeServer::new();
+    let s = open_with_settings(&server, Some("{ \"font_size\": 15 }")).await;
+    let _message = account_with_original(&s).await;
+    let account = s.core.store().reader().unwrap().accounts().unwrap()[0].clone();
+    let file = s._dir.path().join("settings.json");
+    let emails = |core: &mazemail_core::CoreHandle| -> Vec<String> {
+        core.identities()
+            .unwrap()
+            .into_iter()
+            .map(|i| i.email)
+            .collect()
+    };
+
+    s.core
+        .set_alias(account.id, " sales@example.org ", None, true)
+        .unwrap();
+    s.core
+        .set_alias(account.id, "support@example.org", Some("Support"), true)
+        .unwrap();
+    // Written next to what was there, and read back.
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(written["font_size"], 15);
+    assert_eq!(
+        written["accounts"][account.name.as_str()]["aliases"],
+        serde_json::json!(["sales@example.org", { "email": "support@example.org", "name": "Support" }])
+    );
+    let core = s.core.clone();
+    wait_for("the alias identities", move || emails(&core).len() == 3).await;
+    let listed: Vec<String> = s
+        .core
+        .aliases(account.id)
+        .unwrap()
+        .into_iter()
+        .map(|a| a.email)
+        .collect();
+    assert_eq!(listed, ["sales@example.org", "support@example.org"]);
+
+    // Adding an address again replaces its entry; removing takes it out.
+    s.core
+        .set_alias(account.id, "SALES@example.org", Some("Sales"), true)
+        .unwrap();
+    assert_eq!(s.core.aliases(account.id).unwrap().len(), 2);
+    s.core
+        .set_alias(account.id, "support@example.org", None, false)
+        .unwrap();
+    let core = s.core.clone();
+    wait_for("the removed alias to go", move || emails(&core).len() == 2).await;
+    // Not an address: refused, nothing written.
+    assert!(s.core.set_alias(account.id, "nope", None, true).is_err());
+    assert_eq!(s.core.aliases(account.id).unwrap().len(), 1);
+    s.core.shutdown().await.unwrap();
+}

@@ -1341,6 +1341,20 @@ async fn two_accounts() -> TwoAccounts {
         .await
         .unwrap();
     wait_for("the message", || inbox_count(&core) == 1).await;
+    // The second account's folders arrive with its own first sync.
+    let has_archive = {
+        let core = core.clone();
+        move || {
+            !core
+                .store()
+                .reader()
+                .unwrap()
+                .folders_with_role(FolderRole::Archive, Some(to.id))
+                .unwrap()
+                .is_empty()
+        }
+    };
+    wait_for("the other account's Archive", has_archive).await;
     let reader = core.store().reader().unwrap();
     let inbox = reader
         .folders_with_role(FolderRole::Inbox, Some(from.id))

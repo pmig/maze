@@ -882,10 +882,10 @@ pub enum AliasSetting {
         /// The From address.
         email: String,
         /// The name shown with it; the account's when left out.
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         name: Option<String>,
         /// Where replies go, if not to `email`.
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         reply_to: Option<String>,
     },
 }

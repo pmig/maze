@@ -298,8 +298,17 @@ fn removing_the_account_removes_its_contacts() {
         .unwrap();
     let mut changes = store.subscribe();
     upsert(&store, person("c1", "Anna", &["anna@example.com"]), 1);
-    // Sync writes say that contacts changed.
-    let set = changes.try_recv().unwrap();
+    // Sync writes say that contacts changed (published right after the write).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let set = loop {
+        match changes.try_recv() {
+            Ok(set) => break set,
+            Err(_) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(error) => panic!("no change set: {error}"),
+        }
+    };
     assert!(set.contacts);
     store
         .write_blocking(move |w| w.delete_account(account))

@@ -545,6 +545,103 @@ impl CoreHandle {
         Ok(())
     }
 
+    /// The aliases of `account` as the settings list them
+    /// (`accounts.<label>.aliases`, see [`crate::aliases`]).
+    pub fn aliases(&self, account: AccountId) -> Result<Vec<settings::Alias>> {
+        self.ensure_open()?;
+        let row = self
+            .inner
+            .store
+            .reader()?
+            .account(account)?
+            .ok_or_else(|| Error::not_found("account", account))?;
+        Ok(self.settings().settings.aliases(&row.name))
+    }
+
+    /// Adds an alias of `account` to `settings.json` (or, with `add == false`, takes
+    /// it out), like a favorite folder: comments and other keys are kept, and the
+    /// settings are reloaded, which updates the account's identities. Adding an address
+    /// that is listed already replaces its entry (a new name). Fails without a settings
+    /// file, when `email` isn't an address, or when the file's `accounts` can't be read.
+    pub fn set_alias(
+        &self,
+        account: AccountId,
+        email: &str,
+        name: Option<&str>,
+        add: bool,
+    ) -> Result<()> {
+        self.ensure_open()?;
+        let label = self
+            .inner
+            .store
+            .reader()?
+            .account(account)?
+            .ok_or_else(|| Error::not_found("account", account))?
+            .name;
+        let email = email.trim();
+        let valid = email.split_once('@').is_some_and(|(local, domain)| {
+            !local.is_empty() && domain.contains('.') && !email.contains(char::is_whitespace)
+        });
+        if add && !valid {
+            return Err(Error::SettingsWrite(format!(
+                "\"{email}\" isn't an email address"
+            )));
+        }
+        let name = name.map(str::trim).filter(|n| !n.is_empty());
+
+        let watcher = lock(&self.inner.watcher);
+        let Some(watcher) = watcher.as_ref() else {
+            return Err(Error::SettingsWrite(format!(
+                "{PRODUCT_NAME} runs without a settings file"
+            )));
+        };
+        let loaded = settings::load_settings(watcher.path());
+        if let Some(problem) = loaded
+            .diagnostics
+            .iter()
+            .find(|d| d.kind == DiagnosticKind::InvalidValue && d.path.starts_with("accounts"))
+        {
+            return Err(Error::SettingsWrite(format!(
+                "fix the accounts in {} first: {problem}",
+                watcher.path().display()
+            )));
+        }
+        let mut aliases = loaded
+            .settings
+            .accounts
+            .get(&label)
+            .map(|o| o.aliases.clone())
+            .unwrap_or_default();
+        let same = |entry: &settings::AliasSetting| {
+            let listed = match entry {
+                settings::AliasSetting::Address(e) => e,
+                settings::AliasSetting::Full { email, .. } => email,
+            };
+            listed.trim().eq_ignore_ascii_case(email)
+        };
+        let before = aliases.clone();
+        aliases.retain(|entry| !same(entry));
+        if add {
+            aliases.push(match name {
+                Some(name) => settings::AliasSetting::Full {
+                    email: email.to_owned(),
+                    name: Some(name.to_owned()),
+                    reply_to: None,
+                },
+                None => settings::AliasSetting::Address(email.to_owned()),
+            });
+        }
+        if aliases == before {
+            return Ok(());
+        }
+        let value =
+            serde_json::to_value(&aliases).map_err(|err| Error::SettingsWrite(err.to_string()))?;
+        settings::write_setting(watcher.path(), &["accounts", &label, "aliases"], &value)
+            .map_err(|err| Error::SettingsWrite(err.to_string()))?;
+        watcher.reload();
+        Ok(())
+    }
+
     /// The keys of a thread list (16 bytes per row). Metadata toggles of the Quick
     /// Filter run in SQL; typed text matches subjects and senders in memory, and
     /// [`CoreHandle::quick_filter_body`] adds body matches.

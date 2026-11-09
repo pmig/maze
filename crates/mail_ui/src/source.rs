@@ -1219,6 +1219,15 @@ pub enum SourceError {
     Unavailable(String),
 }
 
+/// An alias of an account (`accounts.<label>.aliases`): a From address of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AliasEntry {
+    /// The address.
+    pub email: SharedString,
+    /// Its name, if it has one of its own.
+    pub name: Option<SharedString>,
+}
+
 /// Everything the mail UI reads and changes. Implemented over the core by the
 /// `mazemail` binary, and with synthetic data by [`crate::FakeMailSource`].
 pub trait MailSource: Send + Sync + 'static {
@@ -1508,6 +1517,25 @@ pub trait MailSource: Send + Sync + 'static {
     /// Adds a folder to the favorites or removes it. The next
     /// [`MailSource::folder_tree`] shows the change.
     fn set_favorite(&self, folder: FolderId, favorite: bool) -> Result<(), SourceError>;
+
+    /// The aliases of `account`.
+    fn aliases(&self, account: AccountId) -> Vec<AliasEntry> {
+        let _ = account;
+        Vec::new()
+    }
+
+    /// Adds an alias to `account` (or, with `add == false`, removes it), in the
+    /// settings.
+    fn set_alias(
+        &self,
+        account: AccountId,
+        email: &str,
+        name: Option<&str>,
+        add: bool,
+    ) -> Result<(), SourceError> {
+        let _ = (account, email, name, add);
+        Err(SourceError::Unavailable("aliases aren't available".into()))
+    }
 
     /// Marks every message in `folder` read (the folder pane's Mark All as Read).
     fn mark_all_read(&self, folder: &FolderKey) -> Result<(), SourceError> {
