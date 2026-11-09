@@ -32,7 +32,7 @@ use gpui::{
     WindowOptions, canvas, div, point, prelude::FluentBuilder as _, px, size,
 };
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, Sizable as _, TitleBar, WindowExt as _,
+    ActiveTheme as _, Icon, Selectable as _, Sizable as _, TitleBar, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputEvent, InputState},
@@ -1028,18 +1028,6 @@ impl MailWindow {
                 );
                 MailView::focus_list(&view, window, cx);
             }
-            FolderPaneEvent::AddAlias { account, name } => {
-                self.open_alias_dialog(*account, name.clone(), window, cx);
-            }
-            FolderPaneEvent::RemoveAlias { account, email } => {
-                if let Err(error) = self.source.set_alias(*account, email, None, false) {
-                    window.push_notification(
-                        Notification::error(format!("The alias couldn't be removed: {error}"))
-                            .title(PRODUCT_NAME),
-                        cx,
-                    );
-                }
-            }
             FolderPaneEvent::MarkAllRead { key } => {
                 let result = self.source.mark_all_read(key);
                 self.after_folder_action(result, "marked read", window, cx);
@@ -1131,45 +1119,41 @@ impl MailWindow {
     fn open_alias_dialog(
         &mut self,
         account: mazemail_types::AccountId,
-        account_name: SharedString,
+        _account_name: SharedString,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let email = cx.new(|cx| InputState::new(window, cx).placeholder("sales@example.com"));
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Name (optional)"));
+        let accounts: Vec<(mazemail_types::AccountId, SharedString)> = self
+            .source
+            .folder_tree()
+            .accounts
+            .iter()
+            .map(|a| (a.id, a.name.clone()))
+            .collect();
         let source = self.source.clone();
-        let focus = email.focus_handle(cx);
+        let form = cx.new(|cx| AliasDialog::new(source, accounts, account, window, cx));
+        let focus = form.read(cx).email.focus_handle(cx);
         window.open_dialog(cx, move |dialog, _, cx| {
             let add = {
-                let (email, name, source) = (email.clone(), name.clone(), source.clone());
+                let form = form.clone();
                 move |_: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
-                    let address = email.read(cx).value().trim().to_owned();
-                    let display = name.read(cx).value().trim().to_owned();
-                    let display = (!display.is_empty()).then_some(display.as_str());
-                    match source.set_alias(account, &address, display, true) {
-                        Ok(()) => window.close_dialog(cx),
-                        Err(error) => window.push_notification(
-                            Notification::error(format!("The alias couldn't be added: {error}"))
-                                .title(PRODUCT_NAME),
-                            cx,
-                        ),
+                    if form.update(cx, |form, cx| form.submit(window, cx)) {
+                        window.close_dialog(cx);
                     }
                 }
             };
+            // Enter confirms the dialog: it closes only once the alias is saved.
+            let confirm = {
+                let form = form.clone();
+                move |_: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
+                    form.update(cx, |form, cx| form.submit(window, cx))
+                }
+            };
             dialog
-                .title(format!("Add an alias to {account_name}"))
-                .width(ui::theme::scaled(440., cx))
-                .child(
-                    v_flex()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            "Another address this account may send from (an alias of the \
-                             mailbox). It shows up in the composer's From.",
-                        )
-                        .child(Input::new(&email))
-                        .child(Input::new(&name)),
-                )
+                .title("Add an alias")
+                .on_ok(confirm)
+                .width(ui::theme::scaled(460., cx))
+                .child(form.clone())
                 .footer(
                     h_flex().w_full().justify_end().gap_2().child(
                         Button::new("add-alias")
@@ -2334,6 +2318,114 @@ impl Render for MailWindow {
     }
 }
 
+/// The content of the Add Alias dialog: the account to add it to, the address and
+/// name, and the last error. Enter (the dialog's confirm) adds the alias, like the
+/// button.
+struct AliasDialog {
+    source: Arc<dyn MailSource>,
+    accounts: Vec<(mazemail_types::AccountId, SharedString)>,
+    account: mazemail_types::AccountId,
+    email: Entity<InputState>,
+    name: Entity<InputState>,
+    error: Option<SharedString>,
+}
+
+impl AliasDialog {
+    fn new(
+        source: Arc<dyn MailSource>,
+        accounts: Vec<(mazemail_types::AccountId, SharedString)>,
+        account: mazemail_types::AccountId,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Self {
+        let email = cx.new(|cx| InputState::new(window, cx).placeholder("sales@example.com"));
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Name (optional)"));
+        Self {
+            source,
+            accounts,
+            account,
+            email,
+            name,
+            error: None,
+        }
+    }
+
+    /// Saves the alias in the settings (and says so), or shows why not. Returns whether
+    /// it was saved, so the dialog may close.
+    fn submit(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> bool {
+        let address = self.email.read(cx).value().trim().to_owned();
+        let display = self.name.read(cx).value().trim().to_owned();
+        let display = (!display.is_empty()).then_some(display.as_str());
+        match self.source.set_alias(self.account, &address, display, true) {
+            Ok(()) => {
+                window.push_notification(
+                    Notification::success(format!(
+                        "{address} was added to settings.json and is in From now."
+                    ))
+                    .title(PRODUCT_NAME),
+                    cx,
+                );
+                true
+            }
+            Err(error) => {
+                self.error = Some(error.to_string().into());
+                cx.notify();
+                false
+            }
+        }
+    }
+}
+
+impl Render for AliasDialog {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let picker = h_flex()
+            .flex_wrap()
+            .gap_1()
+            .children(self.accounts.iter().map(|(id, label)| {
+                let id = *id;
+                Button::new(("alias-account", id.0 as u64))
+                    .debug_selector(move || format!("alias-account-{}", id.0))
+                    .small()
+                    .outline()
+                    .selected(id == self.account)
+                    .label(label.clone())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.account = id;
+                        cx.notify();
+                    }))
+            }));
+        v_flex()
+            .gap_2()
+            .text_sm()
+            .child(
+                "Another address an account may send from (an alias of the mailbox). Maze \
+                 adds it to settings.json and to the composer's From.",
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child("Account"),
+            )
+            .child(picker)
+            .child(
+                div()
+                    .debug_selector(|| "alias-email".to_owned())
+                    .child(Input::new(&self.email)),
+            )
+            .child(Input::new(&self.name))
+            .when_some(self.error.clone(), |this, error| {
+                this.child(
+                    div()
+                        .debug_selector(|| "alias-error".to_owned())
+                        .text_color(theme.danger)
+                        .child(error),
+                )
+            })
+    }
+}
+
 /// Whether `folder` is in `entries` (or below them).
 fn contains_folder(
     entries: &[crate::source::FolderEntry],
@@ -3013,37 +3105,82 @@ mod tests {
     }
 
     #[gpui::test]
-    fn the_account_menu_removes_aliases(cx: &mut TestAppContext) {
+    fn the_add_alias_dialog_picks_the_account_and_saves_on_enter(cx: &mut TestAppContext) {
         cx.update(|cx| {
             ui::init(cx);
             crate::init(cx);
         });
         let fake = Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
         let source: Arc<dyn MailSource> = fake.clone();
-        let (view, cx) = cx.add_window_view(|window, cx| {
-            MailWindow::new(source, &MailWindowOptions::default(), window, cx)
+        // With the app window's Root: dialogs need its layer.
+        let mut view = None;
+        let window = cx.add_window(|window, cx| {
+            let mail =
+                cx.new(|cx| MailWindow::new(source, &MailWindowOptions::default(), window, cx));
+            view = Some(mail.clone());
+            gpui_kit::base::Root::new(mail, window, cx)
+        });
+        let view = view.unwrap();
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+        let first = mazemail_types::AccountId(1);
+        let second = mazemail_types::AccountId(2);
+        view.update_in(cx, |w, window, cx| {
+            w.open_alias_dialog(first, "".into(), window, cx);
         });
         cx.run_until_parked();
-        let account = mazemail_types::AccountId(1);
-        fake.set_alias(account, "sales@example.com", None, true)
-            .unwrap();
-        fake.set_alias(account, "support@example.com", Some("Support"), true)
-            .unwrap();
-        view.update_in(cx, |w, window, cx| {
-            let pane = w.folder_pane.clone();
-            let remove = FolderPaneEvent::RemoveAlias {
-                account,
-                email: "sales@example.com".into(),
-            };
-            w.on_folder_pane_event(&pane, &remove, window, cx);
-        });
-        let left: Vec<String> = fake
-            .aliases(account)
+        // The dialog slides in on a real-time animation: under load, wait until the
+        // picker stops moving before clicking it.
+        let mut picker = None;
+        for _ in 0..100 {
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            let now = cx.debug_bounds("alias-account-2");
+            if now.is_some() && now == picker {
+                break;
+            }
+            picker = now;
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        // Pick the second account, type an address, press Enter.
+        let picker = picker.expect("an account picker button per account");
+        cx.simulate_click(picker.center(), gpui::Modifiers::none());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let field = cx.debug_bounds("alias-email").expect("the address field");
+        cx.simulate_click(field.center(), gpui::Modifiers::none());
+        cx.simulate_input("not-an-address");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(
+            cx.debug_bounds("alias-error").is_some(),
+            "an invalid address shows its error in the dialog, which stays open"
+        );
+        assert!(fake.aliases(second).is_empty());
+        // A valid one, with Enter: saved for the picked account, and the dialog closes.
+        let field = cx.debug_bounds("alias-email").expect("the address field");
+        cx.simulate_click(field.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        cx.simulate_keystrokes("secondary-a");
+        cx.run_until_parked();
+        cx.simulate_input("sales@example.com");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        let saved: Vec<String> = fake
+            .aliases(second)
             .into_iter()
             .map(|a| a.email.to_string())
             .collect();
-        assert_eq!(left, ["support@example.com"]);
-        // (Add Alias… opens a dialog, which needs the app window's dialog layer.)
+        assert_eq!(saved, ["sales@example.com"]);
+        assert!(
+            fake.aliases(first).is_empty(),
+            "not the preselected account"
+        );
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(
+            cx.debug_bounds("alias-email").is_none(),
+            "the dialog closed"
+        );
     }
 
     #[gpui::test]
@@ -3241,29 +3378,6 @@ mod tests {
         cx.simulate_mouse_up(bounds.center(), gpui::MouseButton::Right, modifiers);
         cx.run_until_parked();
         cx.update(|window, cx| window.draw(cx).clear(cx));
-    }
-
-    #[gpui::test]
-    fn right_clicking_an_account_offers_its_aliases(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            ui::init(cx);
-            crate::init(cx);
-        });
-        let fake = Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
-        let source: Arc<dyn MailSource> = fake.clone();
-        let (_view, cx) = cx.add_window_view(|window, cx| {
-            MailWindow::new(source, &MailWindowOptions::default(), window, cx)
-        });
-        cx.run_until_parked();
-        let account = mazemail_types::AccountId(1);
-        fake.set_alias(account, "sales@example.com", None, true)
-            .unwrap();
-        cx.update(|window, cx| window.draw(cx).clear(cx));
-        // Add Alias…, then Remove alias sales@example.com.
-        right_click(cx, format!("folder-pane-row:account:{account}"));
-        cx.simulate_keystrokes("down down enter");
-        cx.run_until_parked();
-        assert!(fake.aliases(account).is_empty(), "removed from the menu");
     }
 
     /// Menu items: Reply, Reply All, Forward, —, Mark as Read/Unread, Star/Unstar, …

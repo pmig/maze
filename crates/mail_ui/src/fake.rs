@@ -1345,6 +1345,12 @@ impl MailSource for FakeMailSource {
         name: Option<&str>,
         add: bool,
     ) -> Result<(), SourceError> {
+        // Like the core: only addresses.
+        if add && !email.trim().contains('@') {
+            return Err(SourceError::Unavailable(format!(
+                "\"{email}\" isn't an email address"
+            )));
+        }
         let mut aliases = self
             .aliases
             .lock()

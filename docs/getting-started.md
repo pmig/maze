@@ -927,11 +927,12 @@ the identity, send later and undo send.
 
 An account can send from more addresses than its own: the aliases (proxy addresses) of
 a Microsoft 365 or Outlook.com mailbox, or Gmail's "Send mail as" addresses.
-Right-click the account in the folder pane and choose **Add Alias…** to add one (the
-address, and a name if it should show another one), or run **Mail: Add Alias** in the
-command palette for the account of the mail or folder you have open; the account's menu
-has **Remove alias …** for each. Maze keeps them in `settings.json`, under the account's label, where you can
-also edit them by hand, as plain addresses or with a name and a Reply-To of their own:
+Run **Mail: Add Alias** in the command palette. The dialog starts with the account of
+the mail or folder you have open (or your only account) and lets you pick another; enter
+the address, and a name if it should show another one, and press `enter` or **Add
+Alias**. A problem (not an address, a settings file that can't be read) shows in the
+dialog; once saved, Maze says so. Maze keeps aliases in `settings.json`, under the
+account's label. To remove one, delete it there. You can also edit them by hand, as plain addresses or with a name and a Reply-To of their own:
 
 ```jsonc
 "accounts": {
