@@ -18,6 +18,12 @@ ignore = [
   { id = "RUSTSEC-2026-0371", reason = "zbus_names: GPUI Linux (zbus), unmaintained only" },
   { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: GPUI Linux (zbus), unmaintained only" },
   { id = "RUSTSEC-2026-0441", reason = "pin-utils: via async-imap (no release without it), unmaintained only" },
+  # SQLite before 3.54 with a WAL whose page size differs from the database's. The only
+  # foreign SQLite file Maze opens is a Thunderbird address book, and the import refuses
+  # such a pair (import::thunderbird::abook::check_wal). The fix can't land yet: Servo's
+  # sea-query-rusqlite pins rusqlite 0.38, and bundled-sqlcipher is still on SQLite 3.53
+  # even in libsqlite3-sys 0.39. Re-check when a libsqlite3-sys bundles SQLCipher 4.20.
+  { id = "RUSTSEC-2026-0459", reason = "SQLite WAL page size: only reachable through the address book import, which checks it" },
   # Unmaintained (not vulnerable) crates that only reach us through Servo 0.7, the
   # original HTML engine (ADR-020). Re-check when Servo is updated.
   { id = "RUSTSEC-2025-0141", reason = "bincode 1: via Servo's WebRender, unmaintained only" },

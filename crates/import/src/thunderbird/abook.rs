@@ -134,6 +134,7 @@ pub fn read(path: &Path, name: &str) -> Result<AddressBook> {
             fs::copy(&side, PathBuf::from(target)).map_err(Error::io("copying", &side))?;
         }
     }
+    check_wal(&copy).map_err(Error::io("checking the write-ahead log of", path))?;
     let conn = Connection::open_with_flags(
         &copy,
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -143,6 +144,50 @@ pub fn read(path: &Path, name: &str) -> Result<AddressBook> {
     drop(conn);
     drop(temp);
     Ok(book)
+}
+
+/// Refuses a database whose WAL has another page size than the database itself.
+///
+/// SQLite before 3.54 can return uninitialized memory for such a pair
+/// (RUSTSEC-2026-0459, CVE-2026-119375), and the SQLCipher Maze bundles is still on
+/// 3.53. Thunderbird never writes one (SQLite can't change the page size in WAL
+/// mode), so a mismatch means a damaged or crafted file. The check runs on the
+/// private copy, which nothing else can change before it is opened.
+fn check_wal(db: &Path) -> std::io::Result<()> {
+    use std::io::{Error, ErrorKind, Read as _};
+    let mut wal_path = db.as_os_str().to_owned();
+    wal_path.push("-wal");
+    let wal = match fs::File::open(PathBuf::from(wal_path)) {
+        Ok(file) => file,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    let mut header = Vec::with_capacity(12);
+    wal.take(12).read_to_end(&mut header)?;
+    // SQLite ignores (and resets) a WAL without a complete, valid header, so only a
+    // valid one can be replayed into the database.
+    let Some(header) = header.first_chunk::<12>() else {
+        return Ok(());
+    };
+    let magic = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
+    if magic != 0x377f_0682 && magic != 0x377f_0683 {
+        return Ok(());
+    }
+    let wal_page = u32::from_be_bytes([header[8], header[9], header[10], header[11]]);
+    let mut db_header = [0u8; 18];
+    fs::File::open(db)?.read_exact(&mut db_header)?;
+    let db_page = match u16::from_be_bytes([db_header[16], db_header[17]]) {
+        1 => 65_536,
+        size => u32::from(size),
+    };
+    if wal_page == db_page {
+        Ok(())
+    } else {
+        Err(Error::new(
+            ErrorKind::InvalidData,
+            "its page size differs from the database's",
+        ))
+    }
 }
 
 fn read_tables(conn: &Connection, path: &Path, name: &str) -> rusqlite::Result<AddressBook> {
@@ -258,6 +303,65 @@ fn vcard_values(vcard: &str, property: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A database in WAL mode with an open connection, so the WAL keeps its frames.
+    fn wal_database(dir: &Path, page_size: u32) -> (PathBuf, Connection) {
+        let path = dir.join("abook.sqlite");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(&format!(
+            "PRAGMA page_size = {page_size}; PRAGMA journal_mode = WAL;
+             PRAGMA wal_autocheckpoint = 0;
+             CREATE TABLE properties (card TEXT, name TEXT, value TEXT);
+             CREATE TABLE lists (uid TEXT, name TEXT, nickName TEXT, description TEXT);
+             CREATE TABLE list_cards (list TEXT, card TEXT);
+             INSERT INTO properties VALUES ('1', 'PrimaryEmail', 'anna@example.com');"
+        ))
+        .unwrap();
+        (path, conn)
+    }
+
+    #[test]
+    fn a_wal_with_the_databases_page_size_is_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, _conn) = wal_database(dir.path(), 4096);
+        assert!(
+            dir.path()
+                .join("abook.sqlite-wal")
+                .metadata()
+                .unwrap()
+                .len()
+                > 0
+        );
+        check_wal(&path).unwrap();
+        let book = read(&path, "Personal Address Book").unwrap();
+        assert_eq!(book.cards.len(), 1, "the card only in the WAL is read");
+    }
+
+    #[test]
+    fn a_wal_with_another_page_size_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, _conn) = wal_database(dir.path(), 4096);
+        // Rewrite the WAL header's page size (bytes 8..12) to 8192.
+        let wal = dir.path().join("abook.sqlite-wal");
+        let mut bytes = fs::read(&wal).unwrap();
+        bytes[8..12].copy_from_slice(&8192u32.to_be_bytes());
+        fs::write(&wal, bytes).unwrap();
+        let err = read(&path, "Personal Address Book").unwrap_err();
+        assert!(
+            err.to_string().contains("page size differs"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn no_or_an_empty_wal_is_fine() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("abook.sqlite");
+        fs::write(&path, b"").unwrap();
+        check_wal(&path).unwrap();
+        fs::write(dir.path().join("abook.sqlite-wal"), b"").unwrap();
+        check_wal(&path).unwrap();
+    }
 
     #[test]
     fn reads_vcard_values() {

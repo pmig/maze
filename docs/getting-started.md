@@ -469,6 +469,10 @@ Local Folders, move it into an IMAP folder in Thunderbird before importing, or i
 its mbox files (`Mail/Local Folders/` in the profile) with
 `mazemail import <file> --account …`.
 
+An address book whose write-ahead log (`abook.sqlite-wal`) doesn't match the database is
+damaged or crafted, and Maze refuses to read it; the import result names the file. Open
+Thunderbird once, so it folds the log into the database, then import again.
+
 Running the import again doesn't create duplicates. Nothing in the profile is changed,
 so Thunderbird keeps working side by side. Passwords aren't imported: accounts that
 need one, or a new OAuth sign-in, are listed in the import result.
