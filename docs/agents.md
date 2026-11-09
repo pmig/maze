@@ -153,7 +153,10 @@ key or token when the agent takes one. Once signed in, the conversation shows ho
 agent's row in the picker.
 
 - **Sign in… (terminal logins).** Maze writes a small login script and opens it in
-  Terminal. It runs the agent's own login command with exactly the agent's environment
+  a terminal: Terminal on macOS; on Linux the one in the `TERMINAL` environment
+  variable, else `xdg-terminal-exec`, `x-terminal-emulator` or the first common
+  terminal installed (Ghostty, kitty, foot, Alacritty, WezTerm, GNOME Terminal,
+  Konsole, …). It runs the agent's own login command with exactly the agent's environment
   (`HOME` is the agent's home in Maze, Maze's Node runtime on `PATH`) and in the same
   agent sandbox, so the login lands where the agent finds it and can't touch anything
   else. Links the login wants to open (the sign-in page) open in your browser. When the
