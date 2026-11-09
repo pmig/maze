@@ -713,6 +713,15 @@ impl CoreHandle {
                 Ok(id)
             })
             .await?;
+        // Aliases the settings already name for this account.
+        let settings = self.settings();
+        if let Err(error) = self
+            .store()
+            .write(move |w| crate::aliases::sync(w, &settings.settings))
+            .await
+        {
+            tracing::warn!(%error, "adding the new account's alias identities");
+        }
         self.store()
             .reader()?
             .account(id)?

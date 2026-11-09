@@ -173,6 +173,43 @@ impl Settings {
         }
     }
 
+    /// The aliases of the account labelled `label` (`accounts.<label>.aliases`):
+    /// trimmed, without entries that aren't addresses, each address once.
+    pub fn aliases(&self, label: &str) -> Vec<Alias> {
+        let Some(overrides) = self.accounts.get(label) else {
+            return Vec::new();
+        };
+        let mut out: Vec<Alias> = Vec::new();
+        for entry in &overrides.aliases {
+            let (email, name, reply_to) = match entry {
+                AliasSetting::Address(email) => (email.as_str(), None, None),
+                AliasSetting::Full {
+                    email,
+                    name,
+                    reply_to,
+                } => (email.as_str(), name.as_deref(), reply_to.as_deref()),
+            };
+            let email = email.trim();
+            let valid = email.split_once('@').is_some_and(|(local, domain)| {
+                !local.is_empty() && domain.contains('.') && !email.contains(char::is_whitespace)
+            });
+            if !valid || out.iter().any(|a| a.email.eq_ignore_ascii_case(email)) {
+                continue;
+            }
+            let clean = |text: Option<&str>| {
+                text.map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .map(str::to_owned)
+            };
+            out.push(Alias {
+                email: email.to_owned(),
+                name: clean(name),
+                reply_to: clean(reply_to),
+            });
+        }
+        out
+    }
+
     /// Whether messages sent from the account labelled `label` get a copy in its Inbox:
     /// its override over `compose.copy_sent_to_inbox`.
     pub fn copy_sent_to_inbox(&self, label: &str) -> bool {
@@ -828,6 +865,40 @@ pub struct AccountOverrides {
     /// folder Maze syncs, read-only, next to the account's own contacts.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub shared_contacts: Vec<String>,
+    /// More From addresses of the account (aliases), each an identity in the
+    /// composer's From: an address, or `{ "email", "name", "reply_to" }`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<AliasSetting>,
+}
+
+/// One entry of `accounts.<label>.aliases`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum AliasSetting {
+    /// Just the address; the name is the account's.
+    Address(String),
+    /// The address with its own name and Reply-To.
+    Full {
+        /// The From address.
+        email: String,
+        /// The name shown with it; the account's when left out.
+        #[serde(default)]
+        name: Option<String>,
+        /// Where replies go, if not to `email`.
+        #[serde(default)]
+        reply_to: Option<String>,
+    },
+}
+
+/// An alias of an account, see [`Settings::aliases`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Alias {
+    /// The From address, trimmed.
+    pub email: String,
+    /// The name, if the setting gives one.
+    pub name: Option<String>,
+    /// The Reply-To address, if the setting gives one.
+    pub reply_to: Option<String>,
 }
 
 /// The effective settings of one account, see [`Settings::account`].
@@ -1314,6 +1385,36 @@ mod tests {
         let personal = settings.footer_for("personal");
         assert_eq!(personal.footer, "Philip · *Maze*");
         assert!(personal.support_maze);
+    }
+
+    #[test]
+    fn aliases_are_addresses_or_objects_each_once() {
+        let settings: Settings = serde_json::from_str(
+            r#"{ "accounts": { "work": { "aliases": [
+                "sales@contoso.com",
+                { "email": " support@contoso.com ", "name": "Contoso Support",
+                  "reply_to": "help@contoso.com" },
+                "SALES@contoso.com",
+                "not an address",
+                { "email": "info@contoso.com", "name": "  " }
+            ] } } }"#,
+        )
+        .unwrap();
+        let aliases = settings.aliases("work");
+        let emails: Vec<&str> = aliases.iter().map(|a| a.email.as_str()).collect();
+        assert_eq!(
+            emails,
+            [
+                "sales@contoso.com",
+                "support@contoso.com",
+                "info@contoso.com"
+            ]
+        );
+        assert_eq!(aliases[0].name, None);
+        assert_eq!(aliases[1].name.as_deref(), Some("Contoso Support"));
+        assert_eq!(aliases[1].reply_to.as_deref(), Some("help@contoso.com"));
+        assert_eq!(aliases[2].name, None, "a blank name is no name");
+        assert!(settings.aliases("personal").is_empty());
     }
 
     #[test]

@@ -739,3 +739,80 @@ async fn copy_sent_to_inbox_puts_a_read_copy_into_the_inbox() {
     );
     s.core.shutdown().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn aliases_from_the_settings_become_identities_to_send_from() {
+    let server = FakeServer::new();
+    let s = open_with_settings(&server, Some("{}")).await;
+    let message = account_with_original(&s).await;
+    let account = s.core.store().reader().unwrap().accounts().unwrap()[0]
+        .name
+        .clone();
+    let settings = s._dir.path().join("settings.json");
+    let write = |aliases: &str| {
+        std::fs::write(
+            &settings,
+            format!(r#"{{ "accounts": {{ "{account}": {{ "aliases": {aliases} }} }} }}"#),
+        )
+        .unwrap();
+        s.core.reload_settings();
+    };
+    let emails = |core: &mazemail_core::CoreHandle| -> Vec<String> {
+        core.identities()
+            .unwrap()
+            .into_iter()
+            .map(|i| i.email)
+            .collect()
+    };
+
+    write(r#"["sales@example.org", { "email": "support@example.org", "name": "Support" }]"#);
+    let core = s.core.clone();
+    wait_for("the alias identities", move || emails(&core).len() == 3).await;
+    assert_eq!(
+        emails(&s.core),
+        [
+            "alice@example.org",
+            "sales@example.org",
+            "support@example.org"
+        ],
+        "the account's own address stays first and the default"
+    );
+    let support = s
+        .core
+        .identities()
+        .unwrap()
+        .into_iter()
+        .find(|i| i.email == "support@example.org")
+        .unwrap();
+    assert_eq!(support.display_name.as_deref(), Some("Support"));
+    assert!(!support.is_default);
+
+    // Sending as the alias: its address in From and in the envelope, the account's
+    // SMTP login.
+    let mut reply = s
+        .core
+        .reply_draft(message, ReplyKind::Sender)
+        .await
+        .unwrap();
+    reply.identity = Some(support.id);
+    reply.body_markdown = format!("We're on it.{}", reply.body_markdown);
+    assert_eq!(
+        s.core.send_draft(None, reply).await.unwrap(),
+        SendResult::Sent
+    );
+    let sent = &s.mailer.submissions()[0];
+    assert_eq!(sent.envelope.from, "support@example.org");
+    assert_eq!(sent.user, "alice@example.org");
+    let parsed = MessageParser::default().parse(&sent.raw).unwrap();
+    assert_eq!(
+        parsed.from().unwrap().first().unwrap().address(),
+        Some("support@example.org")
+    );
+
+    // Taken out of the settings, the alias goes; the account's address stays.
+    write(r#"["sales@example.org"]"#);
+    let core = s.core.clone();
+    wait_for("the removed alias to go", move || emails(&core).len() == 2).await;
+    assert_eq!(emails(&s.core), ["alice@example.org", "sales@example.org"]);
+    s.core.shutdown().await.unwrap();
+}

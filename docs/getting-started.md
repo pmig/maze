@@ -863,6 +863,8 @@ body filled in; `mazemail open 'mailto:…'` does the same from a script:
 
 - **From** picks the identity you send as. Replies pick it for you: the identity whose
   address the message was sent to (To, Cc or `Delivered-To`), else the account's default.
+  More From addresses of an account (aliases, as Outlook on the web and Gmail offer
+  them) come from the settings, see [Aliases](#aliases) below.
 - **To**, **Cc** and **Bcc** (click **Cc Bcc** or press `cmd-shift-c`) show each
   recipient as a chip with their initials and name (hover for the address). See
   [Recipients](#recipients) below.
@@ -920,6 +922,32 @@ sends it twice. The copy in your Sent folder, and the optional copy in your Inbo
 Drafts are saved on your computer (encrypted, like your mail) a moment after you stop
 typing. Not there yet: drafts in the server's Drafts folder, signatures switching with
 the identity, send later and undo send.
+
+### Aliases
+
+An account can send from more addresses than its own: the aliases (proxy addresses) of
+a Microsoft 365 or Outlook.com mailbox, or Gmail's "Send mail as" addresses. List them
+under the account's label in `settings.json`, as plain addresses or with a name and a
+Reply-To of their own:
+
+```jsonc
+"accounts": {
+  "Work": {
+    "aliases": [
+      "sales@contoso.com",
+      { "email": "support@contoso.com", "name": "Contoso Support", "reply_to": "help@contoso.com" }
+    ]
+  }
+}
+```
+
+Each alias shows up in the composer's **From**, after the account's own address, and a
+reply to mail sent to an alias picks it. It sends through the account's SMTP server and
+login, with the account's signature and Sent folder. Removing an alias from the list
+removes it from **From**. The provider decides whether you may send as the address:
+Microsoft 365 refuses with *SendAsDenied* until sending from aliases is allowed for the
+mailbox (or you have Send As permission), and Gmail needs the address under "Send mail
+as" first; Maze keeps the draft open with the reason.
 
 ### Recipients
 

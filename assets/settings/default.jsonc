@@ -142,7 +142,9 @@
   // Overrides per account, keyed by the account's label, e.g.
   // "work": { "offline": "all", "remote_content": "never", "footer": "Acme Inc." }
   // Supported keys: "offline", "offline_recent_days", "sync_trash", "remote_content",
-  // "footer", "support_maze", "copy_sent_to_inbox", "contacts_sync" and, for Microsoft
+  // "footer", "support_maze", "copy_sent_to_inbox", "contacts_sync", "aliases": more
+  // From addresses of the account, e.g. "work": { "aliases": ["sales@contoso.com",
+  // { "email": "support@contoso.com", "name": "Support" }] }, and, for Microsoft
   // accounts, "shared_contacts": other mailboxes whose shared Contacts folder Maze
   // syncs, read-only, e.g. "work": { "shared_contacts": ["team@contoso.com"] }.
   "accounts": {},

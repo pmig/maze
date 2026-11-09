@@ -1291,6 +1291,7 @@ pub(crate) async fn finish(
             events_in.clone(),
         )),
         handle.spawn(forward_settings(settings.clone(), events_in.clone())),
+        handle.spawn(sync_aliases(settings.clone(), store.clone())),
         handle.spawn(crate::storage::run_meter(
             Arc::clone(&storage),
             config.data_dir.clone(),
@@ -1528,6 +1529,26 @@ async fn forward_changes(
                 }
             }
             Err(broadcast::error::RecvError::Closed) => return,
+        }
+    }
+}
+
+/// Keeps the accounts' alias identities in line with the settings: at startup and after
+/// every change (see [`crate::aliases`]).
+async fn sync_aliases(mut rx: watch::Receiver<Arc<LoadedSettings>>, store: Store) {
+    loop {
+        let settings = Arc::clone(&rx.borrow_and_update());
+        match store
+            .write(move |w| crate::aliases::sync(w, &settings.settings))
+            .await
+        {
+            Ok(true) => tracing::info!("alias identities updated from the settings"),
+            Ok(false) => {}
+            Err(store::Error::Closed) => return,
+            Err(error) => tracing::warn!(%error, "updating the alias identities"),
+        }
+        if rx.changed().await.is_err() {
+            return;
         }
     }
 }

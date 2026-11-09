@@ -67,6 +67,7 @@ mod runtime;
 pub mod accounts;
 pub mod activity;
 pub mod agents;
+pub mod aliases;
 pub mod api;
 pub mod api_handler;
 pub mod commands;
