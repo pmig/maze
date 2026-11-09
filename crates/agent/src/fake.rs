@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use agent_client_protocol::schema::ProtocolVersion;
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     AgentCapabilities, AuthMethod, AuthMethodAgent, AuthMethodTerminal, AuthenticateRequest,
     AuthenticateResponse, ConfigOptionUpdate, ContentBlock, ContentChunk, CreateTerminalRequest,
     CurrentModeUpdate, Implementation, InitializeRequest, InitializeResponse, LoadSessionRequest,
@@ -30,7 +30,8 @@ use agent_client_protocol::schema::v1::{
     SetSessionModeResponse, StopReason, TerminalOutputRequest, TextContent, ToolCall,
     ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind, WaitForTerminalExitRequest,
 };
-use agent_client_protocol::{Agent, Client, ConnectTo, ConnectionTo, Responder};
+use agent_client_protocol::v1::{ConnectionTo, Responder};
+use agent_client_protocol::{Agent, Client, ConnectTo};
 
 /// One step of the scripted turn.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -453,7 +454,7 @@ impl FakeAgent {
         };
 
         Agent
-            .builder()
+            .v1()
             .name("fake-agent")
             .on_receive_request(on_initialize, agent_client_protocol::on_receive_request!())
             .on_receive_request(

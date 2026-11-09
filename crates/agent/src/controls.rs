@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigOptionValue,
     SessionConfigSelectOptions, SessionModeState,
 };
@@ -317,7 +317,7 @@ impl Preferences {
 
 #[cfg(test)]
 mod tests {
-    use agent_client_protocol::schema::v1::{
+    use agent_client_protocol::v1::schema::{
         SessionConfigSelectGroup, SessionConfigSelectOption, SessionMode,
     };
     use pretty_assertions::assert_eq;
