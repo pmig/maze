@@ -6238,9 +6238,9 @@ checksum = "b0d28e293f2b8c9d2b2d1c0193bd3c1cbdc0d2cf396888dc01162f7cf9d6c3f3"
 
 [[package]]
 name = "mail-auth"
-version = "0.14.1"
+version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96848b9e5340bf531190f600e978310907e4ddfd7757868cb999f59b382d274b"
+checksum = "a3a38e106bc724fb87601fce70bef65c12498b19cdb320994330eae1080d035f"
 dependencies = [
  "aws-lc-rs",
  "aws-lc-sys 0.46.0",
