@@ -6483,7 +6483,7 @@ dependencies = [
  "mazemail_types",
  "pretty_assertions",
  "reqwest",
- "resvg 0.46.0",
+ "resvg 0.48.1",
  "search",
  "security",
  "serde",
