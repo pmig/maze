@@ -8,12 +8,13 @@
 #![allow(clippy::print_stderr)]
 
 use agent_client_protocol::schema::ProtocolVersion;
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     AgentCapabilities, ContentBlock, ContentChunk, InitializeRequest, InitializeResponse,
     NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, SessionNotification,
     SessionUpdate, StopReason, TextContent,
 };
-use agent_client_protocol::{Agent, ByteStreams, Client, ConnectionTo, Responder};
+use agent_client_protocol::v1::{ConnectionTo, Responder};
+use agent_client_protocol::{Agent, ByteStreams, Client};
 use tokio_util::compat::{TokioAsyncReadCompatExt as _, TokioAsyncWriteCompatExt as _};
 
 /// SHA-256 of a variable's value, or `none`.
@@ -76,7 +77,7 @@ async fn main() {
         tokio::io::stdin().compat(),
     );
     let result = Agent
-        .builder()
+        .v1()
         .on_receive_request(
             async |_request: InitializeRequest,
                    responder: Responder<InitializeResponse>,

@@ -26,7 +26,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use agent_client_protocol::schema::ProtocolVersion;
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     AuthCapabilities, AuthMethod, AuthenticateRequest, BooleanConfigOptionCapabilities,
     CancelNotification, ClientCapabilities, ClientSessionCapabilities, ContentBlock,
     CreateTerminalRequest, CreateTerminalResponse, ErrorCode, Implementation, InitializeRequest,
@@ -39,7 +39,8 @@ use agent_client_protocol::schema::v1::{
     TerminalOutputResponse, TextContent, ToolCallContent, ToolCallStatus,
     WaitForTerminalExitRequest, WaitForTerminalExitResponse,
 };
-use agent_client_protocol::{Agent, Client, ConnectTo, ConnectionTo, Responder};
+use agent_client_protocol::v1::{ConnectionTo, Responder};
+use agent_client_protocol::{Agent, Client, ConnectTo};
 use local_api::{TokenId, TokenStore};
 use sandbox::SandboxPolicy;
 
@@ -709,7 +710,7 @@ where
     };
 
     Client
-        .builder()
+        .v1()
         .name("mazemail")
         .on_receive_notification(on_update, agent_client_protocol::on_receive_notification!())
         .on_receive_request(on_permission, agent_client_protocol::on_receive_request!())
@@ -1786,7 +1787,7 @@ fn all_choices() -> Vec<PermissionChoice> {
 fn pick_option(
     request: &RequestPermissionRequest,
     choice: PermissionChoice,
-) -> Option<agent_client_protocol::schema::v1::PermissionOptionId> {
+) -> Option<agent_client_protocol::v1::schema::PermissionOptionId> {
     let find = |kinds: &[PermissionOptionKind]| {
         kinds.iter().find_map(|kind| {
             request
