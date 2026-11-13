@@ -8,11 +8,12 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use auth::MemorySecretStore;
 use imap::fake::{FakeMessage, FakeServer};
+use imap::{BodyPart, BodySummary};
 use mail_parser::{MessageParser, TextList};
 use mazemail_core::{
     CoreHandle, Draft, DraftAttachment, DraftOrigin, Error, ReplyKind, SendResult, SyncEngineConfig,
 };
-use mazemail_types::{Address, Flags, FolderRole, MessageId};
+use mazemail_types::{Address, Flags, FolderRole, MessageId, Sensitive};
 use smtp::{Credentials, Mailer, OutboxEnvelope, SmtpConfig, SmtpError};
 use store::{MessageScope, OutboxState, Queries as _, SmtpAuth, SmtpSecurity};
 use vault::MemoryKeyStore;
@@ -167,7 +168,12 @@ async fn account_with_original(s: &Setup) -> MessageId {
 
 /// An account whose inbox has `raw`, synced (its body may not be stored yet).
 async fn account_with(s: &Setup, raw: &'static str) -> MessageId {
-    s.server.deliver("INBOX", FakeMessage::new(raw));
+    account_with_message(s, FakeMessage::new(raw)).await
+}
+
+/// An account whose inbox has `message`, synced (its body may not be stored yet).
+async fn account_with_message(s: &Setup, message: FakeMessage) -> MessageId {
+    s.server.deliver("INBOX", message);
     let info = s.core.add_imap_account(input(PASSWORD)).await.unwrap();
     let core = s.core.clone();
     let inbox = move || {
@@ -291,12 +297,13 @@ async fn replies_and_forwards_are_prefilled() {
     s.core.shutdown().await.unwrap();
 }
 
-/// A report with a PDF, and an HTML body with an inline logo.
+/// A report with a PDF, and an HTML body with an inline logo. From 2020: older than the
+/// offline policy's 90 days, so sync never downloads its body by itself.
 const WITH_ATTACHMENTS: &str = "From: Anna Example <anna@example.com>\r\n\
 To: Alice <alice@example.org>\r\n\
 Subject: Q3 report\r\n\
 Message-ID: <report@example.com>\r\n\
-Date: Tue, 20 Oct 2026 09:00:00 +0000\r\n\
+Date: Tue, 20 Oct 2020 09:00:00 +0000\r\n\
 MIME-Version: 1.0\r\n\
 Content-Type: multipart/mixed; boundary=\"outer\"\r\n\
 \r\n\
@@ -323,12 +330,65 @@ Content-Transfer-Encoding: base64\r\n\
 JVBERi0xLjQgcmVwb3J0\r\n\
 --outer--\r\n";
 
+/// [`WITH_ATTACHMENTS`] with the BODYSTRUCTURE a server reports for it (the fake's
+/// default is one `text/plain` part), so sync knows it has an attachment before the
+/// body is downloaded.
+fn with_attachments() -> FakeMessage {
+    let part = |section: &str, mime_type: &str, subtype: &str, encoding: &str| BodyPart {
+        section: section.into(),
+        mime_type: mime_type.into(),
+        subtype: subtype.into(),
+        charset: None,
+        encoding: encoding.into(),
+        size: 0,
+        disposition: None,
+        filename: None,
+        content_id: None,
+        is_attachment: false,
+    };
+    FakeMessage::new(WITH_ATTACHMENTS)
+        .internal_date(time::macros::datetime!(2020-10-20 09:00 UTC))
+        .body(BodySummary {
+            parts: vec![
+                BodyPart {
+                    charset: Some("utf-8".into()),
+                    size: 68,
+                    ..part("1.1", "text", "html", "7bit")
+                },
+                BodyPart {
+                    size: 12,
+                    disposition: Some("inline".into()),
+                    content_id: Some("logo@example.com".into()),
+                    ..part("1.2", "image", "png", "base64")
+                },
+                BodyPart {
+                    size: 20,
+                    disposition: Some("attachment".into()),
+                    filename: Some(Sensitive::new("report.pdf".into())),
+                    is_attachment: true,
+                    ..part("2", "application", "pdf", "base64")
+                },
+            ],
+        })
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn forwards_carry_the_attachments_along() {
     let server = FakeServer::new();
     let s = open(&server).await;
-    // Not opened: forwarding downloads the full message itself.
-    let message = account_with(&s, WITH_ATTACHMENTS).await;
+    // Not opened, and too old for sync to download: forwarding downloads the full
+    // message itself.
+    let message = account_with_message(&s, with_attachments()).await;
+    let stored = s
+        .core
+        .store()
+        .reader()
+        .unwrap()
+        .message(message)
+        .unwrap()
+        .unwrap();
+    assert!(stored.has_attachments);
+    assert!(stored.blob.is_none(), "not downloaded before the forward");
 
     let mut forward = s.core.forward_draft(message).await.unwrap();
     // The PDF, not the logo inside the HTML body.
