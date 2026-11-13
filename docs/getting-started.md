@@ -169,7 +169,8 @@ message's body is downloaded when you open it.
   server's.
 - **From Thunderbird:** the [Thunderbird import](#import-mail) takes over your
   accounts with their server settings. Passwords aren't imported; Maze lists the
-  accounts that still need one.
+  accounts that still need one, and you enter each in
+  [Edit Account](#editing-an-account).
 
 Passwords and OAuth refresh tokens are stored in Maze's encrypted database, under the
 storage key, never in plaintext or in the settings. The storage key is Maze's only
@@ -188,6 +189,42 @@ like Thunderbird. Subscribe to a folder on the server's webmail or in another cl
 get it into Maze. Servers that report no subscriptions at all, and Gmail (whose labels
 are folders), get every folder synced.
 
+### Editing an account
+
+Right-click an account in the folder pane and choose **Edit Account…**, or use "Maze:
+Edit Account" in the command palette for the account of the shown mail or folder. An
+account that needs a sign-in or has an error also offers **Edit Account…** in **Sync
+activity** (the status bar's sync item). You can change:
+
+- **The name** in the folder pane. The account's settings in `settings.json` move with
+  it: `accounts.<name>`, its AI access in `agent.accounts` and its favorite folders,
+  comments included. If the old and the new name both have an entry in one of those,
+  Maze asks you to merge them first. The sender name on your mail stays as it is.
+- **The password**, after you changed it at your provider, or for an imported account
+  that has none yet. Leave the field empty to keep the saved one.
+- **The servers**, under **Server settings…**: host, port, security and user name for
+  IMAP and SMTP. Maze only sends a saved password to the servers it was saved for, so
+  these changes need the password again.
+- **The sign-in** of a Google or Microsoft account: **Sign in with Google again** (or
+  Microsoft, with the organization's tenant) when the sign-in expired or was revoked.
+  Their servers are fixed.
+
+Saving works like adding: Maze connects, logs in and lists the folders first, so a
+wrong password or an unreachable server keeps the dialog open with the error. **Test
+Connection** checks IMAP and SMTP without saving. The account keeps its mail; Maze
+restarts its sync with the new settings, which also ends a "sign-in required" state.
+From the command line (with a **writer** token, and you approve each change in Maze):
+
+```sh
+mazemail account set a_… --password        # asks for the new password
+mazemail account set a_… --name Work
+mazemail account set a_… --host mail.example.org --smtp-host mail.example.org
+mazemail account set a_… --sign-in         # Google or Microsoft, in the browser
+```
+
+Changing a server or the user name asks for the password (or reads it with
+`--password-stdin`); `--tenant` with `--sign-in` changes a Microsoft account's tenant.
+
 ### SMTP servers
 
 Every identity sends through an SMTP server with the account's login (its saved
@@ -201,8 +238,8 @@ accounts and for accounts you added before Maze could send:
 | iCloud, Yahoo, Fastmail, GMX, web.de, …    | the provider's (built-in list)                 |
 | everything else                            | `smtp.<domain>` (or the IMAP host with `imap.` → `smtp.`), STARTTLS on 587 |
 
-Use **Server settings…** in Add Account (or `--smtp-host` and friends) when your
-provider uses something else. Maze never falls back to an unencrypted connection when
+Use **Server settings…** in Add Account or [Edit Account](#editing-an-account) (or
+`--smtp-host` and friends) when your provider uses something else. Maze never falls back to an unencrypted connection when
 STARTTLS fails.
 
 **Sent copies:** Gmail and Microsoft 365 file the copy of a sent message in your Sent

@@ -1013,6 +1013,11 @@ impl CommandHandler for CoreCommandHandler {
                 let id = removed.id.clone();
                 output(&removed, vec![id])
             }
+            Command::AccountSet(args) => {
+                let changed = super::accounts::set(&self.core, ctx, args).await?;
+                let id = changed.id.clone();
+                output(&changed, vec![id])
+            }
             Command::Sync(args) => {
                 let synced = super::accounts::sync(&self.core, ctx, &args)?;
                 let ids = synced.accounts.clone();

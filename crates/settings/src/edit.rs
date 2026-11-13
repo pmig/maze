@@ -1,9 +1,10 @@
 //! Writing the user's settings file.
 //!
-//! Maze changes single keys of `settings.json` itself (the favorite folders). The file
-//! is people's, so an edit keeps everything else as it was: comments, formatting,
-//! key order and keys Maze doesn't know. The JSONC is edited as a concrete syntax tree
-//! (`jsonc-parser`'s CST), never re-serialized from [`Settings`](crate::Settings).
+//! Maze changes single keys of `settings.json` itself (the favorite folders, and an
+//! account's settings when it is renamed). The file is people's, so an edit keeps
+//! everything else as it was: comments, formatting, key order and keys Maze doesn't
+//! know. The JSONC is edited as a concrete syntax tree (`jsonc-parser`'s CST), never
+//! re-serialized from [`Settings`](crate::Settings).
 //!
 //! A file that isn't valid JSONC is left alone ([`EditError::Syntax`]): rewriting it
 //! would throw away what the user is in the middle of typing.
@@ -11,7 +12,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use jsonc_parser::cst::{CstInputValue, CstObject, CstRootNode};
+use jsonc_parser::cst::{CstInputValue, CstNode, CstObject, CstRootNode, ObjectPropName};
 use serde_json::Value;
 
 use crate::load::jsonc_options;
@@ -41,6 +42,23 @@ pub enum EditError {
         /// The file.
         path: PathBuf,
         /// The dotted key, e.g. `folder_pane`.
+        key: String,
+    },
+    /// Renaming an account: the file has settings under both the old and the new name
+    /// in the same place ([`rename_account`]); it was not changed.
+    #[error(
+        "{} has settings for both \u{201c}{old}\u{201d} and \u{201c}{new}\u{201d} in `{key}`: \
+         merge or remove one of them first",
+        path.display()
+    )]
+    NameTaken {
+        /// The file.
+        path: PathBuf,
+        /// The account's current label.
+        old: String,
+        /// The label it was to get.
+        new: String,
+        /// Where both are, e.g. `agent.accounts`.
         key: String,
     },
 }
@@ -98,6 +116,140 @@ pub fn write_setting(file: &Path, keys: &[&str], value: &Value) -> Result<(), Ed
         out.push('\n');
     }
     replace_file(&target, &out).map_err(io_error)
+}
+
+/// Moves what the settings file keeps for the account labelled `old` to the label
+/// `new`, for a renamed account: `accounts.<old>` and `agent.accounts.<old>` are
+/// renamed in place (their values, comments and formatting stay as they are), and the
+/// account's favorite folders (`folder_pane.favorites`) get the new label. Returns
+/// whether the file changed (`false` without a file or with nothing to move).
+///
+/// Settings that already exist under `new` stay and apply to the renamed account, as
+/// for any account with that label, except where both labels have an entry in the same
+/// object: that can't be merged, so the file is left alone with
+/// [`EditError::NameTaken`]. A favorite listed under both labels is kept once. A file
+/// that isn't valid JSONC is left alone ([`EditError::Syntax`]).
+pub fn rename_account(file: &Path, old: &str, new: &str) -> Result<bool, EditError> {
+    move_account(file, old, new, true)
+}
+
+/// Whether [`rename_account`] would succeed now, without writing anything: the errors
+/// it would return, else `Ok`.
+pub fn check_account_rename(file: &Path, old: &str, new: &str) -> Result<(), EditError> {
+    move_account(file, old, new, false).map(|_| ())
+}
+
+fn move_account(file: &Path, old: &str, new: &str, write: bool) -> Result<bool, EditError> {
+    if old == new {
+        return Ok(false);
+    }
+    let target = std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
+    let text = match std::fs::read_to_string(&target) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(source) => {
+            return Err(EditError::Io {
+                path: file.to_path_buf(),
+                source,
+            });
+        }
+    };
+    let root = CstRootNode::parse(&text, &jsonc_options()).map_err(|err| EditError::Syntax {
+        path: file.to_path_buf(),
+        message: err.to_string(),
+    })?;
+    let Some(object) = root.object_value() else {
+        return Ok(false);
+    };
+
+    // Check both objects before touching either, so a refusal changes nothing.
+    let maps = [
+        ("accounts", object.object_value("accounts")),
+        (
+            "agent.accounts",
+            object
+                .object_value("agent")
+                .and_then(|agent| agent.object_value("accounts")),
+        ),
+    ];
+    let mut renames = Vec::new();
+    for (key, map) in &maps {
+        let Some(prop) = map.as_ref().and_then(|map| map.get(old)) else {
+            continue;
+        };
+        if map.as_ref().and_then(|map| map.get(new)).is_some() {
+            return Err(EditError::NameTaken {
+                path: file.to_path_buf(),
+                old: old.to_owned(),
+                new: new.to_owned(),
+                key: (*key).to_owned(),
+            });
+        }
+        renames.push(prop);
+    }
+    let mut changed = !renames.is_empty();
+    let quoted = serde_json::to_string(new).unwrap_or_else(|_| format!("\"{new}\""));
+    for prop in renames {
+        match prop.name() {
+            Some(ObjectPropName::String(name)) => name.set_raw_value(quoted.clone()),
+            Some(ObjectPropName::Word(name)) => name.set_raw_value(quoted.clone()),
+            None => {}
+        }
+    }
+
+    let favorites = object
+        .object_value("folder_pane")
+        .and_then(|pane| pane.array_value("favorites"));
+    if let Some(favorites) = favorites {
+        let entry = |node: &CstNode| {
+            let favorite = node.as_object()?;
+            let label = |key: &str| {
+                favorite
+                    .get(key)?
+                    .value()?
+                    .as_string_lit()?
+                    .decoded_value()
+                    .ok()
+            };
+            Some((
+                favorite.get("account")?,
+                label("account")?,
+                label("folder")?,
+            ))
+        };
+        let listed: Vec<(String, String)> = favorites
+            .elements()
+            .iter()
+            .filter_map(|node| entry(node).map(|(_, account, folder)| (account, folder)))
+            .collect();
+        for node in favorites.elements() {
+            let Some((account, label, folder)) = entry(&node) else {
+                continue;
+            };
+            if label != old {
+                continue;
+            }
+            if listed.contains(&(new.to_owned(), folder)) {
+                node.remove();
+            } else {
+                account.set_value(CstInputValue::String(new.to_owned()));
+            }
+            changed = true;
+        }
+    }
+
+    if !changed || !write {
+        return Ok(changed);
+    }
+    let mut out = root.to_string();
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    replace_file(&target, &out).map_err(|source| EditError::Io {
+        path: file.to_path_buf(),
+        source,
+    })?;
+    Ok(true)
 }
 
 /// What a new `settings.json` holds: a pointer to the defaults and an empty object.
@@ -240,6 +392,99 @@ mod tests {
         let again = std::fs::read_to_string(&path).unwrap();
         assert!(again.contains("// Dark, always."), "{again}");
         assert_eq!(load_settings(&path).settings.folder_pane.favorites, vec![]);
+    }
+
+    #[test]
+    fn renaming_an_account_moves_its_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let before = r#"{
+  "accounts": {
+    // My job.
+    "Work": { "offline": "all", "copy_sent_to_inbox": true },
+    "Home": { "sync_trash": false },
+  },
+  "agent": { "accounts": { "Work": "any", "Home": "off" } },
+  "folder_pane": {
+    "favorites": [
+      { "account": "Work", "folder": "Customers/Acme" },
+      { "account": "Home", "folder": "Inbox" },
+      { "account": "Work", "folder": "Inbox" },
+      { "account": "Job", "folder": "Inbox" },
+    ],
+  },
+}
+"#;
+        std::fs::write(&path, before).unwrap();
+        assert!(rename_account(&path, "Work", "Job").unwrap());
+        let after = std::fs::read_to_string(&path).unwrap();
+        // Renamed in place: the comment and the value's formatting stay.
+        assert!(
+            after.contains(
+                "// My job.\n    \"Job\": { \"offline\": \"all\", \"copy_sent_to_inbox\": true },"
+            ),
+            "{after}"
+        );
+        let loaded = load_settings(&path);
+        assert_eq!(loaded.diagnostics, vec![]);
+        let settings = loaded.settings;
+        assert!(settings.copy_sent_to_inbox("Job"));
+        assert!(!settings.copy_sent_to_inbox("Work"));
+        assert_eq!(settings.agent.access_for("Job"), crate::AgentAccess::Any);
+        assert_eq!(settings.agent.access_for("Work"), crate::AgentAccess::Off);
+        assert!(!settings.account("Home").sync_trash, "others stay");
+        // "Job / Inbox" was a favorite already: listed once.
+        let favorite = |account: &str, folder: &str| FavoriteFolder {
+            account: account.to_owned(),
+            folder: folder.to_owned(),
+        };
+        assert_eq!(
+            settings.folder_pane.favorites,
+            vec![
+                favorite("Job", "Customers/Acme"),
+                favorite("Home", "Inbox"),
+                favorite("Job", "Inbox"),
+            ]
+        );
+
+        // Nothing under the old name (any more): nothing to write.
+        let unchanged = std::fs::read_to_string(&path).unwrap();
+        assert!(!rename_account(&path, "Work", "Office").unwrap());
+        assert!(!rename_account(&path, "Job", "Job").unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), unchanged);
+        // No file: nothing to move.
+        assert!(!rename_account(&dir.path().join("none.json"), "Job", "Work").unwrap());
+    }
+
+    #[test]
+    fn renaming_onto_existing_settings_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let before = r#"{
+  "accounts": { "Work": { "offline": "all" } },
+  "agent": { "accounts": { "Work": "off", "Job": "any" } },
+}
+"#;
+        std::fs::write(&path, before).unwrap();
+        let check = check_account_rename(&path, "Work", "Job");
+        assert!(
+            matches!(check, Err(EditError::NameTaken { .. })),
+            "{check:?}"
+        );
+        let err = rename_account(&path, "Work", "Job").unwrap_err();
+        assert!(
+            matches!(&err, EditError::NameTaken { key, .. } if key == "agent.accounts"),
+            "{err:?}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+        // Settings only under the new name are fine: they apply to the renamed account.
+        assert!(check_account_rename(&path, "Home", "Job").is_ok());
+        assert!(rename_account(&path, "Home", "Job").is_ok());
+        std::fs::write(&path, r#"{ "accounts": "#).unwrap();
+        assert!(matches!(
+            rename_account(&path, "Work", "Job"),
+            Err(EditError::Syntax { .. })
+        ));
     }
 
     #[test]

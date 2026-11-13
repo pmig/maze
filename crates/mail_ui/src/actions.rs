@@ -24,6 +24,9 @@ actions!(
         Zoom,
         /// Add a mail account (IMAP, Gmail or Microsoft).
         AddAccount,
+        /// Edit the account of the shown mail or folder: its name, password, servers
+        /// or sign-in.
+        EditAccount,
         /// Add a From address (alias) to the account of the shown mail or folder.
         AddAlias,
         /// Edit your settings (`settings.json`) in a tab (`cmd-,`).
@@ -190,6 +193,13 @@ actions!(
         GoToFolder,
     ]
 );
+
+/// Edit this account: the app opens "Edit Account…" for it. Sent by the folder pane's
+/// account menu, "Sync activity" and "Maze: Edit Account" (which picks the account).
+/// Not in the palette.
+#[derive(Debug, Clone, PartialEq, Eq, gpui::Action)]
+#[action(namespace = accounts, no_json)]
+pub struct EditAccountFor(pub mazemail_types::AccountId);
 
 /// Write to the addresses of a `mailto:` link, clicked in a message. The window asks
 /// the app for a draft ([`crate::ComposeRequest::MailTo`]). Not in the palette.

@@ -203,11 +203,11 @@ pub(crate) fn show(core: CoreHandle, cx: &mut App) {
     }
 }
 
-fn value(input: &Entity<InputState>, cx: &App) -> String {
+pub(crate) fn value(input: &Entity<InputState>, cx: &App) -> String {
     input.read(cx).value().trim().to_owned()
 }
 
-fn security_label(security: ImapSecurity) -> &'static str {
+pub(crate) fn security_label(security: ImapSecurity) -> &'static str {
     match security {
         ImapSecurity::Tls => "TLS",
         ImapSecurity::Starttls => "STARTTLS",
@@ -628,7 +628,7 @@ pub(crate) fn connection_ok(host: &str, test: ConnectionTest) -> String {
 }
 
 /// What the tenant field says above it.
-const TENANT_HINT: &str = "Sign in with Microsoft: organization (tenant). Your tenant ID or \
+pub(crate) const TENANT_HINT: &str = "Sign in with Microsoft: organization (tenant). Your tenant ID or \
 domain (contoso.com) if your organization's app registration is for its own accounts only; \
 \"common\" for any work, school or personal account.";
 

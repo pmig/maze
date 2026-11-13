@@ -4,10 +4,10 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use super::args::{
-    AccountAddArgs, AccountListArgs, AccountRemoveArgs, ArchiveArgs, AttachmentSaveArgs,
-    ContactsArgs, DraftEditArgs, DraftNewArgs, ExportArgs, FlagArgs, FoldersArgs, IdentitiesArgs,
-    ImportArgs, MoveArgs, OAuthProvider, ProposeArgs, ReadArgs, RuleAddArgs, SearchArgs, SendArgs,
-    ShowArgs, SyncArgs, TagArgs, TagsArgs,
+    AccountAddArgs, AccountListArgs, AccountRemoveArgs, AccountSetArgs, ArchiveArgs,
+    AttachmentSaveArgs, ContactsArgs, DraftEditArgs, DraftNewArgs, ExportArgs, FlagArgs,
+    FoldersArgs, IdentitiesArgs, ImportArgs, MoveArgs, OAuthProvider, ProposeArgs, ReadArgs,
+    RuleAddArgs, SearchArgs, SendArgs, ShowArgs, SyncArgs, TagArgs, TagsArgs,
 };
 
 /// Arguments that don't match a command's schema.
@@ -109,6 +109,8 @@ mail_commands! {
     AccountAdd(AccountAddArgs) = "account.add",
     /// `mazemail account remove`. Already approved by the user when it arrives.
     AccountRemove(AccountRemoveArgs) = "account.remove",
+    /// `mazemail account set`. Already approved by the user when it arrives.
+    AccountSet(AccountSetArgs) = "account.set",
     /// `mazemail sync`.
     Sync(SyncArgs) = "sync",
 }
@@ -164,6 +166,42 @@ impl Command {
             {
                 Err(ArgsError(
                     "password: required unless signing in with oauth".into(),
+                ))
+            }
+            Self::AccountSet(args)
+                if args.sign_in && (args.changes_servers() || args.password.is_some()) =>
+            {
+                Err(ArgsError(
+                    "sign_in: a browser sign-in takes no server settings or password".into(),
+                ))
+            }
+            Self::AccountSet(args) if args.tenant.is_some() && !args.sign_in => Err(ArgsError(
+                "tenant: only with sign_in (a Microsoft account signing in again)".into(),
+            )),
+            Self::AccountSet(args)
+                if args
+                    .password
+                    .as_ref()
+                    .is_some_and(|p| p.expose().is_empty()) =>
+            {
+                Err(ArgsError("password: empty".into()))
+            }
+            Self::AccountSet(args) if args.changes_servers() && args.password.is_none() => {
+                Err(ArgsError(
+                    "password: required to change the server or login name (Maze only sends a \
+                     saved password to the servers it was saved for)"
+                        .into(),
+                ))
+            }
+            Self::AccountSet(args)
+                if args.name.is_none()
+                    && args.password.is_none()
+                    && !args.sign_in
+                    && !args.changes_servers() =>
+            {
+                Err(ArgsError(
+                    "nothing to change: give a name, a server setting, a password or sign_in"
+                        .into(),
                 ))
             }
             _ => Ok(()),
