@@ -690,6 +690,46 @@ static REGISTRY: &[CommandSpec] = &[
         human: Human::Fields,
     },
     CommandSpec {
+        name: "account.set",
+        path: &["account", "set"],
+        summary: "Change an account's name, password or servers",
+        help: "Changes what you pass and keeps the rest. A new --name moves the account's \
+               settings in settings.json (accounts.<name>, agent.accounts.<name>, favorite \
+               folders) along with it. --password asks for a new password on the terminal \
+               without echo (--password-stdin reads it from stdin); it is never a command-line \
+               argument. Changing the IMAP server (--host, --port, --security), the login name \
+               (--username) or the SMTP server (--smtp-host, --smtp-port, --smtp-security) asks \
+               for the password again: Maze only sends a saved password to the servers it was \
+               saved for. Like adding, Maze connects, logs in and lists the folders before it \
+               saves anything, then restarts the account's sync. Google and Microsoft accounts \
+               sign in again in the browser with --sign-in (--tenant changes a Microsoft \
+               account's tenant). Needs a writer token, and you approve it in Maze.",
+        permission: Permission::Admin,
+        requires_token: true,
+        touches_mail: false,
+        examples: &[
+            ex(
+                "mazemail account set a_b --password",
+                "The password changed: enter the new one",
+            ),
+            ex(
+                "mazemail account set a_b --name Work",
+                "Rename an account (its settings move along)",
+            ),
+            ex(
+                "mazemail account set a_b --host mail.example.org --smtp-host mail.example.org",
+                "Move to other servers (asks for the password)",
+            ),
+            ex(
+                "mazemail account set a_c --sign-in",
+                "Sign a Google or Microsoft account in again",
+            ),
+        ],
+        args_schema: schema::<AccountSetArgs>,
+        output_schema: schema::<AccountOutput>,
+        human: Human::Fields,
+    },
+    CommandSpec {
         name: "sync",
         path: &["sync"],
         summary: "Sync accounts now",
@@ -794,6 +834,7 @@ mod tests {
             "account.list",
             "account.add",
             "account.remove",
+            "account.set",
             "sync",
         ] {
             assert!(find(name).is_some(), "{name} missing");
@@ -853,11 +894,11 @@ mod tests {
             assert_eq!(triage(name), Propose, "{name}");
         }
         assert_eq!(triage("rule.add"), Ask);
-        // Accounts: listing and syncing are reads; adding and removing need a writer
-        // token and the user's approval.
+        // Accounts: listing and syncing are reads; adding, removing and changing need a
+        // writer token and the user's approval.
         assert_eq!(triage("account.list"), Allow);
         assert_eq!(triage("sync"), Allow);
-        for name in ["account.add", "account.remove"] {
+        for name in ["account.add", "account.remove", "account.set"] {
             assert_eq!(triage(name), Deny, "{name}");
             assert_eq!(find(name).unwrap().access(Profile::Writer, true), Ask);
         }

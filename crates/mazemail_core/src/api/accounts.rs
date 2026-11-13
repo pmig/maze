@@ -1,9 +1,9 @@
-//! `mazemail account list|add|remove` and `mazemail sync` (PLAN §4.11).
+//! `mazemail account list|add|set|remove` and `mazemail sync` (PLAN §4.11).
 //!
 //! # Permissions
 //!
-//! Adding and removing accounts changes Maze itself and handles credentials, so the
-//! registry gives them the `admin` class: only a **writer** token may ask, and the user
+//! Adding, changing and removing accounts changes Maze itself and handles credentials,
+//! so the registry gives them the `admin` class: only a **writer** token may ask, and the user
 //! approves every request in Maze (the approval never shows the password, the
 //! dispatcher redacts it). Listing accounts and "sync now" are reads: they reveal no
 //! mail and only make Maze look for new mail sooner, so every profile may run them,
@@ -11,18 +11,20 @@
 //! agents stay invisible, as everywhere in the local API).
 //!
 //! A new account's password arrives in the request (the CLI read it from the terminal
-//! without echo, or from stdin) and goes straight into the encrypted store.
+//! without echo, or from stdin) and goes straight into the encrypted store. `account
+//! set` changes only what the request names; a changed server needs the password in
+//! the request (see [`crate::accounts::AccountChanges`]).
 
 use local_api::registry::args::{
-    AccountAddArgs, AccountRemoveArgs, OAuthProvider, SecurityArg, SyncArgs,
+    AccountAddArgs, AccountRemoveArgs, AccountSetArgs, OAuthProvider, SecurityArg, SyncArgs,
 };
 use local_api::registry::output::{AccountOutput, AccountRemoved, SyncOutput};
 use local_api::{CommandError, ErrorCode, RequestContext};
 use mazemail_types::PublicId as _;
 
 use crate::accounts::{
-    AccountAuth, AccountErrorKind, AccountInfo, AddImapAccount, AddOAuthAccount, ImapSecurity,
-    ImapServer, suggest_imap_server,
+    AccountAuth, AccountChanges, AccountErrorKind, AccountInfo, AddImapAccount, AddOAuthAccount,
+    ImapSecurity, ImapServer, suggest_imap_server,
 };
 use crate::handle::CoreHandle;
 use crate::outgoing::{SmtpServerSettings, smtp_default_port};
@@ -200,6 +202,85 @@ pub(crate) async fn remove(
         id: args.id.to_public(),
         removed: true,
     })
+}
+
+/// `account set`. Server options name only what changes: a port without a host is
+/// the current host on that port; a new security without a port takes its usual port.
+pub(crate) async fn set(
+    core: &CoreHandle,
+    ctx: &RequestContext,
+    args: AccountSetArgs,
+) -> Result<AccountOutput, CommandError> {
+    if !ctx.scope.allows_account(args.id) {
+        return Err(CommandError::not_found(format!("no account {}", args.id)));
+    }
+    if args.sign_in {
+        let info = core
+            .sign_in_again(args.id, args.tenant)
+            .await
+            .map_err(account_error)?;
+        return Ok(account_output(&info));
+    }
+    let details = core.account_details(args.id).await.map_err(account_error)?;
+    let server = (args.host.is_some() || args.port.is_some() || args.security.is_some())
+        .then(|| {
+            let current = details.info.server.clone().ok_or_else(|| {
+                CommandError::invalid_args("this account has no server to change (Local Folders)")
+            })?;
+            let security = args.security.map_or(current.security, security);
+            let port = args.port.unwrap_or(if args.security.is_some() {
+                security.default_port()
+            } else {
+                current.port
+            });
+            Ok::<_, CommandError>(ImapServer {
+                host: args.host.clone().unwrap_or(current.host),
+                port,
+                security,
+            })
+        })
+        .transpose()?;
+    let smtp =
+        (args.smtp_host.is_some() || args.smtp_port.is_some() || args.smtp_security.is_some())
+            .then(|| {
+                let current = details.smtp.clone();
+                let host = args
+                    .smtp_host
+                    .clone()
+                    .or_else(|| current.as_ref().map(|c| c.host.clone()))
+                    .ok_or_else(|| {
+                        CommandError::invalid_args("smtp_host: the account has no SMTP server yet")
+                    })?;
+                let security = args
+                    .smtp_security
+                    .map(security)
+                    .or_else(|| current.as_ref().map(|c| c.security))
+                    .unwrap_or(ImapSecurity::Starttls);
+                let port = args.smtp_port.unwrap_or_else(|| match &current {
+                    Some(current) if args.smtp_security.is_none() => current.port,
+                    _ => smtp_default_port(security),
+                });
+                Ok::<_, CommandError>(SmtpServerSettings {
+                    host,
+                    port,
+                    security,
+                })
+            })
+            .transpose()?;
+    let info = core
+        .update_account(
+            args.id,
+            AccountChanges {
+                name: args.name,
+                server,
+                username: args.username.map(|u| u.expose().clone()),
+                password: args.password,
+                smtp,
+            },
+        )
+        .await
+        .map_err(account_error)?;
+    Ok(account_output(&info))
 }
 
 /// `sync`.

@@ -728,7 +728,7 @@ async fn google_sign_in_needs_a_client_id() {
 
 /// A browser that consents at once: follows the authorization redirect to the
 /// loopback listener.
-struct ConsentingBrowser;
+pub(crate) struct ConsentingBrowser;
 
 impl BrowserOpener for ConsentingBrowser {
     fn open(&self, url: &url::Url) -> std::io::Result<()> {
