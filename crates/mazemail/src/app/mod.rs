@@ -35,6 +35,7 @@ mod agents;
 mod approval;
 mod compose;
 mod contacts;
+mod edit_account;
 mod keyboard;
 mod legacy_local;
 mod lost_key;
@@ -181,6 +182,15 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
             cx.defer(|cx| match cx.global::<AppState>().core.clone() {
                 Some(core) => add_account::show(core, cx),
                 None => tracing::info!("Add Account: the mail data isn't open yet"),
+            });
+        });
+        // From the folder pane's account menu, "Sync activity" and "Maze: Edit Account";
+        // deferred like Add Account.
+        cx.on_action(|action: &mail_ui::actions::EditAccountFor, cx| {
+            let account = action.0;
+            cx.defer(move |cx| match cx.global::<AppState>().core.clone() {
+                Some(core) => edit_account::show(core, account, cx),
+                None => tracing::info!("Edit Account: the mail data isn't open yet"),
             });
         });
         // The main window asks for new drafts itself (a `ComposeRequest`); this is

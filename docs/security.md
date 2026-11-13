@@ -49,6 +49,11 @@ per account and secret but little protection. The master key is Maze's **only**
 keychain item: a launch reads the keychain once. Secrets are wiped from memory after
 use and never logged.
 
+A saved account password only goes to the servers it was saved for. Changing an
+account's user name or its IMAP or SMTP server (host, port or security) in Edit Account
+or with `mazemail account set` needs the password again. Neither a typo nor a program
+with a writer token can redirect it somewhere else or onto an unencrypted connection.
+
 API keys and tokens you paste into the agent column's sign-in card are stored the same
 way (table `agent_secret`) and handed only to that agent, in its environment. Keys
 written into `agent.env` in `settings.json` are plain text; the settings file says so.

@@ -93,6 +93,8 @@ pub enum AccountCommand {
     Add(AccountAddCliArgs),
     /// `mazemail account remove`.
     Remove(AccountRemoveArgs),
+    /// `mazemail account set`.
+    Set(AccountSetCliArgs),
 }
 
 /// `mazemail token …`.
@@ -400,6 +402,7 @@ impl CliCommand {
             Self::Account(AccountCommand::List(_)) => &["account", "list"],
             Self::Account(AccountCommand::Add(_)) => &["account", "add"],
             Self::Account(AccountCommand::Remove(_)) => &["account", "remove"],
+            Self::Account(AccountCommand::Set(_)) => &["account", "set"],
             Self::Sync(_) => &["sync"],
         };
         // Every path above is in the registry (tested), so the fallback is unreachable.
@@ -495,7 +498,8 @@ impl CliCommand {
                 let password = if args.oauth.is_some() {
                     None
                 } else {
-                    Some(password(env, &args)?)
+                    let prompt = format!("Password for {}: ", args.email);
+                    Some(read_password(env, args.password_stdin, &prompt)?)
                 };
                 let wire = AccountAddArgs {
                     email: Sensitive::new(args.email),
@@ -514,15 +518,41 @@ impl CliCommand {
                 Invocation::new(name, &wire)
             }
             Self::Account(AccountCommand::Remove(args)) => Invocation::new(name, &args),
+            Self::Account(AccountCommand::Set(args)) => {
+                let mut wire = AccountSetArgs {
+                    id: args.id,
+                    name: args.name,
+                    host: args.host,
+                    port: args.port,
+                    security: args.security,
+                    username: args.username.map(Sensitive::new),
+                    password: None,
+                    smtp_host: args.smtp_host,
+                    smtp_port: args.smtp_port,
+                    smtp_security: args.smtp_security,
+                    sign_in: args.sign_in,
+                    tenant: args.tenant,
+                };
+                // Server changes need the password again: ask instead of failing.
+                if args.password || args.password_stdin || wire.changes_servers() {
+                    let prompt = format!("Password for {}: ", args.id);
+                    wire.password = Some(read_password(env, args.password_stdin, &prompt)?);
+                }
+                Invocation::new(name, &wire)
+            }
             Self::Sync(args) => Invocation::new(name, &args),
         }
     }
 }
 
-/// The password for `account add`: the first line of stdin with `--password-stdin`,
-/// else a prompt on the terminal without echo.
-fn password(env: &dyn ClientEnv, args: &AccountAddCliArgs) -> Result<Sensitive<String>, CliError> {
-    let password = if args.password_stdin {
+/// The password for `account add` and `account set`: the first line of stdin with
+/// `--password-stdin`, else a prompt on the terminal without echo.
+fn read_password(
+    env: &dyn ClientEnv,
+    from_stdin: bool,
+    prompt: &str,
+) -> Result<Sensitive<String>, CliError> {
+    let password = if from_stdin {
         let bytes = zeroize::Zeroizing::new(env.read_stdin().map_err(|source| CliError::Read {
             path: PathBuf::from("-"),
             source,
@@ -531,11 +561,10 @@ fn password(env: &dyn ClientEnv, args: &AccountAddCliArgs) -> Result<Sensitive<S
             .map_err(|_| CliError::Invalid("the password on stdin is not UTF-8".into()))?;
         text.lines().next().unwrap_or_default().to_owned()
     } else {
-        env.read_password(&format!("Password for {}: ", args.email))
-            .map_err(|source| CliError::Read {
-                path: PathBuf::from("/dev/tty"),
-                source,
-            })?
+        env.read_password(prompt).map_err(|source| CliError::Read {
+            path: PathBuf::from("/dev/tty"),
+            source,
+        })?
     };
     if password.is_empty() {
         return Err(CliError::Invalid("no password given".into()));
@@ -781,6 +810,7 @@ mod tests {
                 "account.add",
             ),
             (&["account", "remove", "a_b"], "account.remove"),
+            (&["account", "set", "a_b", "--name", "Work"], "account.set"),
             (&["sync"], "sync"),
             (&["sync", "--account", "a_b"], "sync"),
         ] {
@@ -1085,6 +1115,117 @@ mod account_tests {
                 ])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn account_set_asks_for_the_password_only_when_it_is_needed() {
+        let wire = |invocation: Invocation| {
+            super::super::Command::from_wire("account.set", invocation.args.clone())
+                .unwrap()
+                .unwrap();
+            invocation.args
+        };
+        // A new name: no password.
+        let env = Env::default();
+        let renamed = wire(invoke(&["account", "set", "a_b", "--name", "Work"], &env).unwrap());
+        assert_eq!(renamed, json!({ "id": "a_b", "name": "Work" }));
+        assert!(env.prompts.borrow().is_empty());
+
+        // --password asks on the terminal; a server change asks without being told.
+        let password = wire(invoke(&["account", "set", "a_b", "--password"], &env).unwrap());
+        assert_eq!(password["password"], "typed secret");
+        let moved = wire(
+            invoke(
+                &[
+                    "account",
+                    "set",
+                    "a_b",
+                    "--host",
+                    "mail.example.org",
+                    "--smtp-security",
+                    "tls",
+                ],
+                &env,
+            )
+            .unwrap(),
+        );
+        assert_eq!(moved["host"], "mail.example.org");
+        assert_eq!(moved["smtp_security"], "tls");
+        assert_eq!(moved["password"], "typed secret");
+        assert_eq!(
+            *env.prompts.borrow(),
+            ["Password for a_b: ", "Password for a_b: "]
+        );
+
+        let piped = Env {
+            stdin: b"from stdin\n".to_vec(),
+            ..Env::default()
+        };
+        let stdin = wire(
+            invoke(
+                &[
+                    "account",
+                    "set",
+                    "a_b",
+                    "--username",
+                    "",
+                    "--password-stdin",
+                ],
+                &piped,
+            )
+            .unwrap(),
+        );
+        assert_eq!(stdin["password"], "from stdin");
+        assert_eq!(stdin["username"], "");
+        assert!(piped.prompts.borrow().is_empty());
+
+        // Signing in again takes no password or server options.
+        let sign_in = wire(
+            invoke(
+                &[
+                    "account",
+                    "set",
+                    "a_c",
+                    "--sign-in",
+                    "--tenant",
+                    "contoso.com",
+                ],
+                &env,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            sign_in,
+            json!({ "id": "a_c", "sign_in": true, "tenant": "contoso.com" })
+        );
+        for bad in [
+            &["account", "set", "a_c", "--sign-in", "--password"][..],
+            &["account", "set", "a_c", "--sign-in", "--host", "h"],
+            &["account", "set", "a_c", "--tenant", "contoso.com"],
+            &["account", "set", "a_c", "--password", "x"],
+        ] {
+            assert!(
+                cli_command()
+                    .try_get_matches_from(std::iter::once("mazemail").chain(bad.iter().copied()))
+                    .is_err(),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn account_set_checks_what_the_cli_cant() {
+        let from_wire = |args| super::super::Command::from_wire("account.set", args);
+        let error = |args| from_wire(args).unwrap_err().0;
+        assert!(error(json!({ "id": "a_b" })).contains("nothing to change"));
+        // Other clients must send the password with a server change, too.
+        assert!(error(json!({ "id": "a_b", "host": "h" })).contains("password"));
+        assert!(error(json!({ "id": "a_b", "password": "" })).contains("password"));
+        assert!(
+            error(json!({ "id": "a_b", "sign_in": true, "password": "x" })).contains("sign_in")
+        );
+        assert!(error(json!({ "id": "a_b", "tenant": "common", "name": "x" })).contains("tenant"));
+        assert!(from_wire(json!({ "id": "a_b", "host": "h", "password": "x" })).is_ok());
     }
 
     #[test]

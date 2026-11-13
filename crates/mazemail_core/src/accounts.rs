@@ -1,5 +1,5 @@
 //! Mail accounts: adding (IMAP with a password, or Google/Microsoft sign-in), listing
-//! with sync status, and removing (PLAN §4.6, CONCEPT §6).
+//! with sync status, editing ([`edit`]) and removing (PLAN §4.6, CONCEPT §6).
 //!
 //! # Adding an account
 //!
@@ -51,6 +51,10 @@ use crate::handle::CoreHandle;
 use crate::outgoing::{SmtpServerSettings, smtp_server_input, suggest_smtp_server};
 use crate::sync_bridge::SyncStatus;
 use crate::{Error, Result};
+
+mod edit;
+
+pub use edit::{AccountChanges, AccountDetails, ChangesTest};
 
 /// How long validating a new account may take (connect, log in, list folders).
 const VALIDATION_TIMEOUT: Duration = Duration::from_secs(60);
@@ -614,13 +618,19 @@ impl CoreHandle {
     }
 
     fn check_duplicate(&self, email: &str, host: &str) -> Result<()> {
+        self.check_duplicate_except(AccountId(0), email, host)
+    }
+
+    /// [`Self::check_duplicate`], not counting the account `except` (being edited).
+    fn check_duplicate_except(&self, except: AccountId, email: &str, host: &str) -> Result<()> {
         let exists = self.accounts()?.iter().any(|account| {
-            AccountConfig::parse(&account.config_json).is_some_and(|c| {
-                c.email
-                    .as_deref()
-                    .is_some_and(|e| e.eq_ignore_ascii_case(email))
-                    && c.host.eq_ignore_ascii_case(host)
-            })
+            account.id != except
+                && AccountConfig::parse(&account.config_json).is_some_and(|c| {
+                    c.email
+                        .as_deref()
+                        .is_some_and(|e| e.eq_ignore_ascii_case(email))
+                        && c.host.eq_ignore_ascii_case(host)
+                })
         });
         if exists {
             return Err(account_error(
@@ -856,25 +866,36 @@ impl CoreHandle {
                         "enter the SMTP server's host name (smtp.example.com)",
                     )
                 })?;
-            let where_ = format!("{}:{}", server.host, server.port);
             let credentials = smtp::Credentials::Password {
                 user,
                 password: input.password,
             };
-            let check = engine.mailer().check(&server.config(), &credentials).await;
-            match check {
-                Ok(()) => Ok(server),
-                Err(err) if err.is_auth() => Err(account_error(
-                    AccountErrorKind::AuthFailed,
-                    format!("the SMTP server {where_} rejected the login: {err}"),
-                )),
-                Err(err) => Err(account_error(
-                    AccountErrorKind::Unreachable,
-                    format!("can't use the SMTP server {where_}: {err}"),
-                )),
-            }
+            drop(engine);
+            core.check_smtp_login(&server, &credentials).await?;
+            Ok(server)
         })
         .await
+    }
+
+    /// Logs in to an SMTP server and out again, sending nothing.
+    async fn check_smtp_login(
+        &self,
+        server: &SmtpServerSettings,
+        credentials: &smtp::Credentials,
+    ) -> Result<()> {
+        let engine = self.engine_or_err()?;
+        let where_ = format!("{}:{}", server.host, server.port);
+        match engine.mailer().check(&server.config(), credentials).await {
+            Ok(()) => Ok(()),
+            Err(err) if err.is_auth() => Err(account_error(
+                AccountErrorKind::AuthFailed,
+                format!("the SMTP server {where_} rejected the login: {err}"),
+            )),
+            Err(err) => Err(account_error(
+                AccountErrorKind::Unreachable,
+                format!("can't use the SMTP server {where_}: {err}"),
+            )),
+        }
     }
 
     /// Adds a Google or Microsoft account with a browser sign-in (OAuth2 with PKCE):

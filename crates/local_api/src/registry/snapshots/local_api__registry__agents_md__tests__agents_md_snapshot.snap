@@ -62,6 +62,7 @@ expression: agents_md()
 | `account list` | allow | allow | allow |
 | `account add` | deny | deny | ask |
 | `account remove` | deny | deny | ask |
+| `account set` | deny | deny | ask |
 | `sync` | allow | allow | allow |
 
 Permanent delete is not available to tokens. `send` is disabled unless the token was approved with `--allow-send`, and then every send asks.
@@ -1196,6 +1197,62 @@ Examples:
 ```sh
 # Remove an account
 mazemail account remove a_b
+```
+
+### `mazemail account set`
+
+Change an account's name, password or servers.
+
+Changes what you pass and keeps the rest. A new --name moves the account's settings in settings.json (accounts.<name>, agent.accounts.<name>, favorite folders) along with it. --password asks for a new password on the terminal without echo (--password-stdin reads it from stdin); it is never a command-line argument. Changing the IMAP server (--host, --port, --security), the login name (--username) or the SMTP server (--smtp-host, --smtp-port, --smtp-security) asks for the password again: Maze only sends a saved password to the servers it was saved for. Like adding, Maze connects, logs in and lists the folders before it saves anything, then restarts the account's sync. Google and Microsoft accounts sign in again in the browser with --sign-in (--tenant changes a Microsoft account's tenant). Needs a writer token, and you approve it in Maze.
+
+Permission: `admin`
+
+```sh
+mazemail account set [OPTIONS] <ACCOUNT>
+```
+
+| Argument | Description |
+| -------- | ----------- |
+| `<ACCOUNT>` | The account (`a_…`, see `mazemail account list`). |
+| `--name <NAME>` | A new name in the folder pane. |
+| `--host <HOST>` | IMAP host. |
+| `--port <PORT>` | IMAP port. |
+| `--security <SECURITY>` | IMAP transport security. One of `tls`, `starttls`, `none`. |
+| `--username <USERNAME>` | Login name ("" for the address). |
+| `--password` | Set a new password: asks for it on the terminal (without echo). Server changes ask for it anyway. |
+| `--password-stdin` | Read the password from stdin (first line) instead of asking on the terminal. |
+| `--smtp-host <SMTP_HOST>` | SMTP host for sending. |
+| `--smtp-port <SMTP_PORT>` | SMTP port. |
+| `--smtp-security <SMTP_SECURITY>` | SMTP transport security. One of `tls`, `starttls`, `none`. |
+| `--sign-in` | Sign in with Google or Microsoft again, in the browser. |
+| `--tenant <TENANT>` | With `--sign-in` on a Microsoft account: the tenant ID or domain, or `common`, `organizations`, `consumers` (default: the one it signed in with). |
+
+Output (`--json`):
+
+```ts
+{
+  auth?: string | null,  // `password`, `oauth:google` or `oauth:microsoft`, for synced accounts.
+  email?: string | null,  // The address, if known.
+  id: string,  // Account id.
+  kind: string,  // `imap`, `gmail`, `m365` or `local`.
+  name: string,  // The name in the folder pane.
+  server?: string | null,  // The IMAP server (`host:port`), for synced accounts.
+  state: string,  // `connecting`, `idle`, `syncing`, `offline`, `auth_required`, `error` or `not_synced`.
+  status: string,  // The sync state as a sentence.
+}
+```
+
+Examples:
+
+```sh
+# The password changed: enter the new one
+mazemail account set a_b --password
+# Rename an account (its settings move along)
+mazemail account set a_b --name Work
+# Move to other servers (asks for the password)
+mazemail account set a_b --host mail.example.org --smtp-host mail.example.org
+# Sign a Google or Microsoft account in again
+mazemail account set a_c --sign-in
 ```
 
 ### `mazemail sync`

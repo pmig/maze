@@ -38,8 +38,8 @@ mod watcher;
 
 pub use content::*;
 pub use edit::{
-    EditError, USER_SETTINGS_TEMPLATE, read_or_create_settings_file, write_setting,
-    write_settings_file,
+    EditError, USER_SETTINGS_TEMPLATE, check_account_rename, read_or_create_settings_file,
+    rename_account, write_setting, write_settings_file,
 };
 pub use load::{
     DEFAULT_SETTINGS, Diagnostic, DiagnosticKind, LoadedSettings, default_settings, load_settings,

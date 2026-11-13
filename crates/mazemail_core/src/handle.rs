@@ -545,6 +545,29 @@ impl CoreHandle {
         Ok(())
     }
 
+    /// Moves the settings of the account labelled `old` to `new` in `settings.json`
+    /// ([`settings::rename_account`]) and reloads them, or with `check_only` only says
+    /// whether that would work. Nothing to do without a settings file.
+    pub(crate) fn rename_account_settings(
+        &self,
+        old: &str,
+        new: &str,
+        check_only: bool,
+    ) -> std::result::Result<(), settings::EditError> {
+        // The lock also keeps this from crossing another change of the file.
+        let watcher = lock(&self.inner.watcher);
+        let Some(watcher) = watcher.as_ref() else {
+            return Ok(());
+        };
+        if check_only {
+            return settings::check_account_rename(watcher.path(), old, new);
+        }
+        if settings::rename_account(watcher.path(), old, new)? {
+            watcher.reload();
+        }
+        Ok(())
+    }
+
     /// The aliases of `account` as the settings list them
     /// (`accounts.<label>.aliases`, see [`crate::aliases`]).
     pub fn aliases(&self, account: AccountId) -> Result<Vec<settings::Alias>> {

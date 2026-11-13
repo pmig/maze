@@ -1,5 +1,6 @@
 //! "Sync activity": the status bar's sync item opens a popover that says exactly what
-//! is syncing, per account: the state (with the reason of a problem and "Retry now"),
+//! is syncing, per account: the state (with the reason of a problem, "Retry now", and
+//! "Edit Account…" when the sign-in or the settings need fixing),
 //! the folders being synced with their progress, the last finished sync, and the work
 //! that waits (changes for the server, the outbox, offline downloads).
 //!
@@ -25,6 +26,7 @@ use time::OffsetDateTime;
 use ui::assets::IconName;
 use ui::theme::scaled;
 
+use crate::actions::EditAccountFor;
 use crate::format::format_thousands;
 use crate::source::{
     AccountActivity, AccountKind, ActivityState, FolderProgress, FolderStep, MailSource,
@@ -149,6 +151,24 @@ fn account_section(
                     }),
             )
     });
+    // A rejected password or a server that doesn't work: the fix is in the account.
+    let edit = matches!(
+        account.state,
+        ActivityState::SignInRequired { .. } | ActivityState::Error { .. }
+    )
+    .then(|| {
+        div()
+            .debug_selector(move || format!("sync-activity-edit-{}", id.0))
+            .child(
+                Button::new(SharedString::from(format!("sync-activity-edit-{}", id.0)))
+                    .xsmall()
+                    .label("Edit Account…")
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(Box::new(EditAccountFor(id)), cx);
+                        cx.stop_propagation();
+                    }),
+            )
+    });
     let icon = match account.kind {
         AccountKind::Gmail | AccountKind::Microsoft => IconName::Mail,
         AccountKind::Imap => IconName::Server,
@@ -187,7 +207,8 @@ fn account_section(
                             .text_color(theme.danger)
                             .child(problem),
                     )
-                    .children(retry),
+                    .children(retry)
+                    .children(edit),
             )
         })
         .children(

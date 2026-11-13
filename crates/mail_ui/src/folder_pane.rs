@@ -7,7 +7,8 @@
 //! there is more than one account, so a favorite "Inbox" says whose it is. Without
 //! favorites the section says "No favorite folders yet". Right-clicking a folder
 //! offers "Add to Favorites" or "Remove from Favorites"; `mail::ToggleFavoriteFolder`
-//! does the same for the open folder. A favorite opens its folder like the folder's
+//! does the same for the open folder. Right-clicking an account offers "Edit
+//! Account…" ([`EditAccountFor`], opened by the app) and "Add Alias…". A favorite opens its folder like the folder's
 //! row in its account.
 //!
 //! Sections, accounts and folders with subfolders collapse and expand; the pane
@@ -32,12 +33,12 @@ use gpui_kit::component::{
     tree::{TreeEntry, TreeEvent, TreeItem, TreeState, tree},
     v_flex,
 };
-use mazemail_types::{FolderId, FolderRole, PRODUCT_NAME};
+use mazemail_types::{AccountId, FolderId, FolderRole, PRODUCT_NAME};
 use ui::assets::IconName;
 use ui::components::CountBadge;
 use ui::theme::scaled;
 
-use crate::actions::AddAccount;
+use crate::actions::{AddAccount, EditAccountFor};
 use crate::source::{AccountEntry, AccountKind, FolderEntry, FolderKey, FolderTree, MailSource};
 
 /// What a tree row stands for.
@@ -46,7 +47,12 @@ enum Node {
     /// "FAVORITES", "UNIFIED FOLDERS", "ACCOUNTS".
     Section,
     /// An account root.
-    Account(AccountKind),
+    Account {
+        /// The account.
+        id: AccountId,
+        /// Its kind, for the icon.
+        kind: AccountKind,
+    },
     /// An account's name above its favorites (with more than one account).
     FavoritesAccount,
     /// The empty state of Favorites: "No favorite folders yet" and how to add one.
@@ -84,6 +90,11 @@ pub enum FolderPaneEvent {
     MarkAllRead {
         /// The folder (or unified folder).
         key: FolderKey,
+    },
+    /// "Add Alias…" from an account's context menu.
+    AddAlias {
+        /// The account.
+        account: AccountId,
     },
     /// "Delete All Messages", or "Empty Trash" on a Trash folder: the window asks first.
     DeleteAll {
@@ -372,7 +383,13 @@ fn build(
             .expanded(is_expanded(&section, true))
             .children(tree.accounts.iter().enumerate().map(|(ix, account)| {
                 let id: SharedString = format!("account:{}", account.id).into();
-                nodes.insert(id.clone(), Node::Account(account.kind));
+                nodes.insert(
+                    id.clone(),
+                    Node::Account {
+                        id: account.id,
+                        kind: account.kind,
+                    },
+                );
                 let (special, others) = arrange_account_folders(&account.folders);
                 let mut children: Vec<TreeItem> = special
                     .iter()
@@ -552,7 +569,8 @@ impl FolderPane {
 
     /// The context menu of a row: "Open in New Tab" and "Mark All as Read" on folders,
     /// "Delete All Messages" (or "Empty Trash") and "Add to Favorites" or "Remove from
-    /// Favorites" on folders of an account.
+    /// Favorites" on folders of an account, "Edit Account…" and "Add Alias…" on
+    /// accounts.
     fn context_menu(
         menu: PopupMenu,
         node: Option<&Node>,
@@ -560,6 +578,28 @@ impl FolderPane {
         pane: &WeakEntity<Self>,
     ) -> PopupMenu {
         let menu = match node {
+            Some(Node::Account { id, .. }) => {
+                let account = *id;
+                let pane = pane.clone();
+                return menu
+                    .item(
+                        PopupMenuItem::new("Edit Account…")
+                            .icon(Icon::new(IconName::Pencil))
+                            .on_click(move |_, window, cx| {
+                                window.dispatch_action(Box::new(EditAccountFor(account)), cx);
+                            }),
+                    )
+                    .item(
+                        PopupMenuItem::new("Add Alias…")
+                            .icon(Icon::new(IconName::Plus))
+                            .on_click(move |_, _, cx| {
+                                pane.update(cx, |_, cx| {
+                                    cx.emit(FolderPaneEvent::AddAlias { account });
+                                })
+                                .ok();
+                            }),
+                    );
+            }
             Some(Node::Folder {
                 key, title, role, ..
             }) => {
@@ -675,7 +715,7 @@ impl FolderPane {
                     .truncate()
                     .child(item.label.clone()),
             ),
-            Some(Node::Account(kind)) => row.child(
+            Some(Node::Account { kind, .. }) => row.child(
                 h_flex()
                     .gap_1p5()
                     .pl(indent)

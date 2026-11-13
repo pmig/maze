@@ -292,6 +292,24 @@ pub(crate) fn smtp_server_input(
     })
 }
 
+/// Host, port and security of a stored SMTP server (the port defaults to the
+/// security's).
+pub(crate) fn smtp_settings_of(server: &SmtpServerInput) -> SmtpServerSettings {
+    let security = from_store_security(server.security);
+    SmtpServerSettings {
+        host: server.host.clone(),
+        port: server.port.unwrap_or_else(|| smtp_default_port(security)),
+        security,
+    }
+}
+
+/// Sets host, port and security of a stored SMTP server to `settings`.
+pub(crate) fn set_smtp_settings(server: &mut SmtpServerInput, settings: &SmtpServerSettings) {
+    server.host.clone_from(&settings.host);
+    server.port = Some(settings.port);
+    server.security = store_security(settings.security);
+}
+
 /// Gives every identity of a synced account without an SMTP server the derived one
 /// (accounts added before Maze could send). Returns how many identities got one.
 pub(crate) fn ensure_smtp_servers(w: &mut WriteTx<'_>) -> store::Result<usize> {

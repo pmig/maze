@@ -110,8 +110,9 @@ pub use ::contacts::{
     Person, Photo, PostalAddress, Provider as ContactsProvider,
 };
 pub use accounts::{
-    AccountAuth, AccountConfig, AccountErrorKind, AccountInfo, AddImapAccount, AddOAuthAccount,
-    ConnectionTest, ImapSecurity, ImapServer, ServerSuggestion, suggest_imap_server,
+    AccountAuth, AccountChanges, AccountConfig, AccountDetails, AccountErrorKind, AccountInfo,
+    AddImapAccount, AddOAuthAccount, ChangesTest, ConnectionTest, ImapSecurity, ImapServer,
+    ServerSuggestion, suggest_imap_server,
 };
 pub use activity::{AccountActivity, FolderPhase, FolderProgress};
 pub use agents::{ProposalItemSummary, ProposalSummary};

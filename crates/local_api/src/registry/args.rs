@@ -874,6 +874,115 @@ pub struct AccountRemoveArgs {
     pub id: AccountId,
 }
 
+/// `mazemail account set`: what changes about an account; everything not given stays.
+/// Changing the IMAP server, the login name or the SMTP server needs the password
+/// again (Maze only sends a saved password to the servers it was saved for). The
+/// password is never a command-line argument ([`AccountSetCliArgs`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AccountSetArgs {
+    /// The account (`a_…`).
+    #[serde(with = "pubid::one")]
+    #[schemars(with = "String")]
+    pub id: AccountId,
+    /// A new name in the folder pane (settings under the old name move with it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// IMAP host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// IMAP port (default: the current one, or the new security's usual port).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    /// IMAP transport security.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub security: Option<SecurityArg>,
+    /// Login name (empty: the address).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub username: Option<Sensitive<String>>,
+    /// A new password. Stored encrypted, never logged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub password: Option<Sensitive<String>>,
+    /// SMTP host for sending.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smtp_host: Option<String>,
+    /// SMTP port (default: the current one, or the new security's usual port).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smtp_port: Option<u16>,
+    /// SMTP transport security.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smtp_security: Option<SecurityArg>,
+    /// Sign in with Google or Microsoft again, in the browser.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sign_in: bool,
+    /// With `sign_in` on a Microsoft account: the tenant (default: the one it signed
+    /// in with).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub tenant: Option<MicrosoftTenant>,
+}
+
+impl AccountSetArgs {
+    /// Whether a server setting or the login name changes (which needs the password).
+    pub fn changes_servers(&self) -> bool {
+        self.host.is_some()
+            || self.port.is_some()
+            || self.security.is_some()
+            || self.username.is_some()
+            || self.smtp_host.is_some()
+            || self.smtp_port.is_some()
+            || self.smtp_security.is_some()
+    }
+}
+
+/// `mazemail account set` on the command line.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct AccountSetCliArgs {
+    /// The account (`a_…`, see `mazemail account list`).
+    #[arg(value_name = "ACCOUNT")]
+    pub id: AccountId,
+    /// A new name in the folder pane.
+    #[arg(long)]
+    pub name: Option<String>,
+    /// IMAP host.
+    #[arg(long)]
+    pub host: Option<String>,
+    /// IMAP port.
+    #[arg(long)]
+    pub port: Option<u16>,
+    /// IMAP transport security.
+    #[arg(long, value_enum)]
+    pub security: Option<SecurityArg>,
+    /// Login name ("" for the address).
+    #[arg(long)]
+    pub username: Option<String>,
+    /// Set a new password: asks for it on the terminal (without echo). Server changes
+    /// ask for it anyway.
+    #[arg(long, conflicts_with = "password_stdin")]
+    pub password: bool,
+    /// Read the password from stdin (first line) instead of asking on the terminal.
+    #[arg(long)]
+    pub password_stdin: bool,
+    /// SMTP host for sending.
+    #[arg(long)]
+    pub smtp_host: Option<String>,
+    /// SMTP port.
+    #[arg(long)]
+    pub smtp_port: Option<u16>,
+    /// SMTP transport security.
+    #[arg(long, value_enum)]
+    pub smtp_security: Option<SecurityArg>,
+    /// Sign in with Google or Microsoft again, in the browser.
+    #[arg(long, conflicts_with_all = ["password", "password_stdin", "host", "port", "security", "username", "smtp_host", "smtp_port", "smtp_security"])]
+    pub sign_in: bool,
+    /// With `--sign-in` on a Microsoft account: the tenant ID or domain, or `common`,
+    /// `organizations`, `consumers` (default: the one it signed in with).
+    #[arg(long, value_name = "TENANT", requires = "sign_in")]
+    pub tenant: Option<MicrosoftTenant>,
+}
+
 /// `mazemail sync`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

@@ -1032,6 +1032,10 @@ impl MailWindow {
                 let result = self.source.mark_all_read(key);
                 self.after_folder_action(result, "marked read", window, cx);
             }
+            FolderPaneEvent::AddAlias { account } => {
+                let name = self.account_name(*account);
+                self.open_alias_dialog(*account, name, window, cx);
+            }
             FolderPaneEvent::DeleteAll {
                 folder,
                 title,
@@ -1075,6 +1079,49 @@ impl MailWindow {
     /// "Mail: Add Alias" in the palette: the dialog for the account of the selected
     /// mail, else of the open folder, else the only account.
     fn add_alias_for_current_account(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(account) = self.current_account(cx) else {
+            window.push_notification(
+                Notification::info(
+                    "Open a folder of the account first, or right-click the account in the \
+                     folder pane and choose Add Alias…",
+                )
+                .title(PRODUCT_NAME),
+                cx,
+            );
+            return;
+        };
+        let name = self.account_name(account);
+        self.open_alias_dialog(account, name, window, cx);
+    }
+
+    /// "Maze: Edit Account" in the palette: the app's dialog for the account of the
+    /// selected mail, else of the open folder, else the only account.
+    fn edit_current_account(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        match self.current_account(cx) {
+            Some(account) => window.dispatch_action(Box::new(EditAccountFor(account)), cx),
+            None => window.push_notification(
+                Notification::info(
+                    "Open a folder of the account first, or right-click the account in the \
+                     folder pane and choose Edit Account…",
+                )
+                .title(PRODUCT_NAME),
+                cx,
+            ),
+        }
+    }
+
+    fn account_name(&self, account: mazemail_types::AccountId) -> SharedString {
+        self.source
+            .folder_tree()
+            .accounts
+            .iter()
+            .find(|a| a.id == account)
+            .map(|a| a.name.clone())
+            .unwrap_or_default()
+    }
+
+    /// The account of the selected mail, else of the open folder, else the only one.
+    fn current_account(&self, cx: &App) -> Option<mazemail_types::AccountId> {
         let tree = self.source.folder_tree();
         let from_selection =
             self.thread_list(cx)
@@ -1094,24 +1141,7 @@ impl MailWindow {
                 .map(|account| account.id)
         };
         let only = (tree.accounts.len() == 1).then(|| tree.accounts[0].id);
-        let Some(account) = from_selection.or_else(from_folder).or(only) else {
-            window.push_notification(
-                Notification::info(
-                    "Open a folder of the account first, or right-click the account in the \
-                     folder pane and choose Add Alias…",
-                )
-                .title(PRODUCT_NAME),
-                cx,
-            );
-            return;
-        };
-        let name = tree
-            .accounts
-            .iter()
-            .find(|a| a.id == account)
-            .map(|a| a.name.clone())
-            .unwrap_or_default();
-        self.open_alias_dialog(account, name, window, cx);
+        from_selection.or_else(from_folder).or(only)
     }
 
     /// "Add Alias…": asks for the address (and an optional name) and saves it in the
@@ -2129,6 +2159,9 @@ impl MailWindow {
         }))
         .on_action(cx.listener(|this, _: &AddAlias, window, cx| {
             this.add_alias_for_current_account(window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &EditAccount, window, cx| {
+            this.edit_current_account(window, cx);
         }))
         .on_action(cx.listener(|this, _: &ClearSelection, _, cx| {
             let cleared = this
@@ -3879,6 +3912,100 @@ mod tests {
         cx.run_until_parked();
         assert!(cx.debug_bounds("sync-activity").is_none(), "closed");
         assert!(!view.read_with(cx, |w, _| w.is_sync_activity_open()));
+    }
+
+    /// An account that needs a sign-in (or has an error) offers "Edit Account…" in
+    /// "Sync activity", which asks the app to edit that account.
+    #[gpui::test]
+    fn sync_activity_offers_to_edit_an_account_that_needs_it(cx: &mut TestAppContext) {
+        use crate::source::{AccountActivity, AccountKind, ActivityState};
+        use mazemail_types::AccountId;
+
+        cx.update(|cx| {
+            ui::init(cx);
+            crate::init(cx);
+        });
+        let fake = Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
+        let account = |id: i64, state: ActivityState| AccountActivity {
+            account: AccountId(id),
+            name: format!("Account {id}").into(),
+            kind: AccountKind::Imap,
+            state,
+            folders: Vec::new(),
+            replaying_ops: false,
+            bodies_queued: 0,
+            last_synced: None,
+            pending_ops: 0,
+            stuck_ops: 0,
+            oldest_op: None,
+            outbox: 0,
+        };
+        fake.set_sync_activity(vec![
+            account(1, ActivityState::Idle),
+            account(
+                2,
+                ActivityState::SignInRequired {
+                    reason: "the server rejected the password".into(),
+                },
+            ),
+            account(
+                3,
+                ActivityState::Offline {
+                    reason: "connection refused".into(),
+                },
+            ),
+        ]);
+        let source: Arc<dyn MailSource> = fake;
+        let (_view, cx) = cx.add_window_view(|window, cx| {
+            MailWindow::new(source, &MailWindowOptions::default(), window, cx)
+        });
+        cx.update(|window, _| window.activate_window());
+        let edits: Rc<RefCell<Vec<AccountId>>> = Rc::default();
+        cx.update(|_, cx| {
+            let edits = edits.clone();
+            cx.on_action(move |action: &EditAccountFor, _| edits.borrow_mut().push(action.0));
+        });
+        cx.run_until_parked();
+        let item = cx.debug_bounds("status-sync").expect("the sync item");
+        cx.simulate_click(item.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("sync-activity-edit-1").is_none(),
+            "up to date"
+        );
+        assert!(
+            cx.debug_bounds("sync-activity-edit-3").is_none(),
+            "offline: retrying is the fix"
+        );
+        let edit = cx
+            .debug_bounds("sync-activity-edit-2")
+            .expect("Edit Account…");
+        cx.simulate_click(edit.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert_eq!(*edits.borrow(), vec![AccountId(2)]);
+    }
+
+    /// "Maze: Edit Account" in the palette asks the app to edit the account of the open
+    /// folder.
+    #[gpui::test]
+    fn the_palette_edits_the_account_of_the_open_folder(cx: &mut TestAppContext) {
+        let (view, cx) = open(cx);
+        cx.run_until_parked();
+        let expected = view.read_with(cx, |w, cx| w.current_account(cx));
+        assert!(expected.is_some(), "a folder of an account is open");
+        let edits: Rc<RefCell<Vec<mazemail_types::AccountId>>> = Rc::default();
+        cx.update(|_, cx| {
+            let edits = edits.clone();
+            cx.on_action(move |action: &EditAccountFor, _| edits.borrow_mut().push(action.0));
+        });
+        cx.simulate_keystrokes("cmd-shift-p");
+        cx.simulate_input("edit account");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert_eq!(
+            edits.borrow().clone(),
+            expected.into_iter().collect::<Vec<_>>()
+        );
     }
 
     /// The title bar's "+" and `cmd-n` ask the app for a new draft; Reply, Reply All and
