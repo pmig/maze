@@ -167,7 +167,16 @@
       "escape": "composer::Close",
       "cmd-s": "composer::SaveDraft",
       "cmd-shift-a": "composer::Attach",
-      "cmd-shift-c": "composer::ToggleCcBcc"
+      "cmd-shift-c": "composer::ToggleCcBcc",
+      // Formatting keys write Markdown around the selection in the body (and do
+      // nothing in the other fields). In a composer they win over the main window's
+      // keys: cmd-k is a link here, not Go to Folder, and cmd-b bold, not the folder
+      // pane.
+      "cmd-b": "composer::Bold",
+      "cmd-i": "composer::Italic",
+      "cmd-shift-x": "composer::Strikethrough",
+      "cmd-e": "composer::Code",
+      "cmd-k": "composer::Link"
     }
   },
   {

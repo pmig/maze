@@ -22,6 +22,17 @@ actions!(
         ToggleCcBcc,
         /// Move the draft from its tab to a window of its own.
         OpenInNewWindow,
+        /// Make the selection in the body bold (`**`), or plain again (`cmd-b`).
+        Bold,
+        /// Make the selection in the body italic (`_`), or plain again (`cmd-i`).
+        Italic,
+        /// Strike the selection in the body through (`~~`), or not (`cmd-shift-x`).
+        Strikethrough,
+        /// Make the selection in the body inline code (`` ` ``), or not (`cmd-e`).
+        Code,
+        /// Make the selection in the body a link (`[text](url)`), or text again
+        /// (`cmd-k`). The address is the clipboard's if it holds one.
+        Link,
     ]
 );
 

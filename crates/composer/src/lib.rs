@@ -15,6 +15,11 @@
 //! completion from [`ComposeBackend::complete_address`] (address books and the
 //! addresses you wrote to) and chips that can be dragged between the fields.
 //!
+//! The body's formatting keys (`cmd-b` bold, `cmd-i` italic, `cmd-k` link, …) write
+//! Markdown around the selection (module `format`). They are bound in the `Composer`
+//! context, so inside a composer they win over the main window's keys on the same
+//! keystrokes (`cmd-k` Go to Folder, `cmd-b` the folder pane).
+//!
 //! The body is spell checked as you type (crate `spelling`, PLAN-spellcheck) in the
 //! languages the app sets with [`set_spellcheck`] (the `spellcheck` setting); the
 //! personal dictionary comes from and goes to the backend
@@ -22,6 +27,7 @@
 
 pub mod actions;
 mod backend;
+mod format;
 pub mod recipients;
 mod window;
 

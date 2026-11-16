@@ -914,6 +914,17 @@ body filled in; `mazemail open 'mailto:…'` does the same from a script:
   normal formatted mail. Single line breaks are kept. A new line starts at the
   indentation of the one before, so nested lists stay nested; `tab` and `shift-tab`
   indent and outdent.
+- **Formatting keys** write the Markdown for you around the selection: `cmd-b` bold
+  (`**`), `cmd-i` italic (`_`), `cmd-shift-x` strikethrough (`~~`), `cmd-e` inline code
+  (`` ` ``) and `cmd-k` a link (`[text](url)`). Pressed again on formatted text, they
+  take the formatting away. The words stay selected, so keys combine (`cmd-b cmd-i` is
+  bold italic). With nothing selected you get an empty pair to type into. A selection
+  over several lines formats each line on its own. For a link, Maze uses the address
+  on the clipboard if there is one; otherwise the placeholder `url` is selected, ready
+  to be typed over, and a selected address links to itself. In a composer these keys
+  always format text, even where the main window uses the same key (`cmd-k` is Go to
+  Folder and `cmd-b` the folder pane everywhere else); in To, Cc, Bcc and Subject they
+  do nothing.
 - **Attach…** (`cmd-shift-a`) adds files; they are read when the message is sent.
 - **"Sent with Maze"** (on by default) adds a short line below your messages:
   "Sent with Maze (https://mazemail.dev)", with a plain link to the website, no
@@ -1284,6 +1295,8 @@ at once. These are bound today:
 | Reply / reply all / forward                 | `cmd-r` / `cmd-shift-r` / `cmd-l`                    |
 | Send                                        | `cmd-enter`                                          |
 | Save draft / attach / Cc and Bcc            | `cmd-s` / `cmd-shift-a` / `cmd-shift-c`              |
+| Bold / italic / strikethrough (body)        | `cmd-b` / `cmd-i` / `cmd-shift-x`                    |
+| Inline code / link (body)                   | `cmd-e` / `cmd-k`                                    |
 | Recipient: make a chip / take a suggestion   | `,` `;` `enter` `tab` / `enter`, `tab`               |
 | Recipient: select the last chip / remove it  | `backspace` / `backspace`, `delete`                  |
 | Recipient: move between chips                | `left` / `right`                                     |
@@ -1305,6 +1318,9 @@ at once. These are bound today:
 
 Single-letter shortcuts work when the message list or a message has focus, never inside
 a text field; they act on the tab that has the focus.
+
+Inside a composer, the formatting keys take precedence: `cmd-k` makes a link and
+`cmd-b` bold instead of Go to Folder and the folder pane.
 
 Zed splits and moves between panes with `cmd-k` followed by an arrow key. In Maze
 `cmd-k` is Go to Folder, and a two-key shortcut starting with `cmd-k` would make it

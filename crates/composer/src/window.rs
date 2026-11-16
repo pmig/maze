@@ -76,10 +76,11 @@ use ui::panes::{Item, ItemEvent, SerializedItem};
 use ui::theme::scaled;
 
 use crate::actions::{
-    AddToDictionary, Attach, Close, IgnoreSpelling, OpenInNewWindow, ReplaceMisspelling, SaveDraft,
-    Send, ToggleCcBcc, ToggleSpellingLanguage,
+    AddToDictionary, Attach, Bold, Close, Code, IgnoreSpelling, Italic, Link, OpenInNewWindow,
+    ReplaceMisspelling, SaveDraft, Send, Strikethrough, ToggleCcBcc, ToggleSpellingLanguage,
 };
 use crate::backend::{ComposeBackend, IdentityChoice, SendOutcome};
+use crate::format::{self, Style};
 use crate::recipients::{CompleteAddress, RecipientField, RecipientFieldEvent};
 
 mod spellcheck;
@@ -1013,6 +1014,45 @@ impl Composer {
         items
     }
 
+    /// Formats the body's selection with `style` (or takes it away). Only in the body:
+    /// in the other fields the key does nothing, rather than reach the main window.
+    fn format(&mut self, style: Style, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if !self.body_has_focus(window, cx) {
+            return;
+        }
+        let body = self.body.read(cx);
+        let edit = format::toggle(&body.value(), body.selected_range(), style);
+        if let Some(edit) = edit {
+            self.apply_edit(edit, window, cx);
+        }
+    }
+
+    /// Makes the body's selection a link (or text again), to the address on the
+    /// clipboard if there is one.
+    fn link(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if !self.body_has_focus(window, cx) {
+            return;
+        }
+        let clipboard = cx.read_from_clipboard().and_then(|item| item.text());
+        let body = self.body.read(cx);
+        let edit = format::link(&body.value(), body.selected_range(), clipboard.as_deref());
+        self.apply_edit(edit, window, cx);
+    }
+
+    fn body_has_focus(&self, window: &Window, cx: &App) -> bool {
+        self.body.focus_handle(cx).contains_focused(window, cx)
+    }
+
+    /// One undo step, like any other edit; the body's change event marks the draft
+    /// dirty and rechecks the spelling.
+    fn apply_edit(&mut self, edit: format::Edit, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.body.update(cx, |body, cx| {
+            body.set_selected_range(edit.range, cx);
+            body.replace(edit.text, window, cx);
+            body.set_selected_range(edit.select, cx);
+        });
+    }
+
     /// The body in the UI font at the size and leading of a plain text field (the
     /// code editor would use the monospace font).
     fn render_body(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
@@ -1113,6 +1153,19 @@ impl Render for Composer {
             .on_action(cx.listener(|this, _: &Attach, window, cx| this.attach(window, cx)))
             .on_action(cx.listener(|this, _: &ToggleCcBcc, window, cx| this.toggle_cc(window, cx)))
             .on_action(cx.listener(|this, _: &OpenInNewWindow, _, cx| this.open_in_new_window(cx)))
+            .on_action(cx.listener(|this, _: &Bold, window, cx| {
+                this.format(Style::Bold, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &Italic, window, cx| {
+                this.format(Style::Italic, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &Strikethrough, window, cx| {
+                this.format(Style::Strikethrough, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &Code, window, cx| {
+                this.format(Style::Code, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &Link, window, cx| this.link(window, cx)))
             .on_action(
                 cx.listener(|this, action: &ReplaceMisspelling, window, cx| {
                     this.replace_misspelling(action, window, cx);

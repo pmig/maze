@@ -1809,3 +1809,131 @@ fn a_draft_to_a_contact_opens_with_its_chip(cx: &mut TestAppContext) {
     assert_eq!(chips(&to, cx)[0].label(), "Anna Example");
     assert_eq!(field_text(&to, cx), "");
 }
+
+// ---- formatting keys ------------------------------------------------------------------
+
+fn select(view: &Entity<Composer>, range: Range<usize>, cx: &mut VisualTestContext) {
+    view.update_in(cx, |c, _, cx| {
+        c.body.update(cx, |b, cx| b.set_selected_range(range, cx));
+    });
+}
+
+fn selected_range(view: &Entity<Composer>, cx: &mut VisualTestContext) -> Range<usize> {
+    view.read_with(cx, |c, cx| c.body.read(cx).selected_range())
+}
+
+#[gpui::test]
+fn formatting_keys_write_markdown_around_the_selection(cx: &mut TestAppContext) {
+    let (view, cx) = open_body(cx, "Say hello now");
+    select(&view, 4..9, cx);
+    cx.simulate_keystrokes("cmd-b");
+    assert_eq!(body_text(&view, cx), "Say **hello** now");
+    // The words stay selected, so the next key formats them too.
+    assert_eq!(selected_range(&view, cx), 6..11);
+    cx.simulate_keystrokes("cmd-i");
+    assert_eq!(body_text(&view, cx), "Say **_hello_** now");
+    cx.simulate_keystrokes("cmd-i cmd-b");
+    assert_eq!(body_text(&view, cx), "Say hello now");
+    assert!(view.read_with(cx, |c, _| c.is_dirty()));
+
+    cx.simulate_keystrokes("cmd-shift-x");
+    assert_eq!(body_text(&view, cx), "Say ~~hello~~ now");
+    cx.simulate_keystrokes("cmd-shift-x cmd-e");
+    assert_eq!(body_text(&view, cx), "Say `hello` now");
+
+    // Each key is one undo step.
+    cx.simulate_keystrokes(UNDO);
+    assert_eq!(body_text(&view, cx), "Say hello now");
+}
+
+#[gpui::test]
+fn without_a_selection_the_markers_wait_for_the_words(cx: &mut TestAppContext) {
+    let (view, cx) = open_body(cx, "Hi ");
+    select(&view, 3..3, cx);
+    cx.simulate_keystrokes("cmd-b");
+    cx.simulate_input("there");
+    assert_eq!(body_text(&view, cx), "Hi **there**");
+}
+
+#[gpui::test]
+fn cmd_k_makes_a_link(cx: &mut TestAppContext) {
+    let (view, cx) = open_body(cx, "See the docs.");
+    select(&view, 4..12, cx);
+    cx.simulate_keystrokes("cmd-k");
+    // The placeholder address is selected: typing replaces it.
+    cx.simulate_input("https://maze.example");
+    assert_eq!(
+        body_text(&view, cx),
+        "See [the docs](https://maze.example)."
+    );
+
+    // With an address on the clipboard, that one.
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+        "https://maze.example/a".into(),
+    ));
+    view.update_in(cx, |c, window, cx| {
+        c.body
+            .update(cx, |b, cx| b.set_value("Read this", window, cx));
+    });
+    select(&view, 5..9, cx);
+    cx.simulate_keystrokes("cmd-k");
+    assert_eq!(body_text(&view, cx), "Read [this](https://maze.example/a)");
+
+    // Again on the link: text again.
+    select(&view, 5..35, cx);
+    cx.simulate_keystrokes("cmd-k");
+    assert_eq!(body_text(&view, cx), "Read this");
+}
+
+#[gpui::test]
+fn formatting_keys_leave_the_other_fields_alone(cx: &mut TestAppContext) {
+    let (view, cx) = open_body(cx, "Body");
+    view.update_in(cx, |c, window, cx| {
+        let focus = c.subject.focus_handle(cx);
+        window.focus(&focus, cx);
+    });
+    cx.simulate_input("Plans");
+    cx.simulate_keystrokes("cmd-b cmd-k");
+    assert_eq!(
+        view.read_with(cx, |c, cx| c.subject.read(cx).value().to_string()),
+        "Plans"
+    );
+    assert_eq!(body_text(&view, cx), "Body");
+}
+
+mod main_window_keys {
+    gpui::actions!(test_workspace, [GoToFolder, ToggleFolderPane]);
+}
+
+#[gpui::test]
+fn in_a_tab_the_formatting_keys_win_over_the_main_windows(cx: &mut TestAppContext) {
+    use main_window_keys::{GoToFolder, ToggleFolderPane};
+
+    let backend = Arc::new(FakeBackend::default());
+    let mut options = options();
+    options.draft.to = vec![Address::new(None::<String>, "anna@example.com")];
+    options.draft.body_markdown = "Say hello".into();
+    let (composer, _group, cx) = open_tab(cx, backend, options);
+    let reached = Rc::new(RefCell::new(Vec::new()));
+    cx.update(|_, cx| {
+        // The main window's keys on the same keystrokes (Go to Folder, the folder pane).
+        cx.bind_keys([
+            gpui::KeyBinding::new("cmd-k", GoToFolder, Some("Workspace")),
+            gpui::KeyBinding::new("cmd-b", ToggleFolderPane, Some("Workspace")),
+        ]);
+        let r = reached.clone();
+        cx.on_action(move |_: &GoToFolder, _| r.borrow_mut().push("go to folder"));
+        let r = reached.clone();
+        cx.on_action(move |_: &ToggleFolderPane, _| r.borrow_mut().push("folder pane"));
+    });
+    composer.update_in(cx, |c, window, cx| {
+        let focus = c.body.focus_handle(cx);
+        window.focus(&focus, cx);
+        c.body.update(cx, |b, cx| b.set_selected_range(4..9, cx));
+    });
+    cx.simulate_keystrokes("cmd-b");
+    assert_eq!(body_text(&composer, cx), "Say **hello**");
+    cx.simulate_keystrokes("cmd-k");
+    assert_eq!(body_text(&composer, cx), "Say **[hello](url)**");
+    assert!(reached.borrow().is_empty(), "{:?}", reached.borrow());
+}
