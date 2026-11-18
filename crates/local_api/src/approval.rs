@@ -16,6 +16,7 @@ use serde_json::Value;
 use tokio::sync::{Mutex, oneshot};
 
 use crate::peer::ProcessInfo;
+use crate::registry::args::ImportArgs;
 use crate::token::{Grant, Profile, TokenId, TokenScope, Ttl};
 
 /// What the user is asked to approve.
@@ -117,11 +118,31 @@ impl ApprovalRequest {
                     self.scope.describe()
                 )
             }
-            ApprovalKind::Command { .. } => format!(
-                "{who}{parent} asks to run `mazemail {}` with profile {}.{holder}",
-                self.command.replace('.', " "),
-                self.profile
-            ),
+            ApprovalKind::Command { .. } => {
+                let what = self
+                    .summary()
+                    .map(|(verb, what)| format!(" It {} {what}.", verb.to_lowercase()))
+                    .unwrap_or_default();
+                format!(
+                    "{who}{parent} asks to run `mazemail {}` with profile {}.{what}{holder}",
+                    self.command.replace('.', " "),
+                    self.profile
+                )
+            }
+        }
+    }
+
+    /// What a command does, as a verb and an object ("Imports", "only filters from
+    /// /p/abcd.default"), for commands whose arguments say it without mail content.
+    pub fn summary(&self) -> Option<(&'static str, String)> {
+        let ApprovalKind::Command { args, .. } = &self.kind else {
+            return None;
+        };
+        match self.command.as_str() {
+            "import" => serde_json::from_value::<ImportArgs>(args.expose().clone())
+                .ok()
+                .map(|args| ("Imports", args.describe())),
+            _ => None,
         }
     }
 }
@@ -338,6 +359,34 @@ mod tests {
         assert!(text.contains("`mazemail rule add`"), "{text}");
         assert!(text.contains("already holds token tk_abc"), "{text}");
         assert!(!text.contains("secret@example.com"), "{text}");
+    }
+
+    #[test]
+    fn import_prompts_say_what_is_imported() {
+        let mut command = login_request();
+        command.command = "import".into();
+        command.kind = ApprovalKind::Command {
+            args: Sensitive::new(serde_json::json!({
+                "path": "/home/anna/.thunderbird/abcd.default",
+                "only": ["accounts", "filters"],
+            })),
+            rememberable: true,
+        };
+        assert_eq!(
+            command.summary(),
+            Some((
+                "Imports",
+                "only accounts and filters from /home/anna/.thunderbird/abcd.default".into()
+            ))
+        );
+        let text = command.describe();
+        assert!(
+            text.contains(
+                "`mazemail import` with profile read-only. It imports only accounts and \
+                 filters from /home/anna/.thunderbird/abcd.default."
+            ),
+            "{text}"
+        );
     }
 
     #[tokio::test]

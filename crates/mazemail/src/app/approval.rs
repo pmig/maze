@@ -71,7 +71,7 @@ async fn ask(request: ApprovalRequest, cx: &mut AsyncApp) -> Decision {
 }
 
 /// The facts the dialog shows, as `(label, value)` rows. No mail content: command
-/// arguments aren't shown.
+/// arguments aren't shown, only a summary where it has none (what an import brings in).
 pub(crate) fn rows(request: &ApprovalRequest) -> Vec<(&'static str, String)> {
     let mut rows = vec![("Program", request.process.describe())];
     if let Some(parent) = &request.process.parent {
@@ -104,6 +104,9 @@ pub(crate) fn rows(request: &ApprovalRequest) -> Vec<(&'static str, String)> {
                 "Asks to run",
                 format!("mazemail {}", request.command.replace('.', " ")),
             ));
+            if let Some((verb, what)) = request.summary() {
+                rows.push((verb, what));
+            }
             rows.push(("Profile", request.profile.to_string()));
             rows.push(("Scope", request.scope.describe()));
         }
@@ -212,5 +215,33 @@ mod tests {
         assert_eq!(get("Lifetime"), Some("1h"));
         assert_eq!(get("Label"), Some("claude"));
         assert_eq!(title(&request), "Allow a program to use Maze?");
+    }
+
+    #[test]
+    fn an_import_dialog_says_what_is_imported() {
+        let request = ApprovalRequest {
+            process: ProcessInfo {
+                pid: Some(42),
+                exe: Some("/usr/local/bin/mazemail".into()),
+                parent: None,
+            },
+            requester_token: None,
+            profile: Profile::Writer,
+            scope: TokenScope::all(),
+            lifetime: None,
+            command: "import".into(),
+            kind: ApprovalKind::Command {
+                args: mazemail_types::Sensitive::new(serde_json::json!({
+                    "path": "/p/abcd.default",
+                    "only": ["contacts"],
+                })),
+                rememberable: true,
+            },
+        };
+        let rows = rows(&request);
+        assert!(
+            rows.contains(&("Imports", "only contacts from /p/abcd.default".to_owned())),
+            "{rows:?}"
+        );
     }
 }

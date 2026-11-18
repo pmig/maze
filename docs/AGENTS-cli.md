@@ -1036,7 +1036,7 @@ mazemail export 'in:inbox after:2026-01-01' --to inbox.mbox
 
 Import an mbox file, a Maildir or a Thunderbird profile.
 
-Uploads mbox and Maildir mail into a folder of an IMAP account (--account, --folder; the folder is created if missing), queued and sent by the sync engine; it shows up after the folder's next sync. Messages the folder already has are skipped. A Thunderbird profile brings its IMAP accounts, identities, tags, filters, saved searches and address books; POP3 accounts and Local Folders are skipped (Maze is IMAP only). Always asks for approval in Maze.
+Uploads mbox and Maildir mail into a folder of an IMAP account (--account, --folder; the folder is created if missing), queued and sent by the sync engine; it shows up after the folder's next sync. Messages the folder already has are skipped. A Thunderbird profile brings its IMAP accounts, identities, tags, filters, saved searches and address books; POP3 accounts and Local Folders are skipped (Maze is IMAP only). --only picks parts of the profile (accounts, contacts, filters, saved-searches, tags); filters go to accounts an earlier import of the profile created and are skipped without them. Always asks for approval in Maze, which shows what is imported.
 
 Permission: `ask`
 
@@ -1050,6 +1050,7 @@ mazemail import [OPTIONS] <PATH>
 | `--format <FORMAT>` | Format (detected when omitted). One of `mbox`, `maildir`, `thunderbird`. |
 | `--account <ACCOUNT>` | Account to upload mbox and Maildir mail into (may be left out when there is only one account). Not for Thunderbird profiles, which bring their own accounts. |
 | `--folder <PATH>` | Folder of the account to upload into, as a path (`Archive/2019`); created on the server if missing. Default: a top-level folder named after the file. |
+| `--only <PARTS>...` | Import only these parts of a Thunderbird profile, comma-separated (default: everything). Filters go to accounts already in Maze. One of `accounts`, `contacts`, `filters`, `saved-searches`, `tags`. Repeatable. |
 
 Output (`--json`):
 
@@ -1070,6 +1071,8 @@ Examples:
 mazemail import ~/old-mail.mbox --account a_b --folder Archive/2019
 # Import a Thunderbird profile
 mazemail import ~/Library/Thunderbird/Profiles/abcd.default-release
+# Import only the address books and filters of a profile
+mazemail import ~/.thunderbird/abcd.default-release --only contacts,filters
 ```
 
 ### `mazemail account list`

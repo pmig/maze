@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use import::thunderbird::{ImportOptions, ThunderbirdProfile};
 use import::{ImportStats, ProgressUpdate, UploadTarget};
-use local_api::registry::args::{ImportArgs, ImportFormat};
+use local_api::registry::args::{ImportArgs, ImportFormat, ImportPart};
 use local_api::{CommandError, Progress, RequestContext};
 use mazemail_types::{AccountId, FolderId, FolderRole};
 use store::{AccountKind, Queries as _, Store};
@@ -112,7 +112,12 @@ pub(crate) async fn run(
                     "a Thunderbird profile brings its own accounts; drop --account and --folder",
                 ));
             }
-            Jobs::Thunderbird(args.path.clone())
+            Jobs::Thunderbird(args.path.clone(), import_options(&args))
+        }
+        ImportFormat::Mbox | ImportFormat::Maildir if !args.only.is_empty() => {
+            return Err(CommandError::invalid_args(
+                "--only picks parts of a Thunderbird profile; drop it for mbox and Maildir",
+            ));
         }
         ImportFormat::Mbox | ImportFormat::Maildir => {
             let account = target_account(core, ctx, args.account)?;
@@ -198,9 +203,20 @@ pub(crate) async fn run(
     Ok(imported)
 }
 
+/// The parts of a Thunderbird profile `--only` picks (all without it).
+fn import_options(args: &ImportArgs) -> ImportOptions {
+    ImportOptions {
+        accounts: args.includes(ImportPart::Accounts),
+        address_books: args.includes(ImportPart::Contacts),
+        filters: args.includes(ImportPart::Filters),
+        saved_searches: args.includes(ImportPart::SavedSearches),
+        tags: args.includes(ImportPart::Tags),
+    }
+}
+
 /// What the blocking part does.
 enum Jobs {
-    Thunderbird(PathBuf),
+    Thunderbird(PathBuf, ImportOptions),
     Upload {
         format: ImportFormat,
         /// Each source (the file, the Maildir and its Maildir++ subfolders) and where
@@ -359,15 +375,9 @@ fn blocking_import(
             }
             Ok((out, account))
         }
-        Jobs::Thunderbird(path) => {
+        Jobs::Thunderbird(path, options) => {
             let profile = ThunderbirdProfile::load(&path)?;
-            let outcome = import::thunderbird::import(
-                &profile,
-                store,
-                None,
-                &ImportOptions::default(),
-                &progress,
-            )?;
+            let outcome = import::thunderbird::import(&profile, store, None, &options, &progress)?;
             Ok((
                 Imported {
                     accounts: outcome.accounts_created as u64,
@@ -395,5 +405,28 @@ mod tests {
             "Archive 2023"
         );
         assert_eq!(file_label(Path::new("/x/Mail")), "Mail");
+    }
+
+    #[test]
+    fn only_picks_the_import_options() {
+        let mut args = ImportArgs {
+            path: "/p".into(),
+            format: None,
+            account: None,
+            folder: None,
+            only: Vec::new(),
+        };
+        assert_eq!(import_options(&args), ImportOptions::default());
+        args.only = vec![ImportPart::Contacts, ImportPart::SavedSearches];
+        assert_eq!(
+            import_options(&args),
+            ImportOptions {
+                accounts: false,
+                address_books: true,
+                filters: false,
+                saved_searches: true,
+                tags: false,
+            }
+        );
     }
 }

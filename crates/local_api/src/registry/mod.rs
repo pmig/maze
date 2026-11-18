@@ -592,7 +592,10 @@ static REGISTRY: &[CommandSpec] = &[
                engine; it shows up after the folder's next sync. Messages the folder already \
                has are skipped. A Thunderbird profile brings its IMAP accounts, identities, \
                tags, filters, saved searches and address books; POP3 accounts and Local \
-               Folders are skipped (Maze is IMAP only). Always asks for approval in Maze.",
+               Folders are skipped (Maze is IMAP only). --only picks parts of the profile \
+               (accounts, contacts, filters, saved-searches, tags); filters go to accounts \
+               an earlier import of the profile created and are skipped without them. \
+               Always asks for approval in Maze, which shows what is imported.",
         permission: Permission::Ask,
         requires_token: true,
         touches_mail: true,
@@ -604,6 +607,10 @@ static REGISTRY: &[CommandSpec] = &[
             ex(
                 "mazemail import ~/Library/Thunderbird/Profiles/abcd.default-release",
                 "Import a Thunderbird profile",
+            ),
+            ex(
+                "mazemail import ~/.thunderbird/abcd.default-release --only contacts,filters",
+                "Import only the address books and filters of a profile",
             ),
         ],
         args_schema: schema::<ImportArgs>,

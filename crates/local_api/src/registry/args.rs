@@ -718,6 +718,46 @@ pub enum ImportFormat {
     Thunderbird,
 }
 
+/// Parts of a Thunderbird profile (`mazemail import --only`).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImportPart {
+    /// IMAP accounts with their identities, signatures and SMTP servers.
+    Accounts,
+    /// Address books, as contacts.
+    Contacts,
+    /// Message filters, as disabled rules of accounts already in Maze.
+    Filters,
+    /// Saved searches (Thunderbird's virtual folders).
+    SavedSearches,
+    /// Tags with their names and colors.
+    Tags,
+}
+
+impl ImportPart {
+    /// Every part, in the order of the help text.
+    pub const ALL: [Self; 5] = [
+        Self::Accounts,
+        Self::Contacts,
+        Self::Filters,
+        Self::SavedSearches,
+        Self::Tags,
+    ];
+
+    /// How the part is named in prompts ("saved searches").
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Accounts => "accounts",
+            Self::Contacts => "contacts",
+            Self::Filters => "filters",
+            Self::SavedSearches => "saved searches",
+            Self::Tags => "tags",
+        }
+    }
+}
+
 /// `mazemail import`.
 #[derive(Debug, Clone, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -740,6 +780,41 @@ pub struct ImportArgs {
     #[arg(long, value_name = "PATH")]
     #[serde(default)]
     pub folder: Option<String>,
+    /// Import only these parts of a Thunderbird profile, comma-separated (default:
+    /// everything). Filters go to accounts already in Maze.
+    #[arg(long, value_enum, value_name = "PARTS", value_delimiter = ',')]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub only: Vec<ImportPart>,
+}
+
+impl ImportArgs {
+    /// Whether the part is imported: `--only` names it, or there is no `--only`.
+    pub fn includes(&self, part: ImportPart) -> bool {
+        self.only.is_empty() || self.only.contains(&part)
+    }
+
+    /// What the import brings in, for the approval prompt, without mail content:
+    /// "everything in /p/abcd.default", "accounts and filters from /p/abcd.default".
+    pub fn describe(&self) -> String {
+        let path = self.path.display();
+        if self.only.is_empty() {
+            return match self.format {
+                Some(ImportFormat::Mbox | ImportFormat::Maildir) => format!("the mail in {path}"),
+                Some(ImportFormat::Thunderbird) | None => format!("everything in {path}"),
+            };
+        }
+        let parts: Vec<&str> = ImportPart::ALL
+            .into_iter()
+            .filter(|part| self.only.contains(part))
+            .map(ImportPart::label)
+            .collect();
+        let list = match parts.split_last() {
+            Some((last, [])) => (*last).to_owned(),
+            Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+            None => String::new(),
+        };
+        format!("only {list} from {path}")
+    }
 }
 
 /// `mazemail account list`.
@@ -1056,6 +1131,27 @@ mod tests {
             serde_json::to_value(&args).unwrap()["accounts"],
             json!(["a_c"])
         );
+    }
+
+    #[test]
+    fn import_descriptions_name_the_parts() {
+        let mut args: ImportArgs =
+            serde_json::from_value(json!({ "path": "/p/abcd.default" })).unwrap();
+        assert_eq!(args.describe(), "everything in /p/abcd.default");
+        args.only = vec![ImportPart::Filters];
+        assert_eq!(args.describe(), "only filters from /p/abcd.default");
+        args.only = vec![
+            ImportPart::Tags,
+            ImportPart::SavedSearches,
+            ImportPart::Accounts,
+        ];
+        assert_eq!(
+            args.describe(),
+            "only accounts, saved searches and tags from /p/abcd.default"
+        );
+        let mbox: ImportArgs =
+            serde_json::from_value(json!({ "path": "/x/a.mbox", "format": "mbox" })).unwrap();
+        assert_eq!(mbox.describe(), "the mail in /x/a.mbox");
     }
 
     #[test]

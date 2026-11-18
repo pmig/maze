@@ -6,8 +6,8 @@ use serde_json::Value;
 use super::args::{
     AccountAddArgs, AccountListArgs, AccountRemoveArgs, AccountSetArgs, ArchiveArgs,
     AttachmentSaveArgs, ContactsArgs, DraftEditArgs, DraftNewArgs, ExportArgs, FlagArgs,
-    FoldersArgs, IdentitiesArgs, ImportArgs, MoveArgs, OAuthProvider, ProposeArgs, ReadArgs,
-    RuleAddArgs, SearchArgs, SendArgs, ShowArgs, SyncArgs, TagArgs, TagsArgs,
+    FoldersArgs, IdentitiesArgs, ImportArgs, ImportFormat, MoveArgs, OAuthProvider, ProposeArgs,
+    ReadArgs, RuleAddArgs, SearchArgs, SendArgs, ShowArgs, SyncArgs, TagArgs, TagsArgs,
 };
 
 /// Arguments that don't match a command's schema.
@@ -150,6 +150,17 @@ impl Command {
             Self::Import(args) if !args.path.is_absolute() => {
                 Err(ArgsError("path: must be an absolute path".into()))
             }
+            Self::Import(args)
+                if !args.only.is_empty()
+                    && matches!(
+                        args.format,
+                        Some(ImportFormat::Mbox | ImportFormat::Maildir)
+                    ) =>
+            {
+                Err(ArgsError(
+                    "only: picks parts of a Thunderbird profile; mbox and Maildir have none".into(),
+                ))
+            }
             Self::AccountAdd(args)
                 if args.tenant.is_some() && args.oauth != Some(OAuthProvider::Microsoft) =>
             {
@@ -243,6 +254,15 @@ mod tests {
         let error = Command::from_wire("export", json!({ "query": "x", "to": "rel/out.mbox" }))
             .unwrap_err();
         assert!(error.0.contains("absolute"), "{error}");
+        let error = Command::from_wire(
+            "import",
+            json!({ "path": "/x/mail.mbox", "format": "mbox", "only": ["contacts"] }),
+        )
+        .unwrap_err();
+        assert!(error.0.starts_with("only: "), "{error}");
+        let error =
+            Command::from_wire("import", json!({ "path": "/x/p", "only": ["mail"] })).unwrap_err();
+        assert!(error.0.starts_with("only"), "{error}");
         let error = Command::from_wire("move", json!({ "ids": ["m_b"], "to": "a_b" })).unwrap_err();
         assert!(error.0.starts_with("to: "), "{error}");
     }

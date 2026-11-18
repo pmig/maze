@@ -100,15 +100,28 @@ with what your current token may do with it.
 ## Approvals
 
 Commands marked **ask** show the same kind of dialog as a login, describing the command
-(for an import, which path; for an export, the query and the target). `import` and
-`export` always ask, because an import uploads mail to your server (or adds accounts
-from a Thunderbird profile) and an export writes plaintext outside the encrypted store.
+(for an import, which path and what it brings in; for an export, the query and the
+target). `import` and `export` always ask, because an import uploads mail to your server
+(or adds accounts from a Thunderbird profile) and an export writes plaintext outside the
+encrypted store.
 
 ```sh
 eval "$(mazemail login --profile triage --label import)"
 mazemail import ~/old-mail.mbox --account a_…          # asks in Maze
 mazemail export 'in:Inbox after:2026-01-01' --to inbox.mbox       # asks in Maze
 ```
+
+A Thunderbird import takes the whole profile unless `--only` names the parts, separated
+by commas: `accounts`, `contacts` (the address books), `filters`, `saved-searches` and
+`tags`. The dialog then says "Imports: only contacts and filters from …".
+
+```sh
+mazemail import ~/.thunderbird/abcd.default-release --only contacts,filters
+```
+
+Filters belong to accounts: imported on their own, they go to the accounts an earlier
+import of the same profile created. Filters whose account isn't in Maze yet are
+skipped (the result says so); import `--only accounts` first.
 
 ## Headless mode
 

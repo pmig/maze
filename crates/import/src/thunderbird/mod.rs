@@ -13,7 +13,9 @@
 //!    the offline [`BodyReuse`] index from `ImapMail/**`, so the first sync takes
 //!    bodies from disk. Running it again doesn't duplicate anything: accounts are
 //!    recognized by their Thunderbird origin, rules, saved searches, tags and contacts
-//!    by their keys.
+//!    by their keys. [`ImportOptions`] picks parts: filters imported on their own go
+//!    to the accounts an earlier import of the same profile created or are skipped
+//!    when there are none.
 //!
 //! Maze is IMAP only (ADR-019): POP3 accounts, Local Folders and other account types
 //! are skipped, each with a sentence saying why and what to do instead
@@ -524,6 +526,36 @@ struct Origin {
     account: String,
 }
 
+/// [`Origin::source`] of accounts imported from Thunderbird.
+const THUNDERBIRD: &str = "thunderbird";
+
+/// How a profile is named in [`Origin::profile`].
+fn profile_key(profile: &ThunderbirdProfile) -> String {
+    profile.path.to_string_lossy().into_owned()
+}
+
+/// Maze accounts created by earlier imports of this profile, by Thunderbird account
+/// key (from the origin stored in their config).
+fn imported_accounts(
+    profile: &ThunderbirdProfile,
+    store: &Store,
+) -> Result<BTreeMap<String, AccountId>> {
+    let profile_key = profile_key(profile);
+    let mut found = BTreeMap::new();
+    for account in store.reader()?.accounts()? {
+        let origin = serde_json::from_str::<serde_json::Value>(&account.config_json)
+            .ok()
+            .and_then(|v| serde_json::from_value::<Origin>(v.get("import")?.clone()).ok());
+        if let Some(origin) = origin
+            && origin.source == THUNDERBIRD
+            && origin.profile == profile_key
+        {
+            found.entry(origin.account).or_insert(account.id);
+        }
+    }
+    Ok(found)
+}
+
 /// Imports a loaded profile (see the module docs). If `reuse` is given, the offline
 /// stores of the IMAP accounts are scanned into it.
 pub fn import(
@@ -549,9 +581,12 @@ pub fn import(
     // SMTP servers (only for new accounts; reused accounts keep theirs).
     let mut smtp: HashMap<String, SmtpServerId> = HashMap::new();
 
+    // Maze accounts an earlier import of this profile created, by Thunderbird account.
+    let earlier = imported_accounts(profile, store)?;
+
     if options.accounts {
         let existing = store.reader()?.accounts()?;
-        let profile_key = profile.path.to_string_lossy().into_owned();
+        let profile_key = profile_key(profile);
         let mut new_accounts: Vec<(&TbAccount, &TbServer, AccountId)> = Vec::new();
         for (ordinal, account) in config.accounts.iter().enumerate() {
             let Some(server) = config.server_of(account) else {
@@ -567,20 +602,15 @@ pub fn import(
                     continue;
                 }
             };
+            if let Some(&found) = earlier.get(&account.key) {
+                out.accounts.insert(account.key.clone(), found);
+                continue;
+            }
             let origin = Origin {
-                source: "thunderbird".to_owned(),
+                source: THUNDERBIRD.to_owned(),
                 profile: profile_key.clone(),
                 account: account.key.clone(),
             };
-            if let Some(found) = existing.iter().find(|a| {
-                serde_json::from_str::<serde_json::Value>(&a.config_json)
-                    .ok()
-                    .and_then(|v| serde_json::from_value::<Origin>(v.get("import")?.clone()).ok())
-                    .is_some_and(|o| o == origin)
-            }) {
-                out.accounts.insert(account.key.clone(), found.id);
-                continue;
-            }
             let config_json = account_config(config, account, server, &origin);
             let new = NewAccount {
                 kind,
@@ -795,28 +825,43 @@ pub fn import(
         let mut ordinal = existing.len() as i64;
         let mut inputs = Vec::new();
         let mut skipped = 0;
+        let mut without_account = 0;
         for (server_key, file) in &profile.filters {
             if !profile.imports_server(server_key) {
                 skipped += file.filters.len();
                 continue;
             }
-            let account = config
-                .account_for_server(server_key)
-                .and_then(|a| out.accounts.get(&a.key).copied());
+            // The account imported in this run or an earlier one; rules without an
+            // account would apply to every account.
+            let Some(account) = config.account_for_server(server_key).and_then(|a| {
+                out.accounts
+                    .get(&a.key)
+                    .or_else(|| earlier.get(&a.key))
+                    .copied()
+            }) else {
+                without_account += file.filters.len();
+                continue;
+            };
             for filter in &file.filters {
                 if existing
                     .iter()
-                    .any(|r| r.input.account == account && r.input.name == filter.name)
+                    .any(|r| r.input.account == Some(account) && r.input.name == filter.name)
                 {
                     continue;
                 }
-                inputs.push(rule_input(filter, account, server_key, ordinal));
+                inputs.push(rule_input(filter, Some(account), server_key, ordinal));
                 ordinal += 1;
             }
         }
         if skipped > 0 {
             out.skipped.push(format!(
                 "{skipped} message filters skipped: they belong to accounts Maze doesn't import"
+            ));
+        }
+        if without_account > 0 {
+            out.skipped.push(format!(
+                "{without_account} message filters skipped: their accounts aren't in Maze yet; \
+                 import the accounts first (`--only accounts`), then the filters again"
             ));
         }
         out.rules = inputs.len();

@@ -268,6 +268,19 @@ fn imports_everything_and_reruns_without_duplicates() {
         .unwrap();
     assert_eq!(dora.display_name.as_deref(), Some("Dora Vcard"));
     assert!(dora.vcard.unwrap().contains("BEGIN:VCARD"));
+    // Thunderbird's format-upgrade backups (`abook.v2.sqlite`) aren't address books.
+    assert_eq!(
+        profile.address_books.len(),
+        1,
+        "{:?}",
+        profile.address_books
+    );
+    assert!(
+        reader
+            .contact_by_email("backup@example.com")
+            .unwrap()
+            .is_none()
+    );
     drop(reader);
 
     // Running the import again changes nothing.
@@ -290,5 +303,114 @@ fn imports_everything_and_reruns_without_duplicates() {
     assert_eq!(reader.identities(None).unwrap().len(), 3);
     assert_eq!(reader.smtp_servers().unwrap().len(), 2);
     drop(reader);
+    env.close();
+}
+
+/// Only `part` (the others off).
+fn only(part: &str) -> ImportOptions {
+    ImportOptions {
+        accounts: part == "accounts",
+        address_books: part == "contacts",
+        filters: part == "filters",
+        saved_searches: part == "saved-searches",
+        tags: part == "tags",
+    }
+}
+
+#[test]
+fn imports_one_part_at_a_time() {
+    let env = Env::new();
+    let (_, profile_dir) = thunderbird_copy(&env);
+    let profile = ThunderbirdProfile::load(&profile_dir).unwrap();
+    let run = |part: &str| import(&profile, &env.store, None, &only(part), &import::NoProgress);
+
+    // Contacts only: no accounts, tags, rules or saved searches.
+    let contacts = run("contacts").unwrap();
+    assert_eq!(contacts.contacts, 4);
+    assert_eq!(
+        (
+            contacts.accounts_created,
+            contacts.tags,
+            contacts.rules,
+            contacts.saved_searches
+        ),
+        (0, 0, 0, 0)
+    );
+    assert!(contacts.skipped.is_empty(), "{:?}", contacts.skipped);
+    let reader = env.store.reader().unwrap();
+    assert!(reader.accounts().unwrap().is_empty());
+    assert!(reader.rules(None).unwrap().is_empty());
+    assert!(reader.saved_searches().unwrap().is_empty());
+    assert!(
+        reader
+            .tags()
+            .unwrap()
+            .iter()
+            .all(|t| t.keyword != "projekt")
+    );
+    assert!(
+        reader
+            .contact_by_email("carla@example.net")
+            .unwrap()
+            .is_some()
+    );
+    drop(reader);
+
+    // Tags and saved searches, each on its own.
+    assert_eq!(run("tags").unwrap().tags, 2);
+    let searches = run("saved-searches").unwrap();
+    assert_eq!((searches.saved_searches, searches.rules), (2, 0));
+
+    // Accounts, then filters in a second run: the rules go to those accounts.
+    let accounts = run("accounts").unwrap();
+    assert_eq!((accounts.accounts_created, accounts.rules), (2, 0));
+    let filters = run("filters").unwrap();
+    assert_eq!((filters.accounts_created, filters.rules), (0, 2));
+    assert_eq!(
+        filters.skipped,
+        ["1 message filters skipped: they belong to accounts Maze doesn't import"]
+    );
+    let reader = env.store.reader().unwrap();
+    let work = reader
+        .accounts()
+        .unwrap()
+        .into_iter()
+        .find(|a| a.name == "Work")
+        .unwrap();
+    let rules = reader.rules(None).unwrap();
+    assert_eq!(rules.len(), 2);
+    assert!(
+        rules.iter().all(|r| r.input.account == Some(work.id)),
+        "{rules:?}"
+    );
+    drop(reader);
+    // Again: nothing new.
+    assert_eq!(run("filters").unwrap().rules, 0);
+    env.close();
+}
+
+#[test]
+fn filters_without_their_accounts_are_skipped() {
+    let env = Env::new();
+    let (_, profile_dir) = thunderbird_copy(&env);
+    let profile = ThunderbirdProfile::load(&profile_dir).unwrap();
+    let outcome = import(
+        &profile,
+        &env.store,
+        None,
+        &only("filters"),
+        &import::NoProgress,
+    )
+    .unwrap();
+    assert_eq!(outcome.rules, 0);
+    assert_eq!(
+        outcome.skipped,
+        [
+            "1 message filters skipped: they belong to accounts Maze doesn't import",
+            "2 message filters skipped: their accounts aren't in Maze yet; import the accounts \
+             first (`--only accounts`), then the filters again",
+        ]
+    );
+    assert!(env.store.reader().unwrap().rules(None).unwrap().is_empty());
     env.close();
 }

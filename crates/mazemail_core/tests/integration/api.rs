@@ -11,8 +11,8 @@ use auth::MemorySecretStore;
 use imap::fake::FakeServer;
 use import::maildir::MaildirWriter;
 use local_api::registry::args::{
-    ArchiveArgs, ExportArgs, ExportFormat, FoldersArgs, ImportArgs, SearchArgs, ShowArgs,
-    ShowFormat,
+    ArchiveArgs, ExportArgs, ExportFormat, FoldersArgs, ImportArgs, ImportPart, SearchArgs,
+    ShowArgs, ShowFormat,
 };
 use local_api::{
     AccountPolicy, ApprovalRequest, Approver, AuditEvent, AuditOutcome, AuditSink, Command,
@@ -537,6 +537,7 @@ async fn import_queues_uploads_and_export_writes_mbox() {
             format: None,
             account,
             folder: folder.map(str::to_owned),
+            only: Vec::new(),
         })
     };
 
@@ -592,6 +593,17 @@ async fn import_queues_uploads_and_export_writes_mbox() {
         .await
         .unwrap_err();
     assert_eq!(error.code, ErrorCode::InvalidArgs);
+    // `--only` picks parts of a Thunderbird profile; a detected mbox has none.
+    let only = Command::Import(ImportArgs {
+        path: source.clone(),
+        format: None,
+        account: Some(t.fixture.work),
+        folder: None,
+        only: vec![ImportPart::Contacts],
+    });
+    let error = run(&t, &ctx, only).await.unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidArgs);
+    assert!(error.message.contains("--only"), "{}", error.message);
 
     // Export of a query: mbox, oldest first, mode 0600, never overwriting.
     let target = t.dir.path().join("export.mbox");
@@ -711,6 +723,7 @@ async fn imported_mail_is_uploaded_to_the_imap_server_once() {
             // The only account: no --account needed.
             account: None,
             folder: Some(folder.to_owned()),
+            only: Vec::new(),
         })
     };
 

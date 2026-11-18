@@ -507,6 +507,23 @@ An address book whose write-ahead log (`abook.sqlite-wal`) doesn't match the dat
 damaged or crafted, and Maze refuses to read it; the import result names the file. Open
 Thunderbird once, so it folds the log into the database, then import again.
 
+To take over only some of it, name the parts with `--only`, separated by commas:
+`accounts`, `contacts` (the address books), `filters`, `saved-searches` and `tags`.
+Maze's approval dialog shows which parts it imports.
+
+```sh
+mazemail import ~/.thunderbird/abcd1234.default-release --only contacts,saved-searches
+```
+
+Filters always belong to an account. Imported without `accounts`, they go to the
+accounts an earlier import of the same profile created; filters of accounts that aren't
+in Maze are skipped (the import result says so).
+
+Address books are the ones Thunderbird lists in its settings, plus any other
+`abook*.sqlite` in the profile. The backups Thunderbird keeps when it upgrades an
+address book (`abook.v2.sqlite`, `abook-2.v3.sqlite`) are left out, so contacts aren't
+imported twice.
+
 Running the import again doesn't create duplicates. Nothing in the profile is changed,
 so Thunderbird keeps working side by side. Passwords aren't imported: accounts that
 need one, or a new OAuth sign-in, are listed in the import result.

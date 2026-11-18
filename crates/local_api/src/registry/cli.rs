@@ -942,6 +942,49 @@ mod tests {
     }
 
     #[test]
+    fn import_only_takes_a_comma_separated_list() {
+        let env = FakeEnv::default();
+        let all = invoke(&["import", "/abs/profile"], &env);
+        assert_eq!(all.args.get("only"), None);
+        let some = invoke(
+            &[
+                "import",
+                "/abs/profile",
+                "--only",
+                "accounts,saved-searches",
+            ],
+            &env,
+        );
+        assert_eq!(some.args["only"], json!(["accounts", "saved-searches"]));
+        let repeated = invoke(
+            &[
+                "import",
+                "/abs/profile",
+                "--only",
+                "filters",
+                "--only",
+                "contacts,tags",
+            ],
+            &env,
+        );
+        let args: ImportArgs = serde_json::from_value(repeated.args).unwrap();
+        assert_eq!(
+            args.only,
+            [ImportPart::Filters, ImportPart::Contacts, ImportPart::Tags]
+        );
+        assert!(args.includes(ImportPart::Tags));
+        assert!(!args.includes(ImportPart::Accounts));
+        for bad in ["calendars", "accounts,", "saved_searches"] {
+            assert!(
+                cli_command()
+                    .try_get_matches_from(["mazemail", "import", "/abs/profile", "--only", bad])
+                    .is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
     fn paths_are_made_absolute() {
         let env = FakeEnv::default();
         let export = invoke(&["export", "in:inbox", "--to", "out.mbox"], &env);

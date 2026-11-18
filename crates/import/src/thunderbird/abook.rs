@@ -64,7 +64,8 @@ pub struct MailingList {
 }
 
 /// Address book files of a profile with their names: those registered in prefs
-/// (`ldap_2.servers.*.filename`), then any other `abook*.sqlite`/`history.sqlite`.
+/// (`ldap_2.servers.*.filename`), then any other `abook*.sqlite`/`history.sqlite`
+/// except Thunderbird's format-upgrade backups ([`is_upgrade_backup`]).
 pub fn find(profile: &Path, prefs: &Prefs) -> Vec<(PathBuf, String)> {
     let mut out: Vec<(PathBuf, String)> = Vec::new();
     for key in prefs.branch_keys("ldap_2.servers.") {
@@ -90,7 +91,9 @@ pub fn find(profile: &Path, prefs: &Prefs) -> Vec<(PathBuf, String)> {
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| {
                 let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
-                (name.starts_with("abook") || name == "history.sqlite") && name.ends_with(".sqlite")
+                (name.starts_with("abook") || name == "history.sqlite")
+                    && name.ends_with(".sqlite")
+                    && !is_upgrade_backup(name)
             })
             .collect();
         extra.sort();
@@ -106,6 +109,17 @@ pub fn find(profile: &Path, prefs: &Prefs) -> Vec<(PathBuf, String)> {
         }
     }
     out
+}
+
+/// Whether a file name is a backup Thunderbird leaves when it upgrades an address
+/// book's format (`abook.v2.sqlite`, `abook-2.v3.sqlite`): copies of books that are
+/// still in use, so importing them duplicates every contact.
+fn is_upgrade_backup(name: &str) -> bool {
+    name.strip_suffix(".sqlite")
+        .and_then(|stem| stem.rsplit_once(".v"))
+        .is_some_and(|(_, version)| {
+            !version.is_empty() && version.bytes().all(|b| b.is_ascii_digit())
+        })
 }
 
 fn default_name(file: &str) -> String {
@@ -361,6 +375,57 @@ mod tests {
         check_wal(&path).unwrap();
         fs::write(dir.path().join("abook.sqlite-wal"), b"").unwrap();
         check_wal(&path).unwrap();
+    }
+
+    #[test]
+    fn format_upgrade_backups_are_not_address_books() {
+        for backup in [
+            "abook.v2.sqlite",
+            "abook-2.v3.sqlite",
+            "abook-12.v10.sqlite",
+        ] {
+            assert!(is_upgrade_backup(backup), "{backup}");
+        }
+        for book in [
+            "abook.sqlite",
+            "abook-2.sqlite",
+            "history.sqlite",
+            "abook.v.sqlite",
+            "abook.vx2.sqlite",
+        ] {
+            assert!(!is_upgrade_backup(book), "{book}");
+        }
+    }
+
+    #[test]
+    fn the_fallback_scan_skips_upgrade_backups() {
+        let dir = tempfile::tempdir().unwrap();
+        for file in [
+            "abook.sqlite",
+            "abook-1.sqlite",
+            "abook.v2.sqlite",
+            "abook-1.v3.sqlite",
+            "history.sqlite",
+            "places.sqlite",
+        ] {
+            fs::write(dir.path().join(file), b"").unwrap();
+        }
+        let prefs = Prefs::parse(
+            r#"user_pref("ldap_2.servers.pab.filename", "abook.sqlite");
+user_pref("ldap_2.servers.pab.description", "Personal Address Book");"#,
+        );
+        let found: Vec<String> = find(dir.path(), &prefs)
+            .into_iter()
+            .map(|(path, name)| format!("{} {name}", path.file_name().unwrap().to_string_lossy()))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                "abook.sqlite Personal Address Book",
+                "abook-1.sqlite abook-1",
+                "history.sqlite Collected Addresses",
+            ]
+        );
     }
 
     #[test]
