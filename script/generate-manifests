@@ -87,7 +87,7 @@ for platform in macos-aarch64 macos-x86_64 linux-x86_64 linux-aarch64; do
     asset="Maze-${TAG}-macos-${arch}.app.tar.zst"
     [ "$skip_macos" = 1 ] && { echo "skipping $platform (SKIP_MACOS=1)"; continue; }
   else
-    asset="Maze-${TAG}-linux-${arch}.tar.zst"
+    asset="mazemail-${TAG}-linux-${arch}.tar.zst"
   fi
   if [ ! -f "$ASSET_DIR/$asset" ]; then
     echo "error: missing release artifact $ASSET_DIR/$asset" >&2

@@ -374,7 +374,7 @@ pub(crate) mod tests {
             "https://github.com/pmig/maze/releases/download/0.4.0/Maze-0.4.0-macos-aarch64.dmg"
         );
         manifest.url = Url::parse(
-            "https://github.com/pmig/maze/releases/download/0.4.0/Maze-0.4.0-linux-x86_64.tar.zst",
+            "https://github.com/pmig/maze/releases/download/0.4.0/mazemail-0.4.0-linux-x86_64.tar.zst",
         )
         .unwrap();
         assert_eq!(manifest.dmg_url(), None);

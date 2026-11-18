@@ -8,7 +8,8 @@
 #      ├─ applications/dev.mazemail.maze.desktop       Name=Maze, mailto handler
 #      └─ icons/hicolor/512x512/apps/dev.mazemail.maze.png   (if assets/icons/maze.png exists)
 #
-# Output: <out>/Maze-<version>-linux-<arch>.tar.zst
+# Output: <out>/mazemail-<version>-linux-<arch>.tar.zst (people unpack it into ~/.local,
+# so it is named after what it contains: mazemail.app)
 #
 # Usage: script/bundle-linux [options]
 #   --target <triple>      Rust target (default: the host's linux-gnu triple)
@@ -106,7 +107,7 @@ if [ -f assets/icons/maze.png ]; then
 fi
 
 mkdir -p "$out"
-tarball="$out/Maze-${version}-linux-${arch}.tar.zst"
+tarball="$out/mazemail-${version}-linux-${arch}.tar.zst"
 rm -f "$tarball"
 
 tar_opts=()

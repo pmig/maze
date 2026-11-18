@@ -103,11 +103,11 @@ Homebrew cask (see [ADR-010](docs/adr/0010-auto-update.md)).
 
 ### Linux
 
-Download `Maze-<version>-linux-<arch>.tar.zst` from the same page and unpack it to
+Download `mazemail-<version>-linux-<arch>.tar.zst` from the same page and unpack it to
 `~/.local/`:
 
 ```sh
-tar --zstd -xf Maze-*-linux-x86_64.tar.zst -C ~/.local
+tar --zstd -xf mazemail-*-linux-x86_64.tar.zst -C ~/.local
 ~/.local/mazemail.app/bin/mazemail
 ```
 

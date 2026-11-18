@@ -191,7 +191,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           shopt -s nullglob
-          files=(dist/Maze-*.tar.zst dist/Maze-*.dmg)
+          files=(dist/Maze-*.tar.zst dist/Maze-*.dmg dist/mazemail-*-linux-*.tar.zst)
           if [ "${#files[@]}" -eq 0 ]; then
             echo "::error::no release artifacts found in dist/"
             exit 1

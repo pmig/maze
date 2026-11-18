@@ -35,10 +35,10 @@ Applications (or another folder you can write to), so it can update itself.
 
 ### Linux
 
-Download `Maze-<version>-linux-x86_64.tar.zst` (or `-aarch64`) and unpack it:
+Download `mazemail-<version>-linux-x86_64.tar.zst` (or `-aarch64`) and unpack it:
 
 ```sh
-tar --zstd -xf Maze-*-linux-x86_64.tar.zst -C ~/.local
+tar --zstd -xf mazemail-*-linux-x86_64.tar.zst -C ~/.local
 ~/.local/mazemail.app/bin/mazemail
 ```
 

@@ -9,8 +9,10 @@ const version = release.version;
 const published = release.publishedAt
   ? new Date(release.publishedAt).toLocaleDateString("en", { year: "numeric", month: "long", day: "numeric" })
   : null;
+// The macOS downloads carry the product name; the Linux tarball is named after what it
+// unpacks to (mazemail.app).
 const file = (os: string, arch: string, ext: string) =>
-  `Maze-${version ?? "<version>"}-${os}-${arch}.${ext}`;
+  `${os === "linux" ? "mazemail" : "Maze"}-${version ?? "<version>"}-${os}-${arch}.${ext}`;
 ---
 
 <Base title="Download" description="Download Maze for macOS (Apple Silicon and Intel). Maze updates itself in the background.">
@@ -69,7 +71,7 @@ const file = (os: string, arch: string, ext: string) =>
           <a class="button" href={release.linux.aarch64}><Icon name="download" /> aarch64</a>
         </div>
         <pre class="snippet"><code>tar --zstd -C ~/.local \
-  -xf Maze-*-linux-x86_64.tar.zst
+  -xf mazemail-*-linux-x86_64.tar.zst
 ~/.local/mazemail.app/bin/mazemail</code></pre>
       </article>
 

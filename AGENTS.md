@@ -8,22 +8,29 @@ Instructions for humans and coding agents working in this repository.
   dialogs, notifications, docs, `Maze.app`.
 - Every technical identifier is **`mazemail`**: crate and binary names, the CLI
   (`mazemail search …`), env vars (`MAZEMAIL_*`), token prefix `mazemail_s_`,
-  data/config directories, the socket `mazemail.sock`, bundle ID `dev.mazemail.maze`.
+  data/config directories, the socket `mazemail.sock`, bundle ID `dev.mazemail.maze`,
+  the Linux release tarball `mazemail-<version>-linux-<arch>.tar.zst`.
+- Exceptions, because people see them: the app-wide GPUI action namespace is `maze::`
+  (shown as "Maze: …" in the command palette, like Zed's `zed::`), and the macOS
+  downloads are `Maze-<version>-macos-<arch>.dmg`.
 
 ## Layering (enforced by dependencies)
 
 ```
 L4  mazemail (binary: GUI + CLI)
 L3  mail_ui · composer · agent_ui · auto_update_ui · html_view · ui        (GPUI)
-L2  mazemail_core · local_api · agent · assistant · import · rules
-L1  store · search · imap · smtp · auth · security · sync · auto_update · vault ·
-    sandbox · settings · notifications · spelling · contacts
+L2  mazemail_core · local_api · agent · import
+L1  store · ingest · search · imap · smtp · auth · security · sync · auto_update ·
+    vault · sandbox · settings · notifications · spelling · contacts · rules
 L0  mazemail_types · mazemail_mime · release_channel           (pure, no IO)
 ```
 
 Crate names follow PLAN §2, except where a bare name would collide: `core` (Rust's
-`core` library) is `mazemail_core`, and `mime` (a popular crates.io crate) is
-`mazemail_mime`. The importer is `import` (mbox, Maildir and Thunderbird).
+`core` library) is `mazemail_core` and `mime` (a popular crates.io crate) is
+`mazemail_mime`; the shared types are `mazemail_types`. The importer is `import`
+(mbox, Maildir and Thunderbird). `ingest` is the pipeline that stores a message, used
+by the core and the importer; it builds on `store` in the same layer. `rules` holds
+the message rules' format and matching, without IO.
 
 - A crate may only depend on crates in lower layers (same-layer deps only where noted
   in the crate's docs).

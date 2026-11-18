@@ -15,7 +15,7 @@ sees the same mail again after a restart, a reconnect or a UIDVALIDITY change.
 
 ## Decision
 
-**Where.** Rules run in `mazemail_core`. The `rules` crate (L2, no IO) owns the stored
+**Where.** Rules run in `mazemail_core`. The `rules` crate (L1, no IO) owns the stored
 format (`condition_json`, `actions_json`), matching and the plan of actions;
 `mazemail_core::rules` runs the plan as ordinary `MailCommand`s with
 `Origin::Rule { rule }`, through `commands::apply_in_tx`, so pending IMAP ops, the

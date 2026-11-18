@@ -237,7 +237,7 @@ the work directory; debug builds of the app also take `MAZEMAIL_UPDATE_BASE_URL`
 On a Mac that never had Maze (or after removing it and its keychain item):
 
 - [ ] The release has eight assets: `Maze-0.1.0-alpha.1-macos-{aarch64,x86_64}.{dmg,app.tar.zst}`
-      and `Maze-0.1.0-alpha.1-linux-{x86_64,aarch64}.tar.zst`.
+      and `mazemail-0.1.0-alpha.1-linux-{x86_64,aarch64}.tar.zst`.
 - [ ] `https://releases.mazemail.dev/preview/macos-aarch64.json` (and the other three)
       loads over HTTPS, says `"version": "0.1.0-alpha.1"`, and its `sha256` matches
       `shasum -a 256 Maze-0.1.0-alpha.1-macos-aarch64.app.tar.zst`.
@@ -265,7 +265,7 @@ On a Mac that never had Maze (or after removing it and its keychain item):
       Local Folders are listed as skipped), and an IMAP account syncs.
 - [ ] Quitting Maze (`cmd-q`) ends the process and removes `mazemail.sock`; the next
       start opens the same mail without asking for anything.
-- [ ] Linux: `tar --zstd -xf Maze-0.1.0-alpha.1-linux-x86_64.tar.zst -C ~/.local` and
+- [ ] Linux: `tar --zstd -xf mazemail-0.1.0-alpha.1-linux-x86_64.tar.zst -C ~/.local` and
       `~/.local/mazemail.app/bin/mazemail --version`; the app starts and stores its key
       in the Secret Service.
 
