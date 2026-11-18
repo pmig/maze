@@ -7,8 +7,9 @@
 //! - Agent processes run on the core's runtime; quitting stops the runtime, which kills
 //!   their process groups.
 //! - Installed agents update in the background (`agent.auto_update`).
+//! - The manager is also Maze Magic's ([`manager`]), which the composer uses.
 
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock};
 
 use agent::{AgentManager, AgentPaths, ManagerConfig, ReqwestHttp};
 use agent_ui::{AgentPanel, MailContext};
@@ -21,6 +22,17 @@ use settings::Paths;
 use tokio::sync::broadcast;
 
 use super::AppState;
+
+/// The agent manager once the agent column started (Maze Magic uses it too).
+static MANAGER: RwLock<Option<Arc<AgentManager>>> = RwLock::new(None);
+
+/// The agent manager, once the mail is open.
+pub(crate) fn manager() -> Option<Arc<AgentManager>> {
+    MANAGER
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()
+}
 
 /// Registers the app-level agent actions ("Agent: Toggle Agent Panel").
 pub(crate) fn init(cx: &mut App) {
@@ -72,6 +84,7 @@ fn open_panel(core: &CoreHandle, authorizer: &TokenAuthorizer, cx: &mut App) -> 
         host,
         http: Arc::new(ReqwestHttp::new()?),
     }));
+    *MANAGER.write().unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(&manager));
     let settings = core.settings().settings.clone();
     let panel = handle.update(cx, |_, window, cx| {
         cx.new(|cx| {

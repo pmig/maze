@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 gpui = { workspace = true }
 gpui-kit = { workspace = true }
+mazemail_mime = { workspace = true }
 mazemail_types = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

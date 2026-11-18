@@ -9,7 +9,6 @@
       "cmd-q": "maze::Quit",
       "cmd-h": "maze::Hide",
       "cmd-alt-h": "maze::HideOthers",
-      "cmd-m": "maze::Minimize",
       // Thunderbird's "New Message"; works in every window (the compose window too).
       "cmd-n": "mail::NewMessage",
       // The macOS convention for Settings…; opens settings.json in a tab.
@@ -160,6 +159,15 @@
     }
   },
   {
+    // Minimize, except in a composer, where cmd-m is Maze Magic. A binding without a
+    // context would win over the composer's (it counts as matching at the deepest
+    // context), so this one says where it applies.
+    "context": "!Composer",
+    "bindings": {
+      "cmd-m": "maze::Minimize"
+    }
+  },
+  {
     // The compose window (Thunderbird: cmd-enter sends, Escape closes).
     "context": "Composer",
     "bindings": {
@@ -176,7 +184,20 @@
       "cmd-i": "composer::Italic",
       "cmd-shift-x": "composer::Strikethrough",
       "cmd-e": "composer::Code",
-      "cmd-k": "composer::Link"
+      "cmd-k": "composer::Link",
+      // Maze Magic: an agent improves the draft. Minimize (still in the Window menu)
+      // isn't bound in a composer.
+      "cmd-m": "composer::MazeMagic"
+    }
+  },
+  {
+    // Maze Magic's dialog over the composer.
+    "context": "MazeMagic",
+    "bindings": {
+      "enter": "composer::AcceptAndSend",
+      "cmd-enter": "composer::AcceptAndSend",
+      "cmd-e": "composer::AcceptAndEdit",
+      "escape": "composer::DiscardMagic"
     }
   },
   {

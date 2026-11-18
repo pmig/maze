@@ -18,18 +18,25 @@
 //! is the composer's view of the core: identities, drafts, sending and the personal
 //! spelling dictionary. When a message only got queued (offline), the main window says
 //! so.
+//! - **Maze Magic** (`cmd-m` in a draft): [`CoreComposeBackend`] checks that the
+//!   sending account shares mail with agents (`agent.accounts`), adds the conversation
+//!   the draft replies to (`maze_magic.include_thread`) and runs the agent
+//!   (`maze_magic.agent`, else `agent.default`) on the core's runtime with the agent
+//!   column's manager. Closing the dialog stops it.
 
 use std::sync::Arc;
 
+use agent::{MagicError, MagicRequest};
 use composer::{
     BoxFuture, COMPOSE_KIND, ComposeBackend, ComposeError, Composer, ComposerEvent,
-    ComposerOptions, Draft, IdentityChoice, SendOutcome, SerializedDraft,
+    ComposerOptions, Draft, IdentityChoice, MagicInput, SendOutcome, SerializedDraft,
 };
 use gpui::{App, AppContext as _, Entity};
 use mail_ui::ComposeRequest;
 use mail_ui::links::MailTo;
 use mazemail_core::{CoreHandle, ReplyKind, SendResult};
-use mazemail_types::{Address, DraftId, IdentityId, PRODUCT_NAME};
+use mazemail_types::{Address, DraftId, IdentityId, PRODUCT_NAME, Sensitive};
+use settings::AgentAccess;
 use ui::assets::IconName;
 use ui::kit::component::{WindowExt as _, notification::Notification};
 use ui::panes::{ItemKind, Restore, SerializedItem};
@@ -136,6 +143,105 @@ impl ComposeBackend for CoreComposeBackend {
                 .map_err(|error| compose_error(&error))
         })
     }
+
+    fn magic(&self, input: MagicInput) -> BoxFuture<Result<Sensitive<String>, ComposeError>> {
+        let core = self.core.clone();
+        Box::pin(async move {
+            // Agent sessions need the core's (Tokio) runtime; dropping this future
+            // aborts the run, which ends the agent's session.
+            let mut run = AbortOnDrop(core.runtime().spawn(run_magic(core.clone(), input)));
+            match (&mut run.0).await {
+                Ok(result) => result,
+                Err(error) => {
+                    tracing::warn!(%error, "Maze Magic stopped");
+                    Err(ComposeError::new("Maze Magic stopped unexpectedly."))
+                }
+            }
+        })
+    }
+}
+
+/// Aborts a task when it is dropped.
+struct AbortOnDrop<T>(tokio::task::JoinHandle<T>);
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn run_magic(core: CoreHandle, input: MagicInput) -> Result<Sensitive<String>, ComposeError> {
+    let Some(manager) = super::agents::manager() else {
+        return Err(ComposeError::new(
+            "Maze Magic isn't ready yet: it starts with the agent column once your mail is open.",
+        ));
+    };
+    let settings = core.settings().settings.clone();
+    let account = input.identity.and_then(|identity| {
+        core.identities()
+            .ok()?
+            .into_iter()
+            .find(|i| i.id == identity)
+            .map(|i| i.account_name)
+    });
+    let Some(account) = account else {
+        return Err(ComposeError::new("Choose an account to send from first."));
+    };
+    if settings.agent.access_for(&account) != AgentAccess::Any {
+        return Err(ComposeError::new(format!(
+            "Maze Magic sends your draft to an agent, but the account “{account}” doesn't \
+             share mail with agents. Set it to \"any\" in agent.accounts in the settings."
+        )));
+    }
+    let Some(agent_id) = settings
+        .maze_magic
+        .agent
+        .clone()
+        .or_else(|| settings.agent.default.clone())
+    else {
+        return Err(ComposeError::new(
+            "Choose the agent for Maze Magic: maze_magic.agent or agent.default in the settings.",
+        ));
+    };
+    let thread = match input.origin {
+        Some(origin) if settings.maze_magic.include_thread => {
+            match core.message_thread(origin.message()).await {
+                Ok(Some(thread)) => mazemail_core::api::thread_markdown_for_agents(&core, thread)
+                    .await
+                    .unwrap_or_else(|error| {
+                        tracing::warn!(%error, "Maze Magic: the conversation couldn't be read");
+                        None
+                    })
+                    .map(Sensitive::new),
+                Ok(None) => None,
+                Err(error) => {
+                    tracing::warn!(%error, "Maze Magic: the replied-to message wasn't found");
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    let request = MagicRequest {
+        agent_id,
+        instructions: settings.maze_magic.prompt.clone(),
+        draft: input.draft,
+        quoted: input.quoted,
+        thread,
+        settings,
+    };
+    manager.run_magic(request).await.map_err(|error| {
+        let message = match &error {
+            MagicError::Start(start) => format!("The agent couldn't start: {start}"),
+            other => other.to_string(),
+        };
+        let mut chars = message.trim_end_matches('.').chars();
+        let message = chars
+            .next()
+            .map(|first| format!("{}{}.", first.to_uppercase(), chars.as_str()))
+            .unwrap_or_default();
+        ComposeError::new(message)
+    })
 }
 
 /// The open core, or `None` (logged) while Maze is still opening.

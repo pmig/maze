@@ -140,6 +140,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "hex",
+ "insta",
  "local_api",
  "mazemail_types",
  "pretty_assertions",
@@ -1729,6 +1730,7 @@ version = "0.0.0"
 dependencies = [
  "gpui-kit",
  "gpui-pre",
+ "mazemail_mime",
  "mazemail_types",
  "serde",
  "serde_json",

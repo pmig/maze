@@ -139,6 +139,7 @@ impl Harness {
                 open_urls: self.open_urls.clone(),
                 key_env: None,
                 preferred: self.preferred.clone(),
+                ephemeral: false,
             },
             Arc::clone(&self.host) as Arc<dyn agent::AgentHost>,
             SessionResources::default(),

@@ -4,12 +4,12 @@ use std::rc::Rc;
 use std::sync::Mutex;
 
 use gpui::{TestAppContext, VisualTestContext};
-use mazemail_types::MessageId;
 use mazemail_types::compose::DraftOrigin;
+use mazemail_types::{MessageId, Sensitive};
 
 use super::*;
 use crate::actions::{IgnoreSpelling, ToggleSpellingLanguage};
-use crate::backend::{BoxFuture, ComposeError};
+use crate::backend::{BoxFuture, ComposeError, MagicInput};
 
 // gpui-kit binds its editing keys per platform (cmd on macOS, ctrl elsewhere, and a
 // few different keys on Linux), so tests press the ones of the platform they run on.
@@ -41,6 +41,10 @@ struct FakeBackend {
     added_words: Mutex<Vec<String>>,
     /// What address completion knows.
     contacts: Vec<Address>,
+    /// Maze Magic's answer: the improved text or an error. `None`: it never answers.
+    magic: Option<Result<String, String>>,
+    /// What Maze Magic was asked.
+    magic_inputs: Mutex<Vec<MagicInput>>,
 }
 
 impl FakeBackend {
@@ -55,6 +59,9 @@ impl FakeBackend {
     }
     fn added_words(&self) -> Vec<String> {
         self.added_words.lock().unwrap().clone()
+    }
+    fn magic_inputs(&self) -> Vec<MagicInput> {
+        self.magic_inputs.lock().unwrap().clone()
     }
 }
 
@@ -129,6 +136,16 @@ impl ComposeBackend for FakeBackend {
     fn add_spelling_word(&self, word: String) -> BoxFuture<Result<(), ComposeError>> {
         self.added_words.lock().unwrap().push(word);
         Box::pin(async { Ok(()) })
+    }
+
+    fn magic(&self, input: MagicInput) -> BoxFuture<Result<Sensitive<String>, ComposeError>> {
+        self.magic_inputs.lock().unwrap().push(input);
+        match self.magic.clone() {
+            Some(answer) => {
+                Box::pin(async move { answer.map(Sensitive::new).map_err(ComposeError::new) })
+            }
+            None => Box::pin(std::future::pending()),
+        }
     }
 
     fn send(
@@ -1936,4 +1953,180 @@ fn in_a_tab_the_formatting_keys_win_over_the_main_windows(cx: &mut TestAppContex
     cx.simulate_keystrokes("cmd-k");
     assert_eq!(body_text(&composer, cx), "Say **[hello](url)**");
     assert!(reached.borrow().is_empty(), "{:?}", reached.borrow());
+}
+
+// ---- Maze Magic -------------------------------------------------------------------------
+
+const QUOTE: &str = "On Tue, Tom wrote:\n> Three or six months?\n";
+
+/// A reply to Tom with a typo, its quote below.
+fn magic_reply(
+    cx: &mut TestAppContext,
+    backend: Arc<FakeBackend>,
+) -> (Entity<Composer>, &mut VisualTestContext) {
+    let mut options = options();
+    options.draft.to = vec![addr(Some("Tom"), "tom@example.com")];
+    options.draft.origin = Some(DraftOrigin::Reply(MessageId(7)));
+    options.draft.body_markdown = format!("Hi Tom,\n\nthre months.\n\n{QUOTE}");
+    let (view, cx) = open(cx, backend, options);
+    view.update_in(cx, |c, window, cx| {
+        let focus = c.body.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
+    });
+    (view, cx)
+}
+
+fn improving() -> Arc<FakeBackend> {
+    Arc::new(FakeBackend {
+        magic: Some(Ok("Hi Tom,\n\nthree months works for us.".into())),
+        ..FakeBackend::default()
+    })
+}
+
+#[gpui::test]
+fn maze_magic_improves_the_text_above_the_quote_and_enter_sends_it(cx: &mut TestAppContext) {
+    let backend = improving();
+    let (view, cx) = magic_reply(cx, backend.clone());
+    cx.simulate_keystrokes("cmd-m");
+    cx.run_until_parked();
+
+    let inputs = backend.magic_inputs();
+    assert_eq!(inputs.len(), 1);
+    assert_eq!(inputs[0].draft.expose(), "Hi Tom,\n\nthre months.\n\n");
+    assert_eq!(inputs[0].quoted.expose(), QUOTE);
+    assert_eq!(inputs[0].origin, Some(DraftOrigin::Reply(MessageId(7))));
+    assert_eq!(inputs[0].identity, Some(IdentityId(1)));
+    assert_eq!(
+        view.read_with(cx, |c, _| c.magic_result()),
+        Some("Hi Tom,\n\nthree months works for us.".into())
+    );
+
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    let sends = backend.sends();
+    assert_eq!(sends.len(), 1);
+    assert_eq!(
+        sends[0].1.body_markdown,
+        format!("Hi Tom,\n\nthree months works for us.\n\n{QUOTE}")
+    );
+    assert!(view.read_with(cx, |c, _| c.is_closed()));
+}
+
+#[gpui::test]
+fn accept_and_edit_replaces_the_text_in_one_undo_step(cx: &mut TestAppContext) {
+    let backend = improving();
+    let (view, cx) = magic_reply(cx, backend.clone());
+    cx.simulate_keystrokes("cmd-m");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("cmd-e");
+    cx.run_until_parked();
+
+    assert!(backend.sends().is_empty());
+    assert_eq!(view.read_with(cx, |c, _| c.magic_result()), None);
+    assert_eq!(
+        body_text(&view, cx),
+        format!("Hi Tom,\n\nthree months works for us.\n\n{QUOTE}")
+    );
+    assert!(view.update_in(cx, |c, window, cx| c.body_has_focus(window, cx)));
+    cx.simulate_keystrokes(UNDO);
+    cx.run_until_parked();
+    assert_eq!(
+        body_text(&view, cx),
+        format!("Hi Tom,\n\nthre months.\n\n{QUOTE}")
+    );
+}
+
+#[gpui::test]
+fn escape_discards_and_keeps_the_draft(cx: &mut TestAppContext) {
+    let backend = improving();
+    let (view, cx) = magic_reply(cx, backend.clone());
+    cx.simulate_keystrokes("cmd-m");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+
+    assert_eq!(view.read_with(cx, |c, _| c.magic_result()), None);
+    assert_eq!(
+        body_text(&view, cx),
+        format!("Hi Tom,\n\nthre months.\n\n{QUOTE}")
+    );
+    assert!(backend.sends().is_empty());
+    assert!(
+        !view.read_with(cx, |c, _| c.is_closed()),
+        "escape only closed the dialog"
+    );
+}
+
+#[gpui::test]
+fn a_failed_run_says_why(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend {
+        magic: Some(Err("Claude Code needs you to sign in first.".into())),
+        ..FakeBackend::default()
+    });
+    let (view, cx) = magic_reply(cx, backend.clone());
+    cx.simulate_keystrokes("cmd-m");
+    cx.run_until_parked();
+    assert_eq!(
+        view.read_with(cx, |c, _| c.magic_error()),
+        Some("Claude Code needs you to sign in first.".into())
+    );
+    // Enter has nothing to accept.
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(backend.sends().is_empty());
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert_eq!(view.read_with(cx, |c, _| c.magic_error()), None);
+}
+
+#[gpui::test]
+fn nothing_is_sent_while_the_agent_works_and_escape_stops_it(cx: &mut TestAppContext) {
+    let backend = Arc::new(FakeBackend::default());
+    let (view, cx) = magic_reply(cx, backend.clone());
+    cx.simulate_keystrokes("cmd-m");
+    cx.run_until_parked();
+    assert!(view.read_with(cx, |c, _| c.magic_running()));
+    cx.simulate_keystrokes("cmd-enter");
+    cx.run_until_parked();
+    assert!(backend.sends().is_empty());
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(!view.read_with(cx, |c, _| c.magic_running()));
+    assert!(!view.read_with(cx, |c, _| c.is_closed()));
+}
+
+#[gpui::test]
+fn an_empty_draft_isnt_sent_to_the_agent(cx: &mut TestAppContext) {
+    let backend = improving();
+    let mut options = options();
+    options.draft.body_markdown = format!("\n\n{QUOTE}");
+    let (view, cx) = open(cx, backend.clone(), options);
+    cx.simulate_keystrokes("cmd-m");
+    cx.run_until_parked();
+    assert!(backend.magic_inputs().is_empty());
+    assert!(view.read_with(cx, |c, _| c.error()).is_some());
+}
+
+#[gpui::test]
+fn ctrl_m_starts_maze_magic_with_ctrl_as_the_primary_modifier(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        ui::init(cx);
+        ui::keymap::set_primary_modifier(ui::keymap::PrimaryModifier::Ctrl, cx);
+        let _ = ui::keymap::bind_keymap(ui::keymap::DEFAULT_MACOS_KEYMAP, cx);
+        crate::init(cx);
+    });
+    let backend = improving();
+    let mut options = options();
+    options.draft.body_markdown = "Hi Tom".into();
+    let backend_dyn: Arc<dyn ComposeBackend> = backend.clone();
+    let (view, cx) =
+        cx.add_window_view(|window, cx| Composer::new(backend_dyn, options, window, cx));
+    cx.run_until_parked();
+    view.update_in(cx, |c, window, cx| {
+        let focus = c.body.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
+    });
+    cx.simulate_keystrokes("ctrl-m");
+    cx.run_until_parked();
+    assert_eq!(backend.magic_inputs().len(), 1, "ctrl-m in the body");
 }

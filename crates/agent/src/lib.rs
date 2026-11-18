@@ -13,6 +13,7 @@
 //! | [`scratch`], [`tokens`] | the session's scratch dir and its `MAZEMAIL_SESSION` token |
 //! | [`host`] | what sessions need from Maze (implemented over the core by the app) |
 //! | [`manager`] | [`AgentManager`], the agent column's entry point |
+//! | [`magic`] | Maze Magic: one ephemeral prompt that improves a draft |
 //!
 //! # Guarantees
 //!
@@ -39,6 +40,7 @@ pub mod fake;
 pub mod host;
 pub mod http;
 pub mod install;
+pub mod magic;
 pub mod manager;
 pub mod node;
 pub mod paths;
@@ -61,6 +63,7 @@ pub use host::{
 };
 pub use http::{Http, ReqwestHttp};
 pub use install::{InstallError, InstallProgress, InstalledAgent};
+pub use magic::{MAGIC_TIMEOUT, MagicError, MagicRequest};
 #[cfg(any(test, feature = "test-support"))]
 pub use manager::TestAgents;
 pub use manager::{

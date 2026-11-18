@@ -20,6 +20,10 @@
 //! context, so inside a composer they win over the main window's keys on the same
 //! keystrokes (`cmd-k` Go to Folder, `cmd-b` the folder pane).
 //!
+//! Maze Magic (`cmd-m`) sends your text, without the quote below it, to an agent
+//! through [`ComposeBackend::magic`] and shows the improved text over the composer:
+//! Accept & Send (`enter`), Accept & Edit (`cmd-e`) or Discard (`escape`).
+//!
 //! The body is spell checked as you type (crate `spelling`, PLAN-spellcheck) in the
 //! languages the app sets with [`set_spellcheck`] (the `spellcheck` setting); the
 //! personal dictionary comes from and goes to the backend
@@ -33,7 +37,9 @@ mod window;
 
 use gpui::App;
 
-pub use backend::{BoxFuture, ComposeBackend, ComposeError, IdentityChoice, SendOutcome};
+pub use backend::{
+    BoxFuture, ComposeBackend, ComposeError, IdentityChoice, MagicInput, SendOutcome,
+};
 pub use mazemail_types::compose::{Draft, DraftAttachment, DraftOrigin};
 pub use spelling::Lang as SpellingLang;
 pub use window::{

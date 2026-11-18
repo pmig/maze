@@ -14,7 +14,7 @@ use mazemail_types::Sensitive;
 use crate::auth::{self, KeyError, LoginCommand};
 use crate::catalog::{self, AgentEntry, AgentSource};
 use crate::controls::{ControlValue, Preferences};
-use crate::host::{AgentHost, AgentKey, AgentThreadInfo, HostError};
+use crate::host::{AgentHost, AgentKey, AgentThreadInfo, AgentThreadKey, HostError};
 use crate::http::Http;
 use crate::install::{self, InstallContext, InstallError, InstallProgress, InstalledAgent, Launch};
 use crate::node;
@@ -318,7 +318,7 @@ impl AgentManager {
             .collect()
     }
 
-    fn entry(&self, settings: &Settings, id: &str) -> Option<AgentEntry> {
+    pub(crate) fn entry(&self, settings: &Settings, id: &str) -> Option<AgentEntry> {
         let id = catalog::resolve_alias(id);
         self.catalog(settings, true)
             .into_iter()
@@ -437,6 +437,24 @@ impl AgentManager {
 
     /// Starts a session.
     pub async fn start(&self, request: StartRequest) -> Result<StartedSession, StartError> {
+        self.start_session(request, false).await
+    }
+
+    /// Starts an ephemeral session (Maze Magic).
+    pub(crate) async fn start_ephemeral(
+        &self,
+        request: StartRequest,
+    ) -> Result<StartedSession, StartError> {
+        self.start_session(request, true).await
+    }
+
+    /// Starts a session; an `ephemeral` one gets no stored thread, no session token
+    /// and no mail thread (see [`SessionConfig::ephemeral`]).
+    async fn start_session(
+        &self,
+        request: StartRequest,
+        ephemeral: bool,
+    ) -> Result<StartedSession, StartError> {
         let settings = &request.settings;
         let entry = self
             .entry(settings, &request.agent_id)
@@ -474,7 +492,7 @@ impl AgentManager {
         std::fs::create_dir_all(&agent_home)?;
         let cli_bin = scratch.dir().join(".bin");
         std::fs::create_dir_all(&cli_bin)?;
-        if let Some(cli) = &self.config.cli_program {
+        if !ephemeral && let Some(cli) = &self.config.cli_program {
             std::os::unix::fs::symlink(cli, cli_bin.join("mazemail"))?;
         }
         // Agents can't start a browser in the sandbox: Maze opens links for them.
@@ -482,7 +500,8 @@ impl AgentManager {
         let open_urls = scratch.dir().join(".open-urls");
 
         let host = Arc::clone(&self.config.host);
-        let (attached, context_note) = match request.mail_thread {
+        let mail_thread = request.mail_thread.filter(|_| !ephemeral);
+        let (attached, context_note) = match mail_thread {
             Some(thread) => match host.thread_export(thread).await? {
                 Some(export) => {
                     scratch.write_thread(export.markdown.expose())?;
@@ -506,6 +525,7 @@ impl AgentManager {
         };
 
         let (agent_thread, transcript) = match &request.resume {
+            _ if ephemeral => (AgentThreadKey(0), Transcript::default()),
             Some(info) => {
                 let transcript = host
                     .load_transcript(info.key)
@@ -515,30 +535,39 @@ impl AgentManager {
                 (info.key, transcript)
             }
             None => (
-                host.create_agent_thread(&entry.id, None, request.mail_thread)
+                host.create_agent_thread(&entry.id, None, mail_thread)
                     .await?,
                 Transcript::default(),
             ),
         };
 
+        // An ephemeral session gets no token, so the agent can't reach any mail.
         let token_store = host.token_store();
-        let minted = tokens::mint_session_token(
-            token_store.as_ref(),
-            host.account_policy().as_ref(),
-            tokens::profile(settings.agent.session_profile),
-            &format!("Maze agent session: {}", entry.name),
-            &session_id,
-        )
-        .await?;
+        let minted = if ephemeral {
+            None
+        } else {
+            Some(
+                tokens::mint_session_token(
+                    token_store.as_ref(),
+                    host.account_policy().as_ref(),
+                    tokens::profile(settings.agent.session_profile),
+                    &format!("Maze agent session: {}", entry.name),
+                    &session_id,
+                )
+                .await?,
+            )
+        };
 
         // Environment: only what Maze sets.
         let mut path = vec![cli_bin.clone()];
         path.extend(path_dirs);
         let mut env = base_env(paths, &agent_home, scratch.tmp(), path);
-        env.insert(
-            local_api::SESSION_ENV.to_owned(),
-            minted.token.expose().to_owned(),
-        );
+        if let Some(minted) = &minted {
+            env.insert(
+                local_api::SESSION_ENV.to_owned(),
+                minted.token.expose().to_owned(),
+            );
+        }
         env.insert(
             auth::OPEN_URLS_ENV.to_owned(),
             open_urls.display().to_string(),
@@ -617,10 +646,11 @@ impl AgentManager {
             open_urls: Some(open_urls),
             key_env: key_env.clone(),
             preferred: self.preferences().get(&entry.id),
+            ephemeral,
         };
         let resources = SessionResources {
             scratch: Some(scratch),
-            token: Some((token_store, minted.record.id)),
+            token: minted.map(|minted| (token_store, minted.record.id)),
             stderr: Some(stderr),
             lease: Some(Box::new(leases)),
         };

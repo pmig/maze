@@ -3,8 +3,8 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use mazemail_types::compose::Draft;
-use mazemail_types::{Address, DraftId, IdentityId};
+use mazemail_types::compose::{Draft, DraftOrigin};
+use mazemail_types::{Address, DraftId, IdentityId, Sensitive};
 
 /// A boxed, sendable future (the backend runs its work on the core's runtime).
 pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
@@ -66,6 +66,20 @@ impl ComposeError {
     }
 }
 
+/// What Maze Magic gets from the composer: the draft split into your own text and the
+/// quote below it, which stays as it is.
+#[derive(Debug, Clone)]
+pub struct MagicInput {
+    /// The identity the draft is sent from (its account must share mail with agents).
+    pub identity: Option<IdentityId>,
+    /// The message the draft replies to or forwards.
+    pub origin: Option<DraftOrigin>,
+    /// Your own text: the body above the quote.
+    pub draft: Sensitive<String>,
+    /// The quote or forwarded message below it (empty for a new message).
+    pub quoted: Sensitive<String>,
+}
+
 /// The composer's view of Maze. Implemented by the `mazemail` binary over the core.
 pub trait ComposeBackend: Send + Sync + 'static {
     /// The identities to send from, the default ones first.
@@ -122,5 +136,13 @@ pub trait ComposeBackend: Send + Sync + 'static {
     fn sent_with_maze(&self, identity: Option<IdentityId>) -> bool {
         let _ = identity;
         true
+    }
+
+    /// Maze Magic: an agent improves `input.draft` (`maze_magic` settings) and the
+    /// improved text comes back. Dropping the future stops the agent. Optional: the
+    /// default says it isn't available.
+    fn magic(&self, input: MagicInput) -> BoxFuture<Result<Sensitive<String>, ComposeError>> {
+        let _ = input;
+        Box::pin(async { Err(ComposeError::new("Maze Magic isn't available here.")) })
     }
 }

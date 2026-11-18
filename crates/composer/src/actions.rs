@@ -33,6 +33,15 @@ actions!(
         /// Make the selection in the body a link (`[text](url)`), or text again
         /// (`cmd-k`). The address is the clipboard's if it holds one.
         Link,
+        /// Maze Magic: an agent improves the draft and you review the result
+        /// (`cmd-m`).
+        MazeMagic,
+        /// Take Maze Magic's text and send the message (`enter`).
+        AcceptAndSend,
+        /// Take Maze Magic's text and keep writing (`cmd-e`).
+        AcceptAndEdit,
+        /// Close Maze Magic and keep the draft as it was (`escape`).
+        DiscardMagic,
     ]
 );
 

@@ -2,17 +2,20 @@
 // Maze's main window, rebuilt in HTML and CSS for the home page: title bar, spaces bar,
 // folder pane, message list, message and the agent column on the right, in Maze's
 // default One Light / One Dark colors, laid out like crates/mail_ui and crates/agent_ui.
-// public/maze-window.js plays four agent tasks in it: the prompt is typed into the agent
-// column, the agent runs `mazemail` commands, its changes come back as a proposal at the
-// top of the column, a pointer accepts it and the mailbox reacts (rows leave, stars
-// appear, counts change).
+// public/maze-window.js plays five agent tasks in it. The first is Maze Magic: a reply
+// opens as a draft tab, is typed, `⌘M` hands it to the agent and the improved text comes
+// back in a dialog over the draft, where the pointer clicks Accept & Send. In the others
+// the prompt is typed into the agent column, the agent runs `mazemail` commands, its
+// changes come back as a proposal at the top of the column, a pointer accepts it and the
+// mailbox reacts (rows leave, stars appear, counts change).
 //
 // It renders at a fixed design size and is scaled to the width of its container with
 // CSS alone (container query units, `tan(atan2())` for the ratio), so its height is
 // known before anything loads. Narrower containers get smaller layouts: without the
 // message view, and on phones the message list above the agent column.
 //
-// Without JavaScript (and before it runs) the first task shows at its proposal. The
+// Without JavaScript (and before it runs) the first task shows at its proposal (Maze
+// Magic: at its dialog). The
 // window is decoration (aria-hidden, nothing focusable); the list after it says the same
 // for screen readers. All mail and ids are made up. Tasks marked `soon` aren't shipped.
 
@@ -53,9 +56,25 @@ interface Item {
   reason: string;
 }
 
+/** Maze Magic: a reply typed in a draft tab and improved by the agent. */
+interface Magic {
+  /** The draft tab's two-word name. */
+  name: string;
+  to: string;
+  subject: string;
+  /** What is typed into the draft. */
+  draft: string;
+  /** The quote below it. */
+  quote: string;
+  /** The improved text in the dialog. */
+  revised: string;
+}
+
 interface Task {
   title: string;
   prompt: string;
+  /** A Maze Magic task instead of a prompt typed into the column. */
+  magic?: Magic;
   agent: string;
   mode: string;
   soon?: boolean;
@@ -72,6 +91,8 @@ interface Task {
     /** The row selected once the selected one has left. */
     after?: string;
     enrich?: string;
+    /** Rows answered: read, with a reply arrow. */
+    replied?: string;
   };
   final: string;
   summary: string;
@@ -159,6 +180,31 @@ const MSGS: Msg[] = [
 ];
 
 const TASKS: Task[] = [
+  {
+    title: "Maze Magic",
+    prompt:
+      "Improve my draft. Fix spelling, grammar and punctuation. Keep my language, tone and meaning, and make it clear, precise and polite. Check it against the earlier messages…",
+    agent: "Claude Code",
+    mode: "Maze Magic",
+    select: "tom",
+    magic: {
+      name: "brave-otter",
+      to: "Tom Fischer",
+      subject: "Re: Contract draft, two questions",
+      draft: "hi tom, three monts is fine and yes to the suport add on\nsam",
+      quote:
+        "On Tue, 27 Oct 2026 at 11:30, Tom Fischer wrote:\n> 1. Should the notice period be three months or six?\n> 2. Do we include the support add-on in the first year?",
+      revised:
+        "Hi Tom,\n\nThanks for the contract draft. To your two questions:\n\n1. A notice period of three months works for us.\n2. Yes, please include the support add-on in the first year.\n\nBest regards,\nSam",
+    },
+    tools: [],
+    say: "Fixed 3 typos and answered both of Tom's questions in his order. Nothing else in the thread is left open.",
+    proposal: { title: "Maze Magic", total: 1, items: [], more: "" },
+    effect: { replied: "tom", counts: { inbox: "108" } },
+    final: "Sent to Tom Fischer.",
+    summary:
+      "Maze Magic: you write a quick reply to Tom and press ⌘M. The agent fixes the typos, makes the reply clear and polite and checks it against the conversation, so both of Tom's questions are answered. The improved text opens in a dialog; Accept & Send sends it.",
+  },
   {
     title: "Old receipts and error reports",
     prompt: "Find and delete all transaction and error-report emails older than 30 days",
@@ -298,6 +344,7 @@ const TASKS: Task[] = [
 ];
 
 const FIRST = TASKS[0]!;
+const MAGIC = TASKS.find((t) => t.magic)?.magic;
 const firstHits = new Set(FIRST.tools.flatMap((t) => (t.hit ? t.hit.split(" ") : [])));
 
 // Small line icons in the spirit of Maze's (Lucide-style) icon set, drawn for this site.
@@ -352,7 +399,7 @@ const ic = (name: string, cls = "") =>
 
 <div class="mw-wrap">
   <div class="mw-stage">
-    <div class="mw" data-maze-window aria-hidden="true">
+    <div class:list={["mw", { composing: !!FIRST.magic }]} data-maze-window aria-hidden="true">
       <svg class="mw-sprite" width="0" height="0">
         {Object.entries(ICONS).map(([name, d]) => <symbol id={`mw-${name}`} viewBox="0 0 16 16" set:html={d} />)}
       </svg>
@@ -398,6 +445,7 @@ const ic = (name: string, cls = "") =>
         <div class="mw-pane">
           <div class="mw-tabs">
             <span class="mw-tab"><Fragment set:html={ic("inbox")} />Inbox · Unified<Fragment set:html={ic("x", "mw-tx")} /></span>
+            {MAGIC && <span class="mw-tab mw-tab--draft"><Fragment set:html={ic("drafts")} />{MAGIC.name}<Fragment set:html={ic("x", "mw-tx")} /></span>}
           </div>
           <div class="mw-panebody">
             <div class="mw-list">
@@ -428,6 +476,7 @@ const ic = (name: string, cls = "") =>
                         <div class="mw-r1">
                           <i class="mw-dot" />
                           {r.outgoing && <Fragment set:html={ic("upright", "mw-out")} />}
+                          <Fragment set:html={ic("reply", "mw-rep")} />
                           <span class="mw-from">{r.from}</span>
                           <span class="mw-date">{r.date}</span>
                         </div>
@@ -523,6 +572,65 @@ const ic = (name: string, cls = "") =>
                 ))
               }
             </div>
+
+            {
+              MAGIC && (
+                <div class:list={["mw-compose", { on: !!FIRST.magic }]}>
+                  <div class="mw-cf">
+                    <span>From</span>Sam Carter &lt;sam@carter.example&gt;
+                  </div>
+                  <div class="mw-cf">
+                    <span>To</span>
+                    <span class="mw-chipr">
+                      <i>TF</i>
+                      {MAGIC.to}
+                    </span>
+                  </div>
+                  <div class="mw-cf">
+                    <span>Subject</span>
+                    {MAGIC.subject}
+                  </div>
+                  <div class="mw-cbody">
+                    <div class="mw-cdraft">
+                      <span data-mw-draft>{MAGIC.draft}</span>
+                      <span class="mw-caret"></span>
+                    </div>
+                    <div class="mw-cquote">{MAGIC.quote}</div>
+                  </div>
+                  <div class="mw-cfoot">
+                    <span class="mw-ob">Attach…</span>
+                    <span class="mw-grow"></span>
+                    <span class="mw-pb mw-cmagic" data-mw-magic>
+                      <Fragment set:html={ic("sparkles")} />
+                      Maze Magic <span class="mw-pk">⌘M</span>
+                    </span>
+                    <span class="mw-pb mw-pb--primary">
+                      Send <span class="mw-pk">⌘⏎</span>
+                    </span>
+                  </div>
+                  <div class:list={["mw-mdlg", { on: !!FIRST.magic }]}>
+                    <div class="mw-mbox">
+                      <div class="mw-mh2">
+                        <Fragment set:html={ic("sparkles")} />
+                        Maze Magic
+                      </div>
+                      <div class="mw-mtext">{MAGIC.revised}</div>
+                      <div class="mw-mbtns">
+                        <span class="mw-pb">
+                          Discard <span class="mw-pk">esc</span>
+                        </span>
+                        <span class="mw-pb mw-pb--line">
+                          Accept &amp; Edit <span class="mw-pk">⌘E</span>
+                        </span>
+                        <span class="mw-pb mw-pb--primary" data-magic-accept>
+                          Accept &amp; Send <span class="mw-pk">⏎</span>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )
+            }
           </div>
         </div>
 
@@ -549,8 +657,11 @@ const ic = (name: string, cls = "") =>
                   data-flag={t.effect.flag}
                   data-after={t.effect.after}
                   data-enrich={t.effect.enrich}
+                  data-replied={t.effect.replied}
+                  data-kind={t.magic ? "magic" : undefined}
                   data-counts={t.effect.counts ? JSON.stringify(t.effect.counts) : undefined}
                 >
+                  {!t.magic && (
                   <div class="mw-propwrap">
                     <div class="mw-prop mw-step">
                       <div class="mw-ph">
@@ -583,8 +694,17 @@ const ic = (name: string, cls = "") =>
                       </div>
                     </div>
                   </div>
+                  )}
                   <div class="mw-conv">
-                    <div class="mw-user mw-step">{t.prompt}</div>
+                    <div class:list={["mw-user mw-step", { "mw-user--magic": t.magic }]}>
+                      {t.magic && (
+                        <span class="mw-ulabel">
+                          <Fragment set:html={ic("sparkles")} />
+                          Maze Magic · ⌘M in {t.magic.name}
+                        </span>
+                      )}
+                      {t.prompt}
+                    </div>
                     <div class="mw-think mw-step" data-dur="1100">
                       <Fragment set:html={ic("sparkles")} />
                       Thinking
@@ -644,13 +764,14 @@ const ic = (name: string, cls = "") =>
   </div>
   <div class="mw-foot">
     <p>
-      Not a screenshot: Maze's window in HTML, with made-up mail. Ask in plain words; every change comes back as a
-      proposal you accept or reject. The contacts example is planned (<a href="/roadmap/">roadmap</a>); the others work today.
+      Not a screenshot: Maze's window in HTML, with made-up mail. Press ⌘M in a draft for Maze Magic, or ask in plain
+      words; every change comes back for you to accept or reject. The contacts example is planned
+      (<a href="/roadmap/">roadmap</a>); the others work today.
     </p>
     <button class="mw-pause" type="button" data-mw-pause hidden>Pause</button>
   </div>
   <div class="visually-hidden">
-    <p>Examples of what you can ask an agent in Maze:</p>
+    <p>Examples of what agents do in Maze:</p>
     <ul>{TASKS.map((t) => <li>{t.summary}</li>)}</ul>
   </div>
 </div>
@@ -2188,6 +2309,231 @@ const ic = (name: string, cls = "") =>
     50% {
       opacity: 0.45;
     }
+  }
+
+  /* ---------- Maze Magic: a draft tab over the pane, its dialog over the draft ---------- */
+
+  .mw-panebody {
+    position: relative;
+  }
+
+  .mw-tab--draft {
+    display: none;
+  }
+
+  .mw.composing .mw-tab--draft {
+    display: inline-flex;
+    animation: mw-fade 0.25s ease;
+  }
+
+  .mw.composing .mw-tab:first-child {
+    background: var(--m-panel);
+    box-shadow: none;
+    color: var(--m-fg-2);
+  }
+
+  .mw-rep {
+    display: none;
+    width: 12px;
+    height: 12px;
+    color: var(--m-fg-2);
+  }
+
+  .mw-row.replied .mw-rep {
+    display: inline-block;
+    animation: mw-pop 0.45s ease;
+  }
+
+  .mw-row.replied .mw-dot {
+    background: none;
+  }
+
+  .mw-row.replied .mw-from {
+    font-weight: 400;
+  }
+
+  .mw-row.replied .mw-subj {
+    color: var(--m-fg-2);
+  }
+
+  .mw-compose {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: none;
+    flex-direction: column;
+    background: var(--m-bg);
+  }
+
+  .mw-compose.on {
+    display: flex;
+  }
+
+  .mw.live .mw-compose.on {
+    animation: mw-fade 0.25s ease;
+  }
+
+  .mw-cf {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 30px;
+    flex: none;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--m-line-2);
+    font-size: 12px;
+  }
+
+  .mw-cf > span:first-child {
+    width: 52px;
+    flex: none;
+    color: var(--m-fg-2);
+  }
+
+  .mw-chipr {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 20px;
+    padding: 0 8px 0 2px;
+    border-radius: 10px;
+    background: var(--m-panel);
+  }
+
+  .mw-chipr i {
+    display: grid;
+    place-items: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--m-acc);
+    color: var(--m-acc-fg);
+    font-size: 8px;
+    font-style: normal;
+    font-weight: 600;
+  }
+
+  .mw-cbody {
+    display: grid;
+    align-content: start;
+    gap: 14px;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    padding: 12px;
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
+
+  .mw-cdraft,
+  .mw-cquote,
+  .mw-mtext {
+    white-space: pre-wrap;
+  }
+
+  .mw-cdraft {
+    min-height: 3em;
+  }
+
+  .mw-cquote {
+    color: var(--m-fg-3);
+  }
+
+  .mw-cfoot {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: none;
+    padding: 7px 12px;
+    border-top: 1px solid var(--m-line);
+    font-size: 11px;
+  }
+
+  .mw-cmagic .mw-i,
+  .mw-mh2 .mw-i,
+  .mw-ulabel .mw-i {
+    width: 12px;
+    height: 12px;
+    color: var(--m-acc);
+  }
+
+  .mw-cmagic.press {
+    background: var(--m-hit);
+    box-shadow: 0 0 0 2px var(--m-acc);
+  }
+
+  .mw-mdlg {
+    position: absolute;
+    inset: 0;
+    display: none;
+    place-items: center;
+    padding: 16px;
+    background: rgb(0 0 0 / 0.18);
+  }
+
+  .mw-mdlg.on {
+    display: grid;
+  }
+
+  .mw.live .mw-mdlg.on .mw-mbox {
+    animation: mw-in 0.3s ease;
+  }
+
+  .mw-mbox {
+    display: flex;
+    flex-direction: column;
+    width: min(420px, 100%);
+    max-height: 100%;
+    overflow: hidden;
+    border: 1px solid var(--m-line);
+    border-radius: 8px;
+    background: var(--m-bg);
+    box-shadow: 0 12px 32px rgb(0 0 0 / 0.22);
+  }
+
+  .mw-mh2 {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--m-line-2);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .mw-mtext {
+    min-height: 0;
+    overflow: hidden;
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .mw-mbtns {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    padding: 8px 12px;
+    border-top: 1px solid var(--m-line-2);
+    font-size: 11px;
+  }
+
+  .mw-pb--line {
+    border: 1px solid var(--m-line);
+  }
+
+  .mw-user--magic {
+    display: grid;
+    gap: 4px;
+    color: var(--m-fg-2);
+  }
+
+  .mw-ulabel {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--m-fg);
+    font-weight: 600;
   }
 
   /* ---------- Smaller layouts ---------- */

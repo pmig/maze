@@ -1,5 +1,8 @@
 // mazemail.dev: plays the agent tasks in the HTML Maze window on the home page
-// (src/components/MazeWindow.astro). Per task: the pointer may select a message, the
+// (src/components/MazeWindow.astro). A Maze Magic task (data-kind="magic"): the pointer
+// selects a message and clicks Reply, the reply is typed into a draft tab, ⌘M hands it to
+// the agent, the improved text appears in a dialog over the draft and the pointer clicks
+// Accept & Send. Every other task: the pointer may select a message, the
 // prompt is typed into the agent column, the agent's commands run (matching rows light up
 // in the list), its answer streams in, the proposal appears at the top of the column, the
 // pointer clicks "Accept all" and the mailbox reacts. The mailbox keeps the changes until
@@ -47,6 +50,10 @@
   var selected = first;
   var counts = $$("[data-count]").map(function (el) { return [el, el.textContent]; });
   var texts = $$(".mw-say").map(function (el) { return [el, el.textContent]; });
+  var compose = $(".mw-compose");
+  var draft = $("[data-mw-draft]");
+  var dialog = $(".mw-mdlg");
+  var draftText = draft ? draft.textContent : "";
 
   // ---- A one-timer scheduler that can be paused and resumed where it stopped. ----
   var timer = 0, due = 0, left = 0, next = null;
@@ -131,15 +138,25 @@
         }
       });
     }
+    words(t.getAttribute("data-replied")).forEach(function (k) { rows[k].classList.add("replied"); });
     var after = t.getAttribute("data-after");
     if (after && rows[selected].classList.contains("gone")) select(after);
   }
+  // The draft tab and its dialog.
+  function composing(on, text, dlg) {
+    if (!compose) return;
+    root.classList.toggle("composing", on);
+    compose.classList.toggle("on", on);
+    dialog.classList.toggle("on", !!dlg);
+    draft.textContent = text || "";
+  }
   function reset() {
-    for (var k in rows) rows[k].classList.remove("gone", "flag", "hit");
+    for (var k in rows) rows[k].classList.remove("gone", "flag", "hit", "replied");
     for (var m in msgs) msgs[m].classList.remove("enriched", "sig");
     counts.forEach(function (c) { c[0].textContent = c[1]; });
     $$(".drop").forEach(function (f) { f.classList.remove("drop"); });
     list.style.transform = "";
+    composing(false);
     select(first);
   }
   function hitsOf(t) {
@@ -162,6 +179,10 @@
   }
 
   // ---- The pointer, in the window's own (unscaled) coordinates ----
+  // Elements hidden in the smaller layouts (the message view) aren't pointed at.
+  function visible(el) {
+    return !!(el && el.getClientRects().length);
+  }
   function at(el, fx, fy) {
     var r = root.getBoundingClientRect(), b = el.getBoundingClientRect();
     var s = r.width / root.offsetWidth || 1;
@@ -189,7 +210,100 @@
     });
   }
 
+  // Streams `el`'s text in word by word.
+  function stream(q, el, wait) {
+    var text = el.textContent, w = text.split(" ");
+    q(wait || 400, function () {
+      el.textContent = "";
+      el.classList.add("on");
+    });
+    for (var n = 0; n < w.length; n++)
+      (function (n) {
+        q(40, function () { el.textContent = w.slice(0, n + 1).join(" "); });
+      })(n);
+  }
+
+  // Clears task t's steps (and the mailbox, when the loop starts over).
+  function begin(t, k, restart) {
+    $$(".on, .done, .ok, .press, .gone", t).forEach(function (el) {
+      el.classList.remove("on", "done", "ok", "press", "gone");
+    });
+    typed.textContent = "";
+    root.classList.remove("busy");
+    clearHits();
+    if (restart) {
+      reset();
+      root.getBoundingClientRect();
+      root.classList.remove("resetting");
+    }
+    composing(false);
+    show(k, true);
+  }
+
+  function selectSteps(q, key) {
+    q(500, function () { reveal([key]); });
+    q(250, function () { point(rows[key], 0.42, 0.55); });
+    q(900, function () { select(key); });
+  }
+
+  function planMagic(k, restart) {
+    var t = tasks[k], s = [];
+    var q = function (ms, f) { s.push([ms, f]); };
+    var key = t.getAttribute("data-select");
+    var magic = $("[data-mw-magic]"), accept = $("[data-magic-accept]");
+    var reply = function () { return $(".mw-ob", msgs[key]); };
+
+    q(0, function () { begin(t, k, restart); });
+    selectSteps(q, key);
+    q(700, function () {
+      if (visible(reply())) point(reply(), 0.5, 0.55);
+    });
+    q(650, function () {
+      cursor.classList.remove("on");
+      composing(true, "");
+    });
+    for (var c = 1; c <= draftText.length; c++)
+      (function (c) {
+        q(c === 1 ? 500 : 22 + ((draftText.charCodeAt(c - 1) * 13) % 38), function () {
+          draft.textContent = draftText.slice(0, c);
+        });
+      })(c);
+    q(600, function () { point(magic, 0.5, 0.55); });
+    q(800, function () { magic.classList.add("press"); });
+    q(250, function () {
+      magic.classList.remove("press");
+      cursor.classList.remove("on");
+      root.classList.add("busy");
+      show(k, false);
+      $(".mw-user", t).classList.add("on");
+    });
+    q(350, function () { $(".mw-think", t).classList.add("on"); });
+    q(1500, function () { $(".mw-think", t).classList.add("done"); });
+    stream(q, $(".mw-say:not(.mw-final)", t));
+    q(300, function () {
+      root.classList.remove("busy");
+      dialog.classList.add("on");
+    });
+    q(1800, function () { point(accept, 0.45, 0.55); });
+    q(950, function () { accept.classList.add("press"); });
+    q(180, function () { accept.classList.remove("press"); });
+    q(350, function () {
+      cursor.classList.remove("on");
+      composing(false);
+      apply(t, true);
+      reveal([key]);
+    });
+    stream(q, $(".mw-final", t), 250);
+    q(2800, function () {
+      t.classList.add("out");
+      if (k === tasks.length - 1) root.classList.add("resetting");
+    });
+    q(400, function () {});
+    return s;
+  }
+
   function plan(k, restart) {
+    if (tasks[k].getAttribute("data-kind") === "magic") return planMagic(k, restart);
     var t = tasks[k], s = [];
     var q = function (ms, f) { s.push([ms, f]); };
     var on = function (el) { el.classList.add("on"); };
@@ -197,24 +311,9 @@
     var prop = $(".mw-prop", t), wrap = $(".mw-propwrap", t), accept = $("[data-accept]", t);
     var key = t.getAttribute("data-select");
 
-    q(0, function () {
-      $$(".on, .done, .ok, .press, .gone", t).forEach(function (el) {
-        el.classList.remove("on", "done", "ok", "press", "gone");
-      });
-      typed.textContent = "";
-      root.classList.remove("busy");
-      clearHits();
-      if (restart) {
-        reset();
-        root.getBoundingClientRect();
-        root.classList.remove("resetting");
-      }
-      show(k, true);
-    });
+    q(0, function () { begin(t, k, restart); });
     if (key) {
-      q(500, function () { reveal([key]); });
-      q(250, function () { point(rows[key], 0.42, 0.55); });
-      q(900, function () { select(key); });
+      selectSteps(q, key);
       q(450, function () { cursor.classList.remove("on"); });
     }
     for (var c = 1; c <= prompt.length; c++)
@@ -230,7 +329,7 @@
       on(user);
     });
     $$(".mw-conv > .mw-step:not(.mw-user):not(.mw-final)", t).forEach(function (el) {
-      if (el.classList.contains("mw-say")) stream(el);
+      if (el.classList.contains("mw-say")) stream(q, el);
       else
         (function (el) {
           q(350, function () { on(el); });
@@ -257,25 +356,13 @@
       clearHits();
       apply(t, true);
     });
-    stream($(".mw-final", t), 250);
+    stream(q, $(".mw-final", t), 250);
     q(2800, function () {
       t.classList.add("out");
       if (k === tasks.length - 1) root.classList.add("resetting");
     });
     q(400, function () {});
     return s;
-
-    function stream(el, wait) {
-      var text = el.textContent, w = text.split(" ");
-      q(wait || 400, function () {
-        el.textContent = "";
-        on(el);
-      });
-      for (var n = 0; n < w.length; n++)
-        (function (n) {
-          q(40, function () { el.textContent = w.slice(0, n + 1).join(" "); });
-        })(n);
-    }
   }
 
   // Reduced motion: task k at its proposal, with the earlier tasks' changes applied.
@@ -290,6 +377,7 @@
     hitsOf(t).forEach(function (h) { rows[h].classList.add("hit"); });
     if ($("[data-sig]", t)) msgs[selected].classList.add("sig");
     reveal(hitsOf(t));
+    if (t.getAttribute("data-kind") === "magic") composing(true, draftText, true);
     show(k, false);
   }
 

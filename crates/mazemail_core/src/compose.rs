@@ -61,7 +61,7 @@ use mazemail_mime::compose::{
 };
 use mazemail_mime::{MessageHeaders, ParsedMessage};
 use mazemail_types::compose::{Draft, DraftAttachment, DraftOrigin, ForwardedPart};
-use mazemail_types::{AccountId, Address, DraftId, IdentityId, MessageId, PublicId as _};
+use mazemail_types::{AccountId, Address, DraftId, IdentityId, MessageId, PublicId as _, ThreadId};
 use settings::FooterSettings;
 use store::{Identity, MessageDetail, OutboxEnvelope, Queries as _, Reader};
 use time::{OffsetDateTime, UtcOffset};
@@ -416,6 +416,19 @@ impl CoreHandle {
             .settings()
             .settings
             .footer_for(account.as_deref().unwrap_or_default()))
+    }
+
+    /// The thread `message` belongs to (`None` when the message is gone).
+    pub async fn message_thread(&self, message: MessageId) -> Result<Option<ThreadId>> {
+        let core = self.clone();
+        self.run_blocking(move || {
+            Ok(core
+                .store()
+                .reader()?
+                .message(message)?
+                .map(|detail| detail.thread))
+        })
+        .await
     }
 
     /// The identities to send from: by account, each account's default first.

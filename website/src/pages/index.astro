@@ -250,6 +250,17 @@ const TERMINAL = [
       </p>
 
       <div class="grid-3">
+        <article class="card card--wide" id="maze-magic">
+          <h3>Maze Magic: <kbd>⌘M</kbd> in a draft</h3>
+          <p>
+            Write a quick reply and press <kbd>⌘M</kbd> (<kbd>Ctrl+M</kbd> on Linux). Your agent fixes the
+            typos, makes it clear and polite and checks it against the conversation, so no question
+            stays unanswered. You see the result first: Accept &amp; Send, Accept &amp; Edit or Discard.
+            The quote stays as it was, the prompt is yours to change in the settings, and nothing of
+            the run is kept.
+          </p>
+          <p><a href="/docs/agents/#maze-magic">Maze Magic <span aria-hidden="true">→</span></a></p>
+        </article>
         <article class="card">
           <h3>Sign in, pick a model</h3>
           <p>
@@ -482,6 +493,10 @@ const TERMINAL = [
 
   .hero-shot {
     padding: 0 var(--gutter) clamp(2.5rem, 6vw, 4.5rem);
+  }
+
+  .card--wide {
+    grid-column: 1 / -1;
   }
 
   .grid-3 {

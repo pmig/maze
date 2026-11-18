@@ -305,6 +305,11 @@ when it ends. Network access stays on, because agents have to reach their model
 provider. AI is off for every account unless you turn it on. Details in
 [agents.md](agents.md).
 
+Maze Magic (`cmd-m` in a draft) sends your draft and the conversation it replies to
+to the agent you chose, which passes them to its model provider. It works only for
+accounts you share with agents. The run gets no token, can't use tools or run commands
+and isn't stored ([agents.md](agents.md#maze-magic)).
+
 ## Updates
 
 The built-in updater only installs releases whose update manifest is signed with Maze's

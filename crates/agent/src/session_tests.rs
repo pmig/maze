@@ -70,6 +70,7 @@ impl Harness {
             open_urls: None,
             key_env: None,
             preferred: BTreeMap::new(),
+            ephemeral: false,
         }
     }
 

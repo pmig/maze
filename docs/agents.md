@@ -142,6 +142,32 @@ the agent's token.
 `agent.session_profile` sets what an agent session's token may do: `"read-only"`,
 `"triage"` (default) or `"writer"` (changes apply directly).
 
+## Maze Magic
+
+`cmd-m` in a draft sends it to an agent to fix and improve, and shows the result for you
+to accept and send, accept and keep editing, or discard (see
+[Maze Magic](getting-started.md#maze-magic)). It uses the agents of the agent column:
+`maze_magic.agent`, else `agent.default`, installed and signed in there.
+
+A Maze Magic run is a session of its own, started for one prompt and ended with the
+answer:
+
+- **What the agent gets:** your instructions (`maze_magic.prompt`), your text above the
+  quote, the quoted message and, with `maze_magic.include_thread` (on by default), the
+  conversation the draft replies to as Markdown. All of it is in the prompt; nothing is
+  written to the session folder.
+- **What it can't do:** it gets no session token, so the `mazemail` CLI can't reach any
+  mail, every permission it asks for is refused and no terminal command runs. It runs
+  in the same sandbox as every other agent session.
+- **What is kept:** nothing. The run doesn't show in the column's history and no
+  transcript is stored. The agent itself may keep its own logs in its home
+  (`agent-home/<id>/`), as for every session.
+- **Which accounts:** only drafts sent from an account you share with agents (`"any"`
+  in `agent.accounts`). For other accounts Maze Magic says so and sends nothing.
+
+The answer replaces only your text: the quote or forwarded message below it stays as
+it was.
+
 ## Signing in
 
 Each agent keeps its own login in its own home, `<data dir>/agent-home/<id>/`, separate

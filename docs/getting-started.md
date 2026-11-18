@@ -926,6 +926,8 @@ body filled in; `mazemail open 'mailto:…'` does the same from a script:
   Folder and `cmd-b` the folder pane everywhere else); in To, Cc, Bcc and Subject they
   do nothing.
 - **Attach…** (`cmd-shift-a`) adds files; they are read when the message is sent.
+- **Maze Magic** (`cmd-m`, or the button next to **Send**) has an agent fix and improve
+  your draft before you send it. See [Maze Magic](#maze-magic) below.
 - **"Sent with Maze"** (on by default) adds a short line below your messages:
   "Sent with Maze (https://mazemail.dev)", with a plain link to the website, no
   tracking. It's a small way to support Maze. It's a setting, not a switch in the
@@ -974,6 +976,45 @@ sends it twice. The copy in your Sent folder, and the optional copy in your Inbo
 Drafts are saved on your computer (encrypted, like your mail) a moment after you stop
 typing. Not there yet: drafts in the server's Drafts folder, signatures switching with
 the identity, send later and undo send.
+
+### Maze Magic
+
+Press `cmd-m` in a draft (or click **Maze Magic** next to **Send**) and an agent reads
+your text together with the conversation it replies to, fixes typos and grammar, makes
+it clear, precise and polite and checks that you answered every question and forgot
+nothing the earlier messages ask for. The improved text opens in a dialog over the
+draft:
+
+- **Accept & Send** (`enter`, the default) puts the improved text into the draft and
+  sends it.
+- **Accept & Edit** (`cmd-e`) puts it into the draft so you can keep writing. `cmd-z`
+  brings your own text back.
+- **Discard** (`escape`) closes the dialog and leaves the draft as it was. While the
+  agent is still working, `escape` stops it.
+
+Only your own text is changed: the quoted message or the forward below it stays
+exactly as it was. Maze Magic uses the agent column's agents (see [Agents](#agents)),
+so the agent has to be installed and signed in there once, and the account you send
+from has to share mail with agents (`"agent": { "accounts": { "Work": "any" } }`). The
+agent gets your draft and the conversation in its prompt, nothing else: it has no
+access to the rest of your mail, every tool it asks for is refused, and the run isn't
+kept in the agent column's history.
+
+What the agent is asked to do is up to you:
+
+```jsonc
+{
+  "maze_magic": {
+    // The agent to use. null: agent.default.
+    "agent": "claude",
+    // Your instructions (the default fixes typos, keeps your tone and checks the
+    // reply against the conversation).
+    "prompt": "Fix spelling and grammar. Keep it short and friendly.",
+    // Send the whole conversation; false: only the quoted message.
+    "include_thread": true
+  }
+}
+```
 
 ### Aliases
 
@@ -1119,6 +1160,9 @@ opt-in: it's off for every account until you share one with agents
 - **Proposals:** by default an agent's archive, move, tag, flag and mark-read requests
   become proposals at the top of the column. Accept or reject each item (`y` / `n`) or
   all of them (`cmd-shift-enter` / `cmd-shift-backspace`).
+- **Maze Magic:** `cmd-m` in a draft has an agent improve it, with the conversation as
+  context; you review the result before anything is sent. See
+  [Maze Magic](#maze-magic).
 
 Everything else (permission prompts, keys, the sandbox policy, custom agents) is in
 [agents.md](agents.md).
@@ -1268,7 +1312,7 @@ at once. These are bound today:
 | Reader / original HTML / switch              | `cmd-alt-r` / `cmd-alt-o` / `v`                      |
 | Load images / always from this sender        | `i` / `shift-i`                                      |
 | Sync all accounts now                       | `cmd-shift-t`, `F5` (or the title bar's sync button) |
-| Hide Maze / hide others / minimize          | `cmd-h` / `cmd-alt-h` / `cmd-m`                      |
+| Hide Maze / hide others / minimize          | `cmd-h` / `cmd-alt-h` / `cmd-m` (not in a composer)  |
 | Quit                                        | `cmd-q`                                              |
 | **Message list and message**                |                                                      |
 | Next / previous message                     | `f` / `b`, `down` / `up`                             |
@@ -1297,6 +1341,8 @@ at once. These are bound today:
 | Save draft / attach / Cc and Bcc            | `cmd-s` / `cmd-shift-a` / `cmd-shift-c`              |
 | Bold / italic / strikethrough (body)        | `cmd-b` / `cmd-i` / `cmd-shift-x`                    |
 | Inline code / link (body)                   | `cmd-e` / `cmd-k`                                    |
+| Maze Magic (an agent improves the draft)    | `cmd-m`                                              |
+| Maze Magic: accept & send / edit / discard  | `enter` / `cmd-e` / `escape`                         |
 | Recipient: make a chip / take a suggestion   | `,` `;` `enter` `tab` / `enter`, `tab`               |
 | Recipient: select the last chip / remove it  | `backspace` / `backspace`, `delete`                  |
 | Recipient: move between chips                | `left` / `right`                                     |
@@ -1320,7 +1366,8 @@ Single-letter shortcuts work when the message list or a message has focus, never
 a text field; they act on the tab that has the focus.
 
 Inside a composer, the formatting keys take precedence: `cmd-k` makes a link and
-`cmd-b` bold instead of Go to Folder and the folder pane.
+`cmd-b` bold instead of Go to Folder and the folder pane. `cmd-m` is Maze Magic there,
+not Minimize (which stays in the **Window** menu).
 
 Zed splits and moves between panes with `cmd-k` followed by an arrow key. In Maze
 `cmd-k` is Go to Folder, and a two-key shortcut starting with `cmd-k` would make it

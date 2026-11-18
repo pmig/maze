@@ -99,6 +99,9 @@ pub struct SessionConfig {
     pub key_env: Option<String>,
     /// Remembered choices (control id → value) applied when the session starts.
     pub preferred: BTreeMap<String, ControlValue>,
+    /// A one-off session (Maze Magic): nothing is stored, every tool permission is
+    /// denied and no terminal command runs. `agent_thread` isn't used.
+    pub ephemeral: bool,
 }
 
 /// The session's state.
@@ -455,6 +458,7 @@ async fn run<T>(
     let transcript = Arc::new(Mutex::new(config.transcript.clone()));
     let terminals = Arc::new(TerminalHost::new());
     let agent_thread = config.agent_thread;
+    let ephemeral = config.ephemeral;
     let result = connect(
         transport,
         config,
@@ -472,7 +476,8 @@ async fn run<T>(
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .clone();
-    if !snapshot.entries.is_empty()
+    if !ephemeral
+        && !snapshot.entries.is_empty()
         && let Err(error) = host.save_transcript(agent_thread, snapshot.to_json()).await
     {
         tracing::warn!(%error, "could not save the agent transcript");
@@ -926,9 +931,10 @@ async fn session_main(
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .title();
-    if let Err(error) = host
-        .update_agent_thread(config.agent_thread, title.as_deref(), Some(&session.0))
-        .await
+    if !config.ephemeral
+        && let Err(error) = host
+            .update_agent_thread(config.agent_thread, title.as_deref(), Some(&session.0))
+            .await
     {
         tracing::warn!(%error, "could not store the agent session id");
     }
@@ -1494,6 +1500,9 @@ impl Loop {
         if !signed_out {
             self.status(SessionStatus::Ready);
         }
+        if self.config.ephemeral {
+            return;
+        }
         let (json, title) = {
             let transcript = self
                 .transcript
@@ -1523,6 +1532,23 @@ impl Loop {
 
     fn on_request(&mut self, request: HostRequest) {
         match request {
+            HostRequest::Permission(pending) if self.config.ephemeral => {
+                let (request, responder) = *pending;
+                let outcome = match pick_option(&request, PermissionChoice::Deny) {
+                    Some(option) => {
+                        RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option))
+                    }
+                    None => RequestPermissionOutcome::Cancelled,
+                };
+                let _ = responder.respond(RequestPermissionResponse::new(outcome));
+            }
+            HostRequest::CreateTerminal(pending) if self.config.ephemeral => {
+                let (_, responder) = *pending;
+                let _ = responder.respond_with_error(agent_client_protocol::Error::new(
+                    -32603,
+                    "commands can't run in this session",
+                ));
+            }
             HostRequest::Permission(pending) => {
                 let (request, responder) = *pending;
                 self.next_prompt += 1;

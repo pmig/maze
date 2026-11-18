@@ -197,6 +197,18 @@
     "auto_update": true
   },
 
+  // Maze Magic (⌘M / Ctrl+M in the composer): an agent improves your draft, with the
+  // conversation it replies to as context, and you review the result before it is
+  // sent. The sending account needs "any" in agent.accounts.
+  "maze_magic": {
+    // The agent to use. null: agent.default.
+    "agent": null,
+    // What the agent is asked to do with the draft.
+    "prompt": "Improve my draft. Fix spelling, grammar and punctuation. Keep my language, tone and meaning, and make it clear, precise and polite. Check it against the earlier messages: answer every question I was asked, and make sure nothing I promised or was asked for is missing and nothing contradicts the history. Keep names, dates, numbers and links exact. Keep my signature unchanged.",
+    // Send the whole conversation the draft replies to. false: only the quoted message.
+    "include_thread": true
+  },
+
   // The sandbox every agent process runs in.
   "agent_sandbox": {
     // Turning this off lets agents read your whole home directory.

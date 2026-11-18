@@ -1,0 +1,28 @@
+---
+source: crates/agent/src/magic.rs
+expression: prompt.expose()
+---
+Fix typos.
+
+You are improving an email draft in the mail app Maze. Answer with the improved draft only, between <maze-draft> and </maze-draft>, without anything before or after it. Don't use tools and don't add a subject line. Keep the draft's formatting (Markdown) and its language.
+
+<draft>
+Hi Tom,
+
+thre months is fine.
+</draft>
+
+The draft ends with this quote, which Maze keeps as it is. Don't repeat it in your answer.
+
+<quoted>
+On Tue, Tom wrote:
+> Three or six months?
+</quoted>
+
+The conversation the draft replies to:
+
+<conversation>
+# Contract draft
+
+Three or six months?
+</conversation>

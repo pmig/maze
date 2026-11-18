@@ -63,6 +63,8 @@ pub struct Settings {
     pub agent: AgentSettings,
     /// The sandbox every agent process runs in.
     pub agent_sandbox: AgentSandboxSettings,
+    /// Maze Magic: an agent improves the draft in the composer (⌘M / Ctrl+M).
+    pub maze_magic: MazeMagicSettings,
     /// Look for updates in the background. `false`: only when asked.
     pub auto_update: bool,
     /// The update channel. `null`: the channel of the installed build.
@@ -100,6 +102,7 @@ impl Default for Settings {
             auth: AuthSettings::default(),
             agent: AgentSettings::default(),
             agent_sandbox: AgentSandboxSettings::default(),
+            maze_magic: MazeMagicSettings::default(),
             auto_update: true,
             update_channel: None,
             auto_update_install: AutoUpdateInstall::default(),
@@ -999,6 +1002,36 @@ pub enum AgentAccess {
     LocalOnly,
     /// Any agent.
     Any,
+}
+
+/// The instructions Maze Magic sends with a draft unless `maze_magic.prompt` says
+/// otherwise.
+pub const DEFAULT_MAZE_MAGIC_PROMPT: &str = "Improve my draft. Fix spelling, grammar and \
+punctuation. Keep my language, tone and meaning, and make it clear, precise and polite. \
+Check it against the earlier messages: answer every question I was asked, and make sure \
+nothing I promised or was asked for is missing and nothing contradicts the history. Keep \
+names, dates, numbers and links exact. Keep my signature unchanged.";
+
+/// Maze Magic: an agent improves the draft in the composer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct MazeMagicSettings {
+    /// The agent that improves the draft. `null`: `agent.default`.
+    pub agent: Option<String>,
+    /// What the agent is asked to do with the draft.
+    pub prompt: String,
+    /// Send the whole conversation the draft replies to, not only the quoted message.
+    pub include_thread: bool,
+}
+
+impl Default for MazeMagicSettings {
+    fn default() -> Self {
+        Self {
+            agent: None,
+            prompt: DEFAULT_MAZE_MAGIC_PROMPT.to_owned(),
+            include_thread: true,
+        }
+    }
 }
 
 /// The agent sandbox (PLAN §4.18).

@@ -76,13 +76,15 @@ use ui::panes::{Item, ItemEvent, SerializedItem};
 use ui::theme::scaled;
 
 use crate::actions::{
-    AddToDictionary, Attach, Bold, Close, Code, IgnoreSpelling, Italic, Link, OpenInNewWindow,
-    ReplaceMisspelling, SaveDraft, Send, Strikethrough, ToggleCcBcc, ToggleSpellingLanguage,
+    AddToDictionary, Attach, Bold, Close, Code, IgnoreSpelling, Italic, Link, MazeMagic,
+    OpenInNewWindow, ReplaceMisspelling, SaveDraft, Send, Strikethrough, ToggleCcBcc,
+    ToggleSpellingLanguage,
 };
 use crate::backend::{ComposeBackend, IdentityChoice, SendOutcome};
 use crate::format::{self, Style};
 use crate::recipients::{CompleteAddress, RecipientField, RecipientFieldEvent};
 
+mod magic;
 mod spellcheck;
 
 pub use spellcheck::{SPELLCHECK_DEBOUNCE, SpellcheckSettings, set_spellcheck};
@@ -228,6 +230,8 @@ pub struct Composer {
     cc_visible: bool,
     dirty: bool,
     sending: bool,
+    /// Maze Magic's dialog, while it is open.
+    magic: Option<magic::Magic>,
     closed: bool,
     status: Status,
     autosave_after: Duration,
@@ -476,6 +480,7 @@ impl Composer {
             cc_visible,
             dirty: false,
             sending: false,
+            magic: None,
             closed: false,
             status: Status::None,
             autosave_after: options.autosave_after,
@@ -763,7 +768,7 @@ impl Composer {
 
     /// Validates the fields and sends.
     pub fn send(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        if self.sending || self.closed {
+        if self.sending || self.closed || self.magic_running() {
             return;
         }
         let draft = match self.draft(cx) {
@@ -1131,9 +1136,11 @@ impl Render for Composer {
         let footer_preview = self.footer_preview();
         let spelling_status = self.spelling_status(cx);
         let dragging_recipient = self.dragging_recipient(cx);
+        let magic = self.render_magic(cx);
 
         v_flex()
             .id("composer")
+            .relative()
             .size_full()
             .key_context("Composer")
             .track_focus(&self.focus)
@@ -1166,6 +1173,9 @@ impl Render for Composer {
                 this.format(Style::Code, window, cx);
             }))
             .on_action(cx.listener(|this, _: &Link, window, cx| this.link(window, cx)))
+            .on_action(cx.listener(|this, _: &MazeMagic, window, cx| {
+                this.start_magic(window, cx);
+            }))
             .on_action(
                 cx.listener(|this, action: &ReplaceMisspelling, window, cx| {
                     this.replace_misspelling(action, window, cx);
@@ -1314,6 +1324,21 @@ impl Render for Composer {
                         )
                     })
                     .child(
+                        Button::new("maze-magic")
+                            .ghost()
+                            .small()
+                            .icon(IconName::Sparkles)
+                            .label("Maze Magic")
+                            .tooltip(format!(
+                                "Improve the draft with an agent ({})",
+                                shortcut_label("cmd-m", cx)
+                            ))
+                            .disabled(self.sending)
+                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                this.start_magic(window, cx);
+                            })),
+                    )
+                    .child(
                         Button::new("send")
                             .primary()
                             .small()
@@ -1325,6 +1350,7 @@ impl Render for Composer {
                             })),
                     ),
             )
+            .children(magic)
     }
 }
 

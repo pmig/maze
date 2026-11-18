@@ -660,6 +660,46 @@ mod tests {
         );
     }
 
+    /// Stand-ins for the app's actions, so the default keymap binds them here.
+    mod app_actions {
+        gpui::actions!(maze, [Minimize]);
+        gpui::actions!(composer, [MazeMagic]);
+    }
+
+    /// `cmd-m` is Maze Magic inside a composer (also with the focus in its body, below
+    /// the `Composer` context) and Minimize everywhere else. A binding without a context
+    /// counts as matching at the deepest context, so Minimize must not be one.
+    #[gpui::test]
+    fn cmd_m_is_maze_magic_in_a_composer_and_minimize_elsewhere(cx: &mut TestAppContext) {
+        let _ = (app_actions::Minimize, app_actions::MazeMagic);
+        cx.update(|cx| {
+            set_primary_modifier(PrimaryModifier::Ctrl, cx);
+            bind_keymap(DEFAULT_MACOS_KEYMAP, cx).unwrap();
+            let keymap = cx.key_bindings();
+            let keymap = keymap.borrow();
+            let ctrl_m = [gpui::Keystroke::parse("ctrl-m").unwrap()];
+            let action = |stack: &[&str]| {
+                let contexts: Vec<gpui::KeyContext> = stack
+                    .iter()
+                    .map(|c| gpui::KeyContext::parse(c).unwrap())
+                    .collect();
+                let (bindings, _) = keymap.bindings_for_input(&ctrl_m, &contexts);
+                bindings.first().map(|b| b.action().name())
+            };
+            assert_eq!(
+                action(&["MailWindow", "Pane", "Composer", "Editor"]),
+                Some("composer::MazeMagic"),
+                "in a composer's body"
+            );
+            assert_eq!(action(&["Composer"]), Some("composer::MazeMagic"));
+            assert_eq!(
+                action(&["MailWindow", "ThreadList"]),
+                Some("maze::Minimize"),
+                "outside a composer"
+            );
+        });
+    }
+
     #[test]
     fn cmd_becomes_the_primary_modifier() {
         use PrimaryModifier::{Ctrl, Super};
