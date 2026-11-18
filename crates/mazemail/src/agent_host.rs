@@ -8,13 +8,15 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use agent::{
-    AgentHost, AgentKey, AgentThreadInfo, AgentThreadKey, HostError, ProposalItemStatus,
-    ProposalItemView, ProposalView, ThreadExport,
+    AgentConversationInfo, AgentConversationKey, AgentHost, AgentKey, HostError,
+    ProposalItemStatus, ProposalItemView, ProposalView, ThreadExport,
 };
 use async_trait::async_trait;
 use local_api::TokenStore;
 use mazemail_core::api::{self, StoreTokenStore, TokenAuthorizer};
-use mazemail_core::{AgentThreadId, CoreHandle, ProposalId, ProposalItemId, ProposalItemState};
+use mazemail_core::{
+    AgentConversationId, CoreHandle, ProposalId, ProposalItemId, ProposalItemState,
+};
 use mazemail_types::{PublicId as _, Sensitive, ThreadId};
 
 /// The agent host of the running app.
@@ -72,59 +74,69 @@ impl AgentHost for CoreAgentHost {
         }))
     }
 
-    async fn create_agent_thread(
+    async fn create_agent_conversation(
         &self,
         agent_id: &str,
         title: Option<&str>,
         mail_thread: Option<ThreadId>,
-    ) -> Result<AgentThreadKey, HostError> {
+    ) -> Result<AgentConversationKey, HostError> {
         self.core
-            .create_agent_thread(agent_id, title, mail_thread)
+            .create_agent_conversation(agent_id, title, mail_thread)
             .await
-            .map(|id| AgentThreadKey(id.0))
+            .map(|id| AgentConversationKey(id.0))
             .map_err(host_error)
     }
 
-    async fn update_agent_thread(
+    async fn update_agent_conversation(
         &self,
-        key: AgentThreadKey,
+        key: AgentConversationKey,
         title: Option<&str>,
         acp_session_id: Option<&str>,
     ) -> Result<(), HostError> {
         self.core
-            .update_agent_thread(AgentThreadId(key.0), title, acp_session_id)
+            .update_agent_conversation(AgentConversationId(key.0), title, acp_session_id)
             .await
             .map_err(host_error)
     }
 
-    async fn save_transcript(&self, key: AgentThreadKey, json: Vec<u8>) -> Result<(), HostError> {
+    async fn save_transcript(
+        &self,
+        key: AgentConversationKey,
+        json: Vec<u8>,
+    ) -> Result<(), HostError> {
         self.core
-            .save_agent_transcript(AgentThreadId(key.0), json)
+            .save_agent_transcript(AgentConversationId(key.0), json)
             .await
             .map_err(host_error)
     }
 
-    async fn load_transcript(&self, key: AgentThreadKey) -> Result<Option<Vec<u8>>, HostError> {
+    async fn load_transcript(
+        &self,
+        key: AgentConversationKey,
+    ) -> Result<Option<Vec<u8>>, HostError> {
         self.core
-            .agent_transcript(AgentThreadId(key.0))
+            .agent_transcript(AgentConversationId(key.0))
             .await
             .map_err(host_error)
     }
 
-    async fn agent_threads(
+    async fn agent_conversations(
         &self,
         mail_thread: Option<ThreadId>,
-    ) -> Result<Vec<AgentThreadInfo>, HostError> {
-        let threads = self.core.agent_threads(mail_thread).map_err(host_error)?;
-        Ok(threads
+    ) -> Result<Vec<AgentConversationInfo>, HostError> {
+        let conversations = self
+            .core
+            .agent_conversations(mail_thread)
+            .map_err(host_error)?;
+        Ok(conversations
             .into_iter()
-            .map(|thread| AgentThreadInfo {
-                key: AgentThreadKey(thread.id.0),
-                agent_id: thread.agent_id,
-                title: thread.title,
-                mail_thread: thread.mail_thread,
-                acp_session_id: thread.acp_session_id,
-                updated: thread.updated,
+            .map(|conversation| AgentConversationInfo {
+                key: AgentConversationKey(conversation.id.0),
+                agent_id: conversation.agent_id,
+                title: conversation.title,
+                mail_thread: conversation.mail_thread,
+                acp_session_id: conversation.acp_session_id,
+                updated_at: conversation.updated_at,
             })
             .collect())
     }

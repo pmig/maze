@@ -92,7 +92,7 @@ fn populate(store: &Store) -> Mail {
                 person(Some("anna"), "a@example.com"),
                 500,
             );
-            a2.received = Some(310);
+            a2.received_at = Some(310);
             a2.thread = ThreadAssignment::Existing(a1.thread);
             let a2 = w.upsert_message(&a2)?;
 
@@ -110,7 +110,7 @@ fn populate(store: &Store) -> Mail {
 
             let mut c1 = new(4, 250, None, person(None, "carl@example.com"), 100);
             c1.to = vec![person(Some("Yvonne"), "y@example.com")];
-            c1.received = Some(260);
+            c1.received_at = Some(260);
             let c1 = w.upsert_message(&c1)?;
             w.set_tags(&[c1.message], &[important], &[])?;
 
@@ -122,7 +122,7 @@ fn populate(store: &Store) -> Mail {
                 2000,
             );
             d1.to = vec![person(Some("Aaron"), "aaron@example.com")];
-            d1.received = Some(1000);
+            d1.received_at = Some(1000);
             let d1 = w.upsert_message(&d1)?;
             Ok([a1, a2, b1, c1, d1])
         })

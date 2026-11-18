@@ -175,9 +175,9 @@ pub use mazemail_types::SavedSearchId;
 pub use saved_searches::SavedSearchChange;
 /// Store types that are part of this API.
 pub use store::{
-    Account, AccountKind, AgentThread, AgentThreadId, ContactId, ListKey, ListOrder, ListScope,
-    MessageKey, MessageRow, OpId, ProposalId, ProposalItemId, ProposalItemState, ProposalState,
-    RuleId, RuleTrigger, SavedSearch, SortField, SortOrder, Tag, ThreadRow, TokenId,
+    Account, AccountKind, AgentConversation, AgentConversationId, ContactId, ListKey, ListOrder,
+    ListScope, MessageKey, MessageRow, OpId, ProposalId, ProposalItemId, ProposalItemState,
+    ProposalState, RuleId, RuleTrigger, SavedSearch, SortField, SortOrder, Tag, ThreadRow, TokenId,
 };
 
 /// Search types that are part of this API.

@@ -2,7 +2,7 @@
 //!
 //! The session runner turns ACP traffic into [`EntryUpdate`]s; the agent column applies
 //! them to its own [`Transcript`] and the runner keeps one too, which is stored
-//! (encrypted, in the `agent_thread` blob) after every turn. Transcripts hold mail
+//! (encrypted, in the `agent_conversation` blob) after every turn. Transcripts hold mail
 //! content: never log them.
 
 use serde::{Deserialize, Serialize};

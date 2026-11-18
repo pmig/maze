@@ -382,7 +382,7 @@ async fn items_without_an_envelope_fail_and_recent_sent_items_are_kept() {
         .await
         .unwrap();
     // Too recent for a one-hour cutoff (the store's tests cover the exact cutoff;
-    // `created` is in whole seconds, so a zero cutoff would need a sleep here).
+    // `created_at` is in whole seconds, so a zero cutoff would need a sleep here).
     assert_eq!(
         s.outbox
             .prune(std::time::Duration::from_secs(3600))

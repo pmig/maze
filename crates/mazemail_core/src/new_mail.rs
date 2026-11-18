@@ -180,7 +180,7 @@ fn notifies(role: Option<FolderRole>, favorite: bool) -> bool {
 
 /// When a message reached the server: INTERNALDATE, else its `Date` header.
 fn arrival(detail: &MessageDetail) -> UnixTime {
-    detail.received.unwrap_or(detail.date)
+    detail.received_at.unwrap_or(detail.date)
 }
 
 /// The addresses of an account's identities, lowercased.

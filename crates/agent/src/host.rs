@@ -10,15 +10,15 @@ use local_api::{MemoryTokenStore, TokenStore};
 use mazemail_types::{PublicId as _, Sensitive, ThreadId};
 use serde::{Deserialize, Serialize};
 
-/// An agent conversation in the store (`agent_thread`).
+/// An agent conversation in the store (`agent_conversation`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct AgentThreadKey(pub i64);
+pub struct AgentConversationKey(pub i64);
 
-/// An agent conversation as listed in the thread history.
+/// An agent conversation as listed in the conversations of a mail thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentThreadInfo {
+pub struct AgentConversationInfo {
     /// Its key.
-    pub key: AgentThreadKey,
+    pub key: AgentConversationKey,
     /// The agent's id.
     pub agent_id: String,
     /// Title (the first prompt, shortened).
@@ -28,7 +28,7 @@ pub struct AgentThreadInfo {
     /// The agent's ACP session id, for `session/load`.
     pub acp_session_id: Option<String>,
     /// Last change (Unix seconds).
-    pub updated: i64,
+    pub updated_at: i64,
 }
 
 /// A mail thread exported for an agent.
@@ -119,32 +119,39 @@ pub trait AgentHost: Send + Sync {
     async fn thread_export(&self, thread: ThreadId) -> Result<Option<ThreadExport>, HostError>;
 
     /// Starts a stored agent conversation.
-    async fn create_agent_thread(
+    async fn create_agent_conversation(
         &self,
         agent_id: &str,
         title: Option<&str>,
         mail_thread: Option<ThreadId>,
-    ) -> Result<AgentThreadKey, HostError>;
+    ) -> Result<AgentConversationKey, HostError>;
 
     /// Updates title and ACP session id.
-    async fn update_agent_thread(
+    async fn update_agent_conversation(
         &self,
-        key: AgentThreadKey,
+        key: AgentConversationKey,
         title: Option<&str>,
         acp_session_id: Option<&str>,
     ) -> Result<(), HostError>;
 
     /// Replaces the stored (encrypted) transcript.
-    async fn save_transcript(&self, key: AgentThreadKey, json: Vec<u8>) -> Result<(), HostError>;
+    async fn save_transcript(
+        &self,
+        key: AgentConversationKey,
+        json: Vec<u8>,
+    ) -> Result<(), HostError>;
 
     /// The stored transcript.
-    async fn load_transcript(&self, key: AgentThreadKey) -> Result<Option<Vec<u8>>, HostError>;
+    async fn load_transcript(
+        &self,
+        key: AgentConversationKey,
+    ) -> Result<Option<Vec<u8>>, HostError>;
 
     /// Conversations, newest first; `Some(thread)` limits to one mail thread.
-    async fn agent_threads(
+    async fn agent_conversations(
         &self,
         mail_thread: Option<ThreadId>,
-    ) -> Result<Vec<AgentThreadInfo>, HostError>;
+    ) -> Result<Vec<AgentConversationInfo>, HostError>;
 
     /// Proposals waiting for review, newest first.
     async fn pending_proposals(&self) -> Result<Vec<ProposalView>, HostError>;
@@ -171,7 +178,7 @@ pub trait AgentHost: Send + Sync {
 #[derive(Debug, Default)]
 struct MemoryState {
     exports: BTreeMap<ThreadId, String>,
-    threads: Vec<(AgentThreadInfo, Option<Vec<u8>>)>,
+    conversations: Vec<(AgentConversationInfo, Option<Vec<u8>>)>,
     proposals: Vec<ProposalView>,
     keys: BTreeMap<String, AgentKey>,
     clock: i64,
@@ -224,9 +231,9 @@ impl MemoryHost {
     }
 
     /// A stored transcript, for assertions.
-    pub fn transcript(&self, key: AgentThreadKey) -> Option<Vec<u8>> {
+    pub fn transcript(&self, key: AgentConversationKey) -> Option<Vec<u8>> {
         self.state()
-            .threads
+            .conversations
             .iter()
             .find(|(info, _)| info.key == key)
             .and_then(|(_, transcript)| transcript.clone())
@@ -250,33 +257,33 @@ impl AgentHost for MemoryHost {
             }))
     }
 
-    async fn create_agent_thread(
+    async fn create_agent_conversation(
         &self,
         agent_id: &str,
         title: Option<&str>,
         mail_thread: Option<ThreadId>,
-    ) -> Result<AgentThreadKey, HostError> {
+    ) -> Result<AgentConversationKey, HostError> {
         let mut state = self.state();
         state.clock += 1;
-        let key = AgentThreadKey(state.threads.len() as i64 + 1);
+        let key = AgentConversationKey(state.conversations.len() as i64 + 1);
         let updated = state.clock;
-        state.threads.push((
-            AgentThreadInfo {
+        state.conversations.push((
+            AgentConversationInfo {
                 key,
                 agent_id: agent_id.to_owned(),
                 title: title.map(str::to_owned),
                 mail_thread,
                 acp_session_id: None,
-                updated,
+                updated_at: updated,
             },
             None,
         ));
         Ok(key)
     }
 
-    async fn update_agent_thread(
+    async fn update_agent_conversation(
         &self,
-        key: AgentThreadKey,
+        key: AgentConversationKey,
         title: Option<&str>,
         acp_session_id: Option<&str>,
     ) -> Result<(), HostError> {
@@ -284,44 +291,51 @@ impl AgentHost for MemoryHost {
         state.clock += 1;
         let clock = state.clock;
         let (info, _) = state
-            .threads
+            .conversations
             .iter_mut()
             .find(|(info, _)| info.key == key)
-            .ok_or_else(|| HostError("no such agent thread".to_owned()))?;
+            .ok_or_else(|| HostError("no such agent conversation".to_owned()))?;
         info.title = title.map(str::to_owned);
         info.acp_session_id = acp_session_id.map(str::to_owned);
-        info.updated = clock;
+        info.updated_at = clock;
         Ok(())
     }
 
-    async fn save_transcript(&self, key: AgentThreadKey, json: Vec<u8>) -> Result<(), HostError> {
+    async fn save_transcript(
+        &self,
+        key: AgentConversationKey,
+        json: Vec<u8>,
+    ) -> Result<(), HostError> {
         let mut state = self.state();
         let (_, transcript) = state
-            .threads
+            .conversations
             .iter_mut()
             .find(|(info, _)| info.key == key)
-            .ok_or_else(|| HostError("no such agent thread".to_owned()))?;
+            .ok_or_else(|| HostError("no such agent conversation".to_owned()))?;
         *transcript = Some(json);
         Ok(())
     }
 
-    async fn load_transcript(&self, key: AgentThreadKey) -> Result<Option<Vec<u8>>, HostError> {
+    async fn load_transcript(
+        &self,
+        key: AgentConversationKey,
+    ) -> Result<Option<Vec<u8>>, HostError> {
         Ok(self.transcript(key))
     }
 
-    async fn agent_threads(
+    async fn agent_conversations(
         &self,
         mail_thread: Option<ThreadId>,
-    ) -> Result<Vec<AgentThreadInfo>, HostError> {
-        let mut threads: Vec<AgentThreadInfo> = self
+    ) -> Result<Vec<AgentConversationInfo>, HostError> {
+        let mut conversations: Vec<AgentConversationInfo> = self
             .state()
-            .threads
+            .conversations
             .iter()
             .map(|(info, _)| info.clone())
             .filter(|info| mail_thread.is_none() || info.mail_thread == mail_thread)
             .collect();
-        threads.sort_by_key(|info| std::cmp::Reverse(info.updated));
-        Ok(threads)
+        conversations.sort_by_key(|info| std::cmp::Reverse(info.updated_at));
+        Ok(conversations)
     }
 
     async fn pending_proposals(&self) -> Result<Vec<ProposalView>, HostError> {

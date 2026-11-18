@@ -34,25 +34,6 @@ pub(crate) fn manager() -> Option<Arc<AgentManager>> {
         .clone()
 }
 
-/// Registers the app-level agent actions ("Agent: Toggle Agent Panel").
-pub(crate) fn init(cx: &mut App) {
-    cx.on_action(|_: &agent_ui::ToggleAgentPanel, cx| {
-        // Usually dispatched from the palette while the window handles that event;
-        // GPUI can't update a window from inside its own event handling.
-        cx.defer(|cx| {
-            let Some((handle, _)) = cx.global::<AppState>().window.clone() else {
-                return;
-            };
-            let toggled = handle.update(cx, |_, window, cx| {
-                window.dispatch_action(Box::new(mail_ui::actions::ToggleAgentColumn), cx);
-            });
-            if let Err(error) = toggled {
-                tracing::debug!(%error, "no window for the agent column toggle");
-            }
-        });
-    });
-}
-
 /// Creates the agent panel in the main window. Deferred: callers may be in the middle
 /// of a window update.
 pub(crate) fn start(core: &CoreHandle, authorizer: &TokenAuthorizer, cx: &mut App) {

@@ -305,7 +305,14 @@ mod tests {
             assert!(prompt.contains("thre months."));
             assert!(prompt.contains("> Three or six?"));
             // No stored conversation and no session token.
-            assert!(setup.host.agent_threads(None).await.unwrap().is_empty());
+            assert!(
+                setup
+                    .host
+                    .agent_conversations(None)
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
             assert!(setup.host.tokens().list().await.unwrap().is_empty());
         }
 

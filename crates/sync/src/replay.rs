@@ -126,7 +126,7 @@ pub(crate) async fn replay_ops(
     report.next_due = remaining
         .iter()
         .find(|op| op.state == OpState::Queued)
-        .map(|op| op.next_attempt)
+        .map(|op| op.next_attempt_at)
         .filter(|due| *due > now);
     // Folders that still expect locations from queued ops: their passes match new
     // mail by Message-ID before ingesting it.

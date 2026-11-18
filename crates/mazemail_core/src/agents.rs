@@ -1,6 +1,6 @@
 //! Agent conversations and the review of agent proposals (PLAN §4.12, CONCEPT §10.3).
 //!
-//! - **Conversations** (`agent_thread`): one per agent session, linked to a mail
+//! - **Conversations** (`agent_conversation`): one per agent session, linked to a mail
 //!   thread, with the agent's ACP session id for `session/load` and the transcript as
 //!   an encrypted blob.
 //! - **Proposals**: changes agents proposed under the Triage profile (`mazemail
@@ -14,8 +14,8 @@
 
 use mazemail_types::{Sensitive, ThreadId};
 use store::{
-    AgentThread, AgentThreadId, Proposal, ProposalId, ProposalItemId, ProposalItemState,
-    ProposalState, Queries as _,
+    AgentConversation, AgentConversationId, Proposal, ProposalId, ProposalItemId,
+    ProposalItemState, ProposalState, Queries as _,
 };
 
 use crate::api::proposal_summary;
@@ -68,33 +68,36 @@ impl CoreHandle {
     // ---- conversations ------------------------------------------------------------
 
     /// Agent conversations, newest first; `Some(thread)` only those of one mail thread.
-    pub fn agent_threads(&self, mail_thread: Option<ThreadId>) -> Result<Vec<AgentThread>> {
-        let mut threads = self.store().reader()?.agent_threads()?;
+    pub fn agent_conversations(
+        &self,
+        mail_thread: Option<ThreadId>,
+    ) -> Result<Vec<AgentConversation>> {
+        let mut conversations = self.store().reader()?.agent_conversations()?;
         if let Some(thread) = mail_thread {
-            threads.retain(|t| t.mail_thread == Some(thread));
+            conversations.retain(|t| t.mail_thread == Some(thread));
         }
-        Ok(threads)
+        Ok(conversations)
     }
 
     /// Starts a conversation.
-    pub async fn create_agent_thread(
+    pub async fn create_agent_conversation(
         &self,
         agent_id: &str,
         title: Option<&str>,
         mail_thread: Option<ThreadId>,
-    ) -> Result<AgentThreadId> {
+    ) -> Result<AgentConversationId> {
         let agent_id = agent_id.to_owned();
         let title = title.map(str::to_owned);
         Ok(self
             .store()
-            .write(move |w| w.create_agent_thread(&agent_id, title.as_deref(), mail_thread))
+            .write(move |w| w.create_agent_conversation(&agent_id, title.as_deref(), mail_thread))
             .await?)
     }
 
     /// Updates a conversation's title and ACP session id.
-    pub async fn update_agent_thread(
+    pub async fn update_agent_conversation(
         &self,
-        id: AgentThreadId,
+        id: AgentConversationId,
         title: Option<&str>,
         acp_session_id: Option<&str>,
     ) -> Result<()> {
@@ -102,14 +105,14 @@ impl CoreHandle {
         let session = acp_session_id.map(str::to_owned);
         Ok(self
             .store()
-            .write(move |w| w.update_agent_thread(id, title.as_deref(), session.as_deref()))
+            .write(move |w| w.update_agent_conversation(id, title.as_deref(), session.as_deref()))
             .await?)
     }
 
     /// Stores a conversation's transcript (encrypted, compressed blob).
     pub async fn save_agent_transcript(
         &self,
-        id: AgentThreadId,
+        id: AgentConversationId,
         transcript: Vec<u8>,
     ) -> Result<()> {
         let store = self.store().clone();
@@ -123,11 +126,11 @@ impl CoreHandle {
     }
 
     /// A conversation's stored transcript.
-    pub async fn agent_transcript(&self, id: AgentThreadId) -> Result<Option<Vec<u8>>> {
-        let Some(thread) = self.store().reader()?.agent_thread(id)? else {
+    pub async fn agent_transcript(&self, id: AgentConversationId) -> Result<Option<Vec<u8>>> {
+        let Some(conversation) = self.store().reader()?.agent_conversation(id)? else {
             return Ok(None);
         };
-        let Some(blob) = thread.transcript else {
+        let Some(blob) = conversation.transcript else {
             return Ok(None);
         };
         let store = self.store().clone();
@@ -138,10 +141,10 @@ impl CoreHandle {
     }
 
     /// Deletes a conversation.
-    pub async fn delete_agent_thread(&self, id: AgentThreadId) -> Result<()> {
+    pub async fn delete_agent_conversation(&self, id: AgentConversationId) -> Result<()> {
         Ok(self
             .store()
-            .write(move |w| w.delete_agent_thread(id))
+            .write(move |w| w.delete_agent_conversation(id))
             .await?)
     }
 
@@ -321,7 +324,7 @@ fn summarize(proposal: Proposal, source: Option<String>) -> ProposalSummary {
         id: proposal.id,
         title: proposal.title,
         source,
-        created: proposal.created,
+        created: proposal.created_at,
         state: proposal.state,
         items: proposal
             .items

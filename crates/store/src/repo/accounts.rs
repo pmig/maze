@@ -55,7 +55,7 @@ pub(crate) fn account(conn: &Connection, id: AccountId) -> Result<Option<Account
 }
 
 const IDENTITY_COLUMNS: &str = "id, account_id, label, display_name, email, reply_to, \
-     signature_id, smtp_id, sent_folder_id, drafts_folder_id, archive_folder_id, \
+     signature_id, smtp_server_id, sent_folder_id, drafts_folder_id, archive_folder_id, \
      archive_granularity, is_default, ordinal";
 
 fn identity_row(row: &Row<'_>) -> rusqlite::Result<Identity> {
@@ -131,7 +131,7 @@ pub(crate) fn smtp_server(conn: &Connection, id: SmtpServerId) -> Result<Option<
         .optional()?)
 }
 
-const SIGNATURE_COLUMNS: &str = "id, name, body_html, body_text, ordinal, created, updated";
+const SIGNATURE_COLUMNS: &str = "id, name, body_html, body_text, ordinal, created_at, updated_at";
 
 fn signature_row(row: &Row<'_>) -> rusqlite::Result<Signature> {
     Ok(Signature {
@@ -140,8 +140,8 @@ fn signature_row(row: &Row<'_>) -> rusqlite::Result<Signature> {
         body_html: row.get(2)?,
         body_text: row.get(3)?,
         ordinal: row.get(4)?,
-        created: row.get(5)?,
-        updated: row.get(6)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
     })
 }
 
@@ -279,7 +279,7 @@ impl WriteTx<'_> {
         self.conn
             .prepare_cached(
                 "INSERT INTO identity (account_id, label, display_name, email, reply_to,
-                   signature_id, smtp_id, sent_folder_id, drafts_folder_id, archive_folder_id,
+                   signature_id, smtp_server_id, sent_folder_id, drafts_folder_id, archive_folder_id,
                    archive_granularity, is_default, ordinal)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             )?
@@ -318,7 +318,7 @@ impl WriteTx<'_> {
         self.conn
             .prepare_cached(
                 "UPDATE identity SET label = ?2, display_name = ?3, email = ?4, reply_to = ?5,
-                   signature_id = ?6, smtp_id = ?7, sent_folder_id = ?8, drafts_folder_id = ?9,
+                   signature_id = ?6, smtp_server_id = ?7, sent_folder_id = ?8, drafts_folder_id = ?9,
                    archive_folder_id = ?10, archive_granularity = ?11, is_default = ?12,
                    ordinal = ?13
                  WHERE id = ?1",
@@ -426,7 +426,7 @@ impl WriteTx<'_> {
     pub fn create_signature(&mut self, input: &SignatureInput) -> Result<SignatureId> {
         self.conn
             .prepare_cached(
-                "INSERT INTO signature (name, body_html, body_text, ordinal, created, updated)
+                "INSERT INTO signature (name, body_html, body_text, ordinal, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
             )?
             .execute(params![
@@ -446,7 +446,7 @@ impl WriteTx<'_> {
             .conn
             .prepare_cached(
                 "UPDATE signature SET name = ?2, body_html = ?3, body_text = ?4, ordinal = ?5,
-                   updated = ?6 WHERE id = ?1",
+                   updated_at = ?6 WHERE id = ?1",
             )?
             .execute(params![
                 id.0,

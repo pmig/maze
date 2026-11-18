@@ -1,5 +1,5 @@
 //! One agent session: an ACP connection with one ACP session, linked to an agent
-//! thread (and through it to a mail thread), PLAN §4.12.
+//! conversation (and through it to a mail thread), PLAN §4.12.
 //!
 //! ```text
 //! initialize (V1, terminal only) → [authenticate] → session/new | session/load
@@ -46,7 +46,7 @@ use sandbox::SandboxPolicy;
 
 use crate::auth::{UrlInbox, links_in};
 use crate::controls::{self, Control, ControlValue};
-use crate::host::{AgentHost, AgentThreadKey};
+use crate::host::{AgentConversationKey, AgentHost};
 use crate::process::LaunchSpec;
 use crate::scratch::{Scratch, THREAD_FILE};
 use crate::terminal::{CommandClass, ExitInfo, TerminalHost, classify};
@@ -77,7 +77,7 @@ pub struct SessionConfig {
     /// The agent's display name.
     pub agent_name: String,
     /// The stored conversation.
-    pub agent_thread: AgentThreadKey,
+    pub agent_conversation: AgentConversationKey,
     /// The agent's earlier session id to load (`session/load`), when resuming.
     pub resume_acp_session: Option<String>,
     /// The working directory (the scratch dir).
@@ -100,7 +100,7 @@ pub struct SessionConfig {
     /// Remembered choices (control id → value) applied when the session starts.
     pub preferred: BTreeMap<String, ControlValue>,
     /// A one-off session (Maze Magic): nothing is stored, every tool permission is
-    /// denied and no terminal command runs. `agent_thread` isn't used.
+    /// denied and no terminal command runs. `agent_conversation` isn't used.
     pub ephemeral: bool,
 }
 
@@ -233,7 +233,7 @@ pub enum SessionCommand {
 pub struct SessionHandle {
     id: String,
     agent_id: String,
-    agent_thread: AgentThreadKey,
+    agent_conversation: AgentConversationKey,
     events: async_channel::Receiver<SessionEvent>,
     commands: async_channel::Sender<SessionCommand>,
 }
@@ -250,8 +250,8 @@ impl SessionHandle {
     }
 
     /// The stored conversation.
-    pub fn agent_thread(&self) -> AgentThreadKey {
-        self.agent_thread
+    pub fn agent_conversation(&self) -> AgentConversationKey {
+        self.agent_conversation
     }
 
     /// The event stream (runtime-independent, so GPUI can await it).
@@ -388,7 +388,7 @@ where
     let handle = SessionHandle {
         id: config.session_id.clone(),
         agent_id: config.agent_id.clone(),
-        agent_thread: config.agent_thread,
+        agent_conversation: config.agent_conversation,
         events: events_rx,
         commands: commands_tx,
     };
@@ -457,7 +457,7 @@ async fn run<T>(
 {
     let transcript = Arc::new(Mutex::new(config.transcript.clone()));
     let terminals = Arc::new(TerminalHost::new());
-    let agent_thread = config.agent_thread;
+    let agent_conversation = config.agent_conversation;
     let ephemeral = config.ephemeral;
     let result = connect(
         transport,
@@ -478,7 +478,9 @@ async fn run<T>(
         .clone();
     if !ephemeral
         && !snapshot.entries.is_empty()
-        && let Err(error) = host.save_transcript(agent_thread, snapshot.to_json()).await
+        && let Err(error) = host
+            .save_transcript(agent_conversation, snapshot.to_json())
+            .await
     {
         tracing::warn!(%error, "could not save the agent transcript");
     }
@@ -933,7 +935,11 @@ async fn session_main(
         .title();
     if !config.ephemeral
         && let Err(error) = host
-            .update_agent_thread(config.agent_thread, title.as_deref(), Some(&session.0))
+            .update_agent_conversation(
+                config.agent_conversation,
+                title.as_deref(),
+                Some(&session.0),
+            )
             .await
     {
         tracing::warn!(%error, "could not store the agent session id");
@@ -1512,21 +1518,21 @@ impl Loop {
         };
         if let Err(error) = self
             .host
-            .save_transcript(self.config.agent_thread, json)
+            .save_transcript(self.config.agent_conversation, json)
             .await
         {
             tracing::warn!(%error, "could not save the agent transcript");
         }
         if let Err(error) = self
             .host
-            .update_agent_thread(
-                self.config.agent_thread,
+            .update_agent_conversation(
+                self.config.agent_conversation,
                 title.as_deref(),
                 Some(&self.session.0),
             )
             .await
         {
-            tracing::warn!(%error, "could not update the agent thread");
+            tracing::warn!(%error, "could not update the agent conversation");
         }
     }
 

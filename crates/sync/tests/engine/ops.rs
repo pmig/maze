@@ -180,7 +180,7 @@ async fn failures_back_off_and_get_stuck_after_five_attempts() {
                 .unwrap()
                 .contains("quota exceeded")
         );
-        assert!(current.next_attempt >= real_now() + 29);
+        assert!(current.next_attempt_at >= real_now() + 29);
         // Time passes beyond the backoff; the engine's timer would fire, but the test
         // clock moved, so nudge it.
         offset.fetch_add(2 * 3600, Ordering::SeqCst);

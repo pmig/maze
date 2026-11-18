@@ -32,7 +32,7 @@ fn pending_ops_replay_in_order_with_backoff() {
     );
     assert_eq!(ops[1].origin, "agent:3");
     assert_eq!(reader.accounts_with_pending_ops().unwrap(), vec![f.account]);
-    let t0 = ops[0].created;
+    let t0 = ops[0].created_at;
     assert_eq!(
         reader.next_pending_op(f.account, t0).unwrap().unwrap().id,
         first
@@ -234,7 +234,7 @@ fn outbox_claims_once_keeps_the_envelope_retries_and_prunes() {
         .outbox_item(id)
         .unwrap()
         .unwrap()
-        .created;
+        .created_at;
     let pruned = store
         .write_blocking(move |w| w.outbox_prune_sent(created))
         .unwrap();
@@ -308,7 +308,7 @@ fn tokens_store_only_hashes() {
         hash: token_hash(secret),
         profile: "read".to_owned(),
         scope_json: "{}".to_owned(),
-        expires: Some(i64::MAX),
+        expires_at: Some(i64::MAX),
         label: Some("claude".to_owned()),
     };
     let id = store
@@ -347,7 +347,7 @@ fn tokens_can_be_found_by_precomputed_hash_and_id() {
         hash,
         profile: "triage".to_owned(),
         scope_json: r#"{"id":"tk_abc"}"#.to_owned(),
-        expires: None,
+        expires_at: None,
         label: None,
     };
     let id = store
@@ -395,7 +395,7 @@ fn proposals_and_audit_log() {
     let reader = store.reader().unwrap();
     let proposal = reader.proposal(id).unwrap().unwrap();
     assert_eq!(proposal.state, ProposalState::Partial);
-    assert!(proposal.decided.is_some());
+    assert!(proposal.decided_at.is_some());
     assert_eq!(
         reader
             .proposals(Some(ProposalState::Pending))
@@ -512,7 +512,7 @@ fn settings_rows_round_trip() {
     let contacts = reader.search_contacts("ann", 10).unwrap();
     assert_eq!(contacts.len(), 1);
     assert_eq!(
-        (contacts[0].frequency, contacts[0].last_used),
+        (contacts[0].frequency, contacts[0].last_used_at),
         (2, Some(20))
     );
     assert!(

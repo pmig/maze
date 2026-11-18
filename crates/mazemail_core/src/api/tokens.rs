@@ -303,10 +303,10 @@ fn decode(row: &ApiToken) -> Result<TokenRecord, DecodeError> {
         profile: profile_from_text(&row.profile).ok_or(DecodeError::Profile)?,
         scope: stored.scope,
         allow_send: stored.allow_send,
-        created_at: timestamp(row.created)?,
-        expires_at: row.expires.map(timestamp).transpose()?,
+        created_at: timestamp(row.created_at)?,
+        expires_at: row.expires_at.map(timestamp).transpose()?,
         created_by: stored.created_by,
-        revoked_at: row.revoked.map(timestamp).transpose()?,
+        revoked_at: row.revoked_at.map(timestamp).transpose()?,
     })
 }
 
@@ -321,7 +321,7 @@ fn encode(record: &TokenRecord) -> Result<NewApiToken, TokenStoreError> {
         hash: *record.hash.as_bytes(),
         profile: record.profile.as_str().to_owned(),
         scope_json: serde_json::to_string(&stored).map_err(TokenStoreError::new)?,
-        expires: record.expires_at.map(OffsetDateTime::unix_timestamp),
+        expires_at: record.expires_at.map(OffsetDateTime::unix_timestamp),
         label: record.label.clone(),
     })
 }
@@ -468,11 +468,11 @@ mod tests {
             hash: new.hash,
             profile: new.profile,
             scope_json: new.scope_json,
-            expires: new.expires,
+            expires_at: new.expires_at,
             label: new.label,
-            created: original.created_at.unix_timestamp(),
-            last_used: None,
-            revoked: None,
+            created_at: original.created_at.unix_timestamp(),
+            last_used_at: None,
+            revoked_at: None,
         };
         assert_eq!(decode(&row).unwrap(), original);
 

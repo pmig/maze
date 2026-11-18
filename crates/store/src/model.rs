@@ -57,7 +57,7 @@ local_id!(
 );
 local_id!(
     /// An agent conversation.
-    AgentThreadId
+    AgentConversationId
 );
 local_id!(
     /// An SMTP server.
@@ -360,8 +360,8 @@ pub struct Signature {
     pub body_html: Option<String>,
     pub body_text: Option<String>,
     pub ordinal: i64,
-    pub created: UnixTime,
-    pub updated: UnixTime,
+    pub created_at: UnixTime,
+    pub updated_at: UnixTime,
 }
 redacted_debug!(Signature { id, ordinal });
 
@@ -510,7 +510,7 @@ pub struct NewMessage {
     pub in_reply_to: Option<String>,
     pub references: Vec<String>,
     pub date: UnixTime,
-    pub received: Option<UnixTime>,
+    pub received_at: Option<UnixTime>,
     pub from: Option<Address>,
     pub to: Vec<Address>,
     pub cc: Vec<Address>,
@@ -553,7 +553,7 @@ impl NewMessage {
             in_reply_to: None,
             references: Vec::new(),
             date,
-            received: None,
+            received_at: None,
             from: None,
             to: Vec::new(),
             cc: Vec::new(),
@@ -638,7 +638,7 @@ pub struct MessageDetail {
     pub in_reply_to: Option<String>,
     pub references: Vec<String>,
     pub date: UnixTime,
-    pub received: Option<UnixTime>,
+    pub received_at: Option<UnixTime>,
     pub from: Option<Address>,
     pub to: Vec<Address>,
     pub cc: Vec<Address>,
@@ -1019,9 +1019,9 @@ pub struct PendingOp {
     pub origin: String,
     pub state: OpState,
     pub attempts: u32,
-    pub next_attempt: UnixTime,
+    pub next_attempt_at: UnixTime,
     pub last_error: Option<String>,
-    pub created: UnixTime,
+    pub created_at: UnixTime,
 }
 
 text_enum!(
@@ -1065,7 +1065,7 @@ pub struct OutboxItem {
     pub state: OutboxState,
     pub attempts: u32,
     pub last_error: Option<String>,
-    pub created: UnixTime,
+    pub created_at: UnixTime,
     /// The SMTP envelope; `None` for items queued without one (the sender then has to
     /// take it from the message headers).
     pub envelope: Option<OutboxEnvelope>,
@@ -1076,14 +1076,14 @@ pub struct OutboxItem {
 pub struct StoredDraft {
     pub id: DraftId,
     pub draft: Draft,
-    pub created: UnixTime,
-    pub updated: UnixTime,
+    pub created_at: UnixTime,
+    pub updated_at: UnixTime,
 }
 redacted_debug!(StoredDraft {
     id,
     draft,
-    created,
-    updated
+    created_at,
+    updated_at
 });
 
 /// A send log entry: the SMTP server accepted this message.
@@ -1106,17 +1106,17 @@ pub struct ApiToken {
     /// `read`, `triage` or `write`.
     pub profile: String,
     pub scope_json: String,
-    pub expires: Option<UnixTime>,
+    pub expires_at: Option<UnixTime>,
     pub label: Option<String>,
-    pub created: UnixTime,
-    pub last_used: Option<UnixTime>,
-    pub revoked: Option<UnixTime>,
+    pub created_at: UnixTime,
+    pub last_used_at: Option<UnixTime>,
+    pub revoked_at: Option<UnixTime>,
 }
 
 impl ApiToken {
     /// Not revoked and not expired at `now`.
     pub fn is_valid_at(&self, now: UnixTime) -> bool {
-        self.revoked.is_none() && self.expires.is_none_or(|expires| now < expires)
+        self.revoked_at.is_none() && self.expires_at.is_none_or(|expires| now < expires)
     }
 }
 
@@ -1126,7 +1126,7 @@ pub struct NewApiToken {
     pub hash: [u8; 32],
     pub profile: String,
     pub scope_json: String,
-    pub expires: Option<UnixTime>,
+    pub expires_at: Option<UnixTime>,
     pub label: Option<String>,
 }
 
@@ -1160,15 +1160,15 @@ pub struct Proposal {
     pub token: Option<TokenId>,
     pub title: String,
     pub state: ProposalState,
-    pub created: UnixTime,
-    pub decided: Option<UnixTime>,
+    pub created_at: UnixTime,
+    pub decided_at: Option<UnixTime>,
     pub items: Vec<ProposalItem>,
 }
 redacted_debug!(Proposal {
     id,
     token,
     state,
-    created,
+    created_at,
     items
 });
 
@@ -1194,14 +1194,14 @@ redacted_debug!(NewProposalItem {});
 #[derive(Clone, PartialEq, Eq)]
 pub struct AuditEntry {
     pub id: AuditId,
-    pub at: UnixTime,
+    pub occurred_at: UnixTime,
     pub origin: String,
     pub action: String,
     pub detail_json: Option<String>,
 }
 redacted_debug!(AuditEntry {
     id,
-    at,
+    occurred_at,
     origin,
     action
 });
@@ -1218,23 +1218,23 @@ pub struct AuditQuery {
 
 /// An agent conversation (PLAN §4.12).
 #[derive(Clone, PartialEq, Eq)]
-pub struct AgentThread {
-    pub id: AgentThreadId,
+pub struct AgentConversation {
+    pub id: AgentConversationId,
     pub agent_id: String,
     pub title: Option<String>,
     pub mail_thread: Option<ThreadId>,
     pub acp_session_id: Option<String>,
     pub transcript: Option<BlobId>,
-    pub created: UnixTime,
-    pub updated: UnixTime,
+    pub created_at: UnixTime,
+    pub updated_at: UnixTime,
 }
-redacted_debug!(AgentThread {
+redacted_debug!(AgentConversation {
     id,
     agent_id,
     mail_thread,
     transcript,
-    created,
-    updated
+    created_at,
+    updated_at
 });
 
 // ---------------------------------------------------------------------------------------
@@ -1248,14 +1248,14 @@ pub struct Contact {
     pub display_name: Option<String>,
     pub email: String,
     pub frequency: u32,
-    pub last_used: Option<UnixTime>,
+    pub last_used_at: Option<UnixTime>,
     pub vcard: Option<String>,
 }
 redacted_debug!(Contact {
     id,
     book,
     frequency,
-    last_used
+    last_used_at
 });
 
 text_enum!(
@@ -1274,8 +1274,8 @@ text_enum!(
 pub struct Rule {
     pub id: RuleId,
     pub input: RuleInput,
-    pub created: UnixTime,
-    pub updated: UnixTime,
+    pub created_at: UnixTime,
+    pub updated_at: UnixTime,
 }
 
 impl fmt::Debug for Rule {
@@ -1323,7 +1323,7 @@ pub struct SavedSearch {
     /// Folders searched; `None` means all.
     pub folders: Option<Vec<FolderId>>,
     pub ordinal: i64,
-    pub created: UnixTime,
+    pub created_at: UnixTime,
 }
 redacted_debug!(SavedSearch {
     id,

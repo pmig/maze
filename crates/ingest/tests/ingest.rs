@@ -147,7 +147,7 @@ fn ingest_raw_stores_summary_body_and_index_doc() {
     assert_eq!(detail.list_id.as_deref(), Some("billing.example.com"));
     assert_eq!(detail.delivered_to.as_deref(), Some("ben@example.org"));
     assert_eq!(detail.size, Some(raw.len() as u64));
-    assert_eq!(detail.received, Some(1_727_900_000));
+    assert_eq!(detail.received_at, Some(1_727_900_000));
     assert_eq!(detail.date, 1_727_861_400);
     assert!(detail.has_attachments);
     assert!(detail.snippet.as_deref().unwrap().starts_with("Hallo Ben"));

@@ -52,14 +52,14 @@ impl Harness {
     async fn config(&self) -> SessionConfig {
         let key = self
             .host
-            .create_agent_thread("fake", None, Some(ThreadId(7)))
+            .create_agent_conversation("fake", None, Some(ThreadId(7)))
             .await
             .unwrap();
         SessionConfig {
             session_id: "s_test".to_owned(),
             agent_id: "fake".to_owned(),
             agent_name: "Fake".to_owned(),
-            agent_thread: key,
+            agent_conversation: key,
             resume_acp_session: None,
             cwd: self.dir.clone(),
             terminal_env: BTreeMap::from([("PATH".to_owned(), "/usr/bin:/bin".to_owned())]),
@@ -146,7 +146,7 @@ async fn a_turn_streams_into_the_transcript_and_is_stored() {
     config.attached = Some(AttachedThread {
         public_id: "t_h".into(),
     });
-    let key = config.agent_thread;
+    let key = config.agent_conversation;
     let handle = h.start(&agent, config, SessionResources::default());
     let mut transcript = Transcript::default();
     let events = until(&handle, &mut transcript, is_status(SessionStatus::Ready)).await;
@@ -210,9 +210,12 @@ async fn a_turn_streams_into_the_transcript_and_is_stored() {
     // The transcript and the ACP session id were stored after the turn.
     let stored = Transcript::from_json(&h.host.transcript(key).unwrap());
     assert_eq!(stored, transcript);
-    let threads = h.host.agent_threads(Some(ThreadId(7))).await.unwrap();
-    assert_eq!(threads[0].acp_session_id.as_deref(), Some("fake-session-1"));
-    assert_eq!(threads[0].title.as_deref(), Some("Summarize this"));
+    let conversations = h.host.agent_conversations(Some(ThreadId(7))).await.unwrap();
+    assert_eq!(
+        conversations[0].acp_session_id.as_deref(),
+        Some("fake-session-1")
+    );
+    assert_eq!(conversations[0].title.as_deref(), Some("Summarize this"));
 }
 
 #[tokio::test]

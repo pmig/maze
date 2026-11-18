@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use agent::{AgentThreadInfo, LoginScript, SignInProgress, SignInRequest};
+use agent::{AgentConversationInfo, LoginScript, SignInProgress, SignInRequest};
 use gpui::ClipboardItem;
 use gpui_kit::component::input::Input;
 
@@ -147,13 +147,13 @@ impl AgentPanel {
             self.prompt
                 .update(cx, |prompt, cx| prompt.set_value(text, window, cx));
         }
-        let info = AgentThreadInfo {
-            key: session.handle.agent_thread(),
+        let info = AgentConversationInfo {
+            key: session.handle.agent_conversation(),
             agent_id: session.agent_id.clone(),
             title: None,
             mail_thread: self.context.as_ref().map(|c| c.thread),
             acp_session_id: None,
-            updated: 0,
+            updated_at: 0,
         };
         session.handle.shutdown();
         self.start(session.agent_id, Some(info), cx);

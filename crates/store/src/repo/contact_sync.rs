@@ -85,9 +85,9 @@ pub struct ContactSourceState {
     /// The token of the next incremental sync.
     pub sync_token: Option<String>,
     /// When the last full listing finished.
-    pub last_full_sync: Option<UnixTime>,
+    pub last_full_sync_at: Option<UnixTime>,
     /// When the last sync finished.
-    pub last_sync: Option<UnixTime>,
+    pub last_sync_at: Option<UnixTime>,
     /// `ok`, `missing_scope` or `error`.
     pub state: String,
     /// The last error, for people.
@@ -125,7 +125,7 @@ fn person_row(row: &Row<'_>) -> rusqlite::Result<StoredServerContact> {
 }
 
 const SOURCE_COLUMNS: &str =
-    "book, account_id, kind, sync_token, last_full_sync, last_sync, state, error";
+    "book, account_id, kind, sync_token, last_full_sync_at, last_sync_at, state, error";
 
 fn source_row(row: &Row<'_>) -> rusqlite::Result<ContactSourceState> {
     Ok(ContactSourceState {
@@ -133,8 +133,8 @@ fn source_row(row: &Row<'_>) -> rusqlite::Result<ContactSourceState> {
         account: AccountId(row.get(1)?),
         kind: row.get(2)?,
         sync_token: row.get(3)?,
-        last_full_sync: row.get(4)?,
-        last_sync: row.get(5)?,
+        last_full_sync_at: row.get(4)?,
+        last_sync_at: row.get(5)?,
         state: row.get(6)?,
         error: row.get(7)?,
     })
@@ -217,7 +217,7 @@ pub(crate) fn server_contacts(conn: &Connection, book: &str) -> Result<Vec<Store
 
 pub(crate) fn contact_photo(conn: &Connection, url: &str) -> Result<Option<ContactPhotoState>> {
     Ok(conn
-        .prepare_cached("SELECT fetched_at, found FROM contact_photo WHERE url = ?1")?
+        .prepare_cached("SELECT fetched_at, is_found FROM contact_photo WHERE url = ?1")?
         .query_row([url], |row| {
             Ok(ContactPhotoState {
                 fetched_at: row.get(0)?,
@@ -333,13 +333,13 @@ impl WriteTx<'_> {
         self.conn
             .prepare_cached(
                 "INSERT INTO contact_person
-                   (book, resource_name, etag, display_name, emails, vcard, photo_url, seen,
+                   (book, resource_name, etag, display_name, emails, vcard, photo_url, sync_run,
                     updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                  ON CONFLICT (book, resource_name) DO UPDATE SET
                    etag = excluded.etag, display_name = excluded.display_name,
                    emails = excluded.emails, vcard = excluded.vcard,
-                   photo_url = excluded.photo_url, seen = excluded.seen,
+                   photo_url = excluded.photo_url, sync_run = excluded.sync_run,
                    updated_at = excluded.updated_at",
             )?
             .execute(params![
@@ -411,7 +411,7 @@ impl WriteTx<'_> {
     pub fn finish_full_contact_sync(&mut self, book: &str, seen: i64) -> Result<usize> {
         let gone: Vec<(String, String)> = {
             let mut stmt = self.conn.prepare_cached(
-                "SELECT resource_name, emails FROM contact_person WHERE book = ?1 AND seen < ?2",
+                "SELECT resource_name, emails FROM contact_person WHERE book = ?1 AND sync_run < ?2",
             )?;
             stmt.query_map(params![book, seen], |row| Ok((row.get(0)?, row.get(1)?)))?
                 .collect::<rusqlite::Result<_>>()?
@@ -420,7 +420,7 @@ impl WriteTx<'_> {
             return Ok(0);
         }
         self.conn
-            .prepare_cached("DELETE FROM contact_person WHERE book = ?1 AND seen < ?2")?
+            .prepare_cached("DELETE FROM contact_person WHERE book = ?1 AND sync_run < ?2")?
             .execute(params![book, seen])?;
         let emails: BTreeSet<String> = gone
             .iter()
@@ -479,8 +479,8 @@ impl WriteTx<'_> {
         let changed = self
             .conn
             .prepare_cached(
-                "UPDATE contact_source SET sync_token = ?2, last_sync = ?3,
-                   last_full_sync = CASE WHEN ?4 THEN ?3 ELSE last_full_sync END,
+                "UPDATE contact_source SET sync_token = ?2, last_sync_at = ?3,
+                   last_full_sync_at = CASE WHEN ?4 THEN ?3 ELSE last_full_sync_at END,
                    state = 'ok', error = NULL
                  WHERE book = ?1",
             )?
@@ -560,9 +560,9 @@ impl WriteTx<'_> {
     pub fn record_contact_photo(&mut self, url: &str, found: bool) -> Result<()> {
         self.conn
             .prepare_cached(
-                "INSERT INTO contact_photo (url, fetched_at, found) VALUES (?1, ?2, ?3)
+                "INSERT INTO contact_photo (url, fetched_at, is_found) VALUES (?1, ?2, ?3)
                  ON CONFLICT (url) DO UPDATE SET
-                   fetched_at = excluded.fetched_at, found = excluded.found",
+                   fetched_at = excluded.fetched_at, is_found = excluded.is_found",
             )?
             .execute(params![url, self.now, found])?;
         Ok(())

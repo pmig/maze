@@ -12,6 +12,6 @@ CREATE TABLE rule_cursor (
 -- Messages the arrival rules have processed: a message moved back into the Inbox (it
 -- gets a new UID there) isn't processed again.
 CREATE TABLE rule_message (
-  message_id INTEGER PRIMARY KEY REFERENCES message (id) ON DELETE CASCADE,
-  processed  INTEGER NOT NULL
+  message_id   INTEGER PRIMARY KEY REFERENCES message (id) ON DELETE CASCADE,
+  processed_at INTEGER NOT NULL
 );

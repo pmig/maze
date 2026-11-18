@@ -226,7 +226,7 @@
     // shift-enter starts a new line.
     "context": "AgentPanel",
     "bindings": {
-      "cmd-n": "agent::NewThread",
+      "cmd-n": "agent::NewConversation",
       "cmd-shift-enter": "agent::AcceptAllProposals",
       "cmd-shift-backspace": "agent::RejectAllProposals"
     }

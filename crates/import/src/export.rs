@@ -187,7 +187,7 @@ fn export_folder(
                 let state = location.map(|l| MozillaState::from_flags(l.flags, &l.keywords));
                 let envelope = Envelope {
                     sender: m.from.as_ref().map(|a| a.email.clone()),
-                    date: Some(m.received.unwrap_or(m.date)),
+                    date: Some(m.received_at.unwrap_or(m.date)),
                 };
                 writer
                     .write_message(&envelope, state.as_ref(), &raw)

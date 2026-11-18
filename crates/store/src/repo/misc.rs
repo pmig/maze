@@ -35,7 +35,7 @@ pub(crate) fn tag_by_keyword(conn: &Connection, keyword: &str) -> Result<Option<
         .optional()?)
 }
 
-const CONTACT_COLUMNS: &str = "id, book, display_name, email, frequency, last_used, vcard";
+const CONTACT_COLUMNS: &str = "id, book, display_name, email, use_count, last_used_at, vcard";
 
 fn contact_row(row: &Row<'_>) -> rusqlite::Result<Contact> {
     Ok(Contact {
@@ -44,7 +44,7 @@ fn contact_row(row: &Row<'_>) -> rusqlite::Result<Contact> {
         display_name: row.get(2)?,
         email: row.get(3)?,
         frequency: row.get(4)?,
-        last_used: row.get(5)?,
+        last_used_at: row.get(5)?,
         vcard: row.get(6)?,
     })
 }
@@ -65,7 +65,7 @@ pub(crate) fn search_contacts(
         "SELECT {CONTACT_COLUMNS} FROM contact
          WHERE email LIKE ?1 ESCAPE '\\' OR display_name LIKE ?1 ESCAPE '\\'
             OR display_name LIKE '% ' || ?1 ESCAPE '\\'
-         ORDER BY frequency DESC, last_used DESC, id LIMIT ?2"
+         ORDER BY use_count DESC, last_used_at DESC, id LIMIT ?2"
     ))?;
     Ok(stmt
         .query_map(params![pattern, limit as i64], contact_row)?
@@ -76,7 +76,7 @@ pub(crate) fn contact_by_email(conn: &Connection, email: &str) -> Result<Option<
     Ok(conn
         .prepare_cached(&format!(
             "SELECT {CONTACT_COLUMNS} FROM contact WHERE email = ?1
-             ORDER BY book != 'collected', frequency DESC LIMIT 1"
+             ORDER BY book != 'collected', use_count DESC LIMIT 1"
         ))?
         .query_row([email], contact_row)
         .optional()?)
@@ -87,7 +87,7 @@ pub(crate) fn contact_by_email(conn: &Connection, email: &str) -> Result<Option<
 /// contacts read in a few milliseconds.
 pub(crate) fn contact_list(conn: &Connection) -> Result<Vec<Contact>> {
     let mut stmt = conn.prepare_cached(
-        "SELECT id, book, display_name, email, frequency, last_used, NULL FROM contact
+        "SELECT id, book, display_name, email, use_count, last_used_at, NULL FROM contact
          ORDER BY id",
     )?;
     Ok(stmt
@@ -105,7 +105,7 @@ pub(crate) fn contacts_by_email(conn: &Connection, email: &str) -> Result<Vec<Co
         .collect::<rusqlite::Result<_>>()?)
 }
 
-const RULE_COLUMNS: &str = "id, account_id, name, ordinal, enabled, trigger_kind, condition_json, actions_json, created, updated";
+const RULE_COLUMNS: &str = "id, account_id, name, ordinal, is_enabled, trigger_kind, condition_json, actions_json, created_at, updated_at";
 
 fn rule_row(row: &Row<'_>) -> rusqlite::Result<Rule> {
     Ok(Rule {
@@ -119,8 +119,8 @@ fn rule_row(row: &Row<'_>) -> rusqlite::Result<Rule> {
             condition_json: row.get(6)?,
             actions_json: row.get(7)?,
         },
-        created: row.get(8)?,
-        updated: row.get(9)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
     })
 }
 
@@ -216,13 +216,13 @@ fn saved_search_row(row: &Row<'_>) -> Result<SavedSearch> {
             .map(serde_json::from_str::<Vec<FolderId>>)
             .transpose()?,
         ordinal: row.get(4)?,
-        created: row.get(5)?,
+        created_at: row.get(5)?,
     })
 }
 
 pub(crate) fn saved_searches(conn: &Connection) -> Result<Vec<SavedSearch>> {
     let mut stmt = conn.prepare_cached(
-        "SELECT id, name, query, folders_json, ordinal, created FROM saved_search
+        "SELECT id, name, query, folders_json, ordinal, created_at FROM saved_search
          ORDER BY ordinal, id",
     )?;
     let mut rows = stmt.query([])?;
@@ -313,11 +313,11 @@ impl WriteTx<'_> {
         }
         self.conn
             .prepare_cached(
-                "INSERT INTO contact (book, display_name, email, frequency, last_used)
+                "INSERT INTO contact (book, display_name, email, use_count, last_used_at)
                  VALUES ('collected', ?1, ?2, 1, ?3)
                  ON CONFLICT (book, email) DO UPDATE SET
-                   frequency = frequency + 1,
-                   last_used = max(COALESCE(last_used, 0), excluded.last_used),
+                   use_count = use_count + 1,
+                   last_used_at = max(COALESCE(last_used_at, 0), excluded.last_used_at),
                    display_name = COALESCE(display_name, excluded.display_name)",
             )?
             .execute(params![display_name, email, at])?;
@@ -367,8 +367,8 @@ impl WriteTx<'_> {
     pub fn create_rule(&mut self, input: &RuleInput) -> Result<RuleId> {
         self.conn
             .prepare_cached(
-                "INSERT INTO rule (account_id, name, ordinal, enabled, trigger_kind, condition_json,
-                   actions_json, created, updated)
+                "INSERT INTO rule (account_id, name, ordinal, is_enabled, trigger_kind, condition_json,
+                   actions_json, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
             )?
             .execute(params![
@@ -390,8 +390,8 @@ impl WriteTx<'_> {
         let changed = self
             .conn
             .prepare_cached(
-                "UPDATE rule SET account_id = ?2, name = ?3, ordinal = ?4, enabled = ?5,
-                   trigger_kind = ?6, condition_json = ?7, actions_json = ?8, updated = ?9
+                "UPDATE rule SET account_id = ?2, name = ?3, ordinal = ?4, is_enabled = ?5,
+                   trigger_kind = ?6, condition_json = ?7, actions_json = ?8, updated_at = ?9
                  WHERE id = ?1",
             )?
             .execute(params![
@@ -425,7 +425,7 @@ impl WriteTx<'_> {
     pub fn set_rule_enabled(&mut self, id: RuleId, enabled: bool) -> Result<()> {
         let changed = self
             .conn
-            .prepare_cached("UPDATE rule SET enabled = ?2, updated = ?3 WHERE id = ?1")?
+            .prepare_cached("UPDATE rule SET is_enabled = ?2, updated_at = ?3 WHERE id = ?1")?
             .execute(params![id.0, enabled, self.now])?;
         ensure_changed(changed, "rule", id.0)?;
         self.changes.settings = true;
@@ -447,7 +447,7 @@ impl WriteTx<'_> {
     /// Records that the arrival rules have processed `messages`.
     pub fn mark_rule_processed(&mut self, messages: &[MessageId]) -> Result<()> {
         let mut stmt = self.conn.prepare_cached(
-            "INSERT OR IGNORE INTO rule_message (message_id, processed) VALUES (?1, ?2)",
+            "INSERT OR IGNORE INTO rule_message (message_id, processed_at) VALUES (?1, ?2)",
         )?;
         for message in messages {
             stmt.execute(params![message.0, self.now])?;
@@ -468,7 +468,7 @@ impl WriteTx<'_> {
         let folders = folders.map(serde_json::to_string).transpose()?;
         self.conn
             .prepare_cached(
-                "INSERT INTO saved_search (name, query, folders_json, ordinal, created)
+                "INSERT INTO saved_search (name, query, folders_json, ordinal, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
             )?
             .execute(params![name, query, folders, ordinal, self.now])?;

@@ -205,7 +205,6 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
         cx.on_action(|_: &mail_ui::actions::address_book::Sync, cx| {
             cx.defer(contacts::sync_contacts)
         });
-        agents::init(cx);
         cx.set_global(AppState {
             source,
             authorizer,

@@ -9,7 +9,7 @@ use crate::repo::accounts::ensure_changed;
 use crate::{Result, WriteTx};
 
 const DRAFT_COLUMNS: &str = "id, identity_id, to_json, cc_json, bcc_json, subject, body, \
-     in_reply_to, references_json, attachments_json, origin_json, created, updated, name, \
+     in_reply_to, references_json, attachments_json, origin_json, created_at, updated_at, name, \
      support_maze";
 
 fn json<T: serde::de::DeserializeOwned>(row: &Row<'_>, ix: usize) -> rusqlite::Result<T> {
@@ -43,8 +43,8 @@ fn draft_row(row: &Row<'_>) -> rusqlite::Result<StoredDraft> {
             name: row.get(13)?,
             support_maze: row.get(14)?,
         },
-        created: row.get(11)?,
-        updated: row.get(12)?,
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
     })
 }
 
@@ -57,7 +57,7 @@ pub(crate) fn draft(conn: &Connection, id: DraftId) -> Result<Option<StoredDraft
 
 pub(crate) fn drafts(conn: &Connection) -> Result<Vec<StoredDraft>> {
     let mut stmt = conn.prepare_cached(&format!(
-        "SELECT {DRAFT_COLUMNS} FROM draft ORDER BY updated DESC, id DESC"
+        "SELECT {DRAFT_COLUMNS} FROM draft ORDER BY updated_at DESC, id DESC"
     ))?;
     Ok(stmt
         .query_map([], draft_row)?
@@ -97,7 +97,7 @@ impl WriteTx<'_> {
         self.conn
             .prepare_cached(
                 "INSERT INTO draft (identity_id, to_json, cc_json, bcc_json, subject, body,
-                   in_reply_to, references_json, attachments_json, origin_json, created, updated,
+                   in_reply_to, references_json, attachments_json, origin_json, created_at, updated_at,
                    name, support_maze)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12, ?13)",
             )?
@@ -128,7 +128,7 @@ impl WriteTx<'_> {
             .prepare_cached(
                 "UPDATE draft SET identity_id = ?2, to_json = ?3, cc_json = ?4, bcc_json = ?5,
                    subject = ?6, body = ?7, in_reply_to = ?8, references_json = ?9,
-                   attachments_json = ?10, origin_json = ?11, updated = ?12, name = ?13,
+                   attachments_json = ?10, origin_json = ?11, updated_at = ?12, name = ?13,
                    support_maze = ?14
                  WHERE id = ?1",
             )?

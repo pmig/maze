@@ -14,7 +14,7 @@ use mazemail_types::Sensitive;
 use crate::auth::{self, KeyError, LoginCommand};
 use crate::catalog::{self, AgentEntry, AgentSource};
 use crate::controls::{ControlValue, Preferences};
-use crate::host::{AgentHost, AgentKey, AgentThreadInfo, AgentThreadKey, HostError};
+use crate::host::{AgentConversationInfo, AgentConversationKey, AgentHost, AgentKey, HostError};
 use crate::http::Http;
 use crate::install::{self, InstallContext, InstallError, InstallProgress, InstalledAgent, Launch};
 use crate::node;
@@ -88,7 +88,7 @@ pub struct StartRequest {
     /// The mail thread selected in the window, attached as context.
     pub mail_thread: Option<ThreadId>,
     /// An earlier conversation to continue.
-    pub resume: Option<AgentThreadInfo>,
+    pub resume: Option<AgentConversationInfo>,
     /// Current settings.
     pub settings: Settings,
 }
@@ -272,7 +272,7 @@ impl AgentManager {
             .unwrap_or_else(PoisonError::into_inner) = Some(agents);
     }
 
-    /// Maze's side of sessions (threads, transcripts, proposals).
+    /// Maze's side of sessions (conversations, transcripts, proposals).
     pub fn host(&self) -> &Arc<dyn AgentHost> {
         &self.config.host
     }
@@ -448,8 +448,8 @@ impl AgentManager {
         self.start_session(request, true).await
     }
 
-    /// Starts a session; an `ephemeral` one gets no stored thread, no session token
-    /// and no mail thread (see [`SessionConfig::ephemeral`]).
+    /// Starts a session; an `ephemeral` one gets no stored conversation, no session
+    /// token and no mail thread (see [`SessionConfig::ephemeral`]).
     async fn start_session(
         &self,
         request: StartRequest,
@@ -520,8 +520,8 @@ impl AgentManager {
             None => (None, None),
         };
 
-        let (agent_thread, transcript) = match &request.resume {
-            _ if ephemeral => (AgentThreadKey(0), Transcript::default()),
+        let (agent_conversation, transcript) = match &request.resume {
+            _ if ephemeral => (AgentConversationKey(0), Transcript::default()),
             Some(info) => {
                 let transcript = host
                     .load_transcript(info.key)
@@ -531,7 +531,7 @@ impl AgentManager {
                 (info.key, transcript)
             }
             None => (
-                host.create_agent_thread(&entry.id, None, mail_thread)
+                host.create_agent_conversation(&entry.id, None, mail_thread)
                     .await?,
                 Transcript::default(),
             ),
@@ -630,7 +630,7 @@ impl AgentManager {
             session_id,
             agent_id: entry.id.clone(),
             agent_name: entry.name.clone(),
-            agent_thread,
+            agent_conversation,
             resume_acp_session: request.resume.and_then(|info| info.acp_session_id),
             cwd: scratch.dir().to_owned(),
             terminal_env,

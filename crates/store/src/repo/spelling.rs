@@ -27,7 +27,7 @@ impl WriteTx<'_> {
         let word = normalize(word).ok_or(Error::Invalid("not a single word"))?;
         self.conn
             .prepare_cached(
-                "INSERT INTO spelling_word (word, added) VALUES (?1, ?2)
+                "INSERT INTO spelling_word (word, added_at) VALUES (?1, ?2)
                  ON CONFLICT (word) DO NOTHING",
             )?
             .execute(params![word, now])?;

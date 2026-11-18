@@ -5,7 +5,7 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use crate::blob::StagedBlob;
 use crate::model::{
-    AgentThread, AgentThreadId, ApiToken, AuditEntry, AuditId, AuditQuery, NewApiToken,
+    AgentConversation, AgentConversationId, ApiToken, AuditEntry, AuditId, AuditQuery, NewApiToken,
     NewProposalItem, Proposal, ProposalId, ProposalItem, ProposalItemId, ProposalItemState,
     ProposalState, TokenId,
 };
@@ -19,7 +19,7 @@ pub fn token_hash(secret: &str) -> [u8; 32] {
 }
 
 const TOKEN_COLUMNS: &str =
-    "id, hash, profile, scope_json, expires, label, created, last_used, revoked";
+    "id, hash, profile, scope_json, expires_at, label, created_at, last_used_at, revoked_at";
 
 fn token_row(row: &Row<'_>) -> rusqlite::Result<ApiToken> {
     Ok(ApiToken {
@@ -27,11 +27,11 @@ fn token_row(row: &Row<'_>) -> rusqlite::Result<ApiToken> {
         hash: row.get(1)?,
         profile: row.get(2)?,
         scope_json: row.get(3)?,
-        expires: row.get(4)?,
+        expires_at: row.get(4)?,
         label: row.get(5)?,
-        created: row.get(6)?,
-        last_used: row.get(7)?,
-        revoked: row.get(8)?,
+        created_at: row.get(6)?,
+        last_used_at: row.get(7)?,
+        revoked_at: row.get(8)?,
     })
 }
 
@@ -93,7 +93,7 @@ fn proposal_items(conn: &Connection, proposal: ProposalId) -> Result<Vec<Proposa
         .collect::<rusqlite::Result<_>>()?)
 }
 
-const PROPOSAL_COLUMNS: &str = "id, token_id, title, state, created, decided";
+const PROPOSAL_COLUMNS: &str = "id, api_token_id, title, state, created_at, decided_at";
 
 fn proposal_row(row: &Row<'_>) -> rusqlite::Result<Proposal> {
     Ok(Proposal {
@@ -101,8 +101,8 @@ fn proposal_row(row: &Row<'_>) -> rusqlite::Result<Proposal> {
         token: row.get::<_, Option<i64>>(1)?.map(TokenId),
         title: row.get(2)?,
         state: row.get(3)?,
-        created: row.get(4)?,
-        decided: row.get(5)?,
+        created_at: row.get(4)?,
+        decided_at: row.get(5)?,
         items: Vec::new(),
     })
 }
@@ -125,7 +125,7 @@ pub(crate) fn proposal(conn: &Connection, id: ProposalId) -> Result<Option<Propo
 pub(crate) fn proposals(conn: &Connection, state: Option<ProposalState>) -> Result<Vec<Proposal>> {
     let mut stmt = conn.prepare_cached(&format!(
         "SELECT {PROPOSAL_COLUMNS} FROM proposal WHERE ?1 IS NULL OR state = ?1
-         ORDER BY created DESC, id DESC"
+         ORDER BY created_at DESC, id DESC"
     ))?;
     let mut out: Vec<Proposal> = stmt
         .query_map([state.map(ProposalState::as_str)], proposal_row)?
@@ -144,8 +144,8 @@ pub(crate) fn audit_log(conn: &Connection, query: &AuditQuery) -> Result<Vec<Aud
         None => (None, None),
     };
     let mut stmt = conn.prepare_cached(
-        "SELECT id, at, origin, action, detail_json FROM audit_log
-         WHERE (?1 IS NULL OR at >= ?1) AND (?2 IS NULL OR id < ?2)
+        "SELECT id, occurred_at, origin, action, detail_json FROM audit_log
+         WHERE (?1 IS NULL OR occurred_at >= ?1) AND (?2 IS NULL OR id < ?2)
            AND (?3 IS NULL OR origin = ?3) AND (?4 IS NULL OR origin LIKE ?4)
          ORDER BY id DESC LIMIT ?5",
     )?;
@@ -161,7 +161,7 @@ pub(crate) fn audit_log(conn: &Connection, query: &AuditQuery) -> Result<Vec<Aud
             |row| {
                 Ok(AuditEntry {
                     id: AuditId(row.get(0)?),
-                    at: row.get(1)?,
+                    occurred_at: row.get(1)?,
                     origin: row.get(2)?,
                     action: row.get(3)?,
                     detail_json: row.get(4)?,
@@ -171,37 +171,39 @@ pub(crate) fn audit_log(conn: &Connection, query: &AuditQuery) -> Result<Vec<Aud
         .collect::<rusqlite::Result<_>>()?)
 }
 
-const AGENT_THREAD_COLUMNS: &str =
-    "id, agent_id, title, mail_thread_id, acp_session_id, transcript_blob, created, updated";
+const AGENT_CONVERSATION_COLUMNS: &str = "id, agent_id, title, mail_thread_id, acp_session_id, transcript_blob_id, created_at, updated_at";
 
-fn agent_thread_row(row: &Row<'_>) -> rusqlite::Result<AgentThread> {
-    Ok(AgentThread {
-        id: AgentThreadId(row.get(0)?),
+fn agent_conversation_row(row: &Row<'_>) -> rusqlite::Result<AgentConversation> {
+    Ok(AgentConversation {
+        id: AgentConversationId(row.get(0)?),
         agent_id: row.get(1)?,
         title: row.get(2)?,
         mail_thread: row.get::<_, Option<i64>>(3)?.map(ThreadId),
         acp_session_id: row.get(4)?,
         transcript: row.get::<_, Option<[u8; 32]>>(5)?.map(BlobId),
-        created: row.get(6)?,
-        updated: row.get(7)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
     })
 }
 
-pub(crate) fn agent_threads(conn: &Connection) -> Result<Vec<AgentThread>> {
+pub(crate) fn agent_conversations(conn: &Connection) -> Result<Vec<AgentConversation>> {
     let mut stmt = conn.prepare_cached(&format!(
-        "SELECT {AGENT_THREAD_COLUMNS} FROM agent_thread ORDER BY updated DESC, id DESC"
+        "SELECT {AGENT_CONVERSATION_COLUMNS} FROM agent_conversation ORDER BY updated_at DESC, id DESC"
     ))?;
     Ok(stmt
-        .query_map([], agent_thread_row)?
+        .query_map([], agent_conversation_row)?
         .collect::<rusqlite::Result<_>>()?)
 }
 
-pub(crate) fn agent_thread(conn: &Connection, id: AgentThreadId) -> Result<Option<AgentThread>> {
+pub(crate) fn agent_conversation(
+    conn: &Connection,
+    id: AgentConversationId,
+) -> Result<Option<AgentConversation>> {
     Ok(conn
         .prepare_cached(&format!(
-            "SELECT {AGENT_THREAD_COLUMNS} FROM agent_thread WHERE id = ?1"
+            "SELECT {AGENT_CONVERSATION_COLUMNS} FROM agent_conversation WHERE id = ?1"
         ))?
-        .query_row([id.0], agent_thread_row)
+        .query_row([id.0], agent_conversation_row)
         .optional()?)
 }
 
@@ -212,14 +214,14 @@ impl WriteTx<'_> {
     pub fn create_api_token(&mut self, token: &NewApiToken) -> Result<TokenId> {
         self.conn
             .prepare_cached(
-                "INSERT INTO api_token (hash, profile, scope_json, expires, label, created)
+                "INSERT INTO api_token (hash, profile, scope_json, expires_at, label, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             )?
             .execute(params![
                 token.hash,
                 token.profile,
                 token.scope_json,
-                token.expires,
+                token.expires_at,
                 token.label,
                 self.now
             ])?;
@@ -231,7 +233,7 @@ impl WriteTx<'_> {
     pub fn touch_api_token(&mut self, id: TokenId) -> Result<()> {
         let changed = self
             .conn
-            .prepare_cached("UPDATE api_token SET last_used = ?2 WHERE id = ?1")?
+            .prepare_cached("UPDATE api_token SET last_used_at = ?2 WHERE id = ?1")?
             .execute(params![id.0, self.now])?;
         ensure_changed(changed, "API token", id.0)
     }
@@ -240,7 +242,9 @@ impl WriteTx<'_> {
     pub fn revoke_api_token(&mut self, id: TokenId) -> Result<()> {
         let changed = self
             .conn
-            .prepare_cached("UPDATE api_token SET revoked = COALESCE(revoked, ?2) WHERE id = ?1")?
+            .prepare_cached(
+                "UPDATE api_token SET revoked_at = COALESCE(revoked_at, ?2) WHERE id = ?1",
+            )?
             .execute(params![id.0, self.now])?;
         ensure_changed(changed, "API token", id.0)?;
         self.changes.settings = true;
@@ -252,8 +256,8 @@ impl WriteTx<'_> {
         Ok(self
             .conn
             .prepare_cached(
-                "DELETE FROM api_token WHERE (revoked IS NOT NULL AND revoked < ?1)
-                   OR (expires IS NOT NULL AND expires < ?1)",
+                "DELETE FROM api_token WHERE (revoked_at IS NOT NULL AND revoked_at < ?1)
+                   OR (expires_at IS NOT NULL AND expires_at < ?1)",
             )?
             .execute([before])?)
     }
@@ -271,7 +275,9 @@ impl WriteTx<'_> {
             return Err(Error::Invalid("a proposal needs at least one item"));
         }
         self.conn
-            .prepare_cached("INSERT INTO proposal (token_id, title, created) VALUES (?1, ?2, ?3)")?
+            .prepare_cached(
+                "INSERT INTO proposal (api_token_id, title, created_at) VALUES (?1, ?2, ?3)",
+            )?
             .execute(params![token.map(|t| t.0), title, self.now])?;
         let id = ProposalId(self.conn.last_insert_rowid());
         let mut insert = self.conn.prepare_cached(
@@ -305,7 +311,7 @@ impl WriteTx<'_> {
         let changed = self
             .conn
             .prepare_cached(
-                "UPDATE proposal SET state = ?2, decided = COALESCE(decided, ?3) WHERE id = ?1",
+                "UPDATE proposal SET state = ?2, decided_at = COALESCE(decided_at, ?3) WHERE id = ?1",
             )?
             .execute(params![id.0, state, decided])?;
         ensure_changed(changed, "proposal", id.0)?;
@@ -325,7 +331,7 @@ impl WriteTx<'_> {
     ) -> Result<AuditId> {
         self.conn
             .prepare_cached(
-                "INSERT INTO audit_log (at, origin, action, detail_json) VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO audit_log (occurred_at, origin, action, detail_json) VALUES (?1, ?2, ?3, ?4)",
             )?
             .execute(params![self.now, origin, action, detail_json])?;
         Ok(AuditId(self.conn.last_insert_rowid()))
@@ -335,67 +341,67 @@ impl WriteTx<'_> {
     pub fn prune_audit_log(&mut self, before: i64) -> Result<usize> {
         Ok(self
             .conn
-            .prepare_cached("DELETE FROM audit_log WHERE at < ?1")?
+            .prepare_cached("DELETE FROM audit_log WHERE occurred_at < ?1")?
             .execute([before])?)
     }
 
     // ---- agent conversations -----------------------------------------------------
 
     /// Starts an agent conversation.
-    pub fn create_agent_thread(
+    pub fn create_agent_conversation(
         &mut self,
         agent_id: &str,
         title: Option<&str>,
         mail_thread: Option<ThreadId>,
-    ) -> Result<AgentThreadId> {
+    ) -> Result<AgentConversationId> {
         self.conn
             .prepare_cached(
-                "INSERT INTO agent_thread (agent_id, title, mail_thread_id, created, updated)
+                "INSERT INTO agent_conversation (agent_id, title, mail_thread_id, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?4)",
             )?
             .execute(params![agent_id, title, mail_thread.map(|t| t.0), self.now])?;
-        Ok(AgentThreadId(self.conn.last_insert_rowid()))
+        Ok(AgentConversationId(self.conn.last_insert_rowid()))
     }
 
     /// Updates title and ACP session id.
-    pub fn update_agent_thread(
+    pub fn update_agent_conversation(
         &mut self,
-        id: AgentThreadId,
+        id: AgentConversationId,
         title: Option<&str>,
         acp_session_id: Option<&str>,
     ) -> Result<()> {
         let changed = self
             .conn
             .prepare_cached(
-                "UPDATE agent_thread SET title = ?2, acp_session_id = ?3, updated = ?4 WHERE id = ?1",
+                "UPDATE agent_conversation SET title = ?2, acp_session_id = ?3, updated_at = ?4 WHERE id = ?1",
             )?
             .execute(params![id.0, title, acp_session_id, self.now])?;
-        ensure_changed(changed, "agent thread", id.0)
+        ensure_changed(changed, "agent conversation", id.0)
     }
 
     /// Replaces the stored transcript (an encrypted blob; the old one loses a
     /// reference).
     pub fn set_agent_transcript(
         &mut self,
-        id: AgentThreadId,
+        id: AgentConversationId,
         transcript: &StagedBlob,
     ) -> Result<()> {
         self.register_blob(transcript)?;
         let changed = self
             .conn
             .prepare_cached(
-                "UPDATE agent_thread SET transcript_blob = ?2, updated = ?3 WHERE id = ?1",
+                "UPDATE agent_conversation SET transcript_blob_id = ?2, updated_at = ?3 WHERE id = ?1",
             )?
             .execute(params![id.0, &transcript.id().0, self.now])?;
-        ensure_changed(changed, "agent thread", id.0)
+        ensure_changed(changed, "agent conversation", id.0)
     }
 
     /// Deletes an agent conversation (its transcript loses a reference).
-    pub fn delete_agent_thread(&mut self, id: AgentThreadId) -> Result<()> {
+    pub fn delete_agent_conversation(&mut self, id: AgentConversationId) -> Result<()> {
         let changed = self
             .conn
-            .prepare_cached("DELETE FROM agent_thread WHERE id = ?1")?
+            .prepare_cached("DELETE FROM agent_conversation WHERE id = ?1")?
             .execute([id.0])?;
-        ensure_changed(changed, "agent thread", id.0)
+        ensure_changed(changed, "agent conversation", id.0)
     }
 }

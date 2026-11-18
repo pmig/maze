@@ -20,7 +20,7 @@ outside Maze can be limited to some accounts (`mazemail login --account …`).
 
 ## Pick and install an agent
 
-Open the agent column (`cmd-?`, or "Agent: Toggle Agent Panel" in the command palette).
+Open the agent column (`cmd-?`, or "Workspace: Toggle Agent Column" in the command palette).
 The picker lists:
 
 | Agent        | Registry id  | How Maze installs it                                                    |

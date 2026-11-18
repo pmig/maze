@@ -128,7 +128,7 @@ pub(crate) fn write(
                 let mozilla = MozillaState::from_flags(flags, &keywords);
                 let envelope = Envelope {
                     sender: detail.from.as_ref().map(|a| a.email.clone()),
-                    date: Some(detail.received.unwrap_or(detail.date)),
+                    date: Some(detail.received_at.unwrap_or(detail.date)),
                 };
                 writer
                     .write_message(&envelope, Some(&mozilla), &raw)

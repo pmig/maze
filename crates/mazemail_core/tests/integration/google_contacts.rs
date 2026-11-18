@@ -240,7 +240,7 @@ async fn connect(s: &Setup) {
             reader
                 .contact_source(book)
                 .unwrap()
-                .is_some_and(|source| source.last_sync.is_some())
+                .is_some_and(|source| source.last_sync_at.is_some())
         })
     })
     .await;

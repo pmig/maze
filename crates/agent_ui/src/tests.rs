@@ -119,7 +119,7 @@ impl Harness {
             .runtime
             .block_on(
                 self.host
-                    .create_agent_thread("fake", None, Some(ThreadId(3))),
+                    .create_agent_conversation("fake", None, Some(ThreadId(3))),
             )
             .unwrap();
         let handle = start_with_transport(
@@ -128,7 +128,7 @@ impl Harness {
                 session_id: "s_ui".to_owned(),
                 agent_id: "fake".to_owned(),
                 agent_name: "Fake".to_owned(),
-                agent_thread: key,
+                agent_conversation: key,
                 resume_acp_session: None,
                 cwd: std::env::temp_dir(),
                 terminal_env: BTreeMap::new(),
@@ -818,7 +818,7 @@ fn installed_agents_update_in_the_background(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn the_thread_looks_like_zeds(cx: &mut TestAppContext) {
+fn the_conversation_looks_like_zeds(cx: &mut TestAppContext) {
     let h = Harness::new();
     let (panel, cx) = h.open(cx);
     let agent = FakeAgent::new(vec![
@@ -835,10 +835,10 @@ fn the_thread_looks_like_zeds(cx: &mut TestAppContext) {
     panel.update(cx, |panel, cx| {
         panel.attach_session(started, "Fake", false, cx)
     });
-    wait_until(cx, "the empty thread", |cx| {
+    wait_until(cx, "the empty conversation", |cx| {
         status(&panel, cx) == Some(SessionStatus::Ready) && rendered(cx, "agent-empty")
     });
-    for selector in ["agent-title", "agent-new-thread", "agent-prompt-bar"] {
+    for selector in ["agent-title", "agent-new-conversation", "agent-prompt-bar"] {
         assert!(rendered(cx, selector), "{selector} isn't rendered");
     }
     type_prompt(&panel, "Summarize", cx);

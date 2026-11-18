@@ -10,7 +10,7 @@ use crate::repo::accounts::ensure_changed;
 use crate::{Error, Result, WriteTx};
 
 const FOLDER_COLUMNS: &str = "id, account_id, parent_id, remote_name, display_name, role, \
-     is_label, uidvalidity, uidnext, highestmodseq, unread, total, ordinal, favorite";
+     is_label, uidvalidity, uidnext, highestmodseq, unread_count, total_count, ordinal, is_favorite";
 
 fn role_from_sql(role: Option<&str>) -> Option<FolderRole> {
     role.and_then(FolderRole::parse)
@@ -167,7 +167,7 @@ impl WriteTx<'_> {
         self.conn
             .prepare_cached(
                 "UPDATE folder SET parent_id = ?2, remote_name = ?3, display_name = ?4,
-                   role = ?5, ordinal = ?6, favorite = ?7 WHERE id = ?1",
+                   role = ?5, ordinal = ?6, is_favorite = ?7 WHERE id = ?1",
             )?
             .execute(params![
                 id.0,
@@ -301,7 +301,7 @@ impl WriteTx<'_> {
             .prepare_cached("DELETE FROM folder_thread WHERE folder_id = ?1")?
             .execute([folder.0])?;
         self.conn
-            .prepare_cached("UPDATE folder SET unread = 0, total = 0 WHERE id = ?1")?
+            .prepare_cached("UPDATE folder SET unread_count = 0, total_count = 0 WHERE id = ?1")?
             .execute([folder.0])?;
         let entry = self.changes.folder_threads.entry(folder).or_default();
         entry.extend(threads.iter().map(|t| ThreadId(*t)));

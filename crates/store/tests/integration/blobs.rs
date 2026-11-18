@@ -24,8 +24,10 @@ fn refs(store: &Store, id: BlobId) -> Option<i64> {
     let key = common::vault(1).sqlcipher_pragma_key();
     conn.execute_batch(&format!("PRAGMA key = \"{}\";", key.expose_secret()))
         .unwrap();
-    conn.query_row("SELECT refs FROM blob WHERE id = ?1", [&id.0], |r| r.get(0))
-        .ok()
+    conn.query_row("SELECT ref_count FROM blob WHERE id = ?1", [&id.0], |r| {
+        r.get(0)
+    })
+    .ok()
 }
 
 #[test]
@@ -54,7 +56,7 @@ fn references_are_counted_by_every_owner() {
     let (outbox, agent) = store
         .write_blocking(move |w| {
             let outbox = w.outbox_enqueue(None, &s, "out@x", 0, None)?;
-            let agent = w.create_agent_thread("claude", None, None)?;
+            let agent = w.create_agent_conversation("claude", None, None)?;
             w.set_agent_transcript(agent, &s)?;
             Ok((outbox, agent))
         })
@@ -74,7 +76,7 @@ fn references_are_counted_by_every_owner() {
     assert!(store.blobs().exists(&id));
 
     store
-        .write_blocking(move |w| w.delete_agent_thread(agent))
+        .write_blocking(move |w| w.delete_agent_conversation(agent))
         .unwrap();
     assert_eq!(refs(&store, id), Some(0));
     let report = gc(&store, GcOptions::full());

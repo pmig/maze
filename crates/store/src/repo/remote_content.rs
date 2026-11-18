@@ -27,7 +27,7 @@ impl WriteTx<'_> {
         let email = normalize(email).ok_or(Error::Invalid("not an email address"))?;
         self.conn
             .prepare_cached(
-                "INSERT INTO remote_content_sender (email, added) VALUES (?1, ?2)
+                "INSERT INTO remote_content_sender (email, added_at) VALUES (?1, ?2)
                  ON CONFLICT (email) DO NOTHING",
             )?
             .execute(params![email, now])?;

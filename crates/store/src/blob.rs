@@ -559,7 +559,7 @@ impl BlobStore {
         let pins = lock(&self.inner.pins);
         let tx = conn.transaction()?;
         let candidates: Vec<BlobId> = {
-            let mut stmt = tx.prepare_cached("SELECT id FROM blob WHERE refs = 0 LIMIT ?1")?;
+            let mut stmt = tx.prepare_cached("SELECT id FROM blob WHERE ref_count = 0 LIMIT ?1")?;
             stmt.query_map([GC_BATCH as i64], |row| row.get::<_, [u8; 32]>(0))?
                 .map(|r| r.map(BlobId))
                 .collect::<rusqlite::Result<_>>()?
@@ -570,7 +570,8 @@ impl BlobStore {
             .filter(|id| !pins.contains_key(id))
             .collect();
         {
-            let mut delete = tx.prepare_cached("DELETE FROM blob WHERE id = ?1 AND refs = 0")?;
+            let mut delete =
+                tx.prepare_cached("DELETE FROM blob WHERE id = ?1 AND ref_count = 0")?;
             for id in &doomed {
                 delete.execute([&id.0])?;
             }
@@ -705,7 +706,7 @@ pub struct GcReport {
 /// the referencing row's trigger bumps them).
 pub(crate) fn ensure_row(conn: &Connection, blob: &StagedBlob, now: i64) -> Result<()> {
     conn.prepare_cached(
-        "INSERT INTO blob (id, size, created, refs) VALUES (?1, ?2, ?3, 0)
+        "INSERT INTO blob (id, size, created_at, ref_count) VALUES (?1, ?2, ?3, 0)
          ON CONFLICT (id) DO NOTHING",
     )?
     .execute(params![&blob.id.0, blob.size as i64, now])?;
@@ -909,7 +910,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
             "CREATE TABLE blob (id BLOB PRIMARY KEY, size INTEGER NOT NULL,
-               created INTEGER NOT NULL, refs INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID;",
+               created_at INTEGER NOT NULL, ref_count INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID;",
         )
         .unwrap();
         conn

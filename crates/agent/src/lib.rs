@@ -58,7 +58,7 @@ pub mod transcript;
 pub use catalog::{AgentEntry, AgentSource, PI_NOTICE};
 pub use controls::{Choice, Control, ControlCategory, ControlKind, ControlValue};
 pub use host::{
-    AgentHost, AgentKey, AgentThreadInfo, AgentThreadKey, HostError, MemoryHost,
+    AgentConversationInfo, AgentConversationKey, AgentHost, AgentKey, HostError, MemoryHost,
     ProposalItemStatus, ProposalItemView, ProposalView, ThreadExport,
 };
 pub use http::{Http, ReqwestHttp};

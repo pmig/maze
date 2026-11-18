@@ -241,7 +241,7 @@ impl CoreHandle {
                             "error" => ContactBookState::Error,
                             _ => ContactBookState::Ok,
                         },
-                        last_sync: source.last_sync,
+                        last_sync: source.last_sync_at,
                         error: source.error,
                         book: source.book,
                     })

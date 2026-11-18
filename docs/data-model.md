@@ -9,6 +9,11 @@ from `blob`.
 Arrows are foreign keys (child to parent). Dashed arrows are references by value without
 a foreign key. Update this diagram with every schema change.
 
+Column names follow one scheme: timestamps (Unix seconds) end in `_at`, flags start
+with `is_` or `has_`, counts end in `_count` and a foreign key is the referenced
+table's name (or its role, such as `parent_id` or `sent_folder_id`) followed by `_id`.
+`message.date` is the Date header and `last_date` the newest one of a thread.
+
 ```mermaid
 flowchart LR
   classDef other fill:#f3f0ff,stroke:#8b7bd8
@@ -22,7 +27,7 @@ flowchart LR
   end
 
   subgraph MAIL["Mail"]
-    folder["<b>folder</b><br/>remote_name, role, uidvalidity,<br/>modseq, unread, total"]
+    folder["<b>folder</b><br/>remote_name, role, uidvalidity,<br/>modseq, unread_count, total_count"]
     thread["<b>thread</b><br/>subject, last_date, counts,<br/>participants"]
     folder_thread["<b>folder_thread</b><br/>per-folder thread counts"]
     message["<b>message</b><br/>headers, snippet, bodystructure,<br/>gm_msgid, auth_json"]
@@ -30,7 +35,7 @@ flowchart LR
     message_ref["<b>message_ref</b><br/>References / In-Reply-To"]
     message_tag["<b>message_tag</b>"]
     tag["<b>tag</b>"]
-    blob["<b>blob</b><br/>encrypted body, refcount"]
+    blob["<b>blob</b><br/>encrypted body, ref_count"]
   end
 
   subgraph SEND["Writing and sending"]
@@ -55,7 +60,7 @@ flowchart LR
     proposal["<b>proposal</b>"]
     proposal_item["<b>proposal_item</b><br/>command_json"]
     audit_log["<b>audit_log</b>"]
-    agent_thread["<b>agent_thread</b><br/>ACP session, transcript"]
+    agent_conversation["<b>agent_conversation</b><br/>ACP session, transcript"]
     agent_secret["<b>agent_secret</b><br/>API keys"]
   end
 
@@ -69,7 +74,7 @@ flowchart LR
 
   account_secret --> account
   identity --> account
-  identity --> smtp_server
+  identity -->|smtp_server_id| smtp_server
   identity --> signature
   identity -->|sent / drafts / archive| folder
   folder --> account
@@ -80,7 +85,7 @@ flowchart LR
   message --> account
   message --> thread
   message --> blob
-  message -->|identity_hint| identity
+  message -->|identity_hint_id| identity
   message_location --> message
   message_location --> folder
   message_ref --> message
@@ -97,10 +102,10 @@ flowchart LR
   contact -.->|book name| contact_source
   message_domain --> message
   message_domain --> domain
-  proposal --> api_token
+  proposal -->|api_token_id| api_token
   proposal_item --> proposal
-  agent_thread --> thread
-  agent_thread -->|transcript| blob
+  agent_conversation -->|mail_thread_id| thread
+  agent_conversation -->|transcript_blob_id| blob
   rule --> account
   rule_cursor --> folder
   rule_message --> message
@@ -114,7 +119,7 @@ flowchart LR
 - **Threads** are per account too; `folder_thread` keeps the per-folder counts the message
   list shows without scanning messages.
 - **`blob`** counts its references (triggers on `message`, `outbox`, `pending_op` and
-  `agent_thread`), so unreferenced bodies can be removed.
+  `agent_conversation`), so unreferenced bodies can be removed.
 - **Contacts**: `contact` has one row per address (the book is a string such as
   `google:<account uuid>`); `contact_source` and `contact_person` are the sync state and the
   server copy of synced books ([ADR-024](adr/0024-server-owned-contacts.md)).

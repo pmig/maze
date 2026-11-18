@@ -181,9 +181,9 @@ const CORRESPONDENTS: &str = "CASE WHEN EXISTS (SELECT 1 FROM message_location o
                                   CROSS JOIN folder f ON f.id = ol.folder_id
                                 WHERE ol.message_id = m.id
                                   AND f.role IN ('sent', 'drafts', 'outbox'))
-            OR mz_email_key(m.from_addr) IN rarray(?3)
+            OR mz_email_key(m.from_email) IN rarray(?3)
        THEN mz_recipients_key(m.to_json, m.cc_json)
-       ELSE mz_name_key(m.from_name, m.from_addr) END";
+       ELSE mz_name_key(m.from_name, m.from_email) END";
 
 /// The `ORDER BY` clause over the columns `sort_key`, `sort_date` and `id`.
 fn order_by(sql: &mut String, order: ListOrder, id: &str) {
@@ -239,13 +239,13 @@ pub(crate) fn sorted_thread_keys(
     };
     let key = match order.field {
         SortField::Date => agg("last_date"),
-        SortField::Received => "COALESCE(m.received, m.date, 0)".to_owned(),
-        SortField::Starred => format!("{} > 0", agg("flagged")),
+        SortField::Received => "COALESCE(m.received_at, m.date, 0)".to_owned(),
+        SortField::Starred => format!("{} > 0", agg("flagged_count")),
         SortField::Unread => format!("{} > 0", agg("unread_count")),
         SortField::Attachments => format!("{} > 0", agg("attachment_count")),
         SortField::Subject => "mz_subject_key(t.subject)".to_owned(),
         SortField::Correspondents => CORRESPONDENTS.to_owned(),
-        SortField::Sender => "mz_name_key(m.from_name, m.from_addr)".to_owned(),
+        SortField::Sender => "mz_name_key(m.from_name, m.from_email)".to_owned(),
         SortField::Recipients => "mz_recipients_key(m.to_json, m.cc_json)".to_owned(),
         SortField::Tags => "(SELECT mz_fold(group_concat(tg.name, ', ' ORDER BY tg.id))
               FROM tag tg WHERE tg.id IN (SELECT mt.tag_id FROM message tm
@@ -309,13 +309,13 @@ pub(crate) fn sorted_message_keys(
     );
     let key = match order.field {
         SortField::Date => "m.date".to_owned(),
-        SortField::Received => "COALESCE(m.received, m.date)".to_owned(),
+        SortField::Received => "COALESCE(m.received_at, m.date)".to_owned(),
         SortField::Starred => format!("({flags} & 4) <> 0"),
         SortField::Unread => format!("({flags} & 1) = 0"),
         SortField::Attachments => "m.has_attachments".to_owned(),
         SortField::Subject => "mz_subject_key(m.subject)".to_owned(),
         SortField::Correspondents => CORRESPONDENTS.to_owned(),
-        SortField::Sender => "mz_name_key(m.from_name, m.from_addr)".to_owned(),
+        SortField::Sender => "mz_name_key(m.from_name, m.from_email)".to_owned(),
         SortField::Recipients => "mz_recipients_key(m.to_json, m.cc_json)".to_owned(),
         SortField::Tags => "(SELECT mz_fold(group_concat(tg.name, ', ' ORDER BY tg.id))
               FROM message_tag mt CROSS JOIN tag tg ON tg.id = mt.tag_id

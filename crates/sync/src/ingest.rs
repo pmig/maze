@@ -204,7 +204,7 @@ pub fn new_message(input: &HeaderInput) -> NewMessage {
     let date = message_date(headers.as_ref().and_then(|h| h.date), input.internal_date)
         .unwrap_or_default();
     let mut m = NewMessage::new(input.account, date);
-    m.received = input.internal_date.map(OffsetDateTime::unix_timestamp);
+    m.received_at = input.internal_date.map(OffsetDateTime::unix_timestamp);
     m.size = Some(u64::from(input.size));
     m.has_attachments = input
         .body
@@ -334,7 +334,7 @@ mod tests {
         assert_eq!(m.references, vec!["c@x".to_owned(), "b@x".to_owned()]);
         assert_eq!(m.subject_key.as_deref(), Some("plans"));
         assert_eq!(m.thread, ThreadAssignment::Resolve { by_subject: true });
-        assert_eq!(m.received, Some(1_700_000_000));
+        assert_eq!(m.received_at, Some(1_700_000_000));
         assert_ne!(m.date, 1_700_000_000);
         assert_eq!(m.size, Some(1234));
         // Not Gmail: labels are ignored.

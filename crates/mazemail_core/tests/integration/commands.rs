@@ -650,7 +650,7 @@ async fn agent_commands_go_through_the_authorizer() {
                         hash: store::token_hash(&format!("mazemail_s_test{n}")),
                         profile: "triage".to_owned(),
                         scope_json: "{}".to_owned(),
-                        expires: None,
+                        expires_at: None,
                         label: None,
                     })
                 })

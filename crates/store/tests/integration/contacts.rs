@@ -182,7 +182,7 @@ fn a_full_sync_removes_people_it_didnt_see_and_keeps_the_token() {
     assert_eq!(source.sync_token.as_deref(), Some("sync-1"));
     assert_eq!(source.account, account);
     assert_eq!(source.state, "ok");
-    assert!(source.last_full_sync.is_some() && source.last_sync.is_some());
+    assert!(source.last_full_sync_at.is_some() && source.last_sync_at.is_some());
 
     // The next full run (200) only sees Bob.
     upsert(&store, person("c2", "Bob", &["bob@example.com"]), 200);

@@ -97,7 +97,7 @@ fn folder_keys(
         sql.push_str(" AND unread_count > 0");
     }
     if filter.flagged {
-        sql.push_str(" AND flagged > 0");
+        sql.push_str(" AND flagged_count > 0");
     }
     if filter.has_attachment {
         sql.push_str(" AND attachment_count > 0");
@@ -153,7 +153,7 @@ fn account_keys(
         sql.push_str(" AND unread_count > 0");
     }
     if filter.flagged {
-        sql.push_str(" AND flagged > 0");
+        sql.push_str(" AND flagged_count > 0");
     }
     if filter.has_attachment {
         sql.push_str(" AND attachment_count > 0");
@@ -273,7 +273,7 @@ fn folder_message_keys(
         sql.push_str(" AND flags & 4 <> 0");
     }
     if filter.has_attachment {
-        sql.push_str(" AND attachment = 1");
+        sql.push_str(" AND has_attachments = 1");
     }
     message_tag_sql(&mut sql, &mut args, filter, "message_location.message_id");
     args.push(Value::Integer(page.limit as i64));
@@ -561,7 +561,7 @@ mod tests {
                     sql.push_str(" AND flags & 4 <> 0");
                 }
                 if filter.has_attachment {
-                    sql.push_str(" AND attachment = 1");
+                    sql.push_str(" AND has_attachments = 1");
                 }
                 let _ = write!(sql, " ORDER BY date {dir}, message_id {dir} LIMIT 10");
                 let args = [Value::Integer(1), Value::Integer(5), Value::Integer(5)];

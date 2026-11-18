@@ -565,7 +565,10 @@ pub fn summarize(
                     .iter()
                     .map(|&ix| u64::from(entries[ix].frequency))
                     .sum(),
-                last_used: members.iter().filter_map(|&ix| entries[ix].last_used).max(),
+                last_used: members
+                    .iter()
+                    .filter_map(|&ix| entries[ix].last_used_at)
+                    .max(),
             })
         })
         .collect();
@@ -655,7 +658,7 @@ fn detail_of(
                 organization,
                 title,
                 frequency: entry.frequency,
-                last_used: entry.last_used,
+                last_used: entry.last_used_at,
             })
         })
         .collect();

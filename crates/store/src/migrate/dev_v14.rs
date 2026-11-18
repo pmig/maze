@@ -12,9 +12,16 @@
 //!    (indexing the domains of mail stored before the domain index) and
 //!    `identity_rule`, and the columns `identity.color`, `identity.match_patterns_json`
 //!    and `folder.sync_policy`, which nothing used.
-//! 3. `account.kind` gets v1's narrower CHECK (no `local`, no `jmap`). Only the
+//! 3. Tables and columns get v1's names ([`RENAMED`]): timestamps end in `_at`, flags
+//!    start with `is_` or `has_`, counts end in `_count`, foreign keys are named after
+//!    the referenced table and `agent_thread` is `agent_conversation`. SQLite's
+//!    `ALTER TABLE … RENAME` rewrites the indexes, triggers and CHECK constraints that
+//!    name them; the indexes and triggers whose own names changed are dropped and
+//!    created again from v1 ([`RECREATED`]). API token profiles get their new names
+//!    (`read-only` is `read`, `writer` is `write`).
+//! 4. `account.kind` gets v1's narrower CHECK (no `local`, no `jmap`). Only the
 //!    constraint's text changes, which SQLite allows through `writable_schema`.
-//! 4. The result must match a new v1 database object for object (columns, keys,
+//! 5. The result must match a new v1 database object for object (columns, keys,
 //!    foreign keys, indexes, triggers and CHECK constraints, ignoring comments and
 //!    whitespace); otherwise nothing is changed and opening fails. Then `user_version`
 //!    becomes 1.
@@ -36,6 +43,90 @@ const DROPPED: &str = "DROP TABLE legacy_secret_account;
      ALTER TABLE identity DROP COLUMN match_patterns_json;
      ALTER TABLE folder DROP COLUMN sync_policy;";
 
+/// What v1 calls differently, renamed in a development database (after [`DROPPED`]).
+const RENAMED: &str = "ALTER TABLE account_secret RENAME COLUMN updated TO updated_at;
+     ALTER TABLE agent_secret RENAME COLUMN updated TO updated_at;
+     ALTER TABLE signature RENAME COLUMN created TO created_at;
+     ALTER TABLE signature RENAME COLUMN updated TO updated_at;
+     ALTER TABLE folder RENAME COLUMN unread TO unread_count;
+     ALTER TABLE folder RENAME COLUMN total TO total_count;
+     ALTER TABLE folder RENAME COLUMN favorite TO is_favorite;
+     ALTER TABLE identity RENAME COLUMN smtp_id TO smtp_server_id;
+     ALTER TABLE blob RENAME COLUMN created TO created_at;
+     ALTER TABLE blob RENAME COLUMN refs TO ref_count;
+     ALTER TABLE thread RENAME COLUMN flagged TO flagged_count;
+     ALTER TABLE message RENAME COLUMN received TO received_at;
+     ALTER TABLE message RENAME COLUMN from_addr TO from_email;
+     ALTER TABLE message RENAME COLUMN identity_hint TO identity_hint_id;
+     ALTER TABLE message_location RENAME COLUMN attachment TO has_attachments;
+     ALTER TABLE message_ref RENAME COLUMN rfc_id TO rfc_message_id;
+     ALTER TABLE folder_thread RENAME COLUMN flagged TO flagged_count;
+     ALTER TABLE pending_op RENAME COLUMN attempts TO attempt_count;
+     ALTER TABLE pending_op RENAME COLUMN next_attempt TO next_attempt_at;
+     ALTER TABLE pending_op RENAME COLUMN created TO created_at;
+     ALTER TABLE outbox RENAME COLUMN attempts TO attempt_count;
+     ALTER TABLE outbox RENAME COLUMN created TO created_at;
+     ALTER TABLE contact RENAME COLUMN frequency TO use_count;
+     ALTER TABLE contact RENAME COLUMN last_used TO last_used_at;
+     ALTER TABLE contact_source RENAME COLUMN last_full_sync TO last_full_sync_at;
+     ALTER TABLE contact_source RENAME COLUMN last_sync TO last_sync_at;
+     ALTER TABLE contact_person RENAME COLUMN seen TO sync_run;
+     ALTER TABLE contact_photo RENAME COLUMN found TO is_found;
+     ALTER TABLE domain RENAME COLUMN last_seen TO last_seen_at;
+     ALTER TABLE domain RENAME COLUMN favicon_checked TO favicon_checked_at;
+     ALTER TABLE rule RENAME COLUMN enabled TO is_enabled;
+     ALTER TABLE rule RENAME COLUMN created TO created_at;
+     ALTER TABLE rule RENAME COLUMN updated TO updated_at;
+     ALTER TABLE saved_search RENAME COLUMN created TO created_at;
+     ALTER TABLE api_token RENAME COLUMN expires TO expires_at;
+     ALTER TABLE api_token RENAME COLUMN created TO created_at;
+     ALTER TABLE api_token RENAME COLUMN last_used TO last_used_at;
+     ALTER TABLE api_token RENAME COLUMN revoked TO revoked_at;
+     ALTER TABLE proposal RENAME COLUMN token_id TO api_token_id;
+     ALTER TABLE proposal RENAME COLUMN created TO created_at;
+     ALTER TABLE proposal RENAME COLUMN decided TO decided_at;
+     ALTER TABLE audit_log RENAME COLUMN at TO occurred_at;
+     ALTER TABLE draft RENAME COLUMN created TO created_at;
+     ALTER TABLE draft RENAME COLUMN updated TO updated_at;
+     ALTER TABLE remote_content_sender RENAME COLUMN added TO added_at;
+     ALTER TABLE spelling_word RENAME COLUMN added TO added_at;
+     ALTER TABLE agent_thread RENAME COLUMN transcript_blob TO transcript_blob_id;
+     ALTER TABLE agent_thread RENAME COLUMN created TO created_at;
+     ALTER TABLE agent_thread RENAME COLUMN updated TO updated_at;
+     ALTER TABLE agent_thread RENAME TO agent_conversation;
+     UPDATE api_token SET profile = CASE profile
+       WHEN 'read-only' THEN 'read' WHEN 'writer' THEN 'write' ELSE profile END;";
+
+/// Indexes and triggers v1 names differently: `(type, development name, v1 name)`.
+/// The development object is dropped and v1's is created from its SQL.
+const RECREATED: &[(&str, &str, &str)] = &[
+    ("index", "identity_smtp", "identity_smtp_server"),
+    ("index", "proposal_token", "proposal_api_token"),
+    ("index", "audit_log_at", "audit_log_occurred"),
+    (
+        "index",
+        "agent_thread_updated",
+        "agent_conversation_updated",
+    ),
+    ("index", "agent_thread_mail", "agent_conversation_mail"),
+    ("index", "agent_thread_blob", "agent_conversation_blob"),
+    (
+        "trigger",
+        "agent_thread_blob_insert",
+        "agent_conversation_blob_insert",
+    ),
+    (
+        "trigger",
+        "agent_thread_blob_update",
+        "agent_conversation_blob_update",
+    ),
+    (
+        "trigger",
+        "agent_thread_blob_delete",
+        "agent_conversation_blob_delete",
+    ),
+];
+
 /// The last schema version of the development builds.
 pub(super) const DEV_VERSION: u32 = 14;
 
@@ -49,12 +140,9 @@ pub(super) fn is_dev_v14(conn: &Connection) -> Result<bool> {
 
 /// Converts a development database at schema 14 to v1 (see the module docs).
 pub(super) fn convert(conn: &mut Connection) -> Result<()> {
-    let expected = fingerprint(&fresh_v1()?)?;
-    let account_sql: String = fresh_v1()?.query_row(
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'account'",
-        [],
-        |row| row.get(0),
-    )?;
+    let fresh = fresh_v1()?;
+    let expected = fingerprint(&fresh)?;
+    let account_sql = v1_sql(&fresh, "table", "account")?;
 
     let tx = conn.transaction()?;
     let local = tx.execute("DELETE FROM account WHERE kind = 'local'", [])?;
@@ -89,6 +177,7 @@ pub(super) fn convert(conn: &mut Connection) -> Result<()> {
         );
     }
     tx.execute_batch(DROPPED)?;
+    rename(&tx, &fresh)?;
 
     // A narrower CHECK on `account.kind` (the rows already satisfy it): the documented
     // way to change a constraint without rebuilding the table.
@@ -130,6 +219,26 @@ pub(super) fn convert(conn: &mut Connection) -> Result<()> {
         "converted a development database to the v1 schema"
     );
     Ok(())
+}
+
+/// Gives the tables, columns, indexes and triggers of a development database (without
+/// [`DROPPED`]) v1's names ([`RENAMED`], [`RECREATED`]); `v1` is a new v1 database.
+fn rename(conn: &Connection, v1: &Connection) -> Result<()> {
+    conn.execute_batch(RENAMED)?;
+    for (kind, dev_name, v1_name) in RECREATED {
+        conn.execute_batch(&format!("DROP {kind} {dev_name};"))?;
+        conn.execute_batch(&v1_sql(v1, kind, v1_name)?)?;
+    }
+    Ok(())
+}
+
+/// The SQL of the `kind` object `name` in `conn`.
+fn v1_sql(conn: &Connection, kind: &str, name: &str) -> Result<String> {
+    Ok(conn.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = ?1 AND name = ?2",
+        [kind, name],
+        |row| row.get(0),
+    )?)
 }
 
 /// A new, empty v1 database in memory.
@@ -306,15 +415,17 @@ mod tests {
     }
 
     #[test]
-    fn v1_is_the_dev_schema_without_the_removed_objects() {
+    fn v1_is_the_dev_schema_without_the_removed_objects_and_renamed() {
         let dev = Connection::open_in_memory().unwrap();
         dev_v14(&dev);
         for table in ["legacy_secret_account", "domain_backfill", "identity_rule"] {
             assert!(table_exists(&dev, table).unwrap());
         }
         dev.execute_batch(DROPPED).unwrap();
+        let v1 = fresh_v1().unwrap();
+        rename(&dev, &v1).unwrap();
         let mut dev = fingerprint(&dev).unwrap();
-        let mut fresh = fingerprint(&fresh_v1().unwrap()).unwrap();
+        let mut fresh = fingerprint(&v1).unwrap();
         assert!(!fresh["table identity"].shape.contains("color"));
         assert!(!fresh["table folder"].shape.contains("sync_policy"));
 
@@ -335,7 +446,19 @@ mod tests {
         pretty_assertions::assert_eq!(dev, fresh);
         // The comparison sees the things that matter.
         assert_eq!(fresh["table domain"].checks.len(), 4);
-        assert!(fresh["table message_location"].shape.contains("attachment"));
+        assert!(
+            fresh["table message_location"]
+                .shape
+                .contains("has_attachments")
+        );
+        assert!(fresh["table blob"].checks == ["(ref_count >= 0)"]);
+        assert!(
+            fresh["trigger message_blob_insert"]
+                .shape
+                .contains("SET ref_count = ref_count + 1")
+        );
+        assert!(fresh.contains_key("trigger agent_conversation_blob_update"));
+        assert!(!fresh.keys().any(|name| name.contains("agent_thread")));
         assert!(
             fresh["index location_list_unread"]
                 .shape
@@ -368,6 +491,14 @@ mod tests {
              INSERT INTO message_location (message_id, folder_id, uid, date)
                VALUES (1, 1, 10, 5), (2, 2, NULL, 6);
              INSERT INTO draft (id, created, updated, name) VALUES (1, 1, 1, 'brave-otter');
+             UPDATE folder SET favorite = 1, unread = 4 WHERE id = 1;
+             INSERT INTO blob (id, size, created) VALUES (x'03', 1, 1);
+             INSERT INTO agent_thread (id, agent_id, mail_thread_id, transcript_blob, created, updated)
+               VALUES (1, 'claude', 1, x'03', 7, 8);
+             INSERT INTO api_token (id, hash, profile, created, revoked) VALUES
+               (1, x'a1', 'read-only', 1, NULL), (2, x'a2', 'triage', 1, NULL),
+               (3, x'a3', 'writer', 1, 9);
+             INSERT INTO proposal (id, token_id, title, created) VALUES (1, 3, 'Archive', 2);
              UPDATE domain_backfill SET next_message = 3, last_message = 2;",
         )
         .unwrap();
@@ -418,8 +549,61 @@ mod tests {
             .unwrap();
         assert_eq!(secret, "s3cret");
         // The removed message's blob is unreferenced now (garbage collection takes it).
-        assert_eq!(count(&conn, "SELECT refs FROM blob WHERE id = x'02'"), 0);
-        assert_eq!(count(&conn, "SELECT refs FROM blob WHERE id = x'01'"), 1);
+        assert_eq!(
+            count(&conn, "SELECT ref_count FROM blob WHERE id = x'02'"),
+            0
+        );
+        assert_eq!(
+            count(&conn, "SELECT ref_count FROM blob WHERE id = x'01'"),
+            1
+        );
+
+        // Renamed columns and tables keep their values; profiles get their new names.
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT is_favorite * 10 + unread_count FROM folder WHERE id = 1"
+            ),
+            14
+        );
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT created_at * 10 + updated_at FROM agent_conversation
+                 WHERE id = 1 AND mail_thread_id = 1 AND transcript_blob_id = x'03'"
+            ),
+            78
+        );
+        let profiles: Vec<(String, Option<i64>)> = conn
+            .prepare("SELECT profile, revoked_at FROM api_token ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            profiles,
+            [
+                ("read".to_owned(), None),
+                ("triage".to_owned(), None),
+                ("write".to_owned(), Some(9))
+            ]
+        );
+        assert_eq!(
+            count(&conn, "SELECT api_token_id FROM proposal WHERE id = 1"),
+            3
+        );
+        // The transcript's blob is still counted, by the renamed triggers.
+        assert_eq!(
+            count(&conn, "SELECT ref_count FROM blob WHERE id = x'03'"),
+            1
+        );
+        conn.execute("DELETE FROM agent_conversation WHERE id = 1", [])
+            .unwrap();
+        assert_eq!(
+            count(&conn, "SELECT ref_count FROM blob WHERE id = x'03'"),
+            0
+        );
 
         // The constraints and triggers work as in a new database.
         assert!(

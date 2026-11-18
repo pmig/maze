@@ -280,7 +280,7 @@ fn check(db: &Path) {
     };
 
     let stored = query(
-        "SELECT folder_id, thread_id, message_count, unread_count, flagged, attachment_count, last_date
+        "SELECT folder_id, thread_id, message_count, unread_count, flagged_count, attachment_count, last_date
          FROM folder_thread",
     );
     let naive = query(
@@ -291,7 +291,7 @@ fn check(db: &Path) {
     );
     assert_eq!(stored, naive, "folder_thread");
 
-    let stored = query("SELECT id, 0, total, unread FROM folder");
+    let stored = query("SELECT id, 0, total_count, unread_count FROM folder");
     let naive = query(
         "SELECT f.id, 0, (SELECT count(*) FROM message_location WHERE folder_id = f.id),
                 (SELECT count(*) FROM message_location WHERE folder_id = f.id AND (flags & 1) = 0)
@@ -300,7 +300,7 @@ fn check(db: &Path) {
     assert_eq!(stored, naive, "folder counts");
 
     let stored = query(
-        "SELECT id, 0, message_count, unread_count, flagged, attachment_count,
+        "SELECT id, 0, message_count, unread_count, flagged_count, attachment_count,
                 CASE WHEN message_count > 0 THEN last_date ELSE 0 END,
                 CASE WHEN message_count > 0 THEN last_message_id ELSE 0 END
          FROM thread",

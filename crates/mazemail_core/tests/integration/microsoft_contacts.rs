@@ -316,7 +316,7 @@ async fn microsoft_contacts_connect_sync_show_photos_and_take_edits() {
             .unwrap()
             .contact_source(&book)
             .unwrap()
-            .is_some_and(|source| source.last_sync.is_some())
+            .is_some_and(|source| source.last_sync_at.is_some())
     })
     .await;
     assert_eq!(
@@ -451,7 +451,7 @@ async fn shared_mailboxes_sync_read_only_with_their_own_token() {
             .unwrap()
             .contact_source(&book)
             .unwrap()
-            .is_some_and(|source| source.last_sync.is_some())
+            .is_some_and(|source| source.last_sync_at.is_some())
     })
     .await;
     let rows: Vec<String> = s

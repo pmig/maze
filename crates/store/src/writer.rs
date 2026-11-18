@@ -165,7 +165,7 @@ impl<'c> WriteTx<'c> {
         }
     }
 
-    /// The time this job started (Unix seconds); used for `created`/`updated` columns.
+    /// The time this job started (Unix seconds); used for `created_at`/`updated_at` columns.
     pub fn now(&self) -> i64 {
         self.now
     }

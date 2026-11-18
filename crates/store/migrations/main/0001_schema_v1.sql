@@ -6,7 +6,10 @@
 -- changes are new migrations after this one.
 --
 -- Conventions:
--- - Timestamps are Unix seconds (UTC).
+-- - Timestamps are Unix seconds (UTC) in columns ending in `_at` (`message.date` is
+--   the Date header, `last_date` the newest one of a thread).
+-- - Flags start with `is_` or `has_`, counts end in `_count` and a foreign key is the
+--   referenced table's name (or its role) followed by `_id`.
 -- - `*_json` columns hold JSON text written by the store.
 -- - Every child column with a foreign key has an index, so deletes of parents never scan.
 -- - Ids are AUTOINCREMENT: public ids (`m_…`, `t_…`) are never reused for other rows.
@@ -55,7 +58,7 @@ CREATE TABLE account_secret (
   account_uuid TEXT NOT NULL REFERENCES account (uuid) ON DELETE CASCADE,
   kind         TEXT NOT NULL,
   secret       TEXT NOT NULL,
-  updated      INTEGER NOT NULL,
+  updated_at   INTEGER NOT NULL,
   PRIMARY KEY (account_uuid, kind)
 ) WITHOUT ROWID;
 
@@ -64,10 +67,10 @@ CREATE TABLE account_secret (
 -- never written to settings.json, the agent's home or a log. One per agent (its
 -- registry id or custom id).
 CREATE TABLE agent_secret (
-  agent_id TEXT PRIMARY KEY,
-  env      TEXT NOT NULL,
-  secret   TEXT NOT NULL,
-  updated  INTEGER NOT NULL
+  agent_id   TEXT PRIMARY KEY,
+  env        TEXT NOT NULL,
+  secret     TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
 ) WITHOUT ROWID;
 
 -- The password lives in `account_secret`, never here.
@@ -84,13 +87,13 @@ CREATE TABLE smtp_server (
 
 -- HTML and plain-text variants (CONCEPT §8.6).
 CREATE TABLE signature (
-  id        INTEGER PRIMARY KEY AUTOINCREMENT,
-  name      TEXT NOT NULL,
-  body_html TEXT,
-  body_text TEXT,
-  ordinal   INTEGER NOT NULL DEFAULT 0,
-  created   INTEGER NOT NULL,
-  updated   INTEGER NOT NULL
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  body_html  TEXT,
+  body_text  TEXT,
+  ordinal    INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
 );
 
 CREATE TABLE folder (
@@ -104,10 +107,10 @@ CREATE TABLE folder (
   uidvalidity   INTEGER,
   uidnext       INTEGER,
   highestmodseq INTEGER,
-  unread        INTEGER NOT NULL DEFAULT 0,          -- maintained by the writer
-  total         INTEGER NOT NULL DEFAULT 0,          -- maintained by the writer
+  unread_count  INTEGER NOT NULL DEFAULT 0,          -- maintained by the writer
+  total_count   INTEGER NOT NULL DEFAULT 0,          -- maintained by the writer
   ordinal       INTEGER NOT NULL DEFAULT 0,
-  favorite      INTEGER NOT NULL DEFAULT 0
+  is_favorite   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX folder_account ON folder (account_id);
 CREATE INDEX folder_parent ON folder (parent_id);
@@ -122,7 +125,7 @@ CREATE TABLE identity (
   email               TEXT NOT NULL,
   reply_to            TEXT,
   signature_id        INTEGER REFERENCES signature (id) ON DELETE SET NULL,
-  smtp_id             INTEGER REFERENCES smtp_server (id) ON DELETE SET NULL,
+  smtp_server_id      INTEGER REFERENCES smtp_server (id) ON DELETE SET NULL,
   sent_folder_id      INTEGER REFERENCES folder (id) ON DELETE SET NULL,
   drafts_folder_id    INTEGER REFERENCES folder (id) ON DELETE SET NULL,
   archive_folder_id   INTEGER REFERENCES folder (id) ON DELETE SET NULL,
@@ -132,18 +135,18 @@ CREATE TABLE identity (
 );
 CREATE INDEX identity_account ON identity (account_id);
 CREATE INDEX identity_signature ON identity (signature_id) WHERE signature_id IS NOT NULL;
-CREATE INDEX identity_smtp ON identity (smtp_id) WHERE smtp_id IS NOT NULL;
+CREATE INDEX identity_smtp_server ON identity (smtp_server_id) WHERE smtp_server_id IS NOT NULL;
 CREATE INDEX identity_sent_folder ON identity (sent_folder_id) WHERE sent_folder_id IS NOT NULL;
 CREATE INDEX identity_drafts_folder ON identity (drafts_folder_id) WHERE drafts_folder_id IS NOT NULL;
 CREATE INDEX identity_archive_folder ON identity (archive_folder_id) WHERE archive_folder_id IS NOT NULL;
 
 CREATE TABLE blob (
-  id      BLOB PRIMARY KEY,
-  size    INTEGER NOT NULL,                           -- uncompressed bytes
-  created INTEGER NOT NULL,
-  refs    INTEGER NOT NULL DEFAULT 0 CHECK (refs >= 0)
+  id         BLOB PRIMARY KEY,
+  size       INTEGER NOT NULL,                        -- uncompressed bytes
+  created_at INTEGER NOT NULL,
+  ref_count  INTEGER NOT NULL DEFAULT 0 CHECK (ref_count >= 0)
 ) WITHOUT ROWID;
-CREATE INDEX blob_unreferenced ON blob (id) WHERE refs = 0;
+CREATE INDEX blob_unreferenced ON blob (id) WHERE ref_count = 0;
 
 CREATE TABLE thread (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -154,7 +157,7 @@ CREATE TABLE thread (
   last_message_id   INTEGER,
   message_count     INTEGER NOT NULL DEFAULT 0,
   unread_count      INTEGER NOT NULL DEFAULT 0,
-  flagged           INTEGER NOT NULL DEFAULT 0,
+  flagged_count     INTEGER NOT NULL DEFAULT 0,
   attachment_count  INTEGER NOT NULL DEFAULT 0,
   participants_json TEXT
 );
@@ -166,8 +169,8 @@ CREATE INDEX thread_list_unread
   ON thread (account_id, last_date DESC, id DESC, message_count, unread_count)
   WHERE message_count > 0 AND unread_count > 0;
 CREATE INDEX thread_list_flagged
-  ON thread (account_id, last_date DESC, id DESC, message_count, flagged)
-  WHERE message_count > 0 AND flagged > 0;
+  ON thread (account_id, last_date DESC, id DESC, message_count, flagged_count)
+  WHERE message_count > 0 AND flagged_count > 0;
 CREATE INDEX thread_list_attachments
   ON thread (account_id, last_date DESC, id DESC, message_count, attachment_count)
   WHERE message_count > 0 AND attachment_count > 0;
@@ -183,8 +186,8 @@ CREATE TABLE message (
   in_reply_to        TEXT,
   references_json    TEXT,
   date               INTEGER NOT NULL,
-  received           INTEGER,
-  from_addr          TEXT,
+  received_at        INTEGER,
+  from_email         TEXT,
   from_name          TEXT,
   to_json            TEXT,
   cc_json            TEXT,
@@ -198,7 +201,7 @@ CREATE TABLE message (
   gm_msgid           INTEGER,
   gm_thrid           INTEGER,
   auth_json          TEXT,
-  identity_hint      INTEGER REFERENCES identity (id) ON DELETE SET NULL,
+  identity_hint_id   INTEGER REFERENCES identity (id) ON DELETE SET NULL,
   detached_at        INTEGER                          -- set while the message has no location
 );
 CREATE INDEX message_thread ON message (thread_id, date);
@@ -207,7 +210,7 @@ CREATE INDEX message_account ON message (account_id);
 CREATE UNIQUE INDEX message_gmail ON message (account_id, gm_msgid) WHERE gm_msgid IS NOT NULL;
 CREATE INDEX message_gm_thread ON message (account_id, gm_thrid) WHERE gm_thrid IS NOT NULL;
 CREATE INDEX message_blob ON message (blob_id) WHERE blob_id IS NOT NULL;
-CREATE INDEX message_identity ON message (identity_hint) WHERE identity_hint IS NOT NULL;
+CREATE INDEX message_identity ON message (identity_hint_id) WHERE identity_hint_id IS NOT NULL;
 CREATE INDEX message_detached ON message (account_id, detached_at) WHERE detached_at IS NOT NULL;
 -- Account-scope message lists.
 CREATE INDEX message_list ON message (account_id, date DESC, id DESC) WHERE detached_at IS NULL;
@@ -219,14 +222,14 @@ CREATE INDEX message_list ON message (account_id, date DESC, id DESC) WHERE deta
 -- from an index. The writer fills both when it adds a location; the triggers below keep
 -- them right when the message changes.
 CREATE TABLE message_location (
-  message_id    INTEGER NOT NULL REFERENCES message (id) ON DELETE CASCADE,
-  folder_id     INTEGER NOT NULL REFERENCES folder (id) ON DELETE CASCADE,
-  uid           INTEGER,                             -- NULL for Gmail labels and pending moves
-  modseq        INTEGER,
-  flags         INTEGER NOT NULL DEFAULT 0,
-  keywords_json TEXT,                                -- lowercase IMAP keywords = tags
-  date          INTEGER NOT NULL DEFAULT 0,
-  attachment    INTEGER NOT NULL DEFAULT 0,
+  message_id      INTEGER NOT NULL REFERENCES message (id) ON DELETE CASCADE,
+  folder_id       INTEGER NOT NULL REFERENCES folder (id) ON DELETE CASCADE,
+  uid             INTEGER,                           -- NULL for Gmail labels and pending moves
+  modseq          INTEGER,
+  flags           INTEGER NOT NULL DEFAULT 0,
+  keywords_json   TEXT,                              -- lowercase IMAP keywords = tags
+  date            INTEGER NOT NULL DEFAULT 0,
+  has_attachments INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (folder_id, message_id)
 ) WITHOUT ROWID;
 CREATE UNIQUE INDEX location_folder_uid ON message_location (folder_id, uid) WHERE uid IS NOT NULL;
@@ -241,14 +244,14 @@ CREATE INDEX location_list_flagged ON message_location (folder_id, date DESC, me
   WHERE flags & 4 <> 0;
 CREATE INDEX location_list_attachments
   ON message_location (folder_id, date DESC, message_id DESC)
-  WHERE attachment = 1;
+  WHERE has_attachments = 1;
 
 -- Message-ids a message refers to (References + In-Reply-To), so a late parent or a
 -- sibling with a missing parent finds its thread.
 CREATE TABLE message_ref (
-  rfc_id     TEXT NOT NULL,
-  message_id INTEGER NOT NULL REFERENCES message (id) ON DELETE CASCADE,
-  PRIMARY KEY (rfc_id, message_id)
+  rfc_message_id TEXT NOT NULL,
+  message_id     INTEGER NOT NULL REFERENCES message (id) ON DELETE CASCADE,
+  PRIMARY KEY (rfc_message_id, message_id)
 ) WITHOUT ROWID;
 CREATE INDEX message_ref_message ON message_ref (message_id);
 
@@ -259,7 +262,7 @@ CREATE TABLE folder_thread (
   last_date        INTEGER NOT NULL,
   message_count    INTEGER NOT NULL,
   unread_count     INTEGER NOT NULL,
-  flagged          INTEGER NOT NULL,
+  flagged_count    INTEGER NOT NULL,
   attachment_count INTEGER NOT NULL,
   PRIMARY KEY (folder_id, thread_id)
 ) WITHOUT ROWID;
@@ -270,8 +273,8 @@ CREATE INDEX folder_thread_unread
   ON folder_thread (folder_id, last_date DESC, thread_id DESC, unread_count)
   WHERE unread_count > 0;
 CREATE INDEX folder_thread_flagged
-  ON folder_thread (folder_id, last_date DESC, thread_id DESC, flagged)
-  WHERE flagged > 0;
+  ON folder_thread (folder_id, last_date DESC, thread_id DESC, flagged_count)
+  WHERE flagged_count > 0;
 CREATE INDEX folder_thread_attachments
   ON folder_thread (folder_id, last_date DESC, thread_id DESC, attachment_count)
   WHERE attachment_count > 0;
@@ -297,17 +300,17 @@ CREATE INDEX message_tag_tag ON message_tag (tag_id, message_id);
 -- an IMAP folder) is the only reference to its message until the server has it, so
 -- `blob_id` holds the blob, counted like every other blob reference.
 CREATE TABLE pending_op (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  account_id   INTEGER NOT NULL REFERENCES account (id) ON DELETE CASCADE,
-  kind         TEXT NOT NULL,
-  payload_json TEXT NOT NULL,
-  origin       TEXT NOT NULL,
-  state        TEXT NOT NULL DEFAULT 'queued' CHECK (state IN ('queued', 'stuck')),
-  attempts     INTEGER NOT NULL DEFAULT 0,
-  next_attempt INTEGER NOT NULL DEFAULT 0,
-  last_error   TEXT,
-  created      INTEGER NOT NULL,
-  blob_id      BLOB REFERENCES blob (id)
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id      INTEGER NOT NULL REFERENCES account (id) ON DELETE CASCADE,
+  kind            TEXT NOT NULL,
+  payload_json    TEXT NOT NULL,
+  origin          TEXT NOT NULL,
+  state           TEXT NOT NULL DEFAULT 'queued' CHECK (state IN ('queued', 'stuck')),
+  attempt_count   INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at INTEGER NOT NULL DEFAULT 0,
+  last_error      TEXT,
+  created_at      INTEGER NOT NULL,
+  blob_id         BLOB REFERENCES blob (id)
 );
 CREATE INDEX pending_op_account ON pending_op (account_id, id);
 CREATE INDEX pending_op_blob ON pending_op (blob_id) WHERE blob_id IS NOT NULL;
@@ -322,9 +325,9 @@ CREATE TABLE outbox (
   send_at        INTEGER NOT NULL,
   state          TEXT NOT NULL DEFAULT 'queued'
                    CHECK (state IN ('queued', 'sending', 'sent', 'failed', 'frozen')),
-  attempts       INTEGER NOT NULL DEFAULT 0,
+  attempt_count  INTEGER NOT NULL DEFAULT 0,
   last_error     TEXT,
-  created        INTEGER NOT NULL,
+  created_at     INTEGER NOT NULL,
   envelope_json  TEXT
 );
 CREATE INDEX outbox_due ON outbox (state, send_at);
@@ -342,8 +345,8 @@ CREATE TABLE contact (
   book          TEXT NOT NULL DEFAULT 'collected',
   display_name  TEXT,
   email         TEXT NOT NULL COLLATE NOCASE,
-  frequency     INTEGER NOT NULL DEFAULT 0,
-  last_used     INTEGER,
+  use_count     INTEGER NOT NULL DEFAULT 0,
+  last_used_at  INTEGER,
   vcard         TEXT,
   resource_name TEXT
 );
@@ -354,18 +357,18 @@ CREATE INDEX contact_person_rows ON contact (book, resource_name)
 
 -- Where each synced book stands. Everything synced goes with the account.
 CREATE TABLE contact_source (
-  book           TEXT PRIMARY KEY NOT NULL,
-  account_id     INTEGER NOT NULL REFERENCES account (id) ON DELETE CASCADE,
+  book              TEXT PRIMARY KEY NOT NULL,
+  account_id        INTEGER NOT NULL REFERENCES account (id) ON DELETE CASCADE,
   -- "google" or "google-other" (the book name's prefix).
-  kind           TEXT NOT NULL,
+  kind              TEXT NOT NULL,
   -- The token of the next incremental sync; NULL: the next sync lists everything.
-  sync_token     TEXT,
-  last_full_sync INTEGER,
-  last_sync      INTEGER,
+  sync_token        TEXT,
+  last_full_sync_at INTEGER,
+  last_sync_at      INTEGER,
   -- "ok", "missing_scope" (contacts need permission) or "error".
-  state          TEXT NOT NULL DEFAULT 'ok'
-                   CHECK (state IN ('ok', 'missing_scope', 'error')),
-  error          TEXT
+  state             TEXT NOT NULL DEFAULT 'ok'
+                      CHECK (state IN ('ok', 'missing_scope', 'error')),
+  error             TEXT
 ) WITHOUT ROWID;
 CREATE INDEX contact_source_account ON contact_source (account_id);
 
@@ -383,8 +386,9 @@ CREATE TABLE contact_person (
   vcard         TEXT NOT NULL,
   -- The person's own photo (no generated placeholder); NULL: none.
   photo_url     TEXT,
-  -- The sync run that last saw the person; a full sync removes the ones it didn't.
-  seen          INTEGER NOT NULL DEFAULT 0,
+  -- The sync run that last saw the person (an increasing run number, the run's start
+  -- in Unix milliseconds); a full sync removes the ones it didn't.
+  sync_run      INTEGER NOT NULL DEFAULT 0,
   updated_at    INTEGER NOT NULL,
   PRIMARY KEY (book, resource_name)
 ) WITHOUT ROWID;
@@ -395,12 +399,12 @@ BEGIN
   DELETE FROM contact WHERE book = OLD.book AND resource_name = OLD.resource_name;
 END;
 
--- Photos fetched into the encrypted blob cache, by URL. `found` 0 remembers that
+-- Photos fetched into the encrypted blob cache, by URL. `is_found` 0 remembers that
 -- there is no photo behind the URL; entries are refreshed after about 7 days.
 CREATE TABLE contact_photo (
   url        TEXT PRIMARY KEY NOT NULL,
   fetched_at INTEGER NOT NULL,
-  found      INTEGER NOT NULL CHECK (found IN (0, 1))
+  is_found   INTEGER NOT NULL CHECK (is_found IN (0, 1))
 ) WITHOUT ROWID;
 
 -- The domain index (PLAN-contacts §3b): every address's registrable domain (Public
@@ -411,7 +415,7 @@ CREATE TABLE contact_photo (
 -- - `domain`: one row per registrable domain (lowercase ASCII, punycode for IDN) seen
 --   in mail, or whose favicon state is known. The counters are maintained by the
 --   triggers below from `message_domain`, so they stay right when messages go
---   (expunge, purge, account removal cascade). `last_seen` is the newest message date
+--   (expunge, purge, account removal cascade). `last_seen_at` is the newest message date
 --   ever seen and is not lowered by deletes. Contact counts are not stored: the
 --   `contact` table is small and they are derived when read. Whether a domain is a
 --   free-mail provider is decided in code (`mazemail_mime::domain::is_personal`).
@@ -421,17 +425,17 @@ CREATE TABLE contact_photo (
 --   identities) to an address there. Your own identity addresses are not indexed.
 -- - Favicons: `favicon_state` 0 unknown, 1 stored in the encrypted cache under the
 --   random id `favicon_key`, 2 the domain has none (remembered until it is due again);
---   `favicon_checked` is when it was last fetched.
+--   `favicon_checked_at` is when it was last fetched.
 CREATE TABLE domain (
-  id              INTEGER PRIMARY KEY,
-  name            TEXT NOT NULL UNIQUE,
-  message_count   INTEGER NOT NULL DEFAULT 0 CHECK (message_count >= 0),
-  from_count      INTEGER NOT NULL DEFAULT 0 CHECK (from_count >= 0),
-  sent_count      INTEGER NOT NULL DEFAULT 0 CHECK (sent_count >= 0),
-  last_seen       INTEGER,
-  favicon_state   INTEGER NOT NULL DEFAULT 0 CHECK (favicon_state IN (0, 1, 2)),
-  favicon_checked INTEGER,
-  favicon_key     BLOB
+  id                 INTEGER PRIMARY KEY,
+  name               TEXT NOT NULL UNIQUE,
+  message_count      INTEGER NOT NULL DEFAULT 0 CHECK (message_count >= 0),
+  from_count         INTEGER NOT NULL DEFAULT 0 CHECK (from_count >= 0),
+  sent_count         INTEGER NOT NULL DEFAULT 0 CHECK (sent_count >= 0),
+  last_seen_at       INTEGER,
+  favicon_state      INTEGER NOT NULL DEFAULT 0 CHECK (favicon_state IN (0, 1, 2)),
+  favicon_checked_at INTEGER,
+  favicon_key        BLOB
 );
 
 CREATE TABLE message_domain (
@@ -448,13 +452,13 @@ CREATE TABLE rule (
   account_id     INTEGER REFERENCES account (id) ON DELETE CASCADE,
   name           TEXT NOT NULL,
   ordinal        INTEGER NOT NULL DEFAULT 0,
-  enabled        INTEGER NOT NULL DEFAULT 1,
+  is_enabled     INTEGER NOT NULL DEFAULT 1,
   trigger_kind   TEXT NOT NULL
                    CHECK (trigger_kind IN ('arrival_before_junk', 'arrival', 'manual', 'after_send', 'periodic')),
   condition_json TEXT NOT NULL,
   actions_json   TEXT NOT NULL,
-  created        INTEGER NOT NULL,
-  updated        INTEGER NOT NULL
+  created_at     INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL
 );
 CREATE INDEX rule_account ON rule (account_id, ordinal);
 
@@ -465,33 +469,33 @@ CREATE TABLE saved_search (
   query        TEXT NOT NULL,
   folders_json TEXT,
   ordinal      INTEGER NOT NULL DEFAULT 0,
-  created      INTEGER NOT NULL
+  created_at   INTEGER NOT NULL
 );
 
 -- Only the BLAKE3 hash of a token is stored (PLAN §4.11).
 CREATE TABLE api_token (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  hash       BLOB NOT NULL UNIQUE,
-  profile    TEXT NOT NULL,
-  scope_json TEXT NOT NULL DEFAULT '{}',
-  expires    INTEGER,
-  label      TEXT,
-  created    INTEGER NOT NULL,
-  last_used  INTEGER,
-  revoked    INTEGER
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  hash         BLOB NOT NULL UNIQUE,
+  profile      TEXT NOT NULL,
+  scope_json   TEXT NOT NULL DEFAULT '{}',
+  expires_at   INTEGER,
+  label        TEXT,
+  created_at   INTEGER NOT NULL,
+  last_used_at INTEGER,
+  revoked_at   INTEGER
 );
 
 CREATE TABLE proposal (
-  id       INTEGER PRIMARY KEY AUTOINCREMENT,
-  token_id INTEGER REFERENCES api_token (id) ON DELETE SET NULL,
-  title    TEXT NOT NULL,
-  state    TEXT NOT NULL DEFAULT 'pending'
-             CHECK (state IN ('pending', 'approved', 'rejected', 'partial', 'applied')),
-  created  INTEGER NOT NULL,
-  decided  INTEGER
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  api_token_id INTEGER REFERENCES api_token (id) ON DELETE SET NULL,
+  title        TEXT NOT NULL,
+  state        TEXT NOT NULL DEFAULT 'pending'
+                 CHECK (state IN ('pending', 'approved', 'rejected', 'partial', 'applied')),
+  created_at   INTEGER NOT NULL,
+  decided_at   INTEGER
 );
-CREATE INDEX proposal_state ON proposal (state, created);
-CREATE INDEX proposal_token ON proposal (token_id) WHERE token_id IS NOT NULL;
+CREATE INDEX proposal_state ON proposal (state, created_at);
+CREATE INDEX proposal_api_token ON proposal (api_token_id) WHERE api_token_id IS NOT NULL;
 
 CREATE TABLE proposal_item (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -505,12 +509,12 @@ CREATE INDEX proposal_item_proposal ON proposal_item (proposal_id, id);
 
 CREATE TABLE audit_log (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  at          INTEGER NOT NULL,
+  occurred_at INTEGER NOT NULL,
   origin      TEXT NOT NULL,
   action      TEXT NOT NULL,
   detail_json TEXT
 );
-CREATE INDEX audit_log_at ON audit_log (at);
+CREATE INDEX audit_log_occurred ON audit_log (occurred_at);
 
 -- Local drafts, what the composer autosaves while you write (PLAN §4.5): Markdown body,
 -- recipients as JSON arrays of `{"name": …, "email": …}`, attachments as file
@@ -530,43 +534,45 @@ CREATE TABLE draft (
   references_json  TEXT NOT NULL DEFAULT '[]',
   attachments_json TEXT NOT NULL DEFAULT '[]',
   origin_json      TEXT,                                -- reply / reply all / forward of a message
-  created          INTEGER NOT NULL,
-  updated          INTEGER NOT NULL,
+  created_at       INTEGER NOT NULL,
+  updated_at       INTEGER NOT NULL,
   name             TEXT NOT NULL DEFAULT '',
   support_maze     INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX draft_identity ON draft (identity_id) WHERE identity_id IS NOT NULL;
-CREATE INDEX draft_updated ON draft (updated DESC);
+CREATE INDEX draft_updated ON draft (updated_at DESC);
 
 -- Senders whose messages may load remote content (images, fonts, CSS backgrounds)
 -- without asking, added with "Always for this sender" in the message view
 -- (reader.remote_content = "ask"). Addresses are stored lowercase.
 CREATE TABLE remote_content_sender (
-  email TEXT PRIMARY KEY NOT NULL,
-  added INTEGER NOT NULL
+  email    TEXT PRIMARY KEY NOT NULL,
+  added_at INTEGER NOT NULL
 ) WITHOUT ROWID;
 
 -- The personal spelling dictionary, words added with "Add to Dictionary" in the
 -- composer. One list for every language (words are often names); kept in the
 -- encrypted database because they are.
 CREATE TABLE spelling_word (
-  word  TEXT PRIMARY KEY NOT NULL,
-  added INTEGER NOT NULL
+  word     TEXT PRIMARY KEY NOT NULL,
+  added_at INTEGER NOT NULL
 ) WITHOUT ROWID;
 
-CREATE TABLE agent_thread (
-  id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  agent_id        TEXT NOT NULL,
-  title           TEXT,
-  mail_thread_id  INTEGER REFERENCES thread (id) ON DELETE SET NULL,
-  acp_session_id  TEXT,
-  transcript_blob BLOB REFERENCES blob (id),
-  created         INTEGER NOT NULL,
-  updated         INTEGER NOT NULL
+CREATE TABLE agent_conversation (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id           TEXT NOT NULL,
+  title              TEXT,
+  mail_thread_id     INTEGER REFERENCES thread (id) ON DELETE SET NULL,
+  acp_session_id     TEXT,
+  transcript_blob_id BLOB REFERENCES blob (id),
+  created_at         INTEGER NOT NULL,
+  updated_at         INTEGER NOT NULL
 );
-CREATE INDEX agent_thread_updated ON agent_thread (updated DESC);
-CREATE INDEX agent_thread_mail ON agent_thread (mail_thread_id) WHERE mail_thread_id IS NOT NULL;
-CREATE INDEX agent_thread_blob ON agent_thread (transcript_blob) WHERE transcript_blob IS NOT NULL;
+CREATE INDEX agent_conversation_updated ON agent_conversation (updated_at DESC);
+CREATE INDEX agent_conversation_mail ON agent_conversation (mail_thread_id)
+  WHERE mail_thread_id IS NOT NULL;
+CREATE INDEX agent_conversation_blob ON agent_conversation (transcript_blob_id)
+  WHERE transcript_blob_id IS NOT NULL;
 
 -- Message dates and attachment flags on their locations (see `message_location`; the
 -- date never changes after insert, the attachment flag does when the body arrives).
@@ -579,7 +585,7 @@ END;
 CREATE TRIGGER message_attachment_update AFTER UPDATE OF has_attachments ON message
   WHEN NEW.has_attachments IS NOT OLD.has_attachments
 BEGIN
-  UPDATE message_location SET attachment = NEW.has_attachments WHERE message_id = NEW.id;
+  UPDATE message_location SET has_attachments = NEW.has_attachments WHERE message_id = NEW.id;
 END;
 
 -- Domain counters (see `domain`).
@@ -589,8 +595,8 @@ BEGIN
     message_count = message_count + 1,
     from_count = from_count + (NEW.roles & 1 <> 0),
     sent_count = sent_count + (NEW.roles & 4 <> 0),
-    last_seen = max(COALESCE(last_seen, 0),
-                    COALESCE((SELECT date FROM message WHERE id = NEW.message_id), 0))
+    last_seen_at = max(COALESCE(last_seen_at, 0),
+                       COALESCE((SELECT date FROM message WHERE id = NEW.message_id), 0))
   WHERE id = NEW.domain_id;
 END;
 
@@ -606,64 +612,64 @@ END;
 -- Blob reference counts.
 CREATE TRIGGER message_blob_insert AFTER INSERT ON message WHEN NEW.blob_id IS NOT NULL
 BEGIN
-  UPDATE blob SET refs = refs + 1 WHERE id = NEW.blob_id;
+  UPDATE blob SET ref_count = ref_count + 1 WHERE id = NEW.blob_id;
 END;
 CREATE TRIGGER message_blob_update AFTER UPDATE OF blob_id ON message
   WHEN NEW.blob_id IS NOT OLD.blob_id
 BEGIN
-  UPDATE blob SET refs = refs - 1 WHERE id = OLD.blob_id;
-  UPDATE blob SET refs = refs + 1 WHERE id = NEW.blob_id;
+  UPDATE blob SET ref_count = ref_count - 1 WHERE id = OLD.blob_id;
+  UPDATE blob SET ref_count = ref_count + 1 WHERE id = NEW.blob_id;
 END;
 CREATE TRIGGER message_blob_delete AFTER DELETE ON message WHEN OLD.blob_id IS NOT NULL
 BEGIN
-  UPDATE blob SET refs = refs - 1 WHERE id = OLD.blob_id;
+  UPDATE blob SET ref_count = ref_count - 1 WHERE id = OLD.blob_id;
 END;
 
 CREATE TRIGGER outbox_blob_insert AFTER INSERT ON outbox WHEN NEW.blob_id IS NOT NULL
 BEGIN
-  UPDATE blob SET refs = refs + 1 WHERE id = NEW.blob_id;
+  UPDATE blob SET ref_count = ref_count + 1 WHERE id = NEW.blob_id;
 END;
 CREATE TRIGGER outbox_blob_update AFTER UPDATE OF blob_id ON outbox
   WHEN NEW.blob_id IS NOT OLD.blob_id
 BEGIN
-  UPDATE blob SET refs = refs - 1 WHERE id = OLD.blob_id;
-  UPDATE blob SET refs = refs + 1 WHERE id = NEW.blob_id;
+  UPDATE blob SET ref_count = ref_count - 1 WHERE id = OLD.blob_id;
+  UPDATE blob SET ref_count = ref_count + 1 WHERE id = NEW.blob_id;
 END;
 CREATE TRIGGER outbox_blob_delete AFTER DELETE ON outbox WHEN OLD.blob_id IS NOT NULL
 BEGIN
-  UPDATE blob SET refs = refs - 1 WHERE id = OLD.blob_id;
+  UPDATE blob SET ref_count = ref_count - 1 WHERE id = OLD.blob_id;
 END;
 
 CREATE TRIGGER pending_op_blob_insert AFTER INSERT ON pending_op WHEN NEW.blob_id IS NOT NULL
 BEGIN
-  UPDATE blob SET refs = refs + 1 WHERE id = NEW.blob_id;
+  UPDATE blob SET ref_count = ref_count + 1 WHERE id = NEW.blob_id;
 END;
 CREATE TRIGGER pending_op_blob_update AFTER UPDATE OF blob_id ON pending_op
   WHEN NEW.blob_id IS NOT OLD.blob_id
 BEGIN
-  UPDATE blob SET refs = refs - 1 WHERE id = OLD.blob_id;
-  UPDATE blob SET refs = refs + 1 WHERE id = NEW.blob_id;
+  UPDATE blob SET ref_count = ref_count - 1 WHERE id = OLD.blob_id;
+  UPDATE blob SET ref_count = ref_count + 1 WHERE id = NEW.blob_id;
 END;
 CREATE TRIGGER pending_op_blob_delete AFTER DELETE ON pending_op WHEN OLD.blob_id IS NOT NULL
 BEGIN
-  UPDATE blob SET refs = refs - 1 WHERE id = OLD.blob_id;
+  UPDATE blob SET ref_count = ref_count - 1 WHERE id = OLD.blob_id;
 END;
 
-CREATE TRIGGER agent_thread_blob_insert AFTER INSERT ON agent_thread
-  WHEN NEW.transcript_blob IS NOT NULL
+CREATE TRIGGER agent_conversation_blob_insert AFTER INSERT ON agent_conversation
+  WHEN NEW.transcript_blob_id IS NOT NULL
 BEGIN
-  UPDATE blob SET refs = refs + 1 WHERE id = NEW.transcript_blob;
+  UPDATE blob SET ref_count = ref_count + 1 WHERE id = NEW.transcript_blob_id;
 END;
-CREATE TRIGGER agent_thread_blob_update AFTER UPDATE OF transcript_blob ON agent_thread
-  WHEN NEW.transcript_blob IS NOT OLD.transcript_blob
+CREATE TRIGGER agent_conversation_blob_update AFTER UPDATE OF transcript_blob_id ON agent_conversation
+  WHEN NEW.transcript_blob_id IS NOT OLD.transcript_blob_id
 BEGIN
-  UPDATE blob SET refs = refs - 1 WHERE id = OLD.transcript_blob;
-  UPDATE blob SET refs = refs + 1 WHERE id = NEW.transcript_blob;
+  UPDATE blob SET ref_count = ref_count - 1 WHERE id = OLD.transcript_blob_id;
+  UPDATE blob SET ref_count = ref_count + 1 WHERE id = NEW.transcript_blob_id;
 END;
-CREATE TRIGGER agent_thread_blob_delete AFTER DELETE ON agent_thread
-  WHEN OLD.transcript_blob IS NOT NULL
+CREATE TRIGGER agent_conversation_blob_delete AFTER DELETE ON agent_conversation
+  WHEN OLD.transcript_blob_id IS NOT NULL
 BEGIN
-  UPDATE blob SET refs = refs - 1 WHERE id = OLD.transcript_blob;
+  UPDATE blob SET ref_count = ref_count - 1 WHERE id = OLD.transcript_blob_id;
 END;
 
 -- Thunderbird's default tags, so `$label1`…`$label5` from the server show up as tags.

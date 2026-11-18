@@ -25,12 +25,12 @@ use mazemail_types::{
 use rusqlite::Connection;
 
 use crate::model::{
-    Account, AgentThread, AgentThreadId, ApiToken, AuditEntry, AuditQuery, Contact, Folder,
-    FolderNode, Identity, ListFilter, ListKey, ListOrder, ListScope, MessageDetail, MessageKey,
-    MessagePage, MessageRow, MessageScope, MetadataFilter, OutboxId, OutboxItem, OutboxState, Page,
-    PendingOp, Proposal, ProposalId, ProposalState, Rule, SavedSearch, Signature, SignatureId,
-    SmtpServer, SmtpServerId, SortOrder, StoredDraft, Tag, ThreadRow, TokenId, TreeMessage,
-    UnixTime,
+    Account, AgentConversation, AgentConversationId, ApiToken, AuditEntry, AuditQuery, Contact,
+    Folder, FolderNode, Identity, ListFilter, ListKey, ListOrder, ListScope, MessageDetail,
+    MessageKey, MessagePage, MessageRow, MessageScope, MetadataFilter, OutboxId, OutboxItem,
+    OutboxState, Page, PendingOp, Proposal, ProposalId, ProposalState, Rule, SavedSearch,
+    Signature, SignatureId, SmtpServer, SmtpServerId, SortOrder, StoredDraft, Tag, ThreadRow,
+    TokenId, TreeMessage, UnixTime,
 };
 use crate::{Reader, Result, WriteTx};
 
@@ -608,13 +608,13 @@ pub trait Queries: sealed::Sealed {
     }
 
     /// Agent conversations, most recently updated first.
-    fn agent_threads(&self) -> Result<Vec<AgentThread>> {
-        agents::agent_threads(self.connection(sealed::Token))
+    fn agent_conversations(&self) -> Result<Vec<AgentConversation>> {
+        agents::agent_conversations(self.connection(sealed::Token))
     }
 
     /// One agent conversation.
-    fn agent_thread(&self, id: AgentThreadId) -> Result<Option<AgentThread>> {
-        agents::agent_thread(self.connection(sealed::Token), id)
+    fn agent_conversation(&self, id: AgentConversationId) -> Result<Option<AgentConversation>> {
+        agents::agent_conversation(self.connection(sealed::Token), id)
     }
 }
 

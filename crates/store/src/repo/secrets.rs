@@ -60,11 +60,11 @@ impl WriteTx<'_> {
     pub fn set_agent_secret(&mut self, agent_id: &str, env: &str, secret: &str) -> Result<()> {
         self.conn
             .prepare_cached(
-                "INSERT INTO agent_secret (agent_id, env, secret, updated)
+                "INSERT INTO agent_secret (agent_id, env, secret, updated_at)
                  VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT (agent_id)
                  DO UPDATE SET env = excluded.env, secret = excluded.secret,
-                               updated = excluded.updated",
+                               updated_at = excluded.updated_at",
             )?
             .execute(params![agent_id, env, secret, self.now])?;
         Ok(())
@@ -94,10 +94,10 @@ impl WriteTx<'_> {
         }
         self.conn
             .prepare_cached(
-                "INSERT INTO account_secret (account_uuid, kind, secret, updated)
+                "INSERT INTO account_secret (account_uuid, kind, secret, updated_at)
                  VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT (account_uuid, kind)
-                 DO UPDATE SET secret = excluded.secret, updated = excluded.updated",
+                 DO UPDATE SET secret = excluded.secret, updated_at = excluded.updated_at",
             )?
             .execute(params![text(account), kind, secret, self.now])?;
         Ok(())

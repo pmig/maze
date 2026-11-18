@@ -184,7 +184,7 @@ impl CoreHandle {
                 message_count: stats.map_or(0, |s| s.message_count),
                 received_count: stats.map_or(0, |s| s.from_count),
                 sent_count: stats.map_or(0, |s| s.sent_count),
-                last_seen: stats.and_then(|s| s.last_seen),
+                last_seen: stats.and_then(|s| s.last_seen_at),
                 has_favicon: favicons_on
                     && stats.is_some_and(|s| matches!(s.favicon, FaviconState::Stored { .. })),
                 name,

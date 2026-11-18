@@ -1023,7 +1023,7 @@ impl CoreHandle {
                     context = context.with_provider(provider);
                 }
                 if let Some(received) = detail
-                    .received
+                    .received_at
                     .and_then(|r| OffsetDateTime::from_unix_timestamp(r).ok())
                 {
                     context = context.with_received_at(received);
@@ -1724,7 +1724,7 @@ fn build_view(inner: &Inner, id: MessageId) -> Result<(MessageView, bool, bool)>
         to: detail.to,
         cc: detail.cc,
         date: detail.date,
-        received: detail.received,
+        received: detail.received_at,
         rfc_message_id: detail.rfc_message_id,
         list_id: detail.list_id,
         flags,

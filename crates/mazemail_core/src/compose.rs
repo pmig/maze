@@ -1032,7 +1032,7 @@ fn rank_completions(contacts: Vec<store::Contact>, limit: usize) -> Vec<Address>
         let in_book = contact.book != COLLECTED_BOOK;
         let name = contact.display_name.filter(|n| !n.trim().is_empty());
         let key = contact.email.trim().to_lowercase();
-        let last_used = contact.last_used.unwrap_or(0);
+        let last_used = contact.last_used_at.unwrap_or(0);
         match merged
             .iter_mut()
             .find(|c| c.address.email.trim().to_lowercase() == key)
@@ -1127,7 +1127,7 @@ mod tests {
                 in_reply_to: None,
                 references: Vec::new(),
                 date: 0,
-                received: None,
+                received_at: None,
                 from: None,
                 to: Vec::new(),
                 cc: Vec::new(),
@@ -1213,7 +1213,7 @@ mod tests {
                 display_name: name.map(Into::into),
                 email: email.into(),
                 frequency,
-                last_used: None,
+                last_used_at: None,
                 vcard: None,
             };
         let ranked = rank_completions(

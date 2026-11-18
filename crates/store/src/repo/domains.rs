@@ -71,7 +71,7 @@ pub struct DomainStats {
     /// Messages you sent to an address there.
     pub sent_count: u64,
     /// Date of the newest message seen (not lowered when messages are deleted).
-    pub last_seen: Option<UnixTime>,
+    pub last_seen_at: Option<UnixTime>,
     /// The favicon.
     pub favicon: FaviconState,
 }
@@ -82,7 +82,7 @@ impl fmt::Debug for DomainStats {
             .field("message_count", &self.message_count)
             .field("from_count", &self.from_count)
             .field("sent_count", &self.sent_count)
-            .field("last_seen", &self.last_seen)
+            .field("last_seen_at", &self.last_seen_at)
             .field("favicon", &self.favicon)
             .finish_non_exhaustive()
     }
@@ -109,8 +109,8 @@ impl fmt::Debug for DomainContact {
     }
 }
 
-const STATS_COLUMNS: &str = "name, message_count, from_count, sent_count, last_seen, \
-     favicon_state, favicon_checked, favicon_key";
+const STATS_COLUMNS: &str = "name, message_count, from_count, sent_count, last_seen_at, \
+     favicon_state, favicon_checked_at, favicon_key";
 
 fn stats_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DomainStats> {
     let count = |ix: usize| -> rusqlite::Result<u64> {
@@ -135,7 +135,7 @@ fn stats_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DomainStats> {
         message_count: count(1)?,
         from_count: count(2)?,
         sent_count: count(3)?,
-        last_seen: row.get(4)?,
+        last_seen_at: row.get(4)?,
         favicon,
     })
 }
@@ -310,10 +310,10 @@ impl WriteTx<'_> {
             .cache_put(&key, FAVICON_CACHE_KIND, FAVICON_CACHE_VERSION, png)?;
         self.conn
             .prepare_cached(
-                "INSERT INTO domain (name, favicon_state, favicon_checked, favicon_key)
+                "INSERT INTO domain (name, favicon_state, favicon_checked_at, favicon_key)
                  VALUES (?1, 1, ?2, ?3)
                  ON CONFLICT (name) DO UPDATE SET favicon_state = 1,
-                   favicon_checked = excluded.favicon_checked,
+                   favicon_checked_at = excluded.favicon_checked_at,
                    favicon_key = excluded.favicon_key",
             )?
             .execute(params![name, self.now, key.0.as_slice()])?;
@@ -326,9 +326,9 @@ impl WriteTx<'_> {
     pub fn mark_domain_favicon_missing(&mut self, name: &str) -> Result<()> {
         self.conn
             .prepare_cached(
-                "INSERT INTO domain (name, favicon_state, favicon_checked) VALUES (?1, 2, ?2)
+                "INSERT INTO domain (name, favicon_state, favicon_checked_at) VALUES (?1, 2, ?2)
                  ON CONFLICT (name) DO UPDATE SET favicon_state = 2,
-                   favicon_checked = excluded.favicon_checked",
+                   favicon_checked_at = excluded.favicon_checked_at",
             )?
             .execute(params![name, self.now])?;
         self.changes.domains = true;
@@ -421,7 +421,7 @@ mod tests {
                     d.message_count,
                     d.from_count,
                     d.sent_count,
-                    d.last_seen,
+                    d.last_seen_at,
                 )
             })
             .collect()

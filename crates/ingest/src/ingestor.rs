@@ -652,7 +652,7 @@ fn build(
         .filter_map(|id| normalize_message_id(id))
         .map(str::to_owned)
         .collect();
-    m.received = meta.internal_date;
+    m.received_at = meta.internal_date;
     m.from = headers
         .from
         .first()

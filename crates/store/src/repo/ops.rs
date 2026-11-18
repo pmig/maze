@@ -21,7 +21,7 @@ pub fn retry_backoff_secs(attempts: u32) -> i64 {
     (30_i64 << exponent).min(3600)
 }
 
-const OP_COLUMNS: &str = "id, account_id, kind, payload_json, origin, state, attempts, next_attempt, last_error, created";
+const OP_COLUMNS: &str = "id, account_id, kind, payload_json, origin, state, attempt_count, next_attempt_at, last_error, created_at";
 
 fn op_row(row: &Row<'_>) -> rusqlite::Result<PendingOp> {
     Ok(PendingOp {
@@ -32,9 +32,9 @@ fn op_row(row: &Row<'_>) -> rusqlite::Result<PendingOp> {
         origin: row.get(4)?,
         state: row.get(5)?,
         attempts: row.get(6)?,
-        next_attempt: row.get(7)?,
+        next_attempt_at: row.get(7)?,
         last_error: row.get(8)?,
-        created: row.get(9)?,
+        created_at: row.get(9)?,
     })
 }
 
@@ -63,7 +63,7 @@ pub(crate) fn next_pending_op(
         ))?
         .query_row([account.0], op_row)
         .optional()?;
-    Ok(op.filter(|op| op.next_attempt <= now))
+    Ok(op.filter(|op| op.next_attempt_at <= now))
 }
 
 /// Accounts with queued ops.
@@ -76,8 +76,8 @@ pub(crate) fn accounts_with_pending_ops(conn: &Connection) -> Result<Vec<Account
         .collect::<rusqlite::Result<_>>()?)
 }
 
-const OUTBOX_COLUMNS: &str = "id, identity_id, blob_id, rfc_message_id, send_at, state, attempts, \
-     last_error, created, envelope_json";
+const OUTBOX_COLUMNS: &str = "id, identity_id, blob_id, rfc_message_id, send_at, state, attempt_count, \
+     last_error, created_at, envelope_json";
 
 fn outbox_row(row: &Row<'_>) -> rusqlite::Result<OutboxItem> {
     let envelope = row
@@ -96,7 +96,7 @@ fn outbox_row(row: &Row<'_>) -> rusqlite::Result<OutboxItem> {
         state: row.get(5)?,
         attempts: row.get(6)?,
         last_error: row.get(7)?,
-        created: row.get(8)?,
+        created_at: row.get(8)?,
         envelope,
     })
 }
@@ -180,8 +180,8 @@ impl WriteTx<'_> {
     ) -> Result<OpId> {
         self.conn
             .prepare_cached(
-                "INSERT INTO pending_op (account_id, kind, payload_json, origin, next_attempt,
-                   created, blob_id)
+                "INSERT INTO pending_op (account_id, kind, payload_json, origin, next_attempt_at,
+                   created_at, blob_id)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6)",
             )?
             .execute(params![
@@ -213,7 +213,7 @@ impl WriteTx<'_> {
         let account = self.op_account(id)?;
         let attempts: u32 = self
             .conn
-            .prepare_cached("SELECT attempts FROM pending_op WHERE id = ?1")?
+            .prepare_cached("SELECT attempt_count FROM pending_op WHERE id = ?1")?
             .query_row([id.0], |row| row.get(0))?;
         let attempts = attempts.saturating_add(1);
         let state = if attempts >= MAX_OP_ATTEMPTS {
@@ -224,7 +224,7 @@ impl WriteTx<'_> {
         let next = self.now + retry_backoff_secs(attempts) + jitter_secs.max(0);
         self.conn
             .prepare_cached(
-                "UPDATE pending_op SET attempts = ?2, state = ?3, next_attempt = ?4,
+                "UPDATE pending_op SET attempt_count = ?2, state = ?3, next_attempt_at = ?4,
                    last_error = ?5 WHERE id = ?1",
             )?
             .execute(params![id.0, attempts, state, next, error])?;
@@ -237,7 +237,7 @@ impl WriteTx<'_> {
         let account = self.op_account(id)?;
         self.conn
             .prepare_cached(
-                "UPDATE pending_op SET state = 'queued', attempts = 0, next_attempt = ?2
+                "UPDATE pending_op SET state = 'queued', attempt_count = 0, next_attempt_at = ?2
                  WHERE id = ?1",
             )?
             .execute(params![id.0, self.now])?;
@@ -285,7 +285,7 @@ impl WriteTx<'_> {
         let envelope = envelope.map(serde_json::to_string).transpose()?;
         self.conn
             .prepare_cached(
-                "INSERT INTO outbox (identity_id, blob_id, rfc_message_id, send_at, created,
+                "INSERT INTO outbox (identity_id, blob_id, rfc_message_id, send_at, created_at,
                    envelope_json)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             )?
@@ -308,7 +308,7 @@ impl WriteTx<'_> {
         let changed = self
             .conn
             .prepare_cached(
-                "UPDATE outbox SET state = 'sending', attempts = attempts + 1
+                "UPDATE outbox SET state = 'sending', attempt_count = attempt_count + 1
                  WHERE id = ?1 AND state = 'queued'",
             )?
             .execute([id.0])?;
@@ -345,7 +345,7 @@ impl WriteTx<'_> {
         let removed = self
             .conn
             .prepare_cached(
-                "DELETE FROM outbox WHERE state = 'sent' AND created < ?1
+                "DELETE FROM outbox WHERE state = 'sent' AND created_at < ?1
                    AND (blob_id IS NULL OR NOT EXISTS (
                      SELECT 1 FROM pending_op
                      WHERE instr(payload_json, lower(hex(outbox.blob_id))) > 0))",
@@ -368,7 +368,7 @@ impl WriteTx<'_> {
             .conn
             .prepare_cached(
                 "UPDATE outbox SET state = ?2, last_error = ?3,
-                   attempts = attempts + (?2 = 'sending') WHERE id = ?1",
+                   attempt_count = attempt_count + (?2 = 'sending') WHERE id = ?1",
             )?
             .execute(params![id.0, state, error])?;
         ensure_changed(changed, "outbox item", id.0)?;

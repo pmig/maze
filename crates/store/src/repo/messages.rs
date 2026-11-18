@@ -82,12 +82,12 @@ pub(crate) fn locations(conn: &Connection, message: MessageId) -> Result<Vec<Loc
 }
 
 const DETAIL_COLUMNS: &str = "id, account_id, thread_id, blob_id, body_state, rfc_message_id, \
-     in_reply_to, references_json, date, received, from_addr, from_name, to_json, cc_json, \
+     in_reply_to, references_json, date, received_at, from_email, from_name, to_json, cc_json, \
      delivered_to, subject, snippet, size, has_attachments, list_id, bodystructure_json, \
-     gm_msgid, gm_thrid, auth_json, identity_hint, detached_at";
+     gm_msgid, gm_thrid, auth_json, identity_hint_id, detached_at";
 
 fn detail_row(row: &Row<'_>) -> Result<MessageDetail> {
-    let from_addr: Option<String> = row.get(10)?;
+    let from_email: Option<String> = row.get(10)?;
     let from_name: Option<String> = row.get(11)?;
     let references: Option<String> = row.get(7)?;
     Ok(MessageDetail {
@@ -104,8 +104,8 @@ fn detail_row(row: &Row<'_>) -> Result<MessageDetail> {
             .transpose()?
             .unwrap_or_default(),
         date: row.get(8)?,
-        received: row.get(9)?,
-        from: from_addr.map(|email| Address {
+        received_at: row.get(9)?,
+        from: from_email.map(|email| Address {
             name: from_name,
             email,
         }),
@@ -157,7 +157,7 @@ pub(crate) fn message_rows(
     let mut rows: HashMap<MessageId, MessageRow> = HashMap::with_capacity(ids.len());
     {
         let mut stmt = conn.prepare_cached(&format!(
-            "SELECT m.id, m.thread_id, m.account_id, m.subject, m.from_name, m.from_addr,
+            "SELECT m.id, m.thread_id, m.account_id, m.subject, m.from_name, m.from_email,
                     m.to_json, m.cc_json, m.date, m.size, m.has_attachments,
                     (SELECT {EFFECTIVE_FLAGS} FROM message_location ml WHERE ml.message_id = m.id),
                     (SELECT flags FROM message_location WHERE folder_id = ?2 AND message_id = m.id),
@@ -170,7 +170,7 @@ pub(crate) fn message_rows(
         let mut query = stmt.query(params![array, context.map(|f| f.0)])?;
         while let Some(row) = query.next()? {
             let id = MessageId(row.get(0)?);
-            let from_addr: Option<String> = row.get(5)?;
+            let from_email: Option<String> = row.get(5)?;
             let effective: Option<i64> = row.get(11)?;
             let in_folder: Option<i64> = row.get(12)?;
             rows.insert(
@@ -180,7 +180,7 @@ pub(crate) fn message_rows(
                     thread: ThreadId(row.get(1)?),
                     account: AccountId(row.get(2)?),
                     subject: row.get(3)?,
-                    from: from_addr.map(|email| Address {
+                    from: from_email.map(|email| Address {
                         name: row.get(4).ok().flatten(),
                         email,
                     }),
@@ -350,8 +350,8 @@ impl WriteTx<'_> {
                            size = COALESCE(size, ?5),
                            gm_thrid = COALESCE(gm_thrid, ?6),
                            gm_msgid = COALESCE(gm_msgid, ?7),
-                           received = COALESCE(received, ?8),
-                           identity_hint = COALESCE(identity_hint, ?9)
+                           received_at = COALESCE(received_at, ?8),
+                           identity_hint_id = COALESCE(identity_hint_id, ?9)
                          WHERE id = ?1",
                     )?
                     .execute(params![
@@ -362,7 +362,7 @@ impl WriteTx<'_> {
                         message.size.map(|s| s as i64),
                         message.gm_thrid.map(|v| v as i64),
                         message.gm_msgid.map(|v| v as i64),
-                        message.received,
+                        message.received_at,
                         message.identity_hint.map(|i| i.0),
                     ])?;
                 (id, thread, false)
@@ -485,9 +485,9 @@ impl WriteTx<'_> {
         self.conn
             .prepare_cached(
                 "INSERT INTO message (account_id, rfc_message_id, thread_id, in_reply_to,
-                   references_json, date, received, from_addr, from_name, to_json, cc_json,
+                   references_json, date, received_at, from_email, from_name, to_json, cc_json,
                    delivered_to, subject, snippet, size, has_attachments, list_id,
-                   bodystructure_json, gm_msgid, gm_thrid, auth_json, identity_hint)
+                   bodystructure_json, gm_msgid, gm_thrid, auth_json, identity_hint_id)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
                    ?17, ?18, ?19, ?20, ?21, ?22)",
             )?
@@ -502,7 +502,7 @@ impl WriteTx<'_> {
                     Some(serde_json::to_string(&references)?)
                 },
                 m.date,
-                m.received,
+                m.received_at,
                 m.from.as_ref().map(|a| a.email.as_str()),
                 m.from.as_ref().and_then(|a| a.name.as_deref()),
                 addresses_to_sql(&m.to)?,
@@ -521,7 +521,7 @@ impl WriteTx<'_> {
             ])?;
         let id = MessageId(self.conn.last_insert_rowid());
         let mut insert_ref = self.conn.prepare_cached(
-            "INSERT INTO message_ref (rfc_id, message_id) VALUES (?1, ?2)
+            "INSERT INTO message_ref (rfc_message_id, message_id) VALUES (?1, ?2)
              ON CONFLICT DO NOTHING",
         )?;
         for reference in m.in_reply_to.iter().chain(references.iter().copied()) {
@@ -539,7 +539,7 @@ impl WriteTx<'_> {
         self.conn
             .prepare_cached(
                 "INSERT INTO message_location
-                   (message_id, folder_id, uid, modseq, flags, keywords_json, date, attachment)
+                   (message_id, folder_id, uid, modseq, flags, keywords_json, date, has_attachments)
                  SELECT ?1, ?2, ?3, ?4, ?5, ?6, date, has_attachments FROM message WHERE id = ?1
                  ON CONFLICT (folder_id, message_id) DO UPDATE SET
                    uid = COALESCE(excluded.uid, uid),

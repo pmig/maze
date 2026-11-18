@@ -31,7 +31,7 @@ An ephemeral session (`SessionConfig::ephemeral`, `AgentManager::run_magic`):
 
 - gets no session token and no `mazemail` on its `PATH`, so it reaches no mail;
 - denies every permission request and runs no terminal command;
-- stores no agent thread and no transcript, and writes no `thread.md`;
+- stores no agent conversation and no transcript, and writes no `thread.md`;
 - runs in the same sandbox as other sessions, and ends when the answer is complete,
   after three minutes, or when the dialog closes.
 

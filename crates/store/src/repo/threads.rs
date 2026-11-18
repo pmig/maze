@@ -10,7 +10,7 @@
 //! thread dirty. At the end of each write job the writer recomputes each dirty thread
 //! from its messages (one indexed query per thread) and diffs the per-folder result
 //! against the stored `folder_thread` rows, applying the differences to the rows and to
-//! the folders' `unread`/`total` counts. Cost is proportional to the size of the
+//! the folders' `unread_count`/`total_count`. Cost is proportional to the size of the
 //! touched threads, never to the size of a folder.
 //!
 //! Semantics:
@@ -50,7 +50,7 @@ const THREADS_BY_RFC_ID: &str = "SELECT DISTINCT m.thread_id FROM rarray(?1) x
 
 /// Threads of messages that refer to one of the ids in `rarray(?1)`, in account `?2`.
 const THREADS_REFERRING_TO: &str = "SELECT DISTINCT m.thread_id FROM rarray(?1) x
-     CROSS JOIN message_ref r ON r.rfc_id = x.value
+     CROSS JOIN message_ref r ON r.rfc_message_id = x.value
      CROSS JOIN message m ON m.id = r.message_id WHERE m.account_id = ?2";
 
 const THREAD_BY_GM_THRID: &str =
@@ -179,9 +179,9 @@ pub(crate) fn thread_rows(
     {
         let mut stmt = conn.prepare_cached(
             "SELECT t.id, t.account_id, t.subject, t.participants_json, t.last_date,
-                    t.message_count, t.unread_count, t.flagged, t.attachment_count,
+                    t.message_count, t.unread_count, t.flagged_count, t.attachment_count,
                     t.last_message_id, m.snippet,
-                    ft.last_date, ft.message_count, ft.unread_count, ft.flagged,
+                    ft.last_date, ft.message_count, ft.unread_count, ft.flagged_count,
                     ft.attachment_count
              FROM rarray(?1) x
              CROSS JOIN thread t ON t.id = x.value
@@ -269,7 +269,7 @@ struct MessageAgg {
     date: i64,
     has_attachments: bool,
     from_name: Option<String>,
-    from_addr: Option<String>,
+    from_email: Option<String>,
     subject: Option<String>,
     any_unseen: bool,
     flagged: bool,
@@ -397,7 +397,7 @@ impl WriteTx<'_> {
             .execute(params![into.0, from.0])?;
         self.conn
             .prepare_cached(
-                "UPDATE agent_thread SET mail_thread_id = ?1 WHERE mail_thread_id = ?2",
+                "UPDATE agent_conversation SET mail_thread_id = ?1 WHERE mail_thread_id = ?2",
             )?
             .execute(params![into.0, from.0])?;
         self.changes
@@ -464,7 +464,7 @@ impl WriteTx<'_> {
         let mut folders: BTreeMap<i64, FolderAgg> = BTreeMap::new();
         {
             let mut stmt = self.conn.prepare_cached(
-                "SELECT m.id, m.date, m.has_attachments, m.from_name, m.from_addr, m.subject,
+                "SELECT m.id, m.date, m.has_attachments, m.from_name, m.from_email, m.subject,
                         ml.folder_id, ml.flags
                  FROM message m CROSS JOIN message_location ml ON ml.message_id = m.id
                  WHERE m.thread_id = ?1
@@ -497,7 +497,7 @@ impl WriteTx<'_> {
                         date,
                         has_attachments,
                         from_name: row.get(3)?,
-                        from_addr: row.get(4)?,
+                        from_email: row.get(4)?,
                         subject: row.get(5)?,
                         any_unseen: unseen,
                         flagged,
@@ -510,7 +510,7 @@ impl WriteTx<'_> {
         let old: BTreeMap<i64, FolderAgg> = self
             .conn
             .prepare_cached(
-                "SELECT folder_id, last_date, message_count, unread_count, flagged,
+                "SELECT folder_id, last_date, message_count, unread_count, flagged_count,
                         attachment_count
                  FROM folder_thread WHERE thread_id = ?1",
             )?
@@ -539,13 +539,13 @@ impl WriteTx<'_> {
                     self.conn
                         .prepare_cached(
                             "INSERT INTO folder_thread (folder_id, thread_id, last_date,
-                               message_count, unread_count, flagged, attachment_count)
+                               message_count, unread_count, flagged_count, attachment_count)
                              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                              ON CONFLICT (folder_id, thread_id) DO UPDATE SET
                                last_date = excluded.last_date,
                                message_count = excluded.message_count,
                                unread_count = excluded.unread_count,
-                               flagged = excluded.flagged,
+                               flagged_count = excluded.flagged_count,
                                attachment_count = excluded.attachment_count",
                         )?
                         .execute(params![
@@ -573,7 +573,7 @@ impl WriteTx<'_> {
             if total_delta != 0 || unread_delta != 0 {
                 self.conn
                     .prepare_cached(
-                        "UPDATE folder SET total = total + ?2, unread = unread + ?3 WHERE id = ?1",
+                        "UPDATE folder SET total_count = total_count + ?2, unread_count = unread_count + ?3 WHERE id = ?1",
                     )?
                     .execute(params![folder, total_delta, unread_delta])?;
                 self.changes.folders.insert(FolderId(folder));
@@ -590,7 +590,7 @@ impl WriteTx<'_> {
             if any_left {
                 self.conn
                     .prepare_cached(
-                        "UPDATE thread SET message_count = 0, unread_count = 0, flagged = 0,
+                        "UPDATE thread SET message_count = 0, unread_count = 0, flagged_count = 0,
                            attachment_count = 0 WHERE id = ?1",
                     )?
                     .execute([thread.0])?;
@@ -614,7 +614,7 @@ impl WriteTx<'_> {
             if participants.len() >= MAX_PARTICIPANTS {
                 break;
             }
-            if let Some(email) = &message.from_addr
+            if let Some(email) = &message.from_email
                 && seen.insert(email.to_ascii_lowercase())
             {
                 participants.push(Participant {
@@ -632,7 +632,7 @@ impl WriteTx<'_> {
         self.conn
             .prepare_cached(
                 "UPDATE thread SET subject = ?2, last_date = ?3, last_message_id = ?4,
-                   message_count = ?5, unread_count = ?6, flagged = ?7, attachment_count = ?8,
+                   message_count = ?5, unread_count = ?6, flagged_count = ?7, attachment_count = ?8,
                    participants_json = ?9
                  WHERE id = ?1",
             )?
@@ -683,7 +683,7 @@ mod tests {
         crate::migrate::migrate_main(&mut c, &key, tmp.path(), "test").unwrap();
         for (sql, index) in [
             (THREADS_BY_RFC_ID, "message_rfcid"),
-            (THREADS_REFERRING_TO, "PRIMARY KEY (rfc_id=?)"),
+            (THREADS_REFERRING_TO, "PRIMARY KEY (rfc_message_id=?)"),
             (MESSAGES_BY_RFC_ID, "message_rfcid"),
             (DETACHED_BY_RFC_ID, "message_rfcid"),
             (THREAD_BY_GM_THRID, "message_gm_thread"),

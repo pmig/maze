@@ -1,14 +1,14 @@
 //! [`AgentPanel`]: the agent column's view.
 
 mod controls;
+mod conversation;
 mod sign_in;
-mod thread;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use agent::{
-    AgentManager, AgentStatus, AgentThreadInfo, AttachedThread, AuthMethodInfo, Entry,
+    AgentConversationInfo, AgentManager, AgentStatus, AttachedThread, AuthMethodInfo, Entry,
     InstallProgress, NoticeLevel, PermissionChoice, PermissionEntry, PlanStatus,
     ProposalItemStatus, ProposalView, SessionEvent, SessionStatus, StartRequest, StartedSession,
     TerminalEntry, TerminalStatus, ToolCallEntry, ToolStatus, Transcript,
@@ -40,8 +40,8 @@ use self::sign_in::SignInState;
 use crate::launcher::{Launcher, SystemLauncher};
 use crate::{
     AcceptAllProposals, AcceptProposal, CycleMode, CycleModel, CycleThinking, FocusPrompt,
-    NewThread, NextProposal, PreviousProposal, RejectAllProposals, RejectProposal, ShowHistory,
-    StopAgent,
+    NewConversation, NextProposal, PreviousProposal, RejectAllProposals, RejectProposal,
+    ShowConversations, Stop,
 };
 
 /// The mail thread selected in the window, attached to new conversations.
@@ -59,7 +59,7 @@ enum View {
     /// The picker, or the running conversation.
     Main,
     /// Earlier conversations about the selected thread.
-    History,
+    Conversations,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -103,7 +103,7 @@ pub struct AgentPanel {
     context: Option<MailContext>,
     session: Option<Session>,
     view: View,
-    history: Vec<AgentThreadInfo>,
+    conversations: Vec<AgentConversationInfo>,
     proposals: Vec<ProposalView>,
     proposal_cursor: usize,
     installs: HashMap<String, Install>,
@@ -184,7 +184,7 @@ impl AgentPanel {
             context: None,
             session: None,
             view: View::Main,
-            history: Vec::new(),
+            conversations: Vec::new(),
             proposals: Vec::new(),
             proposal_cursor: 0,
             installs: HashMap::new(),
@@ -230,7 +230,7 @@ impl AgentPanel {
             return;
         }
         self.context = context;
-        self.load_history(cx);
+        self.load_conversations(cx);
         cx.notify();
     }
 
@@ -364,7 +364,7 @@ impl AgentPanel {
     fn start(
         &mut self,
         agent_id: String,
-        resume: Option<AgentThreadInfo>,
+        resume: Option<AgentConversationInfo>,
         cx: &mut Context<'_, Self>,
     ) {
         if self.starting {
@@ -425,7 +425,7 @@ impl AgentPanel {
                         self.pending_account = None;
                         self.accounts.insert(session.agent_id.clone());
                     }
-                    self.load_history(cx);
+                    self.load_conversations(cx);
                 }
             }
             SessionEvent::AgentInfo { .. } => {}
@@ -445,13 +445,13 @@ impl AgentPanel {
         cx.notify();
     }
 
-    fn new_thread(&mut self, cx: &mut Context<'_, Self>) {
+    fn new_conversation(&mut self, cx: &mut Context<'_, Self>) {
         if let Some(session) = self.session.take() {
             session.handle.shutdown();
         }
         self.view = View::Main;
         self.notice = None;
-        self.load_history(cx);
+        self.load_conversations(cx);
         cx.notify();
     }
 
@@ -698,23 +698,26 @@ impl AgentPanel {
         self.reload_catalog(cx);
     }
 
-    // ---- history --------------------------------------------------------------------
+    // ---- conversations --------------------------------------------------------------
 
-    fn load_history(&mut self, cx: &mut Context<'_, Self>) {
+    fn load_conversations(&mut self, cx: &mut Context<'_, Self>) {
         if !Tokio::is_initialized(cx) {
             return;
         }
         let Some(thread) = self.context.as_ref().map(|c| c.thread) else {
-            self.history.clear();
+            self.conversations.clear();
             return;
         };
         let host = Arc::clone(self.manager.host());
-        let task = Tokio::spawn(cx, async move { host.agent_threads(Some(thread)).await });
+        let task = Tokio::spawn(
+            cx,
+            async move { host.agent_conversations(Some(thread)).await },
+        );
         self._tasks.push(cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
-                if let Ok(Ok(history)) = result {
-                    this.history = history;
+                if let Ok(Ok(conversations)) = result {
+                    this.conversations = conversations;
                     cx.notify();
                 }
             })
@@ -722,7 +725,7 @@ impl AgentPanel {
         }));
     }
 
-    fn resume(&mut self, info: AgentThreadInfo, cx: &mut Context<'_, Self>) {
+    fn resume(&mut self, info: AgentConversationInfo, cx: &mut Context<'_, Self>) {
         if let Some(session) = self.session.take() {
             session.handle.shutdown();
         }
@@ -810,10 +813,10 @@ impl AgentPanel {
     fn header(&self, cx: &mut Context<'_, Self>) -> impl IntoElement + use<> {
         let theme = cx.theme().colors;
         let (title, placeholder): (SharedString, bool) = match (&self.session, self.view) {
-            (_, View::History) => ("Conversations".into(), false),
+            (_, View::Conversations) => ("Conversations".into(), false),
             (Some(session), View::Main) => match session.transcript.title() {
                 Some(title) => (title.into(), false),
-                None => (format!("New {} Thread", session.name).into(), true),
+                None => (format!("New {} Conversation", session.name).into(), true),
             },
             (None, View::Main) => ("Agents".into(), true),
         };
@@ -838,7 +841,7 @@ impl AgentPanel {
             ),
             None => (IconName::ShieldAlert, "The agent sandbox is off".into()),
         };
-        // "New thread" lists the agents that can start, like Zed's "+" menu.
+        // "New conversation" lists the agents that can start, like Zed's "+" menu.
         let ready: Vec<(String, String)> = self
             .catalog
             .iter()
@@ -880,33 +883,36 @@ impl AgentPanel {
                     .tooltip(lock_tip),
             )
             .child(
-                Button::new("agent-history")
+                Button::new("agent-conversations")
                     .ghost()
                     .xsmall()
                     .icon(Icon::new(IconName::Clock))
-                    .selected(self.view == View::History)
+                    .selected(self.view == View::Conversations)
                     .tooltip("Conversations about this thread")
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.view = if this.view == View::History {
+                        this.view = if this.view == View::Conversations {
                             View::Main
                         } else {
-                            View::History
+                            View::Conversations
                         };
-                        this.load_history(cx);
+                        this.load_conversations(cx);
                         cx.notify();
                     })),
             )
             .child(
                 div()
-                    .debug_selector(|| "agent-new-thread".to_owned())
+                    .debug_selector(|| "agent-new-conversation".to_owned())
                     .child(
-                        Button::new("agent-new-thread")
+                        Button::new("agent-new-conversation")
                             .ghost()
                             .xsmall()
                             .icon(Icon::new(IconName::Plus))
-                            .tooltip(format!("New thread ({})", shortcut_label("cmd-n", cx)))
+                            .tooltip(format!(
+                                "New conversation ({})",
+                                shortcut_label("cmd-n", cx)
+                            ))
                             .dropdown_menu(move |menu: PopupMenu, _, _| {
-                                let mut menu = menu.label("New Thread");
+                                let mut menu = menu.label("New Conversation");
                                 for (id, name) in &ready {
                                     let panel = panel.clone();
                                     let id = id.clone();
@@ -916,7 +922,7 @@ impl AgentPanel {
                                             .on_click(move |_, _, cx| {
                                                 panel
                                                     .update(cx, |panel, cx| {
-                                                        panel.new_thread(cx);
+                                                        panel.new_conversation(cx);
                                                         panel.start(id.clone(), None, cx);
                                                     })
                                                     .ok();
@@ -929,7 +935,7 @@ impl AgentPanel {
                                         move |_, _, cx| {
                                             panel
                                                 .update(cx, |panel, cx| {
-                                                    panel.new_thread(cx);
+                                                    panel.new_conversation(cx);
                                                     panel.show_all = true;
                                                     cx.notify();
                                                 })
@@ -1243,7 +1249,7 @@ impl AgentPanel {
             .into_any_element()
     }
 
-    fn history_view(&self, cx: &mut Context<'_, Self>) -> AnyElement {
+    fn conversations_view(&self, cx: &mut Context<'_, Self>) -> AnyElement {
         let theme = cx.theme().colors;
         let mut list = v_flex().p_2().gap_1().child(
             div()
@@ -1259,7 +1265,7 @@ impl AgentPanel {
                     .text_color(theme.muted_foreground)
                     .child("Select a mail thread to see its conversations."),
             );
-        } else if self.history.is_empty() {
+        } else if self.conversations.is_empty() {
             list = list.child(
                 div()
                     .text_xs()
@@ -1267,7 +1273,7 @@ impl AgentPanel {
                     .child("No conversations yet."),
             );
         }
-        for (ix, info) in self.history.iter().enumerate() {
+        for (ix, info) in self.conversations.iter().enumerate() {
             let agent_name: SharedString = self.status_of(&info.agent_id).map_or_else(
                 || info.agent_id.clone().into(),
                 |s| s.entry.name.clone().into(),
@@ -1280,7 +1286,7 @@ impl AgentPanel {
             let resume = info.clone();
             list = list.child(
                 v_flex()
-                    .id(("agent-history-row", ix))
+                    .id(("agent-conversation-row", ix))
                     .p_2()
                     .rounded_md()
                     .border_1()
@@ -1666,7 +1672,7 @@ impl Render for AgentPanel {
         let banners = self.banners(cx);
         let proposals = self.proposals_view(cx);
         let body: AnyElement = match (self.view, self.session.as_ref()) {
-            (View::History, _) => self.history_view(cx),
+            (View::Conversations, _) => self.conversations_view(cx),
             (View::Main, Some(session)) => self.conversation(session, cx),
             (View::Main, None) => self.picker(cx),
         };
@@ -1680,10 +1686,10 @@ impl Render for AgentPanel {
             .track_focus(&self.focus)
             .size_full()
             .bg(theme.sidebar)
-            .on_action(cx.listener(|this, _: &NewThread, _, cx| this.new_thread(cx)))
-            .on_action(cx.listener(|this, _: &ShowHistory, _, cx| {
-                this.view = View::History;
-                this.load_history(cx);
+            .on_action(cx.listener(|this, _: &NewConversation, _, cx| this.new_conversation(cx)))
+            .on_action(cx.listener(|this, _: &ShowConversations, _, cx| {
+                this.view = View::Conversations;
+                this.load_conversations(cx);
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &FocusPrompt, window, cx| {
@@ -1703,7 +1709,7 @@ impl Render for AgentPanel {
             .on_action(cx.listener(|this, _: &CycleThinking, _, cx| {
                 this.cycle_control(agent::ControlCategory::ThoughtLevel, cx);
             }))
-            .on_action(cx.listener(|this, _: &StopAgent, _, cx| {
+            .on_action(cx.listener(|this, _: &Stop, _, cx| {
                 if let Some(session) = &this.session {
                     session.handle.cancel();
                 }

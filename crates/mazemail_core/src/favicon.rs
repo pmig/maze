@@ -1041,7 +1041,7 @@ mod tests {
             message_count: messages,
             from_count: messages - sent,
             sent_count: sent,
-            last_seen: None,
+            last_seen_at: None,
             favicon: FaviconState::Unknown,
         };
         let received_only = stats(5, 0);

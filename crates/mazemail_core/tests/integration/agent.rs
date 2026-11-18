@@ -164,23 +164,23 @@ async fn conversations_and_transcripts_are_stored() {
     let t = open().await;
     let id = t
         .core
-        .create_agent_thread("claude-acp", None, Some(t.work_thread))
+        .create_agent_conversation("claude-acp", None, Some(t.work_thread))
         .await
         .unwrap();
     t.core
-        .update_agent_thread(id, Some("Summarize"), Some("acp-1"))
+        .update_agent_conversation(id, Some("Summarize"), Some("acp-1"))
         .await
         .unwrap();
     t.core
         .save_agent_transcript(id, br#"{"entries":[]}"#.to_vec())
         .await
         .unwrap();
-    let threads = t.core.agent_threads(Some(t.work_thread)).unwrap();
-    assert_eq!(threads.len(), 1);
-    assert_eq!(threads[0].acp_session_id.as_deref(), Some("acp-1"));
+    let conversations = t.core.agent_conversations(Some(t.work_thread)).unwrap();
+    assert_eq!(conversations.len(), 1);
+    assert_eq!(conversations[0].acp_session_id.as_deref(), Some("acp-1"));
     assert!(
         t.core
-            .agent_threads(Some(t.gmail_thread))
+            .agent_conversations(Some(t.gmail_thread))
             .unwrap()
             .is_empty()
     );
@@ -188,8 +188,8 @@ async fn conversations_and_transcripts_are_stored() {
         t.core.agent_transcript(id).await.unwrap().unwrap(),
         br#"{"entries":[]}"#
     );
-    t.core.delete_agent_thread(id).await.unwrap();
-    assert!(t.core.agent_threads(None).unwrap().is_empty());
+    t.core.delete_agent_conversation(id).await.unwrap();
+    assert!(t.core.agent_conversations(None).unwrap().is_empty());
 }
 
 #[tokio::test]

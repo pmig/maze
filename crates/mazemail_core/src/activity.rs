@@ -132,7 +132,7 @@ impl CoreHandle {
                 stuck_ops: ops.iter().filter(|op| op.state == OpState::Stuck).count(),
                 oldest_op: ops
                     .iter()
-                    .map(|op| op.created)
+                    .map(|op| op.created_at)
                     .min()
                     .and_then(|t| OffsetDateTime::from_unix_timestamp(t).ok()),
                 outbox: outbox.get(&account.id).copied().unwrap_or_default(),
