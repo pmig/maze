@@ -403,6 +403,25 @@ fn arb_query() -> impl Strategy<Value = Query> {
     })
 }
 
+/// Found by the property test below: `-OR` was accepted as the negated word "OR",
+/// which can only be written back quoted (a different query). Negated keywords are an
+/// error; a quoted keyword or a lowercase word is fine.
+#[test]
+fn negated_keywords_are_errors_and_quoted_ones_round_trip() {
+    for input in ["-OR", "-AND", "a -OR b"] {
+        assert!(parse(input).is_err(), "{input:?}");
+    }
+    for input in ["-\"OR\"", "-or", "a -and b"] {
+        let parsed = parse(input).unwrap();
+        let canonical = parsed.query.to_string();
+        assert_eq!(
+            parse(&canonical).unwrap().query,
+            parsed.query,
+            "{input:?} -> {canonical:?}"
+        );
+    }
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
 

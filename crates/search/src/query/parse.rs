@@ -329,6 +329,15 @@ impl Parser {
         if input.peek_token() == Some('-') {
             let checkpoint = input.checkpoint();
             '-'.parse_next(input)?;
+            // `-OR` / `-AND`: the keywords can't be negated (as bare words they aren't
+            // search terms, so they couldn't be written back either).
+            if peek_keyword(input, "OR") || peek_keyword(input, "AND") {
+                return SyntaxError::new(
+                    "`-` needs a search term, not OR or AND; quote the word to search for it",
+                    start..start + 1,
+                )
+                .cut();
+            }
             match input.peek_token() {
                 Some(c) if !c.is_whitespace() && c != ')' => {
                     self.enter(start)?;
