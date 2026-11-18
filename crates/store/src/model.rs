@@ -68,10 +68,6 @@ local_id!(
     SignatureId
 );
 local_id!(
-    /// An identity rule.
-    IdentityRuleId
-);
-local_id!(
     /// A filter rule.
     RuleId
 );
@@ -197,7 +193,6 @@ pub struct NewFolder {
     pub role: Option<FolderRole>,
     /// A Gmail label shown as a folder (its locations have no UIDs).
     pub is_label: bool,
-    pub sync_policy: Option<String>,
     pub ordinal: i64,
 }
 redacted_debug!(NewFolder {
@@ -217,7 +212,6 @@ impl NewFolder {
             display_name: display_name.to_owned(),
             role: None,
             is_label: false,
-            sync_policy: None,
             ordinal: 0,
         }
     }
@@ -254,7 +248,6 @@ pub struct Folder {
     pub role: Option<FolderRole>,
     pub is_label: bool,
     pub sync: FolderSyncState,
-    pub sync_policy: Option<String>,
     /// Locations without `\Seen` in this folder.
     pub unread: u64,
     /// Locations in this folder.
@@ -279,7 +272,6 @@ pub struct FolderPatch {
     pub remote_name: Option<Option<String>>,
     pub display_name: Option<String>,
     pub role: Option<Option<FolderRole>>,
-    pub sync_policy: Option<Option<String>>,
     pub ordinal: Option<i64>,
     pub favorite: Option<bool>,
 }
@@ -420,9 +412,6 @@ pub struct IdentityInput {
     pub archive_folder: Option<FolderId>,
     /// 0 single folder, 1 yearly, 2 monthly (Thunderbird's archive granularity).
     pub archive_granularity: i64,
-    pub color: Option<String>,
-    /// Address patterns this identity answers for (`*@distr.example`), as JSON.
-    pub match_patterns_json: Option<String>,
     pub is_default: bool,
     pub ordinal: i64,
 }
@@ -433,32 +422,6 @@ redacted_debug!(IdentityInput {
     drafts_folder,
     archive_folder,
     is_default,
-    ordinal
-});
-
-text_enum!(
-    /// What an identity rule matches on.
-    IdentityRuleKind {
-        Recipient = "recipient",
-        Domain = "domain",
-        Folder = "folder",
-        List = "list",
-    }
-);
-
-/// A rule that picks an identity when replying or composing.
-#[derive(Clone, PartialEq, Eq)]
-pub struct IdentityRule {
-    pub id: IdentityRuleId,
-    pub identity: IdentityId,
-    pub kind: IdentityRuleKind,
-    pub pattern: String,
-    pub ordinal: i64,
-}
-redacted_debug!(IdentityRule {
-    id,
-    identity,
-    kind,
     ordinal
 });
 

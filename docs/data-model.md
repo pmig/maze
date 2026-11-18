@@ -1,7 +1,7 @@
 # Data model
 
 What Maze stores, as of the v1 schema (`crates/store/migrations/main/0001_schema_v1.sql`,
-34 tables) plus the send log (`crates/store/migrations/sendlog/`). Everything is in
+33 tables) plus the send log (`crates/store/migrations/sendlog/`). Everything is in
 SQLCipher databases encrypted by the vault ([ADR-017](adr/0017-account-secrets-in-the-vault.md));
 message bodies, queued messages and agent transcripts are encrypted blobs referenced
 from `blob`.
@@ -17,7 +17,6 @@ flowchart LR
     account["<b>account</b><br/>name, kind (imap, gmail, m365),<br/>config_json, sync_state_json, uuid"]
     account_secret["<b>account_secret</b><br/>passwords, OAuth tokens"]
     identity["<b>identity</b><br/>email, display_name, reply_to,<br/>sent/drafts/archive folder"]
-    identity_rule["<b>identity_rule</b><br/>match patterns"]
     smtp_server["<b>smtp_server</b>"]
     signature["<b>signature</b>"]
   end
@@ -68,7 +67,6 @@ flowchart LR
 
   account_secret --> account
   identity --> account
-  identity_rule --> identity
   identity --> smtp_server
   identity --> signature
   identity -->|sent / drafts / archive| folder

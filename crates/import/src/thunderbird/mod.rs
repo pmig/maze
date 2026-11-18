@@ -712,10 +712,6 @@ pub fn import(
                     } else {
                         0
                     },
-                    color: None,
-                    match_patterns_json: (identity.catch_all
-                        && !identity.catch_all_hint.is_empty())
-                    .then(|| json!(identity.catch_all_hint).to_string()),
                     is_default: index == 0
                         && default_account.as_deref() == Some(account.key.as_str()),
                     ordinal: identity_ordinal,

@@ -577,7 +577,6 @@ pub(crate) fn seed_demo(options: &SeedOptions) -> Result<()> {
                         display_name: name,
                         role,
                         is_label: false,
-                        sync_policy: None,
                         ordinal: ix as i64,
                     })
                 })?;

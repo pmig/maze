@@ -160,7 +160,6 @@ fn folder(
                 display_name: name,
                 role,
                 is_label: false,
-                sync_policy: None,
                 ordinal: 0,
             })
         })

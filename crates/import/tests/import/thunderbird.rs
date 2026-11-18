@@ -197,10 +197,6 @@ fn imports_everything_and_reruns_without_duplicates() {
         .unwrap();
     assert!(anna.input.is_default);
     assert_eq!(anna.input.archive_granularity, 2);
-    assert_eq!(
-        anna.input.match_patterns_json.as_deref(),
-        Some(r#"["*@anna.example","info@example.com"]"#)
-    );
     let signature = reader
         .signature(anna.input.signature.unwrap())
         .unwrap()

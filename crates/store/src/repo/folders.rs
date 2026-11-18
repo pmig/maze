@@ -10,7 +10,7 @@ use crate::repo::accounts::ensure_changed;
 use crate::{Error, Result, WriteTx};
 
 const FOLDER_COLUMNS: &str = "id, account_id, parent_id, remote_name, display_name, role, \
-     is_label, uidvalidity, uidnext, highestmodseq, sync_policy, unread, total, ordinal, favorite";
+     is_label, uidvalidity, uidnext, highestmodseq, unread, total, ordinal, favorite";
 
 fn role_from_sql(role: Option<&str>) -> Option<FolderRole> {
     role.and_then(FolderRole::parse)
@@ -30,11 +30,10 @@ fn folder_row(row: &Row<'_>) -> rusqlite::Result<Folder> {
             uidnext: row.get(8)?,
             highestmodseq: row.get::<_, Option<i64>>(9)?.map(|v| v as u64),
         },
-        sync_policy: row.get(10)?,
-        unread: row.get::<_, i64>(11)?.max(0) as u64,
-        total: row.get::<_, i64>(12)?.max(0) as u64,
-        ordinal: row.get(13)?,
-        favorite: row.get(14)?,
+        unread: row.get::<_, i64>(10)?.max(0) as u64,
+        total: row.get::<_, i64>(11)?.max(0) as u64,
+        ordinal: row.get(12)?,
+        favorite: row.get(13)?,
     })
 }
 
@@ -134,8 +133,8 @@ impl WriteTx<'_> {
         self.conn
             .prepare_cached(
                 "INSERT INTO folder (account_id, parent_id, remote_name, display_name, role,
-                   is_label, sync_policy, ordinal)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                   is_label, ordinal)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )?
             .execute(params![
                 folder.account.0,
@@ -144,7 +143,6 @@ impl WriteTx<'_> {
                 folder.display_name,
                 folder.role.map(FolderRole::as_str),
                 folder.is_label,
-                folder.sync_policy,
                 folder.ordinal,
             ])?;
         let id = FolderId(self.conn.last_insert_rowid());
@@ -166,11 +164,10 @@ impl WriteTx<'_> {
         let remote_name = patch.remote_name.clone().unwrap_or(current.remote_name);
         let display_name = patch.display_name.clone().unwrap_or(current.display_name);
         let role = patch.role.unwrap_or(current.role);
-        let sync_policy = patch.sync_policy.clone().unwrap_or(current.sync_policy);
         self.conn
             .prepare_cached(
                 "UPDATE folder SET parent_id = ?2, remote_name = ?3, display_name = ?4,
-                   role = ?5, sync_policy = ?6, ordinal = ?7, favorite = ?8 WHERE id = ?1",
+                   role = ?5, ordinal = ?6, favorite = ?7 WHERE id = ?1",
             )?
             .execute(params![
                 id.0,
@@ -178,7 +175,6 @@ impl WriteTx<'_> {
                 remote_name,
                 display_name,
                 role.map(FolderRole::as_str),
-                sync_policy,
                 patch.ordinal.unwrap_or(current.ordinal),
                 patch.favorite.unwrap_or(current.favorite),
             ])?;

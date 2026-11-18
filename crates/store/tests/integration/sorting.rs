@@ -52,8 +52,6 @@ fn populate(store: &Store) -> Mail {
                     drafts_folder: None,
                     archive_folder: None,
                     archive_granularity: 1,
-                    color: None,
-                    match_patterns_json: None,
                     is_default: true,
                     ordinal: 0,
                 },

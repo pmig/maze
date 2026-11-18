@@ -26,11 +26,11 @@ use rusqlite::Connection;
 
 use crate::model::{
     Account, AgentThread, AgentThreadId, ApiToken, AuditEntry, AuditQuery, Contact, Folder,
-    FolderNode, Identity, IdentityRule, ListFilter, ListKey, ListOrder, ListScope, MessageDetail,
-    MessageKey, MessagePage, MessageRow, MessageScope, MetadataFilter, OutboxId, OutboxItem,
-    OutboxState, Page, PendingOp, Proposal, ProposalId, ProposalState, Rule, SavedSearch,
-    Signature, SignatureId, SmtpServer, SmtpServerId, SortOrder, StoredDraft, Tag, ThreadRow,
-    TokenId, TreeMessage, UnixTime,
+    FolderNode, Identity, ListFilter, ListKey, ListOrder, ListScope, MessageDetail, MessageKey,
+    MessagePage, MessageRow, MessageScope, MetadataFilter, OutboxId, OutboxItem, OutboxState, Page,
+    PendingOp, Proposal, ProposalId, ProposalState, Rule, SavedSearch, Signature, SignatureId,
+    SmtpServer, SmtpServerId, SortOrder, StoredDraft, Tag, ThreadRow, TokenId, TreeMessage,
+    UnixTime,
 };
 use crate::{Reader, Result, WriteTx};
 
@@ -78,11 +78,6 @@ pub trait Queries: sealed::Sealed {
     /// One identity.
     fn identity(&self, id: IdentityId) -> Result<Option<Identity>> {
         accounts::identity(self.connection(sealed::Token), id)
-    }
-
-    /// The rules that select an identity, by ordinal.
-    fn identity_rules(&self, identity: IdentityId) -> Result<Vec<IdentityRule>> {
-        accounts::identity_rules(self.connection(sealed::Token), identity)
     }
 
     /// All SMTP servers.

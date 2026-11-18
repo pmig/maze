@@ -88,7 +88,6 @@ fn folder(
                 display_name: name,
                 role: None,
                 is_label: false,
-                sync_policy: None,
                 ordinal: 0,
             })
         })

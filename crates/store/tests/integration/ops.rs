@@ -4,10 +4,9 @@
 use mazemail_types::{Flags, FolderRole};
 use pretty_assertions::assert_eq;
 use store::{
-    AccountKind, AuditQuery, IdentityInput, IdentityRuleKind, MAX_OP_ATTEMPTS, NewApiToken,
-    NewProposalItem, OpState, OutboxState, ProposalItemState, ProposalState, Queries, RuleInput,
-    RuleTrigger, SavesSent, SignatureInput, SmtpAuth, SmtpSecurity, SmtpServerInput, TokenId,
-    token_hash,
+    AccountKind, AuditQuery, IdentityInput, MAX_OP_ATTEMPTS, NewApiToken, NewProposalItem, OpState,
+    OutboxState, ProposalItemState, ProposalState, Queries, RuleInput, RuleTrigger, SavesSent,
+    SignatureInput, SmtpAuth, SmtpSecurity, SmtpServerInput, TokenId, token_hash,
 };
 
 use crate::common::{self, message};
@@ -468,7 +467,6 @@ fn settings_rows_round_trip() {
                     ..input
                 },
             )?;
-            w.add_identity_rule(second, IdentityRuleKind::Domain, "*@customer.example", 0)?;
             let rule = w.create_rule(&RuleInput {
                 account: Some(f.account),
                 name: "Newsletters".to_owned(),
@@ -496,10 +494,6 @@ fn settings_rows_round_trip() {
     // Only the newest default stays default.
     assert!(!reader.identity(first).unwrap().unwrap().input.is_default);
     assert!(reader.identity(second).unwrap().unwrap().input.is_default);
-    assert_eq!(
-        reader.identity_rules(second).unwrap()[0].kind,
-        IdentityRuleKind::Domain
-    );
     assert_eq!(reader.smtp_server(smtp).unwrap().unwrap().port, Some(465));
     assert_eq!(
         reader

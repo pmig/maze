@@ -1,12 +1,12 @@
-//! Accounts, identities, identity rules, SMTP servers and signatures.
+//! Accounts, identities, SMTP servers and signatures.
 
 use mazemail_types::{AccountId, FolderId, IdentityId};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use uuid::Uuid;
 
 use crate::model::{
-    Account, Identity, IdentityInput, IdentityRule, IdentityRuleId, IdentityRuleKind, NewAccount,
-    Signature, SignatureId, SignatureInput, SmtpServer, SmtpServerId, SmtpServerInput,
+    Account, Identity, IdentityInput, NewAccount, Signature, SignatureId, SignatureInput,
+    SmtpServer, SmtpServerId, SmtpServerInput,
 };
 use crate::{Error, Result, WriteTx};
 
@@ -56,7 +56,7 @@ pub(crate) fn account(conn: &Connection, id: AccountId) -> Result<Option<Account
 
 const IDENTITY_COLUMNS: &str = "id, account_id, label, display_name, email, reply_to, \
      signature_id, smtp_id, sent_folder_id, drafts_folder_id, archive_folder_id, \
-     archive_granularity, color, match_patterns_json, is_default, ordinal";
+     archive_granularity, is_default, ordinal";
 
 fn identity_row(row: &Row<'_>) -> rusqlite::Result<Identity> {
     Ok(Identity {
@@ -73,10 +73,8 @@ fn identity_row(row: &Row<'_>) -> rusqlite::Result<Identity> {
             drafts_folder: row.get::<_, Option<i64>>(9)?.map(FolderId),
             archive_folder: row.get::<_, Option<i64>>(10)?.map(FolderId),
             archive_granularity: row.get(11)?,
-            color: row.get(12)?,
-            match_patterns_json: row.get(13)?,
-            is_default: row.get(14)?,
-            ordinal: row.get(15)?,
+            is_default: row.get(12)?,
+            ordinal: row.get(13)?,
         },
     })
 }
@@ -98,24 +96,6 @@ pub(crate) fn identity(conn: &Connection, id: IdentityId) -> Result<Option<Ident
         ))?
         .query_row([id.0], identity_row)
         .optional()?)
-}
-
-pub(crate) fn identity_rules(conn: &Connection, identity: IdentityId) -> Result<Vec<IdentityRule>> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT id, identity_id, kind, pattern, ordinal FROM identity_rule
-         WHERE identity_id = ?1 ORDER BY ordinal, id",
-    )?;
-    Ok(stmt
-        .query_map([identity.0], |row| {
-            Ok(IdentityRule {
-                id: IdentityRuleId(row.get(0)?),
-                identity: IdentityId(row.get(1)?),
-                kind: row.get(2)?,
-                pattern: row.get(3)?,
-                ordinal: row.get(4)?,
-            })
-        })?
-        .collect::<rusqlite::Result<_>>()?)
 }
 
 const SMTP_COLUMNS: &str = "id, name, host, port, security, auth, username, saves_sent";
@@ -300,8 +280,8 @@ impl WriteTx<'_> {
             .prepare_cached(
                 "INSERT INTO identity (account_id, label, display_name, email, reply_to,
                    signature_id, smtp_id, sent_folder_id, drafts_folder_id, archive_folder_id,
-                   archive_granularity, color, match_patterns_json, is_default, ordinal)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                   archive_granularity, is_default, ordinal)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             )?
             .execute(params![
                 account.0,
@@ -315,8 +295,6 @@ impl WriteTx<'_> {
                 input.drafts_folder.map(|f| f.0),
                 input.archive_folder.map(|f| f.0),
                 input.archive_granularity,
-                input.color,
-                input.match_patterns_json,
                 input.is_default,
                 input.ordinal,
             ])?;
@@ -341,8 +319,8 @@ impl WriteTx<'_> {
             .prepare_cached(
                 "UPDATE identity SET label = ?2, display_name = ?3, email = ?4, reply_to = ?5,
                    signature_id = ?6, smtp_id = ?7, sent_folder_id = ?8, drafts_folder_id = ?9,
-                   archive_folder_id = ?10, archive_granularity = ?11, color = ?12,
-                   match_patterns_json = ?13, is_default = ?14, ordinal = ?15
+                   archive_folder_id = ?10, archive_granularity = ?11, is_default = ?12,
+                   ordinal = ?13
                  WHERE id = ?1",
             )?
             .execute(params![
@@ -357,8 +335,6 @@ impl WriteTx<'_> {
                 input.drafts_folder.map(|f| f.0),
                 input.archive_folder.map(|f| f.0),
                 input.archive_granularity,
-                input.color,
-                input.match_patterns_json,
                 input.is_default,
                 input.ordinal,
             ])?;
@@ -384,35 +360,6 @@ impl WriteTx<'_> {
             .prepare_cached("DELETE FROM identity WHERE id = ?1")?
             .execute([id.0])?;
         ensure_changed(changed, "identity", id.0)?;
-        self.changes.settings = true;
-        Ok(())
-    }
-
-    /// Adds a rule that selects `identity`.
-    pub fn add_identity_rule(
-        &mut self,
-        identity: IdentityId,
-        kind: IdentityRuleKind,
-        pattern: &str,
-        ordinal: i64,
-    ) -> Result<IdentityRuleId> {
-        self.conn
-            .prepare_cached(
-                "INSERT INTO identity_rule (identity_id, kind, pattern, ordinal)
-                 VALUES (?1, ?2, ?3, ?4)",
-            )?
-            .execute(params![identity.0, kind, pattern, ordinal])?;
-        self.changes.settings = true;
-        Ok(IdentityRuleId(self.conn.last_insert_rowid()))
-    }
-
-    /// Deletes an identity rule.
-    pub fn delete_identity_rule(&mut self, id: IdentityRuleId) -> Result<()> {
-        let changed = self
-            .conn
-            .prepare_cached("DELETE FROM identity_rule WHERE id = ?1")?
-            .execute([id.0])?;
-        ensure_changed(changed, "identity rule", id.0)?;
         self.changes.settings = true;
         Ok(())
     }

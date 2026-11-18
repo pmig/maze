@@ -104,7 +104,6 @@ CREATE TABLE folder (
   uidvalidity   INTEGER,
   uidnext       INTEGER,
   highestmodseq INTEGER,
-  sync_policy   TEXT,
   unread        INTEGER NOT NULL DEFAULT 0,          -- maintained by the writer
   total         INTEGER NOT NULL DEFAULT 0,          -- maintained by the writer
   ordinal       INTEGER NOT NULL DEFAULT 0,
@@ -128,8 +127,6 @@ CREATE TABLE identity (
   drafts_folder_id    INTEGER REFERENCES folder (id) ON DELETE SET NULL,
   archive_folder_id   INTEGER REFERENCES folder (id) ON DELETE SET NULL,
   archive_granularity INTEGER NOT NULL DEFAULT 1,     -- 0 single folder, 1 yearly, 2 monthly
-  color               TEXT,
-  match_patterns_json TEXT,
   is_default          INTEGER NOT NULL DEFAULT 0,
   ordinal             INTEGER NOT NULL DEFAULT 0
 );
@@ -139,15 +136,6 @@ CREATE INDEX identity_smtp ON identity (smtp_id) WHERE smtp_id IS NOT NULL;
 CREATE INDEX identity_sent_folder ON identity (sent_folder_id) WHERE sent_folder_id IS NOT NULL;
 CREATE INDEX identity_drafts_folder ON identity (drafts_folder_id) WHERE drafts_folder_id IS NOT NULL;
 CREATE INDEX identity_archive_folder ON identity (archive_folder_id) WHERE archive_folder_id IS NOT NULL;
-
-CREATE TABLE identity_rule (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  identity_id INTEGER NOT NULL REFERENCES identity (id) ON DELETE CASCADE,
-  kind        TEXT NOT NULL CHECK (kind IN ('recipient', 'domain', 'folder', 'list')),
-  pattern     TEXT NOT NULL,
-  ordinal     INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX identity_rule_identity ON identity_rule (identity_id, ordinal);
 
 CREATE TABLE blob (
   id      BLOB PRIMARY KEY,

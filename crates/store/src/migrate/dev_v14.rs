@@ -7,9 +7,11 @@
 //!
 //! 1. Local Folders (`account.kind = 'local'`, ADR-019) are removed with their mail.
 //!    The backup keeps them, and the build that wrote the database can export them.
-//! 2. The tables v1 dropped go: `legacy_secret_account` (accounts whose secrets were
-//!    still to be moved out of the OS keychain) and `domain_backfill` (indexing the
-//!    domains of mail stored before the domain index).
+//! 2. What v1 dropped goes ([`DROPPED`]): the tables `legacy_secret_account` (accounts
+//!    whose secrets were still to be moved out of the OS keychain), `domain_backfill`
+//!    (indexing the domains of mail stored before the domain index) and
+//!    `identity_rule`, and the columns `identity.color`, `identity.match_patterns_json`
+//!    and `folder.sync_policy`, which nothing used.
 //! 3. `account.kind` gets v1's narrower CHECK (no `local`, no `jmap`). Only the
 //!    constraint's text changes, which SQLite allows through `writable_schema`.
 //! 4. The result must match a new v1 database object for object (columns, keys,
@@ -25,6 +27,14 @@ use rusqlite::{Connection, OptionalExtension};
 
 use super::{SCHEMA_V1, SCHEMA_VERSION, user_version};
 use crate::{Error, Result};
+
+/// What v1 no longer has, dropped from a development database.
+const DROPPED: &str = "DROP TABLE legacy_secret_account;
+     DROP TABLE domain_backfill;
+     DROP TABLE identity_rule;
+     ALTER TABLE identity DROP COLUMN color;
+     ALTER TABLE identity DROP COLUMN match_patterns_json;
+     ALTER TABLE folder DROP COLUMN sync_policy;";
 
 /// The last schema version of the development builds.
 pub(super) const DEV_VERSION: u32 = 14;
@@ -75,7 +85,7 @@ pub(super) fn convert(conn: &mut Connection) -> Result<()> {
              out of the domain counts"
         );
     }
-    tx.execute_batch("DROP TABLE legacy_secret_account; DROP TABLE domain_backfill;")?;
+    tx.execute_batch(DROPPED)?;
 
     // A narrower CHECK on `account.kind` (the rows already satisfy it): the documented
     // way to change a constraint without rebuilding the table.
@@ -296,10 +306,14 @@ mod tests {
     fn v1_is_the_dev_schema_without_the_removed_objects() {
         let dev = Connection::open_in_memory().unwrap();
         dev_v14(&dev);
+        for table in ["legacy_secret_account", "domain_backfill", "identity_rule"] {
+            assert!(table_exists(&dev, table).unwrap());
+        }
+        dev.execute_batch(DROPPED).unwrap();
         let mut dev = fingerprint(&dev).unwrap();
         let mut fresh = fingerprint(&fresh_v1().unwrap()).unwrap();
-        assert!(dev.remove("table legacy_secret_account").is_some());
-        assert!(dev.remove("table domain_backfill").is_some());
+        assert!(!fresh["table identity"].shape.contains("color"));
+        assert!(!fresh["table folder"].shape.contains("sync_policy"));
 
         // Only `account.kind` lost values.
         let dev_account = dev.get_mut("table account").unwrap();

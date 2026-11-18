@@ -946,7 +946,6 @@ impl<'a, 'w> Tx<'a, 'w> {
             display_name: name.to_owned(),
             role: None,
             is_label: false,
-            sync_policy: None,
             ordinal: 0,
         })?;
         let folder = self.folder(id)?;
@@ -1189,7 +1188,6 @@ impl<'a, 'w> Tx<'a, 'w> {
             display_name: name.to_owned(),
             role: None,
             is_label,
-            sync_policy: None,
             ordinal: 0,
         })?;
         let folder = self.folder(id)?;

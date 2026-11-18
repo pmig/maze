@@ -63,8 +63,6 @@ pub(crate) fn sync(w: &mut WriteTx<'_>, settings: &Settings) -> store::Result<bo
                 drafts_folder: None,
                 archive_folder: None,
                 archive_granularity: default.input.archive_granularity,
-                color: None,
-                match_patterns_json: None,
                 is_default: false,
                 ordinal: 0,
             };

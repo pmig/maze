@@ -714,8 +714,6 @@ impl CoreHandle {
                         archive_folder: None,
                         // Thunderbird's default: yearly archive folders.
                         archive_granularity: 1,
-                        color: None,
-                        match_patterns_json: None,
                         is_default: true,
                         ordinal: 0,
                     },

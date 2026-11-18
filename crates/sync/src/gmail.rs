@@ -262,7 +262,6 @@ mod tests {
             role,
             is_label,
             sync: FolderSyncState::default(),
-            sync_policy: None,
             unread: 0,
             total: 0,
             ordinal: 0,
