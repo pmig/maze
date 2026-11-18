@@ -19,7 +19,7 @@
 //! spelling dictionary. When a message only got queued (offline), the main window says
 //! so.
 //! - **Maze Magic** (`cmd-m` in a draft): [`CoreComposeBackend`] checks that the
-//!   sending account shares mail with agents (`agent.accounts`), adds the conversation
+//!   sending account shares mail with agents (`accounts.<name>.agent`), adds the conversation
 //!   the draft replies to (`maze_magic.include_thread`) and runs the agent
 //!   (`maze_magic.agent`, else `agent.default`) on the core's runtime with the agent
 //!   column's manager. Closing the dialog stops it.
@@ -187,10 +187,11 @@ async fn run_magic(core: CoreHandle, input: MagicInput) -> Result<Sensitive<Stri
     let Some(account) = account else {
         return Err(ComposeError::new("Choose an account to send from first."));
     };
-    if settings.agent.access_for(&account) != AgentAccess::Any {
+    if settings.account(&account).agent_access != AgentAccess::Any {
         return Err(ComposeError::new(format!(
             "Maze Magic sends your draft to an agent, but the account “{account}” doesn't \
-             share mail with agents. Set it to \"any\" in agent.accounts in the settings."
+             share mail with agents. Set \"agent\": \"any\" for it under \"accounts\" in \
+             the settings."
         )));
     }
     let Some(agent_id) = settings

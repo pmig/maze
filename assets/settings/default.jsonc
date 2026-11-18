@@ -33,19 +33,6 @@
   // "vertical" (four_column without the agent column), "classic" or "wide"
   // (Thunderbird's layouts).
   "layout": "four_column",
-  // Below this window width (in px) the message moves under the list (Classic).
-  "narrow_layout_below_px": 1000,
-
-  // The agent column on the right.
-  "agent_panel": {
-    "visible": true,
-    // Width in px.
-    "width": 380,
-    // Show the agent for the selected message or thread.
-    "follow_selection": true,
-    // Below this window width (in px) the column collapses to a thin strip.
-    "collapse_below_px": 1400
-  },
 
   // The message list.
   "thread_list": {
@@ -75,11 +62,6 @@
     "favorites": []
   },
 
-  // Quick Filter: combine several active filters with "or" or "and".
-  "quick_filter": {
-    "boolean_mode": "or"
-  },
-
   // The message view.
   "reader": {
     // How HTML mail is shown in the message pane: "reader" (sanitized reader mode,
@@ -97,12 +79,6 @@
 
   // Writing mail.
   "compose": {
-    // Open the composer in a "tab" (Zed style) or a separate "window" (Thunderbird style).
-    "open_in": "tab",
-    // "markdown" or "plain".
-    "format": "markdown",
-    // Seconds during which a sent message can still be undone (0 to 30).
-    "undo_send_seconds": 10,
     // Added below every message you send (Markdown), after your signature and above
     // the quoted message of a reply or forward. Empty: none. Shown under the body
     // while you write; it isn't part of the text you edit.
@@ -139,10 +115,14 @@
   // websites learns that Maze looked); "off": none.
   "favicons": "contacts",
 
-  // Overrides per account, keyed by the account's label, e.g.
-  // "work": { "offline": "all", "remote_content": "never", "footer": "Acme Inc." }
-  // Supported keys: "offline", "offline_recent_days", "sync_trash", "remote_content",
-  // "footer", "support_maze", "copy_sent_to_inbox", "contacts_sync", "aliases": more
+  // Settings per account, keyed by the account's label, e.g.
+  // "work": { "agent": "any", "offline": "all", "remote_content": "never" }
+  // "agent": what AI agents may do with the account: "off" (the default),
+  // "local_only" (local models only) or "any". Agents Maze starts, and Maze Magic,
+  // only ever see "any" accounts.
+  // Overrides of the global values: "offline", "offline_recent_days", "sync_trash",
+  // "remote_content", "footer", "support_maze", "copy_sent_to_inbox", "contacts_sync".
+  // "aliases": more
   // From addresses of the account, e.g. "work": { "aliases": ["sales@contoso.com",
   // { "email": "support@contoso.com", "name": "Support" }] }, and, for Microsoft
   // accounts, "shared_contacts": other mailboxes whose shared Contacts folder Maze
@@ -169,15 +149,13 @@
     }
   },
 
-  // AI agents (docs/agents.md). AI is off unless enabled per account.
+  // AI agents (docs/agents.md). AI is off unless enabled per account
+  // ("accounts": { "Work": { "agent": "any" } }).
   "agent": {
     // The agent used when none is chosen explicitly: a registry id ("claude-acp",
     // "codex-acp", "gemini", "cursor", "pi-acp"), a short name ("claude", "codex",
     // "pi") or a key of "custom".
     "default": "claude",
-    // Access per account label: "off", "local_only" (local models only) or "any".
-    // Accounts not listed are "off". Agents Maze starts only ever see "any" accounts.
-    "accounts": {},
     // What the session token of an agent started by Maze may do: "read-only",
     // "triage" (changes become proposals you review) or "writer".
     "session_profile": "triage",
@@ -199,7 +177,7 @@
 
   // Maze Magic (⌘M / Ctrl+M in the composer): an agent improves your draft, with the
   // conversation it replies to as context, and you review the result before it is
-  // sent. The sending account needs "any" in agent.accounts.
+  // sent. The sending account needs "agent": "any" in "accounts".
   "maze_magic": {
     // The agent to use. null: agent.default.
     "agent": null,
@@ -241,9 +219,7 @@
     // What a notification shows: "sender_and_subject", "sender_only" or "none" (only
     // that new mail arrived). macOS keeps the text of delivered notifications in its
     // own database.
-    "content": "sender_and_subject",
-    // The unread count on the dock icon.
-    "dock_badge": true
+    "content": "sender_and_subject"
   },
 
   // Contacts of Google and Microsoft accounts that connected them ("Contacts: Connect
@@ -255,9 +231,5 @@
     "sync": true,
     // Minutes between syncs (also at startup and on demand). At least 5.
     "sync_interval_minutes": 30
-  },
-
-  // Log verbosity: "error", "warn", "info", "debug" or "trace". The MAZEMAIL_LOG
-  // environment variable takes precedence.
-  "log_level": "info",
+  }
 }

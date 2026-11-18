@@ -17,8 +17,8 @@
 //! accounts and against `settings.json` before anything happens. Then the account's
 //! sync stops, the new password is saved (the old one is put back if a later step
 //! fails), the account row and its SMTP server are updated, the settings move to the
-//! new name ([`settings::rename_account`]: `accounts.<name>`, `agent.accounts.<name>`
-//! and the favorite folders), and sync starts again with the new settings. That also
+//! new name ([`settings::rename_account`]: `accounts.<name>` and the
+//! favorite folders), and sync starts again with the new settings. That also
 //! ends a "sign-in required" state.
 //!
 //! An SMTP server that identities of other accounts share (Thunderbird imports can do

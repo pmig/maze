@@ -163,7 +163,8 @@ answer:
   transcript is stored. The agent itself may keep its own logs in its home
   (`agent-home/<id>/`), as for every session.
 - **Which accounts:** only drafts sent from an account you share with agents (`"any"`
-  in `agent.accounts`). For other accounts Maze Magic says so and sends nothing.
+  for the account: `"accounts": { "Work": { "agent": "any" } }`). For other accounts
+  Maze Magic says so and sends nothing.
 
 The answer replaces only your text: the quote or forwarded message below it stays as
 it was.

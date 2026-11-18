@@ -1032,8 +1032,8 @@ impl AgentPanel {
         if self.no_shared_accounts {
             out.push(Self::banner(
                 "agent-ai-off",
-                "No account shares mail with agents yet. Set an account to \"any\" under \
-                 \"agent.accounts\" in settings; until then agents see no mail."
+                "No account shares mail with agents yet. Set \"agent\": \"any\" for an account \
+                 under \"accounts\" in settings; until then agents see no mail."
                     .into(),
                 false,
                 cx,

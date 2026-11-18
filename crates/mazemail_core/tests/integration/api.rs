@@ -49,7 +49,7 @@ async fn open() -> ApiCore {
     let settings = dir.path().join("settings.json");
     std::fs::write(
         &settings,
-        r#"{ "agent": { "accounts": { "Work": "any", "Gmail": "any" } } }"#,
+        r#"{ "accounts": { "Work": { "agent": "any" }, "Gmail": { "agent": "any" } } }"#,
     )
     .unwrap();
     let keys = Arc::new(MemoryKeyStore::new());
@@ -285,7 +285,7 @@ async fn folder_scope_and_ai_policy_narrow_further() {
     // Turning agents off for Gmail removes it from every token at once.
     std::fs::write(
         t.dir.path().join("settings.json"),
-        r#"{ "agent": { "accounts": { "Work": "any", "Gmail": "off" } } }"#,
+        r#"{ "accounts": { "Work": { "agent": "any" }, "Gmail": { "agent": "off" } } }"#,
     )
     .unwrap();
     let policy = api::SettingsAccountPolicy::new(t.core.clone());

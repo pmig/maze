@@ -983,7 +983,7 @@ async fn the_local_api_adds_lists_syncs_and_removes_accounts() {
     let settings = dir.path().join("settings.json");
     std::fs::write(
         &settings,
-        r#"{ "agent": { "accounts": { "Work": "any" } } }"#,
+        r#"{ "accounts": { "Work": { "agent": "any" } } }"#,
     )
     .unwrap();
     let keys = Arc::new(MemoryKeyStore::new());

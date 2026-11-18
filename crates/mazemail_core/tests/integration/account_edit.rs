@@ -416,8 +416,7 @@ async fn renaming_moves_the_settings_and_refuses_taken_names() {
     let s = setup(
         r#"{
   // Work things.
-  "accounts": { "Work": { "copy_sent_to_inbox": true } },
-  "agent": { "accounts": { "Work": "any", "Job": "off" } },
+  "accounts": { "Work": { "copy_sent_to_inbox": true, "agent": "any" }, "Job": { "agent": "off" } },
   "folder_pane": { "favorites": [{ "account": "Work", "folder": "INBOX" }] }
 }
 "#,
@@ -452,14 +451,18 @@ async fn renaming_moves_the_settings_and_refuses_taken_names() {
         .await
         .unwrap_err();
     assert_eq!(kind(&both), AccountErrorKind::InvalidInput);
-    assert!(both.to_string().contains("agent.accounts"), "{both}");
+    assert!(both.to_string().contains("accounts"), "{both}");
     assert_eq!(std::fs::read_to_string(&s.settings).unwrap(), before);
     assert_eq!(
         s.core.account_details(work).await.unwrap().info.name,
         "Work"
     );
 
-    std::fs::write(&s.settings, before.replace(r#", "Job": "off""#, "")).unwrap();
+    std::fs::write(
+        &s.settings,
+        before.replace(r#", "Job": { "agent": "off" }"#, ""),
+    )
+    .unwrap();
     let info = s.core.update_account(work, rename(" Job ")).await.unwrap();
     assert_eq!(info.name, "Job");
     // The settings went along (comments and all) and apply at once.
@@ -468,7 +471,7 @@ async fn renaming_moves_the_settings_and_refuses_taken_names() {
     let settings = s.core.settings();
     assert!(settings.settings.copy_sent_to_inbox("Job"));
     assert_eq!(
-        settings.settings.agent.access_for("Job"),
+        settings.settings.account("Job").agent_access,
         settings::AgentAccess::Any
     );
     assert_eq!(settings.settings.folder_pane.favorites[0].account, "Job");
@@ -498,7 +501,7 @@ async fn the_local_api_changes_accounts() {
     use mazemail_core::api::{self, TokenAuthorizer};
     use mazemail_types::PublicId as _;
 
-    let s = setup(r#"{ "agent": { "accounts": { "Work": "any" } } }"#).await;
+    let s = setup(r#"{ "accounts": { "Work": { "agent": "any" } } }"#).await;
     let id = s
         .core
         .add_imap_account(account("Work", "alice@example.org"))

@@ -80,10 +80,8 @@ mod tests {
             "$schema",
             "theme",
             "layout",
-            "agent_panel",
             "thread_list",
             "folder_pane",
-            "quick_filter",
             "reader",
             "compose",
             "spellcheck",
@@ -95,7 +93,6 @@ mod tests {
             "update_channel",
             "auto_update_install",
             "notifications",
-            "log_level",
         ] {
             assert!(properties.contains_key(key), "missing {key}");
         }
@@ -107,9 +104,8 @@ mod tests {
                 .unwrap()
                 .contains("updates")
         );
-        // The range of the undo-send delay is in the schema.
-        let undo = &schema["$defs"]["UndoSendSeconds"];
-        assert_eq!(undo["maximum"], 30);
+        // Ranges are in the schema.
+        assert_eq!(properties["font_size"]["maximum"], 32);
     }
 
     #[test]

@@ -26,16 +26,10 @@ pub struct Settings {
     pub keymap: KeymapSettings,
     /// Window layout.
     pub layout: Layout,
-    /// Below this window width (px) the message moves under the list (Classic layout).
-    pub narrow_layout_below_px: u32,
-    /// The agent column.
-    pub agent_panel: AgentPanelSettings,
     /// The message list.
     pub thread_list: ThreadListSettings,
     /// The folder pane.
     pub folder_pane: FolderPaneSettings,
-    /// Quick Filter.
-    pub quick_filter: QuickFilterSettings,
     /// The message view.
     pub reader: ReaderSettings,
     /// Writing mail.
@@ -75,8 +69,6 @@ pub struct Settings {
     pub notifications: NotificationSettings,
     /// Contacts synced from Google and Microsoft accounts that connected their contacts.
     pub contacts: ContactsSettings,
-    /// Log verbosity. The `MAZEMAIL_LOG` environment variable takes precedence.
-    pub log_level: LogLevel,
 }
 
 impl Default for Settings {
@@ -86,11 +78,8 @@ impl Default for Settings {
             font_size: 14,
             keymap: KeymapSettings::default(),
             layout: Layout::default(),
-            narrow_layout_below_px: 1000,
-            agent_panel: AgentPanelSettings::default(),
             thread_list: ThreadListSettings::default(),
             folder_pane: FolderPaneSettings::default(),
-            quick_filter: QuickFilterSettings::default(),
             reader: ReaderSettings::default(),
             compose: ComposeSettings::default(),
             spellcheck: Spellcheck::default(),
@@ -108,7 +97,6 @@ impl Default for Settings {
             auto_update_install: AutoUpdateInstall::default(),
             notifications: NotificationSettings::default(),
             contacts: ContactsSettings::default(),
-            log_level: LogLevel::default(),
         }
     }
 }
@@ -138,7 +126,7 @@ impl Settings {
             remote_content: overrides
                 .and_then(|o| o.remote_content)
                 .unwrap_or(self.reader.remote_content),
-            agent_access: self.agent.access_for(label),
+            agent_access: overrides.and_then(|o| o.agent).unwrap_or_default(),
             contacts_sync: overrides
                 .and_then(|o| o.contacts_sync)
                 .unwrap_or(self.contacts.sync),
@@ -305,31 +293,6 @@ pub enum Layout {
     Wide,
 }
 
-/// The agent column.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
-pub struct AgentPanelSettings {
-    /// Show the agent column.
-    pub visible: bool,
-    /// Width in px.
-    pub width: u32,
-    /// Show the agent for the selected message or thread.
-    pub follow_selection: bool,
-    /// Below this window width (px) the column collapses to a thin strip.
-    pub collapse_below_px: u32,
-}
-
-impl Default for AgentPanelSettings {
-    fn default() -> Self {
-        Self {
-            visible: true,
-            width: 380,
-            follow_selection: true,
-            collapse_below_px: 1400,
-        }
-    }
-}
-
 /// The message list.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -470,25 +433,6 @@ pub enum FolderPaneMode {
     Recent,
 }
 
-/// Quick Filter.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
-pub struct QuickFilterSettings {
-    /// How several active filters combine.
-    pub boolean_mode: BooleanMode,
-}
-
-/// How filters combine.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum BooleanMode {
-    /// A message matches if any filter matches.
-    #[default]
-    Or,
-    /// A message matches only if all filters match.
-    And,
-}
-
 /// The message view.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -558,12 +502,6 @@ pub enum RemoteContentPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ComposeSettings {
-    /// Where the composer opens.
-    pub open_in: ComposeOpenIn,
-    /// The editing format.
-    pub format: ComposeFormat,
-    /// Seconds during which a sent message can be undone (0 to 30).
-    pub undo_send_seconds: UndoSendSeconds,
     /// Added below every message you send (Markdown), after your signature and above
     /// a quoted message. Empty: none. Can be overridden per account.
     pub footer: String,
@@ -578,9 +516,6 @@ pub struct ComposeSettings {
 impl Default for ComposeSettings {
     fn default() -> Self {
         Self {
-            open_in: ComposeOpenIn::default(),
-            format: ComposeFormat::default(),
-            undo_send_seconds: UndoSendSeconds::default(),
             footer: String::new(),
             support_maze: true,
             copy_sent_to_inbox: false,
@@ -595,89 +530,6 @@ pub struct FooterSettings {
     pub footer: String,
     /// Whether new messages add "Sent with Maze".
     pub support_maze: bool,
-}
-
-/// Where the composer opens.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ComposeOpenIn {
-    /// A tab in the main window (Zed style).
-    #[default]
-    Tab,
-    /// A separate window (Thunderbird style).
-    Window,
-}
-
-/// The composer's editing format.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ComposeFormat {
-    /// Markdown, sent as HTML plus a plain-text part.
-    #[default]
-    Markdown,
-    /// Plain text only.
-    Plain,
-}
-
-/// The undo-send delay in seconds, at most [`UndoSendSeconds::MAX`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(try_from = "u32", into = "u32")]
-pub struct UndoSendSeconds(u8);
-
-impl UndoSendSeconds {
-    /// The longest allowed delay.
-    pub const MAX: u8 = 30;
-
-    /// Creates a delay, or `None` if it exceeds [`Self::MAX`].
-    pub const fn new(seconds: u8) -> Option<Self> {
-        if seconds <= Self::MAX {
-            Some(Self(seconds))
-        } else {
-            None
-        }
-    }
-
-    /// The delay in seconds.
-    pub const fn get(self) -> u8 {
-        self.0
-    }
-}
-
-impl Default for UndoSendSeconds {
-    fn default() -> Self {
-        Self(10)
-    }
-}
-
-impl TryFrom<u32> for UndoSendSeconds {
-    type Error = String;
-
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
-        u8::try_from(value)
-            .ok()
-            .and_then(Self::new)
-            .ok_or_else(|| format!("{value} is out of range (0 to {})", Self::MAX))
-    }
-}
-
-impl From<UndoSendSeconds> for u32 {
-    fn from(value: UndoSendSeconds) -> Self {
-        u32::from(value.0)
-    }
-}
-
-impl JsonSchema for UndoSendSeconds {
-    fn schema_name() -> std::borrow::Cow<'static, str> {
-        "UndoSendSeconds".into()
-    }
-
-    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        schemars::json_schema!({
-            "type": "integer",
-            "minimum": 0,
-            "maximum": Self::MAX,
-        })
-    }
 }
 
 /// The `spellcheck` setting: `false`, or the languages to check (PLAN-spellcheck).
@@ -840,6 +692,10 @@ pub enum OfflinePolicy {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct AccountOverrides {
+    /// What AI agents may do with this account: `off` (the default), `local_only` or
+    /// `any`. Agents Maze starts, and Maze Magic, only ever see `any` accounts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentAccess>,
     /// Overrides `offline`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offline: Option<OfflinePolicy>,
@@ -929,8 +785,6 @@ pub struct AgentSettings {
     /// `claude-acp`, the short names `claude`, `codex`, `gemini`, `cursor`, `pi`, or a
     /// key of `custom`).
     pub default: Option<String>,
-    /// Access per account label. Accounts not listed are `off`.
-    pub accounts: BTreeMap<String, AgentAccess>,
     /// The profile of the session token agents started by Maze get.
     pub session_profile: SessionProfile,
     /// Your own ACP agents, keyed by an id of your choice.
@@ -948,7 +802,6 @@ impl Default for AgentSettings {
     fn default() -> Self {
         Self {
             default: Some("claude".to_owned()),
-            accounts: BTreeMap::new(),
             session_profile: SessionProfile::default(),
             custom: BTreeMap::new(),
             env: BTreeMap::new(),
@@ -982,13 +835,6 @@ pub struct CustomAgentSettings {
     pub args: Vec<String>,
     /// Extra environment variables.
     pub env: BTreeMap<String, String>,
-}
-
-impl AgentSettings {
-    /// The access agents have to an account (off unless listed).
-    pub fn access_for(&self, label: &str) -> AgentAccess {
-        self.accounts.get(label).copied().unwrap_or_default()
-    }
 }
 
 /// What agents may do with an account (CONCEPT §10.4).
@@ -1175,8 +1021,6 @@ pub struct NotificationSettings {
     /// What a notification shows. macOS keeps delivered notification text in its own
     /// database.
     pub content: NotificationContent,
-    /// Show the unread count on the dock icon.
-    pub dock_badge: bool,
 }
 
 impl Default for NotificationSettings {
@@ -1184,7 +1028,6 @@ impl Default for NotificationSettings {
         Self {
             enabled: true,
             content: NotificationContent::SenderAndSubject,
-            dock_badge: true,
         }
     }
 }
@@ -1202,61 +1045,9 @@ pub enum NotificationContent {
     None,
 }
 
-/// Log verbosity.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum LogLevel {
-    /// Errors only.
-    Error,
-    /// Errors and warnings.
-    Warn,
-    /// Normal operation.
-    #[default]
-    Info,
-    /// Detailed diagnostics.
-    Debug,
-    /// Everything.
-    Trace,
-}
-
-impl LogLevel {
-    /// The level as a `tracing` filter directive (`"info"`, …).
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Error => "error",
-            Self::Warn => "warn",
-            Self::Info => "info",
-            Self::Debug => "debug",
-            Self::Trace => "trace",
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn undo_send_seconds_range() {
-        assert_eq!(UndoSendSeconds::try_from(0).unwrap().get(), 0);
-        assert_eq!(UndoSendSeconds::try_from(30).unwrap().get(), 30);
-        assert!(UndoSendSeconds::try_from(31).is_err());
-        assert!(UndoSendSeconds::try_from(300).is_err());
-        assert_eq!(UndoSendSeconds::default().get(), 10);
-    }
 
     #[test]
     fn effective_update_channel() {
@@ -1340,13 +1131,10 @@ mod tests {
             AccountOverrides {
                 offline: Some(OfflinePolicy::All),
                 remote_content: Some(RemoteContentPolicy::Never),
+                agent: Some(AgentAccess::Any),
                 ..AccountOverrides::default()
             },
         );
-        settings
-            .agent
-            .accounts
-            .insert("work".to_owned(), AgentAccess::Any);
 
         let work = settings.account("work");
         assert_eq!(work.offline, OfflinePolicy::All);

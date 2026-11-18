@@ -516,7 +516,7 @@ impl AgentManager {
                     None,
                     Some(
                         "The selected thread isn't attached: its account doesn't share mail \
-                         with agents (agent.accounts in settings)."
+                         with agents (\"agent\": \"any\" in accounts.<name> in settings)."
                             .to_owned(),
                     ),
                 ),

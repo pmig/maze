@@ -228,7 +228,7 @@ fn saving_reloads_the_watcher_at_once(cx: &mut TestAppContext) {
     // Unknown keys and wrong values: listed with their lines, the rest applies.
     type_text(
         &tab,
-        "{\n  \"layout\": \"wide\",\n  \"lay_out\": 1,\n  \"agent_panel\": { \"width\": \"wide\" }\n}",
+        "{\n  \"layout\": \"wide\",\n  \"lay_out\": 1,\n  \"thread_list\": { \"sort\": \"wide\" }\n}",
         cx,
     );
     cx.simulate_keystrokes("cmd-s");
@@ -242,8 +242,8 @@ fn saving_reloads_the_watcher_at_once(cx: &mut TestAppContext) {
     assert_eq!(
         lines,
         vec![
-            ("agent_panel.width".to_owned(), Some(4), true),
             ("lay_out".to_owned(), Some(3), false),
+            ("thread_list.sort".to_owned(), Some(4), true),
         ]
     );
     assert_eq!(receiver.borrow_and_update().settings.layout, Layout::Wide);

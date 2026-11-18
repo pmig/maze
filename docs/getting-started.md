@@ -197,9 +197,9 @@ account that needs a sign-in or has an error also offers **Edit Account…** in 
 activity** (the status bar's sync item). You can change:
 
 - **The name** in the folder pane. The account's settings in `settings.json` move with
-  it: `accounts.<name>`, its AI access in `agent.accounts` and its favorite folders,
-  comments included. If the old and the new name both have an entry in one of those,
-  Maze asks you to merge them first. The sender name on your mail stays as it is.
+  it: `accounts.<name>` (its AI access included) and its favorite folders, comments
+  included. If the old and the new name both have an entry in `accounts`, Maze asks you
+  to merge them first. The sender name on your mail stays as it is.
 - **The password**, after you changed it at your provider, or for an imported account
   that has none yet. Leave the field empty to keep the saved one.
 - **The servers**, under **Server settings…**: host, port, security and user name for
@@ -995,7 +995,7 @@ draft:
 Only your own text is changed: the quoted message or the forward below it stays
 exactly as it was. Maze Magic uses the agent column's agents (see [Agents](#agents)),
 so the agent has to be installed and signed in there once, and the account you send
-from has to share mail with agents (`"agent": { "accounts": { "Work": "any" } }`). The
+from has to share mail with agents (`"accounts": { "Work": { "agent": "any" } }`). The
 agent gets your draft and the conversation in its prompt, nothing else: it has no
 access to the rest of your mail, every tool it asks for is refused, and the run isn't
 kept in the agent column's history.
@@ -1146,7 +1146,7 @@ What exactly is sent is in [security.md](security.md#favicons).
 The agent column on the right (`cmd-?` shows and hides it) runs coding agents over the
 Agent Client Protocol: Claude Code, Codex, Gemini CLI, Cursor, pi or your own. AI is
 opt-in: it's off for every account until you share one with agents
-(`"agent": { "accounts": { "Work": "any" } }`).
+(`"accounts": { "Work": { "agent": "any" } }`).
 
 - **Install and sign in** from the column. Maze installs each agent (and the Node
   runtime npm agents need) itself and keeps installed agents up to date in the

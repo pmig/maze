@@ -5,7 +5,7 @@
 //! | ----------------- | -------------- | --------- |
 //! | [`CommandHandler`](local_api::CommandHandler) | [`CoreCommandHandler`] | the [`CoreHandle`] queries, [`CoreHandle::apply`], `import` |
 //! | [`TokenStore`](local_api::TokenStore) | [`StoreTokenStore`] | the encrypted `api_token` table |
-//! | [`AccountPolicy`](local_api::AccountPolicy) | [`SettingsAccountPolicy`] | `agent.accounts` in the settings |
+//! | [`AccountPolicy`](local_api::AccountPolicy) | [`SettingsAccountPolicy`] | `accounts.<name>.agent` in the settings |
 //! | [`AuditSink`](local_api::AuditSink) | [`StoreAuditSink`] | the encrypted `audit_log` |
 //!
 //! plus core's own permission hook, [`TokenAuthorizer`] (a

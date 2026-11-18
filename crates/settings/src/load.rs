@@ -508,8 +508,10 @@ mod tests {
               "theme": { "mode": "dark" },          // keeps light/dark names
               "layout": "classic",
               "folder_pane": { "modes": ["all", "tags",], },
-              "accounts": { "work": { "offline": "all", "remote_content": "never" } },
-              "agent": { "accounts": { "work": "any", "personal": "local_only" } },
+              "accounts": {
+                "work": { "offline": "all", "remote_content": "never" },
+                "personal": { "agent": "local_only" },
+              },
               "update_channel": "preview",
             }
             "#,
@@ -531,7 +533,7 @@ mod tests {
                 ..AccountOverrides::default()
             })
         );
-        assert_eq!(s.agent.access_for("personal"), AgentAccess::LocalOnly);
+        assert_eq!(s.account("personal").agent_access, AgentAccess::LocalOnly);
         assert_eq!(s.agent.default.as_deref(), Some("claude"));
         assert_eq!(s.update_channel, Some(UpdateChannel::Preview));
     }
@@ -587,11 +589,10 @@ mod tests {
         let loaded = parse_settings(Some(
             r#"{
               "layout": "diagonal",
-              "agent_panel": { "width": "wide", "visible": false },
-              "compose": { "undo_send_seconds": 99, "format": "plain" },
+              "thread_list": { "sort": "sideways", "threaded": false },
               "folder_pane": { "modes": ["all", 7] },
               "accounts": { "work": { "offline": "sometimes", "remote_content": "never" } },
-              "log_level": "debug"
+              "font_size": 16
             }"#,
         ));
         let errors: Vec<_> = loaded
@@ -604,25 +605,22 @@ mod tests {
             errors,
             vec![
                 "accounts.work.offline",
-                "agent_panel.width",
-                "compose.undo_send_seconds",
                 "folder_pane.modes[1]",
                 "layout",
+                "thread_list.sort",
             ]
         );
         let s = &loaded.settings;
         // Invalid keys use their defaults ...
         assert_eq!(s.layout, Layout::FourColumn);
-        assert_eq!(s.agent_panel.width, 380);
-        assert_eq!(s.compose.undo_send_seconds.get(), 10);
+        assert_eq!(s.thread_list.sort, crate::ThreadSort::default());
         assert_eq!(
             s.folder_pane.modes,
             vec![FolderPaneMode::Favorite, FolderPaneMode::Unified]
         );
         // ... while valid siblings are kept.
-        assert!(!s.agent_panel.visible);
-        assert_eq!(s.compose.format, crate::ComposeFormat::Plain);
-        assert_eq!(s.log_level, crate::LogLevel::Debug);
+        assert!(!s.thread_list.threaded);
+        assert_eq!(s.font_size, 16);
         let work = s.account("work");
         assert_eq!(work.offline, OfflinePolicy::Recent);
         assert_eq!(work.remote_content, RemoteContentPolicy::Never);

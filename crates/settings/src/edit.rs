@@ -58,7 +58,7 @@ pub enum EditError {
         old: String,
         /// The label it was to get.
         new: String,
-        /// Where both are, e.g. `agent.accounts`.
+        /// Where both are (`accounts`).
         key: String,
     },
 }
@@ -119,14 +119,14 @@ pub fn write_setting(file: &Path, keys: &[&str], value: &Value) -> Result<(), Ed
 }
 
 /// Moves what the settings file keeps for the account labelled `old` to the label
-/// `new`, for a renamed account: `accounts.<old>` and `agent.accounts.<old>` are
-/// renamed in place (their values, comments and formatting stay as they are), and the
+/// `new`, for a renamed account: `accounts.<old>` is renamed in place (its values,
+/// comments and formatting stay as they are), and the
 /// account's favorite folders (`folder_pane.favorites`) get the new label. Returns
 /// whether the file changed (`false` without a file or with nothing to move).
 ///
 /// Settings that already exist under `new` stay and apply to the renamed account, as
-/// for any account with that label, except where both labels have an entry in the same
-/// object: that can't be merged, so the file is left alone with
+/// for any account with that label, except where both labels have an entry in
+/// `accounts`: that can't be merged, so the file is left alone with
 /// [`EditError::NameTaken`]. A favorite listed under both labels is kept once. A file
 /// that isn't valid JSONC is left alone ([`EditError::Syntax`]).
 pub fn rename_account(file: &Path, old: &str, new: &str) -> Result<bool, EditError> {
@@ -162,16 +162,8 @@ fn move_account(file: &Path, old: &str, new: &str, write: bool) -> Result<bool, 
         return Ok(false);
     };
 
-    // Check both objects before touching either, so a refusal changes nothing.
-    let maps = [
-        ("accounts", object.object_value("accounts")),
-        (
-            "agent.accounts",
-            object
-                .object_value("agent")
-                .and_then(|agent| agent.object_value("accounts")),
-        ),
-    ];
+    // Check before touching anything, so a refusal changes nothing.
+    let maps = [("accounts", object.object_value("accounts"))];
     let mut renames = Vec::new();
     for (key, map) in &maps {
         let Some(prop) = map.as_ref().and_then(|map| map.get(old)) else {
@@ -401,10 +393,9 @@ mod tests {
         let before = r#"{
   "accounts": {
     // My job.
-    "Work": { "offline": "all", "copy_sent_to_inbox": true },
-    "Home": { "sync_trash": false },
+    "Work": { "offline": "all", "copy_sent_to_inbox": true, "agent": "any" },
+    "Home": { "sync_trash": false, "agent": "off" },
   },
-  "agent": { "accounts": { "Work": "any", "Home": "off" } },
   "folder_pane": {
     "favorites": [
       { "account": "Work", "folder": "Customers/Acme" },
@@ -421,7 +412,7 @@ mod tests {
         // Renamed in place: the comment and the value's formatting stay.
         assert!(
             after.contains(
-                "// My job.\n    \"Job\": { \"offline\": \"all\", \"copy_sent_to_inbox\": true },"
+                "// My job.\n    \"Job\": { \"offline\": \"all\", \"copy_sent_to_inbox\": true, \"agent\": \"any\" },"
             ),
             "{after}"
         );
@@ -430,8 +421,14 @@ mod tests {
         let settings = loaded.settings;
         assert!(settings.copy_sent_to_inbox("Job"));
         assert!(!settings.copy_sent_to_inbox("Work"));
-        assert_eq!(settings.agent.access_for("Job"), crate::AgentAccess::Any);
-        assert_eq!(settings.agent.access_for("Work"), crate::AgentAccess::Off);
+        assert_eq!(
+            settings.account("Job").agent_access,
+            crate::AgentAccess::Any
+        );
+        assert_eq!(
+            settings.account("Work").agent_access,
+            crate::AgentAccess::Off
+        );
         assert!(!settings.account("Home").sync_trash, "others stay");
         // "Job / Inbox" was a favorite already: listed once.
         let favorite = |account: &str, folder: &str| FavoriteFolder {
@@ -461,8 +458,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         let before = r#"{
-  "accounts": { "Work": { "offline": "all" } },
-  "agent": { "accounts": { "Work": "off", "Job": "any" } },
+  "accounts": { "Work": { "offline": "all" }, "Job": { "agent": "any" } },
 }
 "#;
         std::fs::write(&path, before).unwrap();
@@ -473,7 +469,7 @@ mod tests {
         );
         let err = rename_account(&path, "Work", "Job").unwrap_err();
         assert!(
-            matches!(&err, EditError::NameTaken { key, .. } if key == "agent.accounts"),
+            matches!(&err, EditError::NameTaken { key, .. } if key == "accounts"),
             "{err:?}"
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), before);

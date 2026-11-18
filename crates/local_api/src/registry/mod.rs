@@ -694,8 +694,8 @@ static REGISTRY: &[CommandSpec] = &[
         path: &["account", "set"],
         summary: "Change an account's name, password or servers",
         help: "Changes what you pass and keeps the rest. A new --name moves the account's \
-               settings in settings.json (accounts.<name>, agent.accounts.<name>, favorite \
-               folders) along with it. --password asks for a new password on the terminal \
+               settings in settings.json (accounts.<name>, favorite folders) \
+               along with it. --password asks for a new password on the terminal \
                without echo (--password-stdin reads it from stdin); it is never a command-line \
                argument. Changing the IMAP server (--host, --port, --security), the login name \
                (--username) or the SMTP server (--smtp-host, --smtp-port, --smtp-security) asks \

@@ -1,6 +1,6 @@
 //! `local_api`'s [`AccountPolicy`] from the settings (CONCEPT §10.4).
 //!
-//! `agent.accounts` maps account names to `off`, `local_only` or `any`; accounts not
+//! `accounts.<name>.agent` sets, per account name, `off`, `local_only` or `any`; accounts not
 //! listed are `off`. External agents (everything that reaches Maze through the local
 //! API) only ever see accounts set to `any`. The settings are watched, so changing the
 //! policy takes effect on the next request, for existing tokens too.
@@ -14,7 +14,7 @@ use settings::AgentAccess;
 
 use crate::handle::CoreHandle;
 
-/// Allows the accounts whose `agent.accounts` entry is `any`. See the
+/// Allows the accounts whose `accounts.<name>.agent` is `any`. See the
 /// [module docs](self).
 #[derive(Clone)]
 pub struct SettingsAccountPolicy {
@@ -42,7 +42,7 @@ impl AccountPolicy for SettingsAccountPolicy {
             Ok(accounts) => accounts
                 .iter()
                 .filter(|account| {
-                    settings.settings.agent.access_for(&account.name) == AgentAccess::Any
+                    settings.settings.account(&account.name).agent_access == AgentAccess::Any
                 })
                 .map(|account| account.id)
                 .collect(),

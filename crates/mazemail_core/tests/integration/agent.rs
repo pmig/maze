@@ -33,7 +33,7 @@ async fn open() -> AgentCore {
     let settings = dir.path().join("settings.json");
     std::fs::write(
         &settings,
-        r#"{ "agent": { "accounts": { "Work": "any", "Gmail": "off" } } }"#,
+        r#"{ "accounts": { "Work": { "agent": "any" }, "Gmail": { "agent": "off" } } }"#,
     )
     .unwrap();
     let keys = Arc::new(MemoryKeyStore::new());

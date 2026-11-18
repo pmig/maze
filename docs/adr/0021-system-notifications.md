@@ -60,4 +60,5 @@ notification per message, or one summary for more than three.
   in a signed build before a release; development builds without a bundle show
   nothing. `mise start` runs dev builds from a minimal `Maze Dev.app`
   (`script/dev-bundle`), so they show notifications under the dev bundle ID.
-- The `notifications.dock_badge` setting is separate and not implemented yet.
+- A dock badge with the unread count isn't implemented; its setting was removed before
+  the first release and comes back with the feature.
