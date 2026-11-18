@@ -88,10 +88,10 @@ or fails with exit code 3 (**deny**).
 
 | Commands                                                      | read-only | triage  | writer |
 | ------------------------------------------------------------- | --------- | ------- | ------ |
-| `search`, `show`, `folders`, `tags`, `contacts`, `identities`, `token list`, `saved-search list` | allow | allow | allow |
+| `search`, `show`, `folders`, `tags`, `contacts`, `identities`, `token list`, `rule list`, `rule show`, `saved-search list` | allow | allow | allow |
 | `draft new`, `draft edit`, `propose`, `saved-search add`, `saved-search rename`, `saved-search edit` | deny | allow | allow |
 | `archive`, `move`, `tag`, `flag`, `read`                      | deny      | propose | allow  |
-| `import`, `export`, `rule add`, `token revoke` (other tokens), `saved-search delete` | deny | ask | ask |
+| `import`, `export`, `rule add`, `rule enable`, `rule disable`, `rule delete`, `rule run`, `token revoke` (other tokens), `saved-search delete` | deny | ask | ask |
 | `send`                                                        | deny      | ask with `--allow-send` | ask with `--allow-send` |
 
 Permanent delete isn't available to tokens at all. `mazemail help` lists every command
@@ -122,6 +122,30 @@ mazemail import ~/.thunderbird/abcd.default-release --only contacts,filters
 Filters belong to accounts: imported on their own, they go to the accounts an earlier
 import of the same profile created. Filters whose account isn't in Maze yet are
 skipped (the result says so); import `--only accounts` first.
+
+## Rules
+
+Message rules (filters) run on new mail in the Inbox, in their order; see
+[getting-started.md](getting-started.md#rules). Filters imported from Thunderbird
+arrive disabled:
+
+```sh
+mazemail rule list                       # every rule, in order, with its problems
+mazemail rule show r_b                   # one rule, with the import's note
+mazemail rule run --folder f_k2 r_b      # try a rule on a folder first
+mazemail rule enable r_b                 # it runs on new mail from now on
+mazemail rule add --name Receipts --when 'from:receipts@shop.example' \
+  --then tag:Receipts --then archive     # a new rule, enabled
+```
+
+`rule add --when` takes `from:`, `to:`, `cc:`, `subject:`, `list:`, `has:attachment` and
+free text (matched against the message text), each negated with `-`; all terms must
+match, or any of them with `OR`. Actions (`--then`, repeatable) are `read`, `flag`,
+`tag:<name>`, `copy:<folder-id>`, `move:<folder-id>`, `archive`, `trash` and `stop`. A
+rule with a move or copy belongs to that folder's account; otherwise pass `--account`
+(a rule for every account needs a token for every account). Enabling, running, adding
+and deleting rules change mail, so they always ask for your approval in Maze; listing
+them is a read. What a rule does is in the audit log with the origin `rule:<id>`.
 
 ## Headless mode
 
@@ -179,13 +203,13 @@ pane shows the changes at once.
 
 `status`, `help`, `login`, `token`, `search`, `show`, `folders`, `tags`, `contacts`,
 `identities`, `archive`, `move`, `tag`, `flag`, `read`, `propose`, `import`,
-`export`, `account list`, `account add` (with `--smtp-host`, `--smtp-port` and
+`export`, `rule list|show|add|enable|disable|delete|run`, `account list`, `account add` (with `--smtp-host`, `--smtp-port` and
 `--smtp-security` for the server Maze sends through, and `--tenant` for the
 organization of a `--oauth microsoft` sign-in), `account set` (a new name, password or
 servers, or `--sign-in` again), `account remove`, `sync` and `saved-search` work.
 Writing and sending mail works in the app; the CLI commands for it (`draft new`,
-`draft edit`, `send`) and `rule add` and `attachment save` fail with "not available in
-this version" (exit code 1), and so does a `propose` batch with an `unsubscribe` item.
+`draft edit`, `send`) and `attachment save` fail with "not available in this version"
+(exit code 1), and so does a `propose` batch with an `unsubscribe` item.
 Proposals (from `propose` and from a triage token's `archive`, `move`, `tag`, `flag`
 and `read`) show at the top of Maze's agent column (`cmd-?`), where you accept or
 reject each item; nothing changes until you accept. See

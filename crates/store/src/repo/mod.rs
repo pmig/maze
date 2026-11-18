@@ -115,6 +115,41 @@ pub trait Queries: sealed::Sealed {
         misc::rules(self.connection(sealed::Token), account)
     }
 
+    /// One rule.
+    fn rule(&self, id: crate::model::RuleId) -> Result<Option<Rule>> {
+        misc::rule(self.connection(sealed::Token), id)
+    }
+
+    /// Where the arrival rules stopped in `folder` (see ADR-029).
+    fn rule_cursor(&self, folder: FolderId) -> Result<Option<crate::model::RuleCursor>> {
+        misc::rule_cursor(self.connection(sealed::Token), folder)
+    }
+
+    /// Locations in `folder` with a UID above `after`, ascending, at most `limit`.
+    fn locations_after_uid(
+        &self,
+        folder: FolderId,
+        after: u32,
+        limit: usize,
+    ) -> Result<Vec<(u32, MessageId)>> {
+        misc::locations_after_uid(self.connection(sealed::Token), folder, after, limit)
+    }
+
+    /// Messages in `folder` with an id above `after`, ascending, at most `limit`.
+    fn folder_messages_after(
+        &self,
+        folder: FolderId,
+        after: MessageId,
+        limit: usize,
+    ) -> Result<Vec<MessageId>> {
+        misc::folder_messages_after(self.connection(sealed::Token), folder, after, limit)
+    }
+
+    /// Whether the arrival rules have processed `message`.
+    fn rule_processed(&self, message: MessageId) -> Result<bool> {
+        misc::rule_processed(self.connection(sealed::Token), message)
+    }
+
     /// All saved searches.
     fn saved_searches(&self) -> Result<Vec<SavedSearch>> {
         misc::saved_searches(self.connection(sealed::Token))

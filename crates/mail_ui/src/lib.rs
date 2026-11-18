@@ -8,7 +8,8 @@
 //! which takes the folder pane's and the center's place.
 //!
 //! The center is a `ui::panes::PaneGroup` of mail views (message list and message),
-//! message tabs, drafts and the settings ([`settings_editor`]).
+//! message tabs, drafts, the settings ([`settings_editor`]) and the rules
+//! ([`rules_tab`]).
 //!
 //! The UI reads mail through the [`MailSource`] trait, so it doesn't depend on any
 //! non-UI Maze crate except `mazemail_types` and `settings` (the settings tab parses
@@ -39,6 +40,7 @@ pub mod message_tab;
 pub mod message_view;
 pub mod perf;
 pub mod quick_move;
+pub mod rules_tab;
 pub mod saved_search;
 pub mod selection;
 pub mod settings_editor;

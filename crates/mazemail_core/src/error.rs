@@ -51,6 +51,11 @@ pub enum Error {
     #[error("invalid command: {0}")]
     InvalidCommand(&'static str),
 
+    /// A rule can't be created or enabled as it is (a condition Maze can't evaluate, no
+    /// action it can run). The text is for people and holds no message content.
+    #[error("{0}")]
+    InvalidRule(String),
+
     /// A row the operation needs doesn't exist.
     #[error("{entity} {id} not found")]
     NotFound {

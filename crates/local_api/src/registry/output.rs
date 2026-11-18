@@ -345,6 +345,57 @@ pub struct RuleOutput {
     pub name: String,
 }
 
+/// `rule list`, `rule show`, `rule enable`, `rule disable`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RuleInfo {
+    /// Rule id (`r_…`).
+    pub id: String,
+    /// Name.
+    pub name: String,
+    /// The account (`a_…`), or `null` for every account.
+    pub account: Option<String>,
+    /// Whether it runs on new mail.
+    pub enabled: bool,
+    /// When it runs: `arrival` or `arrival_before_junk` on new mail; others only with `rule run`.
+    pub trigger: String,
+    /// The conditions, readable (`from contains "anna" and has attachments`).
+    pub conditions: String,
+    /// The actions, readable, in the order they run.
+    pub actions: String,
+    /// What keeps it from running as intended; unsupported actions are only skipped.
+    pub problems: Vec<String>,
+    /// Whether it may be enabled.
+    pub runnable: bool,
+    /// Imported from Thunderbird.
+    pub imported: bool,
+    /// The import's note, if any.
+    pub note: Option<String>,
+}
+
+/// `rule delete`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RuleDeleted {
+    /// The deleted rule's id.
+    pub id: String,
+    /// Its name.
+    pub name: String,
+}
+
+/// `rule run`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RuleRunOutput {
+    /// Messages the rules looked at.
+    pub examined: u64,
+    /// Messages a rule acted on.
+    pub matched: u64,
+    /// Actions run (each covers all its messages).
+    pub actions: u64,
+    /// Actions skipped or failed (the audit log says why).
+    pub failed: u64,
+    /// Message ids changed.
+    pub affected: Vec<String>,
+}
+
 /// `send`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SendOutput {

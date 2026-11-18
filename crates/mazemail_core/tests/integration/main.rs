@@ -23,4 +23,5 @@ mod messages;
 mod microsoft_contacts;
 mod queries;
 mod remote_content;
+mod rules;
 mod search;

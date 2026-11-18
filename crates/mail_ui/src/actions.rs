@@ -96,6 +96,16 @@ actions!(
 );
 
 actions!(
+    rules,
+    [
+        /// Show the message rules (filters) in a tab, to review and enable them.
+        ShowRules,
+        /// Run the enabled rules on the selected folder now.
+        RunRulesOnFolder,
+    ]
+);
+
+actions!(
     command_palette,
     [
         /// Open or close the command palette (`cmd-shift-p`).
@@ -291,6 +301,7 @@ pub const PALETTE_NAMESPACES: &[&str] = &[
     "address_book",
     "agent",
     "contacts",
+    "rules",
 ];
 
 /// "mail::NextUnread" becomes "Mail: Next Unread", the way Zed's palette shows actions.

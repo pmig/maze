@@ -1,7 +1,7 @@
 # Data model
 
 What Maze stores, as of the v1 schema (`crates/store/migrations/main/0001_schema_v1.sql`,
-33 tables) plus the send log (`crates/store/migrations/sendlog/`). Everything is in
+33 tables) and the rules engine's two tables (`0002_rules.sql`) plus the send log (`crates/store/migrations/sendlog/`). Everything is in
 SQLCipher databases encrypted by the vault ([ADR-017](adr/0017-account-secrets-in-the-vault.md));
 message bodies, queued messages and agent transcripts are encrypted blobs referenced
 from `blob`.
@@ -61,6 +61,8 @@ flowchart LR
 
   subgraph USER["Your lists"]
     rule["<b>rule</b><br/>filter rules"]
+    rule_cursor["<b>rule_cursor</b><br/>last UID the rules saw"]
+    rule_message["<b>rule_message</b><br/>messages the rules processed"]
     saved_search["<b>saved_search</b>"]
     spelling_word["<b>spelling_word</b>"]
   end
@@ -100,6 +102,8 @@ flowchart LR
   agent_thread --> thread
   agent_thread -->|transcript| blob
   rule --> account
+  rule_cursor --> folder
+  rule_message --> message
 ```
 
 ## Notes
@@ -114,5 +118,9 @@ flowchart LR
 - **Contacts**: `contact` has one row per address (the book is a string such as
   `google:<account uuid>`); `contact_source` and `contact_person` are the sync state and the
   server copy of synced books ([ADR-024](adr/0024-server-owned-contacts.md)).
+- **Rules** ([ADR-029](adr/0029-message-rules.md)) keep their conditions and actions as
+  JSON in `rule`. `rule_cursor` remembers, per watched folder and UIDVALIDITY, the
+  highest UID the arrival rules have seen; `rule_message` the messages they processed,
+  so each is filtered once.
 - **The send log** (`sendlog.db`, table `sent`) records every message a server accepted,
   so a crash while sending never sends it twice.

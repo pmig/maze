@@ -22,6 +22,7 @@
 //! | Messages | [`message`](CoreHandle::message), [`verify_auth`](CoreHandle::verify_auth) |
 //! | Search   | [`search`](CoreHandle::search), [`saved_searches`](CoreHandle::saved_searches) / [`search_saved`](CoreHandle::search_saved) (see [`saved_searches`](mod@saved_searches)), [`quick_filter_body`](CoreHandle::quick_filter_body), [`sort_threads`](CoreHandle::sort_threads) / [`sort_messages`](CoreHandle::sort_messages) (search results by any column) |
 //! | Commands | [`apply`](CoreHandle::apply), [`undo`](CoreHandle::undo) |
+//! | Rules    | [`rules`](CoreHandle::rules), [`set_rule_enabled`](CoreHandle::set_rule_enabled), [`add_rule`](CoreHandle::add_rule), [`delete_rule`](CoreHandle::delete_rule), [`run_rules`](CoreHandle::run_rules) (run on new mail by themselves, see [`rules`](mod@rules)) |
 //! | Contacts | [`address_books`](CoreHandle::address_books), [`contacts`](CoreHandle::contacts) (All Contacts grouped by address, or one book), [`contact`](CoreHandle::contact) (every book's version), [`contact_book_editable`](CoreHandle::contact_book_editable) / [`save_contact`](CoreHandle::save_contact) (see [`contacts`](mod@contacts)) |
 //! | Google and Microsoft contacts | [`connect_contacts`](CoreHandle::connect_contacts) / [`disconnect_contacts`](CoreHandle::disconnect_contacts), [`contacts_status`](CoreHandle::contacts_status), [`sync_contacts_now`](CoreHandle::sync_contacts_now), [`create_contact`](CoreHandle::create_contact) / [`update_contact`](CoreHandle::update_contact) (write-through), [`synced_contact`](CoreHandle::synced_contact), [`contact_photo`](CoreHandle::contact_photo) (see [`synced_contacts`]) |
 //! | Compose  | [`identities`](CoreHandle::identities), [`new_draft`](CoreHandle::new_draft), [`reply_draft`](CoreHandle::reply_draft), [`forward_draft`](CoreHandle::forward_draft), [`create_draft`](CoreHandle::create_draft)/[`update_draft`](CoreHandle::update_draft)/[`delete_draft`](CoreHandle::delete_draft), [`send_draft`](CoreHandle::send_draft) (see [`compose`], [`outgoing`]) |
@@ -90,6 +91,7 @@ pub mod new_mail;
 pub mod ops;
 pub mod outgoing;
 pub mod reader_text;
+pub mod rules;
 pub mod saved_searches;
 pub mod secrets;
 pub mod storage;
@@ -143,6 +145,7 @@ pub use message::{AuthStatus, Body, MessageView, RENDERER_VERSION, RemoteContent
 pub use new_mail::{NewMail, NewMailBatch};
 pub use outgoing::{SmtpServerSettings, SmtpSuggestion, smtp_default_port, suggest_smtp_server};
 pub use row_cache::{DEFAULT_ROW_CACHE_CAPACITY, RowCacheStats};
+pub use rules::{NewRule, RuleRunReport, RuleSummary};
 pub use secrets::StoreSecretStore;
 pub use storage::StorageUsage;
 pub use sync_bridge::{
@@ -174,7 +177,7 @@ pub use saved_searches::SavedSearchChange;
 pub use store::{
     Account, AccountKind, AgentThread, AgentThreadId, ContactId, ListKey, ListOrder, ListScope,
     MessageKey, MessageRow, OpId, ProposalId, ProposalItemId, ProposalItemState, ProposalState,
-    RuleId, SavedSearch, SortField, SortOrder, Tag, ThreadRow, TokenId,
+    RuleId, RuleTrigger, SavedSearch, SortField, SortOrder, Tag, ThreadRow, TokenId,
 };
 
 /// Search types that are part of this API.

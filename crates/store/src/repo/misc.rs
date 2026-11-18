@@ -1,10 +1,11 @@
 //! Tags, contacts, rules and saved searches.
 
-use mazemail_types::{AccountId, FolderId, TagId};
+use mazemail_types::{AccountId, FolderId, MessageId, TagId};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use crate::model::{
-    Contact, ContactId, Rule, RuleId, RuleInput, SavedSearch, SavedSearchId, Tag, UnixTime,
+    Contact, ContactId, Rule, RuleCursor, RuleId, RuleInput, SavedSearch, SavedSearchId, Tag,
+    UnixTime,
 };
 use crate::repo::accounts::ensure_changed;
 use crate::{Error, Result, WriteTx};
@@ -133,6 +134,75 @@ pub(crate) fn rules(conn: &Connection, account: Option<AccountId>) -> Result<Vec
     Ok(stmt
         .query_map([account.map(|a| a.0)], rule_row)?
         .collect::<rusqlite::Result<_>>()?)
+}
+
+/// One rule.
+pub(crate) fn rule(conn: &Connection, id: RuleId) -> Result<Option<Rule>> {
+    Ok(conn
+        .prepare_cached(&format!("SELECT {RULE_COLUMNS} FROM rule WHERE id = ?1"))?
+        .query_row([id.0], rule_row)
+        .optional()?)
+}
+
+/// Where the arrival rules stopped in `folder`.
+pub(crate) fn rule_cursor(conn: &Connection, folder: FolderId) -> Result<Option<RuleCursor>> {
+    Ok(conn
+        .prepare_cached("SELECT uidvalidity, last_uid FROM rule_cursor WHERE folder_id = ?1")?
+        .query_row([folder.0], |row| {
+            Ok(RuleCursor {
+                uidvalidity: row.get(0)?,
+                last_uid: row.get(1)?,
+            })
+        })
+        .optional()?)
+}
+
+/// Locations in `folder` with a UID above `after`, ascending, at most `limit`.
+pub(crate) fn locations_after_uid(
+    conn: &Connection,
+    folder: FolderId,
+    after: u32,
+    limit: usize,
+) -> Result<Vec<(u32, MessageId)>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT uid, message_id FROM message_location
+         WHERE folder_id = ?1 AND uid > ?2 ORDER BY uid LIMIT ?3",
+    )?;
+    Ok(stmt
+        .query_map(
+            params![folder.0, after, i64::try_from(limit).unwrap_or(i64::MAX)],
+            |row| Ok((row.get(0)?, MessageId(row.get(1)?))),
+        )?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// Messages in `folder` with an id above `after`, ascending, at most `limit` (Gmail
+/// labels included, which have no UIDs).
+pub(crate) fn folder_messages_after(
+    conn: &Connection,
+    folder: FolderId,
+    after: MessageId,
+    limit: usize,
+) -> Result<Vec<MessageId>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT message_id FROM message_location
+         WHERE folder_id = ?1 AND message_id > ?2 ORDER BY message_id LIMIT ?3",
+    )?;
+    Ok(stmt
+        .query_map(
+            params![folder.0, after.0, i64::try_from(limit).unwrap_or(i64::MAX)],
+            |row| Ok(MessageId(row.get(0)?)),
+        )?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// Whether the arrival rules have processed `message`.
+pub(crate) fn rule_processed(conn: &Connection, message: MessageId) -> Result<bool> {
+    Ok(conn
+        .prepare_cached("SELECT 1 FROM rule_message WHERE message_id = ?1")?
+        .query_row([message.0], |_| Ok(()))
+        .optional()?
+        .is_some())
 }
 
 fn saved_search_row(row: &Row<'_>) -> Result<SavedSearch> {
@@ -348,6 +418,40 @@ impl WriteTx<'_> {
             .execute([id.0])?;
         ensure_changed(changed, "rule", id.0)?;
         self.changes.settings = true;
+        Ok(())
+    }
+
+    /// Enables or disables a rule.
+    pub fn set_rule_enabled(&mut self, id: RuleId, enabled: bool) -> Result<()> {
+        let changed = self
+            .conn
+            .prepare_cached("UPDATE rule SET enabled = ?2, updated = ?3 WHERE id = ?1")?
+            .execute(params![id.0, enabled, self.now])?;
+        ensure_changed(changed, "rule", id.0)?;
+        self.changes.settings = true;
+        Ok(())
+    }
+
+    /// Records where the arrival rules stopped in `folder`.
+    pub fn set_rule_cursor(&mut self, folder: FolderId, cursor: RuleCursor) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT INTO rule_cursor (folder_id, uidvalidity, last_uid) VALUES (?1, ?2, ?3)
+                 ON CONFLICT (folder_id) DO UPDATE
+                   SET uidvalidity = excluded.uidvalidity, last_uid = excluded.last_uid",
+            )?
+            .execute(params![folder.0, cursor.uidvalidity, cursor.last_uid])?;
+        Ok(())
+    }
+
+    /// Records that the arrival rules have processed `messages`.
+    pub fn mark_rule_processed(&mut self, messages: &[MessageId]) -> Result<()> {
+        let mut stmt = self.conn.prepare_cached(
+            "INSERT OR IGNORE INTO rule_message (message_id, processed) VALUES (?1, ?2)",
+        )?;
+        for message in messages {
+            stmt.execute(params![message.0, self.now])?;
+        }
         Ok(())
     }
 

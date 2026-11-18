@@ -7,9 +7,9 @@ use super::args::{
     AccountAddArgs, AccountListArgs, AccountRemoveArgs, AccountSetArgs, ArchiveArgs,
     AttachmentSaveArgs, ContactsArgs, DraftEditArgs, DraftNewArgs, ExportArgs, FlagArgs,
     FoldersArgs, IdentitiesArgs, ImportArgs, ImportFormat, MoveArgs, OAuthProvider, ProposeArgs,
-    ReadArgs, RuleAddArgs, SavedSearchAddArgs, SavedSearchDeleteArgs, SavedSearchEditArgs,
-    SavedSearchListArgs, SavedSearchRenameArgs, SearchArgs, SendArgs, ShowArgs, SyncArgs, TagArgs,
-    TagsArgs,
+    ReadArgs, RuleAddArgs, RuleIdArgs, RuleListArgs, RuleRunArgs, SavedSearchAddArgs,
+    SavedSearchDeleteArgs, SavedSearchEditArgs, SavedSearchListArgs, SavedSearchRenameArgs,
+    SearchArgs, SendArgs, ShowArgs, SyncArgs, TagArgs, TagsArgs,
 };
 
 /// Arguments that don't match a command's schema.
@@ -99,6 +99,18 @@ mail_commands! {
     Propose(ProposeArgs) = "propose",
     /// `mazemail rule add`. Already approved by the user when it arrives.
     RuleAdd(RuleAddArgs) = "rule.add",
+    /// `mazemail rule list`.
+    RuleList(RuleListArgs) = "rule.list",
+    /// `mazemail rule show`.
+    RuleShow(RuleIdArgs) = "rule.show",
+    /// `mazemail rule enable`. Already approved by the user when it arrives.
+    RuleEnable(RuleIdArgs) = "rule.enable",
+    /// `mazemail rule disable`. Already approved by the user when it arrives.
+    RuleDisable(RuleIdArgs) = "rule.disable",
+    /// `mazemail rule delete`. Already approved by the user when it arrives.
+    RuleDelete(RuleIdArgs) = "rule.delete",
+    /// `mazemail rule run`. Already approved by the user when it arrives.
+    RuleRun(RuleRunArgs) = "rule.run",
     /// `mazemail send`. Already approved by the user when it arrives.
     Send(SendArgs) = "send",
     /// `mazemail export`. Already approved by the user when it arrives.

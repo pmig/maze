@@ -1408,3 +1408,42 @@ fn inbox_count_in(core: &CoreHandle, folder: mazemail_types::FolderId) -> usize 
         .unwrap()
         .len()
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rules_move_new_mail_on_the_server() {
+    let server = FakeServer::new();
+    server.add_folder("Lists", None);
+    server.deliver("INBOX", mail(1, OLD));
+    let s = open(&server).await;
+    let info = s.core.add_imap_account(input(PASSWORD)).await.unwrap();
+    wait_for("the first message", || inbox_count(&s.core) == 1).await;
+    let rule = rules::Rule::parse(
+        r#"{"match":"all","terms":[{"field":"from","op":"contains","value":"carol@"}]}"#,
+        r#"[{"action":"mark_read"},{"action":"move_to_folder","value":"Lists"}]"#,
+    )
+    .unwrap();
+    s.core
+        .add_rule(mazemail_core::NewRule {
+            account: Some(info.id),
+            name: "Carol".into(),
+            rule,
+            enabled: true,
+        })
+        .await
+        .unwrap();
+
+    // New mail from Carol ends up in Lists on the server, read; the old mail stays.
+    s.server
+        .deliver("INBOX", fresh(2, "Carol <carol@example.net>"));
+    s.server.deliver("INBOX", fresh(3, "Bob <bob@example.net>"));
+    wait_for("the rule's move on the server", || {
+        s.server
+            .messages("Lists")
+            .iter()
+            .any(|m| m.flags.contains(Flags::SEEN))
+    })
+    .await;
+    wait_for("the other message", || inbox_count(&s.core) == 2).await;
+    assert_eq!(s.server.messages("INBOX").len(), 2);
+    s.core.shutdown().await.unwrap();
+}

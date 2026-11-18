@@ -13,6 +13,8 @@ ingest = { workspace = true }
 mazemail_mime = { workspace = true }
 mazemail_types = { workspace = true }
 rayon = { workspace = true }
+# Filters become rules in the rules engine's format (same layer, L2).
+rules = { workspace = true }
 rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

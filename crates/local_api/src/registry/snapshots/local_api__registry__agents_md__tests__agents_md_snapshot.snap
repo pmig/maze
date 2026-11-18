@@ -55,7 +55,13 @@ expression: agents_md()
 | `flag` | deny | propose | allow |
 | `read` | deny | propose | allow |
 | `propose` | deny | allow | allow |
+| `rule list` | allow | allow | allow |
+| `rule show` | allow | allow | allow |
 | `rule add` | deny | ask | ask |
+| `rule enable` | deny | ask | ask |
+| `rule disable` | deny | ask | ask |
+| `rule delete` | deny | ask | ask |
+| `rule run` | deny | ask | ask |
 | `send` | deny | deny (ask with `--allow-send`) | deny (ask with `--allow-send`) |
 | `export` | deny | ask | ask |
 | `import` | deny | ask | ask |
@@ -942,11 +948,97 @@ Examples:
 mazemail propose --title 'Inbox triage' --file actions.json
 ```
 
+### `mazemail rule list`
+
+List message rules (filters).
+
+Lists the rules in the order they run, with their conditions, actions and whether they are enabled. Rules imported from Thunderbird start disabled; `problems` says what Maze can't run.
+
+Permission: `read`
+
+```sh
+mazemail rule list [OPTIONS]
+```
+
+| Argument | Description |
+| -------- | ----------- |
+| `--account <ACCOUNT>` | Only this account's rules (and the rules for every account). |
+
+Output (`--json`):
+
+```ts
+[
+  {
+    account?: string | null,  // The account (`a_…`), or `null` for every account.
+    actions: string,  // The actions, readable, in the order they run.
+    conditions: string,  // The conditions, readable (`from contains "anna" and has attachments`).
+    enabled: boolean,  // Whether it runs on new mail.
+    id: string,  // Rule id (`r_…`).
+    imported: boolean,  // Imported from Thunderbird.
+    name: string,  // Name.
+    note?: string | null,  // The import's note, if any.
+    problems: string[],  // What keeps it from running as intended; unsupported actions are only skipped.
+    runnable: boolean,  // Whether it may be enabled.
+    trigger: string,  // When it runs: `arrival` or `arrival_before_junk` on new mail; others only with `rule run`.
+  }
+]
+```
+
+Examples:
+
+```sh
+# Show every rule
+mazemail rule list
+# Imported rules that can be enabled
+mazemail rule list --json | jq -r '.[] | select(.imported and .runnable and (.enabled | not)) | .id'
+```
+
+### `mazemail rule show`
+
+Show one rule.
+
+Shows a rule's conditions, actions, problems and, for an imported rule, the import's note.
+
+Permission: `read`
+
+```sh
+mazemail rule show <RULE>
+```
+
+| Argument | Description |
+| -------- | ----------- |
+| `<RULE>` | The rule's id (`r_…`, from `mazemail rule list`). |
+
+Output (`--json`):
+
+```ts
+{
+  account?: string | null,  // The account (`a_…`), or `null` for every account.
+  actions: string,  // The actions, readable, in the order they run.
+  conditions: string,  // The conditions, readable (`from contains "anna" and has attachments`).
+  enabled: boolean,  // Whether it runs on new mail.
+  id: string,  // Rule id (`r_…`).
+  imported: boolean,  // Imported from Thunderbird.
+  name: string,  // Name.
+  note?: string | null,  // The import's note, if any.
+  problems: string[],  // What keeps it from running as intended; unsupported actions are only skipped.
+  runnable: boolean,  // Whether it may be enabled.
+  trigger: string,  // When it runs: `arrival` or `arrival_before_junk` on new mail; others only with `rule run`.
+}
+```
+
+Examples:
+
+```sh
+# Show a rule
+mazemail rule show r_b
+```
+
 ### `mazemail rule add`
 
-Add a filter rule.
+Add a rule for new mail.
 
-Adds a rule that runs on new mail. Always asks for approval in Maze.
+Adds an enabled rule that runs on new mail in the Inbox, after the existing rules. --when takes from:, to:, cc:, subject:, list:, has:attachment and free text (the message text), negated with `-`; terms must all match, or any with OR. Always asks for approval in Maze.
 
 Permission: `ask`
 
@@ -957,10 +1049,10 @@ mazemail rule add [OPTIONS] --name <NAME> --when <QUERY> --then <ACTION>...
 | Argument | Description |
 | -------- | ----------- |
 | `--name <NAME>` | Name shown in the rules list. Required. |
-| `--when <QUERY>` | Which messages the rule matches, as a search query. Required. |
-| `--then <ACTION>...` | What to do (repeatable): archive, read, flag, move:&lt;folder-id&gt;, tag:&lt;name&gt;. Required. |
+| `--when <QUERY>` | Which messages the rule matches, as a search query: from:, to:, cc:, subject:, list:, has:attachment and free text (the message text), negated with `-`, all of them (`a b`) or any (`a OR b`). Required. |
+| `--then <ACTION>...` | What to do (repeatable): archive, read, flag, trash, stop, move:&lt;folder-id&gt;, copy:&lt;folder-id&gt;, tag:&lt;name&gt;. Required. |
 | `--account <ACCOUNT>` | Limit the rule to one account. |
-| `--apply-now` | Also run the rule on existing messages now. |
+| `--apply-now` | Also run the rule on the messages in the Inbox now. |
 
 Output (`--json`):
 
@@ -976,6 +1068,158 @@ Examples:
 ```sh
 # Tag and archive receipts
 mazemail rule add --name Receipts --when 'from:receipts@shop.example' --then tag:Receipts --then archive
+```
+
+### `mazemail rule enable`
+
+Enable a rule.
+
+The rule runs on new mail from now on (mail that arrived before isn't filtered; use `mazemail rule run` for that). A rule with conditions Maze can't evaluate can't be enabled. Always asks for approval in Maze.
+
+Permission: `ask`
+
+```sh
+mazemail rule enable <RULE>
+```
+
+| Argument | Description |
+| -------- | ----------- |
+| `<RULE>` | The rule's id (`r_…`, from `mazemail rule list`). |
+
+Output (`--json`):
+
+```ts
+{
+  account?: string | null,  // The account (`a_…`), or `null` for every account.
+  actions: string,  // The actions, readable, in the order they run.
+  conditions: string,  // The conditions, readable (`from contains "anna" and has attachments`).
+  enabled: boolean,  // Whether it runs on new mail.
+  id: string,  // Rule id (`r_…`).
+  imported: boolean,  // Imported from Thunderbird.
+  name: string,  // Name.
+  note?: string | null,  // The import's note, if any.
+  problems: string[],  // What keeps it from running as intended; unsupported actions are only skipped.
+  runnable: boolean,  // Whether it may be enabled.
+  trigger: string,  // When it runs: `arrival` or `arrival_before_junk` on new mail; others only with `rule run`.
+}
+```
+
+Examples:
+
+```sh
+# Enable an imported rule
+mazemail rule enable r_b
+```
+
+### `mazemail rule disable`
+
+Disable a rule.
+
+The rule stops running on new mail; it stays in the list. Always asks for approval in Maze.
+
+Permission: `ask`
+
+```sh
+mazemail rule disable <RULE>
+```
+
+| Argument | Description |
+| -------- | ----------- |
+| `<RULE>` | The rule's id (`r_…`, from `mazemail rule list`). |
+
+Output (`--json`):
+
+```ts
+{
+  account?: string | null,  // The account (`a_…`), or `null` for every account.
+  actions: string,  // The actions, readable, in the order they run.
+  conditions: string,  // The conditions, readable (`from contains "anna" and has attachments`).
+  enabled: boolean,  // Whether it runs on new mail.
+  id: string,  // Rule id (`r_…`).
+  imported: boolean,  // Imported from Thunderbird.
+  name: string,  // Name.
+  note?: string | null,  // The import's note, if any.
+  problems: string[],  // What keeps it from running as intended; unsupported actions are only skipped.
+  runnable: boolean,  // Whether it may be enabled.
+  trigger: string,  // When it runs: `arrival` or `arrival_before_junk` on new mail; others only with `rule run`.
+}
+```
+
+Examples:
+
+```sh
+# Disable a rule
+mazemail rule disable r_b
+```
+
+### `mazemail rule delete`
+
+Delete a rule.
+
+Removes the rule; mail it already sorted stays where it is. Always asks for approval in Maze.
+
+Permission: `ask`
+
+```sh
+mazemail rule delete <RULE>
+```
+
+| Argument | Description |
+| -------- | ----------- |
+| `<RULE>` | The rule's id (`r_…`, from `mazemail rule list`). |
+
+Output (`--json`):
+
+```ts
+{
+  id: string,  // The deleted rule's id.
+  name: string,  // Its name.
+}
+```
+
+Examples:
+
+```sh
+# Delete a rule
+mazemail rule delete r_b
+```
+
+### `mazemail rule run`
+
+Run rules on a folder now.
+
+Runs the enabled rules of the folder's account over every message in the folder, or only the rule you name (even a disabled one, to try it first). Actions are logged in the audit log with the rule as their origin. Always asks for approval in Maze.
+
+Permission: `ask`
+
+```sh
+mazemail rule run --folder <FOLDER> [<RULE>]
+```
+
+| Argument | Description |
+| -------- | ----------- |
+| `--folder <FOLDER>` | The folder to run the rules on (`f_…`, from `mazemail folders`). Required. |
+| `<RULE>` | Only this rule (`r_…`), even if it is disabled (to try it). Default: the enabled rules of the folder's account. |
+
+Output (`--json`):
+
+```ts
+{
+  actions: integer,  // Actions run (each covers all its messages).
+  affected: string[],  // Message ids changed.
+  examined: integer,  // Messages the rules looked at.
+  failed: integer,  // Actions skipped or failed (the audit log says why).
+  matched: integer,  // Messages a rule acted on.
+}
+```
+
+Examples:
+
+```sh
+# Run the enabled rules on a folder
+mazemail rule run --folder f_k2
+# Try one rule on a folder
+mazemail rule run --folder f_k2 r_b
 ```
 
 ### `mazemail send`

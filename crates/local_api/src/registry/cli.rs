@@ -145,8 +145,20 @@ pub enum DraftCommand {
 /// `mazemail rule …`.
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum RuleCommand {
+    /// `mazemail rule list`.
+    List(RuleListArgs),
+    /// `mazemail rule show`.
+    Show(RuleIdArgs),
     /// `mazemail rule add`.
     Add(RuleAddArgs),
+    /// `mazemail rule enable`.
+    Enable(RuleIdArgs),
+    /// `mazemail rule disable`.
+    Disable(RuleIdArgs),
+    /// `mazemail rule delete`.
+    Delete(RuleIdArgs),
+    /// `mazemail rule run`.
+    Run(RuleRunArgs),
 }
 
 /// Adds every subcommand to `cmd`, with summaries, help and examples from the registry.
@@ -413,7 +425,13 @@ impl CliCommand {
             Self::Flag(_) => &["flag"],
             Self::Read(_) => &["read"],
             Self::Propose(_) => &["propose"],
+            Self::Rule(RuleCommand::List(_)) => &["rule", "list"],
+            Self::Rule(RuleCommand::Show(_)) => &["rule", "show"],
             Self::Rule(RuleCommand::Add(_)) => &["rule", "add"],
+            Self::Rule(RuleCommand::Enable(_)) => &["rule", "enable"],
+            Self::Rule(RuleCommand::Disable(_)) => &["rule", "disable"],
+            Self::Rule(RuleCommand::Delete(_)) => &["rule", "delete"],
+            Self::Rule(RuleCommand::Run(_)) => &["rule", "run"],
             Self::Send(_) => &["send"],
             Self::Export(_) => &["export"],
             Self::Import(_) => &["import"],
@@ -506,7 +524,15 @@ impl CliCommand {
                 })?;
                 Invocation::new(name, &wire)
             }
+            Self::Rule(RuleCommand::List(args)) => Invocation::new(name, &args),
             Self::Rule(RuleCommand::Add(args)) => Invocation::new(name, &args),
+            Self::Rule(
+                RuleCommand::Show(args)
+                | RuleCommand::Enable(args)
+                | RuleCommand::Disable(args)
+                | RuleCommand::Delete(args),
+            ) => Invocation::new(name, &args),
+            Self::Rule(RuleCommand::Run(args)) => Invocation::new(name, &args),
             Self::Send(args) => Invocation::new(name, &args),
             Self::Export(mut args) => {
                 args.to = cwd(env)?.join(&args.to);
@@ -829,6 +855,20 @@ mod tests {
                 ],
                 "rule.add",
             ),
+            (
+                &[
+                    "rule", "add", "--name", "n", "--when", "list:dev", "--then", "copy:f_c",
+                    "--then", "trash", "--then", "stop",
+                ],
+                "rule.add",
+            ),
+            (&["rule", "list", "--account", "a_b"], "rule.list"),
+            (&["rule", "show", "r_b"], "rule.show"),
+            (&["rule", "enable", "r_b"], "rule.enable"),
+            (&["rule", "disable", "r_b"], "rule.disable"),
+            (&["rule", "delete", "r_b"], "rule.delete"),
+            (&["rule", "run", "--folder", "f_b"], "rule.run"),
+            (&["rule", "run", "--folder", "f_b", "r_c"], "rule.run"),
             (&["send", "d_b"], "send"),
             (&["import", "mail.mbox"], "import"),
             (&["account", "list"], "account.list"),
@@ -899,6 +939,8 @@ mod tests {
             &[
                 "rule", "add", "--name", "n", "--when", "q", "--then", "delete",
             ],
+            &["rule", "run", "r_b"],
+            &["rule", "enable"],
             &["token"],
             &["search"],
             &["saved-search"],

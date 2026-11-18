@@ -1554,6 +1554,72 @@ impl MailSource for CoreMailSource {
         })
     }
 
+    fn rules(&self) -> Vec<mail_ui::rules_tab::RuleEntry> {
+        let Some(core) = self.core() else {
+            return Vec::new();
+        };
+        let names: std::collections::HashMap<AccountId, String> = core
+            .accounts()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| (a.id, a.name))
+            .collect();
+        match core.rules(None) {
+            Ok(rules) => rules
+                .into_iter()
+                .map(|rule| mail_ui::rules_tab::RuleEntry {
+                    id: rule.id.0,
+                    account_name: match rule.account {
+                        Some(account) => names.get(&account).cloned().unwrap_or_default().into(),
+                        None => "All accounts".into(),
+                    },
+                    name: rule.name.into(),
+                    account: rule.account,
+                    enabled: rule.enabled,
+                    conditions: Sensitive::new(rule.conditions.into()),
+                    actions: rule.actions.join(", ").into(),
+                    problems: rule.problems.into_iter().map(Into::into).collect(),
+                    runnable: rule.runnable,
+                    imported: rule.imported,
+                })
+                .collect(),
+            Err(error) => {
+                tracing::warn!(%error, "reading the rules");
+                Vec::new()
+            }
+        }
+    }
+
+    fn set_rule_enabled(&self, rule: i64, enabled: bool) -> Result<(), SourceError> {
+        let core = self.ready()?;
+        let runner = core.clone();
+        wait(&core, async move {
+            runner
+                .set_rule_enabled(mazemail_core::RuleId(rule), enabled)
+                .await
+        })?
+        .map(drop)
+        .map_err(unavailable)
+    }
+
+    fn run_rules(&self, folder: FolderId) -> Result<mail_ui::rules_tab::RulesRun, SourceError> {
+        let core = self.ready()?;
+        let runner = core.clone();
+        let report = wait_for(
+            &core,
+            async move { runner.run_rules(folder, None).await },
+            FOLDER_ACTION_TIMEOUT,
+        )?
+        .map_err(|error| match error {
+            mazemail_core::Error::NotFound { .. } => SourceError::FolderNotFound,
+            other => unavailable(other),
+        })?;
+        Ok(mail_ui::rules_tab::RulesRun {
+            examined: report.examined,
+            matched: report.matched,
+        })
+    }
+
     fn set_favorite(&self, folder: FolderId, favorite: bool) -> Result<(), SourceError> {
         let core = self.ready()?;
         core.set_favorite_folder(folder, favorite)

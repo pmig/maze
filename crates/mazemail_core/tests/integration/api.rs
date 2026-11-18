@@ -11,9 +11,9 @@ use auth::MemorySecretStore;
 use imap::fake::FakeServer;
 use import::maildir::MaildirWriter;
 use local_api::registry::args::{
-    ArchiveArgs, ExportArgs, ExportFormat, FoldersArgs, ImportArgs, ImportPart, SavedSearchAddArgs, SavedSearchDeleteArgs, SavedSearchEditArgs, SavedSearchListArgs, SavedSearchRenameArgs,
-    SearchArgs,
-    ShowArgs, ShowFormat,
+    ArchiveArgs, ExportArgs, ExportFormat, FoldersArgs, ImportArgs, ImportPart, SavedSearchAddArgs,
+    SavedSearchDeleteArgs, SavedSearchEditArgs, SavedSearchListArgs, SavedSearchRenameArgs,
+    SearchArgs, ShowArgs, ShowFormat,
 };
 use local_api::{
     AccountList, ApprovalRequest, Approver, AuditEvent, AuditOutcome, AuditSink, Command,
@@ -1074,4 +1074,111 @@ async fn account_scope_limits_synced_contacts_to_its_accounts() {
         .await
         .unwrap();
     assert_eq!(contacts(all).len(), 4);
+}
+
+#[tokio::test]
+async fn rule_commands_add_list_enable_run_and_delete() {
+    use local_api::registry::args::{
+        RuleAction, RuleAddArgs, RuleIdArgs, RuleListArgs, RuleRunArgs,
+    };
+    let t = open().await;
+    let fx = t.fixture;
+    let record = token(&t, Profile::Writer, TokenScope::all()).await;
+    let all = ctx_all(&t, &record);
+
+    // A rule for every account is refused for a token that doesn't see every account.
+    let work_only = token(&t, Profile::Writer, accounts(&[fx.work])).await;
+    let narrow = ctx(&t, &work_only, ExecutionMode::Execute);
+    let add = |account, actions: Vec<RuleAction>| {
+        Command::RuleAdd(RuleAddArgs {
+            name: "Anna".into(),
+            when: Sensitive::new("from:anna -subject:spam".to_owned()),
+            actions,
+            account,
+            apply_now: false,
+        })
+    };
+    let error = run(&t, &narrow, add(None, vec![RuleAction::Flag]))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidArgs, "{error:?}");
+
+    // A move names the account; the rule stores the folder's path.
+    let added = run(
+        &t,
+        &all,
+        add(
+            None,
+            vec![RuleAction::MarkRead, RuleAction::Move { to: fx.projects }],
+        ),
+    )
+    .await
+    .unwrap();
+    let id = added["id"].as_str().unwrap().to_owned();
+    assert!(id.starts_with("r_"), "{added}");
+    let listed = run(&t, &narrow, Command::RuleList(RuleListArgs::default()))
+        .await
+        .unwrap();
+    assert_eq!(listed[0]["account"], fx.work.to_string());
+    assert_eq!(listed[0]["enabled"], true);
+    assert_eq!(
+        listed[0]["conditions"],
+        "from contains \"anna\" and subject doesn't contain \"spam\""
+    );
+    assert_eq!(listed[0]["actions"], "mark read, move to Projects");
+
+    // Gmail's token doesn't see the Work rule.
+    let gmail_only = token(&t, Profile::Writer, accounts(&[fx.gmail])).await;
+    let gmail = ctx(&t, &gmail_only, ExecutionMode::Execute);
+    let hidden = run(&t, &gmail, Command::RuleShow(RuleIdArgs { id: id.clone() }))
+        .await
+        .unwrap_err();
+    assert_eq!(hidden.code, ErrorCode::NotFound);
+
+    // Disable, then run it on the Inbox by name: Anna's message moves.
+    let disabled = run(
+        &t,
+        &all,
+        Command::RuleDisable(RuleIdArgs { id: id.clone() }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(disabled["enabled"], false);
+    let ran = run(
+        &t,
+        &all,
+        Command::RuleRun(RuleRunArgs {
+            folder: fx.inbox,
+            id: Some(id.clone()),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(ran["matched"], 1, "{ran}");
+    assert_eq!(ran["affected"], json!([t.work_mail.to_string()]));
+    let reader = t.core.store().reader().unwrap();
+    let detail = reader.message(t.work_mail).unwrap().unwrap();
+    assert_eq!(detail.locations[0].folder, fx.projects);
+    let audited = reader
+        .audit_log(&AuditQuery {
+            origin: Some("rule:".into()),
+            limit: 10,
+            ..AuditQuery::default()
+        })
+        .unwrap();
+    assert_eq!(audited.len(), 2, "{audited:?}");
+    drop(reader);
+
+    let enabled = run(&t, &all, Command::RuleEnable(RuleIdArgs { id: id.clone() }))
+        .await
+        .unwrap();
+    assert_eq!(enabled["enabled"], true);
+    let deleted = run(&t, &all, Command::RuleDelete(RuleIdArgs { id: id.clone() }))
+        .await
+        .unwrap();
+    assert_eq!(deleted["name"], "Anna");
+    let gone = run(&t, &all, Command::RuleShow(RuleIdArgs { id }))
+        .await
+        .unwrap_err();
+    assert_eq!(gone.code, ErrorCode::NotFound);
 }

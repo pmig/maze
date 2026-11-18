@@ -541,10 +541,54 @@ static REGISTRY: &[CommandSpec] = &[
         human: Human::Fields,
     },
     CommandSpec {
+        name: "rule.list",
+        path: &["rule", "list"],
+        summary: "List message rules (filters)",
+        help: "Lists the rules in the order they run, with their conditions, actions and \
+               whether they are enabled. Rules imported from Thunderbird start disabled; \
+               `problems` says what Maze can't run.",
+        permission: Permission::Read,
+        requires_token: true,
+        touches_mail: true,
+        examples: &[
+            ex("mazemail rule list", "Show every rule"),
+            ex(
+                "mazemail rule list --json | jq -r '.[] | select(.imported and .runnable and (.enabled | not)) | .id'",
+                "Imported rules that can be enabled",
+            ),
+        ],
+        args_schema: schema::<RuleListArgs>,
+        output_schema: schema::<Vec<RuleInfo>>,
+        human: Human::Table(&[
+            col("ID", "id"),
+            col("NAME", "name"),
+            col("ENABLED", "enabled"),
+            col("CONDITIONS", "conditions"),
+            col("ACTIONS", "actions"),
+        ]),
+    },
+    CommandSpec {
+        name: "rule.show",
+        path: &["rule", "show"],
+        summary: "Show one rule",
+        help: "Shows a rule's conditions, actions, problems and, for an imported rule, the \
+               import's note.",
+        permission: Permission::Read,
+        requires_token: true,
+        touches_mail: true,
+        examples: &[ex("mazemail rule show r_b", "Show a rule")],
+        args_schema: schema::<RuleIdArgs>,
+        output_schema: schema::<RuleInfo>,
+        human: Human::Fields,
+    },
+    CommandSpec {
         name: "rule.add",
         path: &["rule", "add"],
-        summary: "Add a filter rule",
-        help: "Adds a rule that runs on new mail. Always asks for approval in Maze.",
+        summary: "Add a rule for new mail",
+        help: "Adds an enabled rule that runs on new mail in the Inbox, after the existing \
+               rules. --when takes from:, to:, cc:, subject:, list:, has:attachment and free \
+               text (the message text), negated with `-`; terms must all match, or any with \
+               OR. Always asks for approval in Maze.",
         permission: Permission::Ask,
         requires_token: true,
         touches_mail: true,
@@ -554,6 +598,74 @@ static REGISTRY: &[CommandSpec] = &[
         )],
         args_schema: schema::<RuleAddArgs>,
         output_schema: schema::<RuleOutput>,
+        human: Human::Fields,
+    },
+    CommandSpec {
+        name: "rule.enable",
+        path: &["rule", "enable"],
+        summary: "Enable a rule",
+        help: "The rule runs on new mail from now on (mail that arrived before isn't \
+               filtered; use `mazemail rule run` for that). A rule with conditions Maze can't \
+               evaluate can't be enabled. Always asks for approval in Maze.",
+        permission: Permission::Ask,
+        requires_token: true,
+        touches_mail: true,
+        examples: &[ex("mazemail rule enable r_b", "Enable an imported rule")],
+        args_schema: schema::<RuleIdArgs>,
+        output_schema: schema::<RuleInfo>,
+        human: Human::Fields,
+    },
+    CommandSpec {
+        name: "rule.disable",
+        path: &["rule", "disable"],
+        summary: "Disable a rule",
+        help: "The rule stops running on new mail; it stays in the list. Always asks for \
+               approval in Maze.",
+        permission: Permission::Ask,
+        requires_token: true,
+        touches_mail: true,
+        examples: &[ex("mazemail rule disable r_b", "Disable a rule")],
+        args_schema: schema::<RuleIdArgs>,
+        output_schema: schema::<RuleInfo>,
+        human: Human::Fields,
+    },
+    CommandSpec {
+        name: "rule.delete",
+        path: &["rule", "delete"],
+        summary: "Delete a rule",
+        help: "Removes the rule; mail it already sorted stays where it is. Always asks for \
+               approval in Maze.",
+        permission: Permission::Ask,
+        requires_token: true,
+        touches_mail: true,
+        examples: &[ex("mazemail rule delete r_b", "Delete a rule")],
+        args_schema: schema::<RuleIdArgs>,
+        output_schema: schema::<RuleDeleted>,
+        human: Human::Fields,
+    },
+    CommandSpec {
+        name: "rule.run",
+        path: &["rule", "run"],
+        summary: "Run rules on a folder now",
+        help: "Runs the enabled rules of the folder's account over every message in the \
+               folder, or only the rule you name (even a disabled one, to try it first). \
+               Actions are logged in the audit log with the rule as their origin. Always asks \
+               for approval in Maze.",
+        permission: Permission::Ask,
+        requires_token: true,
+        touches_mail: true,
+        examples: &[
+            ex(
+                "mazemail rule run --folder f_k2",
+                "Run the enabled rules on a folder",
+            ),
+            ex(
+                "mazemail rule run --folder f_k2 r_b",
+                "Try one rule on a folder",
+            ),
+        ],
+        args_schema: schema::<RuleRunArgs>,
+        output_schema: schema::<RuleRunOutput>,
         human: Human::Fields,
     },
     CommandSpec {
@@ -867,7 +979,10 @@ pub(crate) const GROUPS: &[(&str, &str)] = &[
     ("account", "Add, list and remove mail accounts"),
     ("attachment", "Work with attachments"),
     ("draft", "Write and change drafts"),
-    ("rule", "Manage filter rules"),
+    (
+        "rule",
+        "List, enable, run and manage message rules (filters)",
+    ),
     (
         "saved-search",
         "List, add, rename, edit and delete saved searches",
@@ -929,6 +1044,12 @@ mod tests {
             "read",
             "propose",
             "rule.add",
+            "rule.list",
+            "rule.show",
+            "rule.enable",
+            "rule.disable",
+            "rule.delete",
+            "rule.run",
             "send",
             "export",
             "import",
@@ -1001,7 +1122,16 @@ mod tests {
         for name in ["archive", "move", "tag", "flag", "read"] {
             assert_eq!(triage(name), Propose, "{name}");
         }
-        assert_eq!(triage("rule.add"), Ask);
+        for name in [
+            "rule.add",
+            "rule.enable",
+            "rule.disable",
+            "rule.delete",
+            "rule.run",
+        ] {
+            assert_eq!(triage(name), Ask, "{name}");
+        }
+        assert_eq!(triage("rule.list"), Allow);
         // Saved searches change what Maze shows, never mail: a read, harmless additions
         // and changes and a delete that asks.
         assert_eq!(triage("saved-search.list"), Allow);
@@ -1013,6 +1143,7 @@ mod tests {
             assert_eq!(triage(name), Allow, "{name}");
         }
         assert_eq!(triage("saved-search.delete"), Ask);
+        assert_eq!(triage("rule.show"), Allow);
         // Accounts: listing and syncing are reads; adding, removing and changing need a
         // writer token and the user's approval.
         assert_eq!(triage("account.list"), Allow);

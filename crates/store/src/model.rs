@@ -1306,6 +1306,14 @@ redacted_debug!(RuleInput {
     trigger
 });
 
+/// Where the arrival rules stopped in a folder: the highest UID they have seen, for
+/// the folder's UIDVALIDITY (ADR-029).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuleCursor {
+    pub uidvalidity: u32,
+    pub last_uid: u32,
+}
+
 /// A saved search (Thunderbird virtual folder).
 #[derive(Clone, PartialEq, Eq)]
 pub struct SavedSearch {

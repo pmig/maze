@@ -20,8 +20,8 @@
 //! `import` uploads mbox and Maildir mail into a folder of an IMAP account (or imports
 //! a Thunderbird profile) through the `import` crate, and `export` writes the matches
 //! of a query as mbox or Maildir (both `ask`, so the user approved them).
-//! Commands whose crates aren't part of this build yet (`draft new|edit`, `send`,
-//! `rule add`, `attachment save`) fail with a typed "not available in this version"
+//! The `rule` commands are in [`super::rules`]. Commands whose crates aren't part of
+//! this build yet (`draft new|edit`, `send`, `attachment save`) fail with a typed "not available in this version"
 //! error (`internal`, exit code 1).
 
 use std::collections::{BTreeSet, HashMap};
@@ -112,6 +112,7 @@ pub(crate) fn core_error(error: Error) -> CommandError {
             CommandError::not_found(format!("{entity} {id} not found"))
         }
         Error::InvalidCommand(reason) => CommandError::invalid_args(reason),
+        Error::InvalidRule(reason) => CommandError::invalid_args(reason),
         Error::Query(error) => CommandError::invalid_args(format!("invalid search query: {error}")),
         Error::PermissionDenied { reason } => {
             CommandError::new(ErrorCode::PermissionDenied, reason)
@@ -130,7 +131,7 @@ pub(crate) fn core_error(error: Error) -> CommandError {
     }
 }
 
-fn store_error(error: store::Error) -> CommandError {
+pub(super) fn store_error(error: store::Error) -> CommandError {
     core_error(error.into())
 }
 
@@ -240,7 +241,7 @@ fn resolve_messages(
 }
 
 /// A visible folder, or `not_found`.
-fn visible_folder_row(
+pub(super) fn visible_folder_row(
     reader: &Reader,
     scope: &EffectiveScope,
     id: FolderId,
@@ -298,7 +299,7 @@ fn public_ids(ids: &[MessageId]) -> Vec<String> {
     ids.iter().map(ToString::to_string).collect()
 }
 
-fn output(
+pub(super) fn output(
     data: &impl serde::Serialize,
     affected: Vec<String>,
 ) -> Result<CommandOutput, CommandError> {
@@ -1104,10 +1105,20 @@ impl CommandHandler for CoreCommandHandler {
                 };
                 output(&deleted, Vec::new())
             }
+            Command::RuleList(args) => super::rules::list(&self.core, ctx, &args),
+            Command::RuleShow(args) => super::rules::show(&self.core, ctx, &args),
+            Command::RuleAdd(args) => super::rules::add(&self.core, ctx, args).await,
+            Command::RuleEnable(args) => {
+                super::rules::set_enabled(&self.core, ctx, &args, true).await
+            }
+            Command::RuleDisable(args) => {
+                super::rules::set_enabled(&self.core, ctx, &args, false).await
+            }
+            Command::RuleDelete(args) => super::rules::delete(&self.core, ctx, &args).await,
+            Command::RuleRun(args) => super::rules::run(&self.core, ctx, &args).await,
             command @ (Command::AttachmentSave(_)
             | Command::DraftNew(_)
             | Command::DraftEdit(_)
-            | Command::RuleAdd(_)
             | Command::Send(_)) => Err(not_available(command.name())),
         }
     }

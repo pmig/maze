@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 
 use rusqlite::{Connection, OptionalExtension};
 
-use super::{SCHEMA_V1, SCHEMA_VERSION, user_version};
+use super::{SCHEMA_V1, user_version};
 use crate::{Error, Result};
 
 /// What v1 no longer has, dropped from a development database.
@@ -38,6 +38,9 @@ const DROPPED: &str = "DROP TABLE legacy_secret_account;
 
 /// The last schema version of the development builds.
 pub(super) const DEV_VERSION: u32 = 14;
+
+/// The schema version the conversion ends at; later migrations run after it.
+const V1: u32 = 1;
 
 /// Whether `conn` is a database of a development build at its last schema.
 pub(super) fn is_dev_v14(conn: &Connection) -> Result<bool> {
@@ -119,11 +122,11 @@ pub(super) fn convert(conn: &mut Connection) -> Result<()> {
     if let Some(table) = violations {
         return Err(Error::DevSchema(format!("foreign keys of {table}")));
     }
-    tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    tx.pragma_update(None, "user_version", V1)?;
     tx.commit()?;
     tracing::info!(
         from = DEV_VERSION,
-        to = SCHEMA_VERSION,
+        to = V1,
         "converted a development database to the v1 schema"
     );
     Ok(())
@@ -282,7 +285,7 @@ mod tests {
 
     use super::*;
     use crate::conn::{self, Access};
-    use crate::migrate::{MigrationReport, migrate_main};
+    use crate::migrate::{MAIN, MigrationReport, SCHEMA_VERSION, migrate_main};
 
     /// What the 14 migrations of the development builds produced, as SQLite stored it.
     const DEV_V14_SCHEMA: &str = include_str!("../../tests/fixtures/schema_v14.sql");
@@ -382,11 +385,13 @@ mod tests {
                 backup: Some(backup.clone()),
             }
         );
+        // Converted to v1, then migrated like any v1 database.
         assert_eq!(user_version(&conn).unwrap(), SCHEMA_VERSION);
-        pretty_assertions::assert_eq!(
-            fingerprint(&conn).unwrap(),
-            fingerprint(&fresh_v1().unwrap()).unwrap()
-        );
+        let mut latest = Connection::open_in_memory().unwrap();
+        rusqlite_migration::Migrations::from_slice(MAIN)
+            .to_latest(&mut latest)
+            .unwrap();
+        pretty_assertions::assert_eq!(fingerprint(&conn).unwrap(), fingerprint(&latest).unwrap());
 
         let count = |conn: &Connection, sql: &str| -> i64 {
             conn.query_row(sql, [], |r| r.get(0)).unwrap()
@@ -439,7 +444,10 @@ mod tests {
 
         // Opening it again changes nothing.
         let again = migrate_main(&mut conn, &key, &backups, "0.1.0-alpha.1").unwrap();
-        assert_eq!((again.from, again.to, again.backup), (1, 1, None));
+        assert_eq!(
+            (again.from, again.to, again.backup),
+            (SCHEMA_VERSION, SCHEMA_VERSION, None)
+        );
         drop(conn);
 
         // The backup still has everything, Local Folders included.

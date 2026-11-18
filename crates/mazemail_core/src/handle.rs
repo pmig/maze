@@ -78,7 +78,7 @@ impl std::fmt::Debug for CoreHandle {
     }
 }
 
-struct Inner {
+pub(crate) struct Inner {
     data_dir: PathBuf,
     runtime: Arc<RuntimeHolder>,
     store: Store,
@@ -406,6 +406,29 @@ impl CoreHandle {
     }
 
     /// The user's UTC offset, for dates in quotes.
+    /// The context commands run in.
+    pub(crate) fn exec_context(&self) -> ExecContext {
+        ExecContext {
+            utc_offset: self.inner.utc_offset,
+        }
+    }
+
+    /// A handle that doesn't keep the core alive (for background tasks).
+    pub(crate) fn downgrade(&self) -> std::sync::Weak<Inner> {
+        Arc::downgrade(&self.inner)
+    }
+
+    /// The core behind a [`CoreHandle::downgrade`]d handle, unless it is gone or closed.
+    pub(crate) fn upgrade(weak: &std::sync::Weak<Inner>) -> Option<Self> {
+        let inner = weak.upgrade()?;
+        (!inner.closed.load(Ordering::Acquire)).then_some(Self { inner })
+    }
+
+    /// Keeps a background task, stopped at shutdown.
+    pub(crate) fn push_task(&self, task: tokio::task::JoinHandle<()>) {
+        lock(&self.inner.tasks).push(task);
+    }
+
     pub(crate) fn utc_offset(&self) -> UtcOffset {
         self.inner.utc_offset
     }
@@ -1188,7 +1211,11 @@ impl CoreHandle {
         })
     }
 
-    fn after_write(&self, threads: &BTreeSet<ThreadId>, queued: &[(AccountId, store::OpId)]) {
+    pub(crate) fn after_write(
+        &self,
+        threads: &BTreeSet<ThreadId>,
+        queued: &[(AccountId, store::OpId)],
+    ) {
         // The change set invalidates too, asynchronously; doing it here as well means a
         // caller that reads rows right after `apply` never sees the old state.
         self.inner.rows.invalidate(threads.iter().copied());
@@ -1445,6 +1472,9 @@ pub(crate) async fn finish(
         && let Err(err) = engine.start_all()
     {
         tracing::error!(%err, "starting sync");
+    }
+    if let Some(engine) = &core.inner.engine {
+        crate::rules::spawn_runner(&core, engine.arrivals().subscribe());
     }
     if let (Some(engine), Some(outbox)) = (&core.inner.engine, &core.inner.outbox) {
         start_sending(&core, Arc::clone(engine), outbox.clone());

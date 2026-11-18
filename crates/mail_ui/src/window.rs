@@ -40,7 +40,7 @@ use gpui_kit::component::{
     resizable::{HandleEdge, resize_handle},
     v_flex,
 };
-use mazemail_types::{Address, FolderRole, MessageId, PRODUCT_NAME, ThreadId};
+use mazemail_types::{Address, FolderId, FolderRole, MessageId, PRODUCT_NAME, ThreadId};
 use time::UtcOffset;
 use ui::assets::IconName;
 use ui::keymap::shortcut_label;
@@ -63,6 +63,7 @@ use crate::message_tab::{MESSAGE_KIND, MessageTab, SerializedMessage};
 use crate::message_view::MessageView;
 use crate::perf::{FrameStats, ScrollBenchmark, resident_memory};
 use crate::quick_move::{MoveTarget, QuickMove, QuickMoveEvent, source_folder};
+use crate::rules_tab::{RULES_KIND, RulesTab};
 use crate::saved_search::SavedSearchDialog;
 use crate::settings_editor::{SETTINGS_KIND, SerializedSettings, SettingsEditor, SettingsFile};
 use crate::source::{
@@ -489,12 +490,21 @@ impl MailWindow {
             })
         });
 
+        let source = self.source.clone();
+        let rules = ItemKind::new(move |_: &SerializedItem, _, cx| {
+            let source = source.clone();
+            Restore::Item(Box::new(cx.new(|cx| RulesTab::new(source, cx))))
+        })
+        .icon(IconName::ListFilter)
+        .title(|_, _| Some("Rules".into()));
+
         let views = self.views.clone();
         let fallback_pane = self.folder_pane.downgrade();
         self.panes.update(cx, |panes, cx| {
             panes.register_kind(MAIL_KIND, mail, window, cx);
             panes.register_kind(MESSAGE_KIND, message, window, cx);
             panes.register_kind(SETTINGS_KIND, settings, window, cx);
+            panes.register_kind(RULES_KIND, rules, window, cx);
             panes.set_split_fallback(Rc::new(move |window, cx| {
                 let pane = fallback_pane.upgrade()?;
                 let key = pane
@@ -770,6 +780,70 @@ impl MailWindow {
         Some(editor)
     }
 
+    /// Shows the rules in a tab ("Rules: Show Rules"); an open one is activated and
+    /// reloaded.
+    pub fn open_rules(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Entity<RulesTab> {
+        let open = self
+            .panes
+            .read(cx)
+            .items_of::<RulesTab>(cx)
+            .into_iter()
+            .next();
+        if let Some(tab) = open {
+            let id = tab.entity_id();
+            tab.update(cx, |tab, cx| tab.reload(cx));
+            self.panes
+                .update(cx, |panes, cx| panes.activate_item(id, true, window, cx));
+            return tab;
+        }
+        let source = self.source.clone();
+        let tab = cx.new(|cx| RulesTab::new(source, cx));
+        self.add_item(Box::new(tab.clone()), window, cx);
+        tab
+    }
+
+    /// Runs the enabled rules on `folder` and says what they did.
+    fn run_rules_on(
+        &mut self,
+        folder: FolderId,
+        title: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match self.source.run_rules(folder) {
+            Ok(run) => {
+                window.push_notification(
+                    Notification::info(format!(
+                        "Rules acted on {} of {} messages in {title}.",
+                        run.matched, run.examined
+                    ))
+                    .title(PRODUCT_NAME),
+                    cx,
+                );
+                self.after_folder_action(Ok(()), "sorted", window, cx);
+            }
+            Err(error) => self.after_folder_action(Err(error), "sorted", window, cx),
+        }
+    }
+
+    /// "Rules: Run Rules on Folder": the folder selected in the folder pane.
+    fn run_rules_on_selected(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let selected = self.folder_pane.read(cx).selected().cloned();
+        let Some(FolderKey::Folder(folder)) = selected else {
+            window.push_notification(
+                Notification::info("Select a folder (not a unified folder) first.")
+                    .title(PRODUCT_NAME),
+                cx,
+            );
+            return;
+        };
+        self.run_rules_on(folder, "the folder", window, cx);
+    }
+
     /// A random two-word name for a new draft (`brave-otter`) that no open tab has.
     pub fn new_draft_name(&mut self, cx: &App) -> String {
         let titles: Vec<String> = self
@@ -1037,6 +1111,10 @@ impl MailWindow {
             FolderPaneEvent::MarkAllRead { key } => {
                 let result = self.source.mark_all_read(key);
                 self.after_folder_action(result, "marked read", window, cx);
+            }
+            FolderPaneEvent::RunRules { folder, title } => {
+                let title = title.clone();
+                self.run_rules_on(*folder, &title, window, cx);
             }
             FolderPaneEvent::AddAlias { account } => {
                 let name = self.account_name(*account);
@@ -2050,6 +2128,12 @@ impl MailWindow {
         }))
         .on_action(cx.listener(|this, _: &OpenDefaultSettings, window, cx| {
             this.open_settings(true, window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &ShowRules, window, cx| {
+            this.open_rules(window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &RunRulesOnFolder, window, cx| {
+            this.run_rules_on_selected(window, cx);
         }))
         .on_action(cx.listener(|this, _: &OpenMessage, window, cx| {
             this.open_selected_message(window, cx);
@@ -4104,6 +4188,7 @@ mod tests {
 
     mod original_html;
     mod panes;
+    mod rules_tab;
     mod saved_searches;
     mod settings_tab;
 }

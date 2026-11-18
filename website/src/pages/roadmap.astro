@@ -79,7 +79,7 @@ const STAGES: Stage[] = [
     done: [
       "Thunderbird profiles: IMAP accounts, identities, signatures, tags, saved searches, address books",
       "mbox and Maildir import into an IMAP folder, and export back to mbox or Maildir",
-      "Filters are imported and kept, disabled, until rules arrive",
+      "Filters become rules, imported disabled for you to review and enable",
       "Import only parts of a profile, such as the address books or the filters",
     ],
   },
@@ -98,6 +98,7 @@ const STAGES: Stage[] = [
       "The Address Book space: every address book in one list, one row per person with a label per account, New Mail and Show Mail",
       "Google contacts synced (My Contacts and Other contacts, with photos), encrypted on your computer and first in autocomplete",
       "Microsoft contacts synced (Outlook.com and Microsoft 365, with photos and shared mailboxes)",
+      "Filter rules, including your imported Thunderbird filters: run on new mail, or on a folder now",
     ],
     todo: [
       "Drafts in the server's Drafts folder",
@@ -106,7 +107,7 @@ const STAGES: Stage[] = [
       "The contact editor: adding and editing contacts in Maze, saved to Google",
       "Domains in the Address Book: everyone and everything from one organization, with favicons fetched from the domain itself",
       "Signatures that switch with the identity",
-      "Filter rules, including your imported Thunderbird filters",
+      "A rule editor in Maze (rules are created with the CLI for now)",
     ],
   },
   {
@@ -151,14 +152,14 @@ const STAGES: Stage[] = [
 ];
 ---
 
-<Base title="Roadmap" description="What works in Maze today and what comes next: drafts on the server, send later, rules, notifications, a settings window and search by meaning.">
+<Base title="Roadmap" description="What works in Maze today and what comes next: drafts on the server, send later, notifications, a settings window and search by meaning.">
   <div class="frame">
     <section class="section head">
       <p class="eyebrow">Roadmap</p>
       <h1>Where Maze is going.</h1>
       <p class="lede">
         Maze is built in milestones. Reading, writing and agents are in; what's left on the way
-        to a daily driver is filling them out: drafts on the server, send later, rules,
+        to a daily driver is filling them out: drafts on the server, send later,
         notifications and a settings window. No dates, just order. The design decisions are on
         <a href={repoFile("docs/adr/README.md")}>GitHub</a>.
       </p>

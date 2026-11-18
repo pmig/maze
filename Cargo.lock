@@ -5336,6 +5336,7 @@ dependencies = [
  "mazemail_types",
  "pretty_assertions",
  "rayon",
+ "rules",
  "rusqlite",
  "serde",
  "serde_json",
@@ -6435,6 +6436,7 @@ dependencies = [
  "pretty_assertions",
  "reqwest",
  "resvg 0.48.1",
+ "rules",
  "search",
  "security",
  "serde",
@@ -9038,6 +9040,17 @@ checksum = "9a1efe12a1469752d0e6ff5ebec0b6ef4924cc5c4c71046b0ec730040535819d"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "rules"
+version = "0.0.0"
+dependencies = [
+ "mazemail_types",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

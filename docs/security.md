@@ -273,8 +273,14 @@ rules are:
 - The server rejects connections from other user ids, and records every request (the
   program's pid and path, the outcome, the affected ids, never content) in the
   encrypted audit log.
-- Commands that leave the store or change a lot (`import`, `export`, rules, sending)
-  ask again for each request, and permanent delete isn't available to tokens at all.
+- Commands that leave the store or change a lot (`import`, `export`, sending, and
+  adding, enabling, disabling, deleting and running rules) ask again for each request,
+  and permanent delete isn't available to tokens at all. A rule keeps acting on new
+  mail after the token that asked for it is gone, which is why turning one on always
+  needs your approval; rules never delete mail for good, and everything they do is in
+  the audit log with the origin `rule:<id>`. A token sees only the rules of the
+  accounts in its scope (and the rules for every account), and only a token for every
+  account may add a rule for every account.
 - A token covers every account or only the ones it was created for
   (`mazemail login --account …`).
 

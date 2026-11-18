@@ -232,7 +232,21 @@ fn imports_everything_and_reruns_without_duplicates() {
     assert_eq!(lists.input.account, Some(accounts[0].id));
     assert_eq!(lists.input.trigger, RuleTrigger::ArrivalBeforeJunk);
     let condition: serde_json::Value = serde_json::from_str(&lists.input.condition_json).unwrap();
-    assert_eq!(condition["terms"][0]["attribute"], "list-id");
+    // In the rules engine's format, with Thunderbird's original next to it.
+    assert_eq!(condition["match"], "any");
+    assert_eq!(condition["terms"][0]["field"], "list_id");
+    assert_eq!(condition["terms"][1]["op"], "begins_with");
+    assert_eq!(condition["thunderbird"]["terms"][0]["attribute"], "list-id");
+    let parsed =
+        rules::Rule::parse(&lists.input.condition_json, &lists.input.actions_json).unwrap();
+    assert!(parsed.is_runnable(), "{:?}", parsed.problems());
+    assert_eq!(
+        parsed.actions,
+        vec![
+            rules::Action::with_value(rules::ActionKind::MoveToFolder, "Lists"),
+            rules::Action::new(rules::ActionKind::MarkRead),
+        ]
+    );
     assert!(
         condition["import_note"]
             .as_str()
@@ -245,7 +259,16 @@ fn imports_everything_and_reruns_without_duplicates() {
         .find(|r| r.input.name == "Tag the boss")
         .unwrap();
     let actions: serde_json::Value = serde_json::from_str(&boss.input.actions_json).unwrap();
-    assert_eq!(actions[1]["supported"], false);
+    assert_eq!(actions[0]["action"], "add_tag");
+    assert_eq!(actions[1]["action"], "custom");
+    assert_eq!(
+        actions[1]["thunderbird"]["custom_id"],
+        "filtaquilla@mesquilla.com#runFile"
+    );
+    let parsed = rules::Rule::parse(&boss.input.condition_json, &boss.input.actions_json).unwrap();
+    // The custom action is skipped; the tag still runs, so the rule can be enabled.
+    assert!(parsed.is_runnable(), "{:?}", parsed.problems());
+    assert_eq!(parsed.condition.matching, rules::Match::All);
 
     // Saved searches cover every folder until edited (folders come with the sync).
     let searches = reader.saved_searches().unwrap();

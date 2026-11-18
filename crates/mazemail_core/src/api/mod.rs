@@ -42,6 +42,7 @@ mod audit;
 mod export;
 mod handler;
 mod import;
+mod rules;
 mod tokens;
 
 use std::sync::Arc;
@@ -52,6 +53,7 @@ pub use account_list::CoreAccountList;
 pub use agent_export::thread_markdown_for_agents;
 pub use audit::StoreAuditSink;
 pub use handler::{CoreCommandHandler, ProposalPublicId, not_available};
+pub use rules::RulePublicId;
 pub(crate) use tokens::proposal_title as proposal_summary;
 pub use tokens::{StoreTokenStore, TokenAuthorizer, TokenCache};
 

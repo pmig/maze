@@ -1614,6 +1614,24 @@ pub trait MailSource: Send + Sync + 'static {
         ))
     }
 
+    /// The message rules in the order they run (the Rules tab, ADR-029).
+    fn rules(&self) -> Vec<crate::rules_tab::RuleEntry> {
+        Vec::new()
+    }
+
+    /// Enables or disables a rule. Rules Maze can't run can't be enabled.
+    fn set_rule_enabled(&self, rule: i64, enabled: bool) -> Result<(), SourceError> {
+        let _ = (rule, enabled);
+        Err(crate::rules_tab::no_rules())
+    }
+
+    /// Runs the enabled rules of `folder`'s account over the mail in it now (the folder
+    /// pane's Run Rules on Folder).
+    fn run_rules(&self, folder: FolderId) -> Result<crate::rules_tab::RulesRun, SourceError> {
+        let _ = folder;
+        Err(crate::rules_tab::no_rules())
+    }
+
     /// Connection, sync and outbox state.
     fn status(&self) -> SourceStatus;
 

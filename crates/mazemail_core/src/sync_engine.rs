@@ -17,7 +17,8 @@
 //!   The same forwarder picks newly arrived mail out of the actor's batches
 //!   ([`crate::new_mail`]) and broadcasts it for notifications, and keeps the actor's
 //!   watched folders on the account's favorites (`folder_pane.favorites`), which are
-//!   then checked as often as the open folder.
+//!   then checked as often as the open folder. Every batch with new mail, bodies or
+//!   counts is also signalled to the rules runner ([`crate::rules`]).
 //! - **Requests.** [`SyncBridge::fetch_body`] sends an interactive body fetch to the
 //!   message's account, [`SyncBridge::refresh`] a "sync now", and
 //!   [`SyncBridge::ops_queued`] a replay nudge.
@@ -54,6 +55,7 @@ use crate::credentials::{AccountCredentials, Method};
 use crate::events::CoreEvent;
 use crate::folders;
 use crate::new_mail::{self, NewMailBatch, NewMailFilter, unix_now};
+use crate::rules::Arrival;
 use crate::sync_bridge::{FetchPriority, RefreshScope, SyncBridge, SyncState, SyncStatus};
 use crate::sync_ingest::CoreIngest;
 
@@ -244,6 +246,8 @@ pub struct SyncEngine {
     settings: watch::Receiver<Arc<LoadedSettings>>,
     events: mpsc::UnboundedSender<CoreEvent>,
     new_mail: broadcast::Sender<NewMailBatch>,
+    /// Account batches, for the rules runner ([`crate::rules`]).
+    arrivals: broadcast::Sender<Arrival>,
     runtime: tokio::runtime::Handle,
     actors: Arc<Mutex<HashMap<AccountId, Running>>>,
     /// One OAuth token manager per account, shared by sync and sending, so a refresh
@@ -313,6 +317,7 @@ impl SyncEngine {
             settings,
             events,
             new_mail: new_mail::channel(),
+            arrivals: crate::rules::arrivals_channel(),
             runtime,
             actors: Arc::new(Mutex::new(HashMap::new())),
             tokens: Mutex::new(HashMap::new()),
@@ -325,6 +330,11 @@ impl SyncEngine {
     /// Where newly arrived mail is broadcast ([`CoreHandle::new_mail`](crate::CoreHandle::new_mail)).
     pub(crate) fn new_mail(&self) -> &broadcast::Sender<NewMailBatch> {
         &self.new_mail
+    }
+
+    /// Where account batches are signalled for the rules runner.
+    pub(crate) fn arrivals(&self) -> &broadcast::Sender<Arrival> {
+        &self.arrivals
     }
 
     pub(crate) fn connector(&self) -> &Arc<dyn ImapConnector> {
@@ -516,6 +526,7 @@ impl SyncEngine {
                 statuses: Arc::clone(&self.statuses),
                 store: self.store.clone(),
                 new_mail: self.new_mail.clone(),
+                arrivals: self.arrivals.clone(),
                 settings: self.settings.clone(),
                 handle: handle.clone(),
                 actors: Arc::clone(&self.actors),
@@ -608,6 +619,7 @@ struct Forward {
     statuses: Arc<Mutex<HashMap<AccountId, SyncStatus>>>,
     store: Store,
     new_mail: broadcast::Sender<NewMailBatch>,
+    arrivals: broadcast::Sender<Arrival>,
     settings: watch::Receiver<Arc<LoadedSettings>>,
     /// The actor, told which folders to watch.
     handle: AccountHandle,
@@ -629,6 +641,7 @@ async fn forward_status(
         statuses,
         store,
         new_mail,
+        arrivals,
         mut settings,
         handle,
         actors,
@@ -708,6 +721,13 @@ async fn forward_status(
                     }
                     if !batch.added.is_empty() {
                         report_new_mail(&store, &mut filter, &batch, &favorites, &new_mail);
+                    }
+                    if !batch.added.is_empty() || !batch.bodies.is_empty() || !batch.counts.is_empty() {
+                        // Nobody listening (no rules runner) is fine.
+                        let _ = arrivals.send(Arrival {
+                            account,
+                            added: !batch.added.is_empty() || !batch.counts.is_empty(),
+                        });
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {

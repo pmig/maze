@@ -37,6 +37,8 @@ zeroize = { workspace = true }
 # Remote images of the original HTML mode, fetched by Maze (ADR-020), and favicons
 # from each domain's own website (PLAN-contacts §3b).
 reqwest = { workspace = true }
+# Message rules: format and matching (same layer, L2; ADR-029).
+rules = { workspace = true }
 url = { workspace = true }
 image = { workspace = true, features = ["gif", "ico", "jpeg", "webp"] }
 resvg = { workspace = true }

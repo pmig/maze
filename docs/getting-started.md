@@ -495,7 +495,8 @@ From a Thunderbird profile Maze takes over:
 - IMAP accounts (Gmail and Microsoft 365 included) with their server settings,
   identities, signatures and SMTP servers
 - tags, saved searches (`virtualFolders.dat`) and address books
-- message filters, imported as **disabled** rules (rules don't run yet)
+- message filters, imported as **disabled** [rules](#rules): review them in the Rules tab
+  ("Rules: Show Rules") or with `mazemail rule list`, and enable the ones you want
 
 POP3 accounts and Local Folders are skipped, and the import result says so. For a POP3
 account, enable IMAP at your provider and add the account in Maze. To keep mail from
@@ -883,6 +884,44 @@ The `notifications` settings turn them off or show less:
   "content": "sender_and_subject"
 }
 ```
+
+### Rules
+
+Rules (filters) sort new mail as it arrives: "mail from the shop: tag it Receipts and
+archive it". Each rule has conditions and actions, and rules run in their order on
+every new message in the Inbox of their account (or of every account).
+
+- **Conditions** look at the sender (`from`), `to`, `cc`, "to or cc", any address, the
+  subject, the list (`List-Id`), whether there are attachments, and the message text.
+  Text matches with *contains*, *doesn't contain*, *is*, *isn't*, *begins with* and
+  *ends with*, ignoring case. A rule needs all its conditions, or any of them.
+- **Actions** mark read or unread, flag, add a tag, copy to a folder, move to a folder,
+  archive, move to the Trash, report junk, and stop (no further rules for that
+  message). Like in Thunderbird, a rule's flags and tags come first, then copies, then
+  the move; once a message has been moved, no further rule looks at it. Rules never
+  delete mail for good.
+- **The text** a rule sees is the start of the message (the preview Maze keeps). When a
+  rule looks at the text and the message's body hasn't been downloaded yet, Maze fetches
+  it and waits up to five minutes before deciding without it.
+
+Rules only filter mail that arrives while they are enabled: turning a rule on doesn't
+sort the mail already in your Inbox, and each message is filtered once (a message you
+move back into the Inbox stays there). To sort the mail already in a folder, right-click
+it in the folder pane and choose **Run Rules on Folder** ("Rules: Run Rules on Folder" in
+the command palette runs them on the selected folder).
+
+What rules do goes through the same path as your own commands: it reaches the server
+like a move you make, and every action is in the activity log with the rule as its
+origin. Actions can't be undone with `cmd-z`.
+
+**"Rules: Show Rules"** in the command palette opens the Rules tab: every rule in order
+with its conditions, actions and what keeps it from running, and a button to enable or
+disable it. Filters imported from Thunderbird arrive disabled, with a note; rules whose
+conditions Maze can't evaluate (the age of a message, its size, a custom header other
+than `List-Id`, Thunderbird's regular expressions) can't be enabled, and actions it
+doesn't run (reply, forward, change priority, watch or ignore the thread, add-on
+actions) are skipped. Creating and editing rules happens on the command line for now
+(`mazemail rule add`, see [cli.md](cli.md#rules)); the Rules tab shows and toggles them.
 
 ### Disk space
 

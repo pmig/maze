@@ -421,6 +421,9 @@ pub struct FakeMailSource {
     search_large_folder: bool,
     /// Saved searches, in order (kept apart from [`State`], which undo restores).
     saved_searches: Mutex<Vec<SavedSearchEntry>>,
+    /// The rules ([`MailSource::rules`]): two imported from Thunderbird, one that
+    /// can't run.
+    rules: Mutex<Vec<crate::rules_tab::RuleEntry>>,
 }
 
 /// A folder action the fake was asked for (see [`FakeMailSource::folder_actions`]).
@@ -430,6 +433,8 @@ pub enum FolderAction {
     MarkAllRead(FolderKey),
     /// Delete All or Empty Trash.
     DeleteAll(FolderId),
+    /// Run Rules on Folder.
+    RunRules(FolderId),
 }
 
 impl std::fmt::Debug for FakeMailSource {
@@ -484,6 +489,7 @@ impl FakeMailSource {
             aliases: Mutex::new(HashMap::new()),
             search_large_folder: true,
             saved_searches: Mutex::new(Vec::new()),
+            rules: Mutex::new(fake_rules()),
         }
     }
 
@@ -1462,6 +1468,43 @@ impl MailSource for FakeMailSource {
         Ok(())
     }
 
+    fn rules(&self) -> Vec<crate::rules_tab::RuleEntry> {
+        self.rules
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn set_rule_enabled(&self, rule: i64, enabled: bool) -> Result<(), SourceError> {
+        let mut rules = self
+            .rules
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let entry = rules
+            .iter_mut()
+            .find(|r| r.id == rule)
+            .ok_or_else(|| SourceError::Unavailable("no such rule".into()))?;
+        if enabled && !entry.runnable {
+            return Err(SourceError::Unavailable(format!(
+                "the rule \"{}\" can't be enabled",
+                entry.name
+            )));
+        }
+        entry.enabled = enabled;
+        Ok(())
+    }
+
+    fn run_rules(&self, folder: FolderId) -> Result<crate::rules_tab::RulesRun, SourceError> {
+        self.folder_actions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(FolderAction::RunRules(folder));
+        Ok(crate::rules_tab::RulesRun {
+            examined: 12,
+            matched: 3,
+        })
+    }
+
     fn mark_all_read(&self, folder: &FolderKey) -> Result<(), SourceError> {
         self.folder_actions
             .lock()
@@ -2079,6 +2122,50 @@ impl MailSource for FakeMailSource {
 /// A shared fake source, as the window takes it.
 pub fn shared() -> Arc<dyn MailSource> {
     Arc::new(FakeMailSource::new())
+}
+
+/// The fake's rules: a running one, an imported one waiting to be enabled and an
+/// imported one Maze can't run.
+fn fake_rules() -> Vec<crate::rules_tab::RuleEntry> {
+    use crate::rules_tab::RuleEntry;
+    let rule = |id: i64, name: &str, enabled: bool, conditions: &str, actions: &str| RuleEntry {
+        id,
+        name: name.to_owned().into(),
+        account: None,
+        account_name: "All accounts".into(),
+        enabled,
+        conditions: Sensitive::new(conditions.to_owned().into()),
+        actions: actions.to_owned().into(),
+        problems: Vec::new(),
+        runnable: true,
+        imported: !enabled,
+    };
+    let mut old = rule(
+        3,
+        "Old newsletters",
+        false,
+        "thunderbird:age in days thunderbird:is greater than \"30\"",
+        "move to Trash",
+    );
+    old.problems = vec!["Maze can't evaluate the condition `age in days`".into()];
+    old.runnable = false;
+    vec![
+        rule(
+            1,
+            "Receipts",
+            true,
+            "from contains \"receipts@\"",
+            "tag Receipts, archive",
+        ),
+        rule(
+            2,
+            "Mailing lists",
+            false,
+            "list-id contains \"dev.example.org\"",
+            "mark read, move to Lists",
+        ),
+        old,
+    ]
 }
 
 #[cfg(test)]

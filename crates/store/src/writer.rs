@@ -175,6 +175,34 @@ impl<'c> WriteTx<'c> {
         self.blobs
     }
 
+    /// Runs `f` in a nested savepoint: if it fails, only what it did is rolled back and
+    /// the job goes on (its error is returned). The rules engine runs each action of a
+    /// batch this way, so one failing action doesn't undo the others.
+    ///
+    /// # Errors
+    ///
+    /// `f`'s error, or a SQLite error opening or closing the savepoint.
+    pub fn attempt<R>(&mut self, f: impl FnOnce(&mut Self) -> Result<R>) -> Result<R> {
+        self.conn.execute_batch("SAVEPOINT attempt")?;
+        let dirty = self.dirty_threads.clone();
+        let changes = self.changes.clone();
+        let blobs = self.blobs_referenced.len();
+        match f(self) {
+            Ok(value) => {
+                self.conn.execute_batch("RELEASE attempt")?;
+                Ok(value)
+            }
+            Err(err) => {
+                self.conn
+                    .execute_batch("ROLLBACK TO attempt; RELEASE attempt")?;
+                self.dirty_threads = dirty;
+                self.changes = changes;
+                self.blobs_referenced.truncate(blobs);
+                Err(err)
+            }
+        }
+    }
+
     /// Brings derived data (thread and folder aggregates) up to date; runs at the end
     /// of every job, inside its savepoint.
     fn finish_job(&mut self) -> Result<()> {

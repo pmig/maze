@@ -30,6 +30,7 @@ mail_ui = { path = "crates/mail_ui" }
 mazemail_mime = { path = "crates/mazemail_mime" }
 notifications = { path = "crates/notifications" }
 release_channel = { path = "crates/release_channel" }
+rules = { path = "crates/rules" }
 sandbox = { path = "crates/sandbox" }
 search = { path = "crates/search" }
 security = { path = "crates/security" }

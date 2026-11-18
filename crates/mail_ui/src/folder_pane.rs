@@ -95,6 +95,13 @@ pub enum FolderPaneEvent {
         /// The folder (or unified folder).
         key: FolderKey,
     },
+    /// "Run Rules on Folder" from a folder's context menu.
+    RunRules {
+        /// The folder.
+        folder: FolderId,
+        /// Its title, for the result.
+        title: SharedString,
+    },
     /// "Add Alias…" from an account's context menu.
     AddAlias {
         /// The account.
@@ -689,6 +696,14 @@ impl FolderPane {
                             "Delete All Messages…"
                         };
                         menu.item(
+                            PopupMenuItem::new("Run Rules on Folder")
+                                .icon(Icon::new(IconName::ListFilter))
+                                .on_click(emit(FolderPaneEvent::RunRules {
+                                    folder: *folder,
+                                    title: title.clone(),
+                                })),
+                        )
+                        .item(
                             PopupMenuItem::new(label)
                                 .icon(Icon::new(IconName::Trash))
                                 .on_click(emit(FolderPaneEvent::DeleteAll {

@@ -596,17 +596,29 @@ pub enum RuleAction {
         #[schemars(with = "String")]
         to: FolderId,
     },
+    /// Copy to a folder.
+    Copy {
+        /// Target folder id.
+        #[serde(with = "pubid::one")]
+        #[schemars(with = "String")]
+        to: FolderId,
+    },
     /// Add a tag.
     Tag {
         /// Tag name.
         tag: String,
     },
+    /// Move to the Trash (never deletes for good).
+    Trash,
+    /// Run no further rules on the message.
+    Stop,
 }
 
 impl FromStr for RuleAction {
     type Err = RuleActionError;
 
-    /// `archive`, `read`, `flag`, `move:<folder-id>`, `tag:<name>`.
+    /// `archive`, `read`, `flag`, `move:<folder-id>`, `copy:<folder-id>`, `tag:<name>`,
+    /// `trash`, `stop`.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (verb, value) = match s.split_once(':') {
             Some((verb, value)) => (verb, Some(value)),
@@ -616,8 +628,13 @@ impl FromStr for RuleAction {
             ("archive", None) => Ok(Self::Archive),
             ("read", None) => Ok(Self::MarkRead),
             ("flag", None) => Ok(Self::Flag),
+            ("trash", None) => Ok(Self::Trash),
+            ("stop", None) => Ok(Self::Stop),
             ("move", Some(folder)) => FolderId::parse_public(folder)
                 .map(|to| Self::Move { to })
+                .map_err(|_| RuleActionError),
+            ("copy", Some(folder)) => FolderId::parse_public(folder)
+                .map(|to| Self::Copy { to })
                 .map_err(|_| RuleActionError),
             ("tag", Some(tag)) if !tag.is_empty() => Ok(Self::Tag {
                 tag: tag.to_owned(),
@@ -633,16 +650,21 @@ impl fmt::Display for RuleAction {
             Self::Archive => f.write_str("archive"),
             Self::MarkRead => f.write_str("read"),
             Self::Flag => f.write_str("flag"),
+            Self::Trash => f.write_str("trash"),
+            Self::Stop => f.write_str("stop"),
             Self::Move { to } => write!(f, "move:{to}"),
+            Self::Copy { to } => write!(f, "copy:{to}"),
             Self::Tag { tag } => write!(f, "tag:{tag}"),
         }
     }
 }
 
-/// A rule action that isn't `archive`, `read`, `flag`, `move:<folder-id>` or
-/// `tag:<name>`.
+/// A rule action that isn't one of `archive`, `read`, `flag`, `trash`, `stop`,
+/// `move:<folder-id>`, `copy:<folder-id>` or `tag:<name>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("expected archive, read, flag, move:<folder-id> or tag:<name>")]
+#[error(
+    "expected archive, read, flag, trash, stop, move:<folder-id>, copy:<folder-id> or tag:<name>"
+)]
 pub struct RuleActionError;
 
 /// `mazemail rule add`.
@@ -652,11 +674,14 @@ pub struct RuleAddArgs {
     /// Name shown in the rules list.
     #[arg(long)]
     pub name: String,
-    /// Which messages the rule matches, as a search query.
+    /// Which messages the rule matches, as a search query: from:, to:, cc:, subject:,
+    /// list:, has:attachment and free text (the message text), negated with `-`, all
+    /// of them (`a b`) or any (`a OR b`).
     #[arg(long, value_name = "QUERY")]
     #[schemars(with = "String")]
     pub when: Sensitive<String>,
-    /// What to do (repeatable): archive, read, flag, move:<folder-id>, tag:<name>.
+    /// What to do (repeatable): archive, read, flag, trash, stop, move:<folder-id>,
+    /// copy:<folder-id>, tag:<name>.
     #[arg(long = "then", value_name = "ACTION", required = true)]
     pub actions: Vec<RuleAction>,
     /// Limit the rule to one account.
@@ -664,10 +689,46 @@ pub struct RuleAddArgs {
     #[serde(default, with = "pubid::option")]
     #[schemars(with = "Option<String>")]
     pub account: Option<AccountId>,
-    /// Also run the rule on existing messages now.
+    /// Also run the rule on the messages in the Inbox now.
     #[arg(long)]
     #[serde(default)]
     pub apply_now: bool,
+}
+
+/// `mazemail rule list`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RuleListArgs {
+    /// Only this account's rules (and the rules for every account).
+    #[arg(long, value_name = "ACCOUNT")]
+    #[serde(default, with = "pubid::option")]
+    #[schemars(with = "Option<String>")]
+    pub account: Option<AccountId>,
+}
+
+/// `mazemail rule show|enable|disable|delete`.
+#[derive(Debug, Clone, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RuleIdArgs {
+    /// The rule's id (`r_…`, from `mazemail rule list`).
+    #[arg(value_name = "RULE")]
+    pub id: String,
+}
+
+/// `mazemail rule run`.
+#[derive(Debug, Clone, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RuleRunArgs {
+    /// The folder to run the rules on (`f_…`, from `mazemail folders`).
+    #[arg(long, value_name = "FOLDER")]
+    #[serde(with = "pubid::one")]
+    #[schemars(with = "String")]
+    pub folder: FolderId,
+    /// Only this rule (`r_…`), even if it is disabled (to try it). Default: the
+    /// enabled rules of the folder's account.
+    #[arg(value_name = "RULE")]
+    #[serde(default)]
+    pub id: Option<String>,
 }
 
 /// `mazemail saved-search list`.

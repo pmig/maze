@@ -198,7 +198,8 @@ impl ThunderbirdProfile {
         if report.filters > 0 {
             report.unsupported.push(Unsupported {
                 item: format!("{} message filters", report.filters),
-                reason: "imported disabled; review and enable them once Maze's rules engine is available"
+                reason: "imported disabled; review them with `mazemail rule list` (or Rules: Show \
+                         Rules in Maze) and enable the ones you want with `mazemail rule enable`"
                     .to_owned(),
             });
         }
@@ -957,54 +958,88 @@ fn account_config(
     .to_string()
 }
 
-/// A disabled rule from a Thunderbird filter (PLAN §4.13).
+/// A disabled rule from a Thunderbird filter (PLAN §4.13), in the rules engine's
+/// format (ADR-029). The condition keeps the filter as written next to the terms.
 fn rule_input(
     filter: &filters::Filter,
     account: Option<AccountId>,
     server_key: &str,
     ordinal: i64,
 ) -> RuleInput {
-    let unsupported: Vec<String> = filter
-        .unsupported_actions()
-        .iter()
-        .map(|a| a.action.clone())
-        .collect();
-    let mut note =
-        String::from("Imported from Thunderbird and disabled: review it before enabling.");
+    let converted = rules::Rule {
+        condition: rules::thunderbird::condition(
+            filter.condition.match_all,
+            filter
+                .condition
+                .terms
+                .iter()
+                .map(|t| {
+                    (
+                        t.boolean == filters::BoolOp::Or,
+                        rules::thunderbird::term(
+                            &t.attribute,
+                            t.custom_header,
+                            &t.operator,
+                            &t.value,
+                        ),
+                    )
+                })
+                .collect(),
+        ),
+        actions: filter
+            .actions
+            .iter()
+            .map(|a| rules::thunderbird::action(&a.action, a.value.as_deref()))
+            .collect(),
+    };
+    let mut note = String::from(
+        "Imported from Thunderbird and disabled: review it, then enable it with \
+         `mazemail rule enable` or in the Rules tab.",
+    );
     if !filter.enabled {
         note.push_str(" It was disabled in Thunderbird.");
     }
-    if !unsupported.is_empty() {
-        note.push_str(&format!(
-            " Unsupported actions: {}.",
-            unsupported.join(", ")
-        ));
-    }
-    let condition = json!({
-        "source": "thunderbird",
-        "match": if filter.condition.match_all { "all_messages" } else { "terms" },
-        "terms": filter.condition.terms,
-        "raw": filter.condition.raw,
-        "thunderbird": {
-            "server": server_key,
-            "type": filter.filter_type,
-            "triggers": filter.triggers(),
-            "enabled": filter.enabled,
-            "description": filter.description,
-        },
-        "import_note": note,
-    });
-    let actions: Vec<serde_json::Value> = filter
-        .actions
+    let problems: Vec<String> = converted
+        .problems()
         .iter()
-        .map(|a| {
+        .map(ToString::to_string)
+        .collect();
+    if !problems.is_empty() {
+        note.push_str(&format!(" Problems: {}.", problems.join("; ")));
+    }
+    let mut condition = converted.condition_json_value();
+    if let Some(object) = condition.as_object_mut() {
+        object.insert("source".to_owned(), json!("thunderbird"));
+        object.insert("raw".to_owned(), json!(filter.condition.raw));
+        object.insert(
+            "thunderbird".to_owned(),
             json!({
-                "action": a.kind(),
-                "value": a.value,
-                "custom_id": a.custom_id,
-                "supported": a.is_supported(),
-                "thunderbird": a.action,
-            })
+                "server": server_key,
+                "type": filter.filter_type,
+                "triggers": filter.triggers(),
+                "enabled": filter.enabled,
+                "description": filter.description,
+                "terms": filter.condition.terms,
+            }),
+        );
+        object.insert("import_note".to_owned(), json!(note));
+    }
+    let actions: Vec<serde_json::Value> = converted
+        .actions_json_values()
+        .into_iter()
+        .zip(&filter.actions)
+        .map(|(mut action, original)| {
+            if let Some(object) = action.as_object_mut() {
+                object.insert(
+                    "thunderbird".to_owned(),
+                    json!({
+                        "action": original.action,
+                        "value": original.value,
+                        "custom_id": original.custom_id,
+                    }),
+                );
+            }
+            action
         })
         .collect();
     RuleInput {

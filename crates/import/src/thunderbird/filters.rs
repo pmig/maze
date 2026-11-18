@@ -61,29 +61,18 @@ pub struct FilterAction {
 }
 
 impl FilterAction {
-    /// Whether Maze's rules engine will be able to run this action. Custom actions,
-    /// replies and forwards with templates, JavaScript and POP3 actions are not.
+    /// Whether Maze's rules engine runs this action (ADR-029): moves, copies, Delete
+    /// (to the Trash), marking read, unread and flagged, tags, junk and stop. Custom
+    /// actions, replies and forwards, priorities, thread watching and POP3 actions are
+    /// skipped.
     pub fn is_supported(&self) -> bool {
-        matches!(
-            self.action.as_str(),
-            "Move to folder"
-                | "Copy to folder"
-                | "Change priority"
-                | "Delete"
-                | "Mark read"
-                | "Mark unread"
-                | "Ignore thread"
-                | "Ignore subthread"
-                | "Watch thread"
-                | "Mark flagged"
-                | "Stop execution"
-                | "JunkScore"
-                | "AddTag"
-                | "Forward"
+        !matches!(
+            rules::thunderbird::action(&self.action, self.value.as_deref()).kind,
+            rules::ActionKind::Other(_)
         )
     }
 
-    /// A stable snake_case name for the action JSON.
+    /// A stable snake_case name for the action.
     pub fn kind(&self) -> String {
         match self.action.as_str() {
             "Move to folder" => "move_to_folder".to_owned(),

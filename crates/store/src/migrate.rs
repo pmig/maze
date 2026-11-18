@@ -21,7 +21,10 @@ mod dev_v14;
 
 /// The main store's migrations. 0001 is the one schema of the first release; it
 /// replaces the 14 migrations of the development builds before it (see [`dev_v14`]).
-const MAIN: &[M<'static>] = &[M::up(SCHEMA_V1).foreign_key_check()];
+const MAIN: &[M<'static>] = &[
+    M::up(SCHEMA_V1).foreign_key_check(),
+    M::up(include_str!("../migrations/main/0002_rules.sql")).foreign_key_check(),
+];
 
 /// The v1 schema (migration 0001).
 const SCHEMA_V1: &str = include_str!("../migrations/main/0001_schema_v1.sql");
@@ -64,7 +67,7 @@ pub(crate) fn user_version(conn: &Connection) -> Result<u32> {
 ///   `backups/mazemail-<schema>-<app version>.db` with the online backup API, keyed with
 ///   the same key; only the newest [`BACKUPS_KEPT`] backups are kept.
 /// - A database of a development build at its schema 14 is backed up the same way and
-///   converted to v1 ([`dev_v14`]).
+///   converted to v1 ([`dev_v14`]); the migrations after 0001 then run as usual.
 pub(crate) fn migrate_main(
     conn: &mut Connection,
     key: &SecretString,
@@ -75,6 +78,7 @@ pub(crate) fn migrate_main(
         let from = user_version(conn)?;
         let backup = backup_before_migrating(conn, key, backups_dir, app_version, from)?;
         dev_v14::convert(conn)?;
+        Migrations::from_slice(MAIN).to_latest(conn)?;
         return Ok(MigrationReport {
             from,
             to: SCHEMA_VERSION,
