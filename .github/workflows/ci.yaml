@@ -1,6 +1,7 @@
 name: CI
 
-# Pull requests and pushes to main: lint, test and a build. Licenses and advisories
+# Pull requests and pushes to main: lint, test and a build (and, on Linux, the
+# end-to-end test binaries for the E2E workflow). Licenses and advisories
 # are checked in cargo-deny.yaml, on dependency changes and on a schedule.
 # Nothing is published from here (PLAN §4.16). The unsigned macOS build that
 # pushes to main upload is only a workflow artifact for manual testing.
@@ -57,6 +58,22 @@ jobs:
 
       - name: Build
         run: cargo build --locked
+
+      # The end-to-end tests run in the E2E workflow once this run is done, from these
+      # binaries: packing them reuses what the test step built.
+      - name: Archive the end-to-end tests
+        if: runner.os == 'Linux'
+        run: >-
+          cargo nextest archive --workspace --locked --archive-file e2e-tests.tar.zst
+          -E 'binary(stalwart) | binary(imap_e2e) | binary(send_e2e)'
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: runner.os == 'Linux'
+        with:
+          name: e2e-tests
+          path: e2e-tests.tar.zst
+          retention-days: 3
+          if-no-files-found: error
 
   unsigned-macos-build:
     name: Unsigned macOS build (artifact)

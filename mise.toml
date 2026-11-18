@@ -48,6 +48,14 @@ run = "cargo nextest run --workspace --locked"
 description = "License and advisory checks"
 run = "cargo deny check"
 
+[tasks.e2e]
+description = "End-to-end tests against a real mail server (a pinned Stalwart, downloaded once)"
+env = { MAZEMAIL_TEST_IMAP = "1" }
+run = [
+  "sh crates/imap/tests/support/fetch-stalwart.sh target/stalwart >/dev/null",
+  "cargo nextest run --locked -p imap -p smtp -p sync -p mazemail --run-ignored only -E 'binary(stalwart) | binary(imap_e2e) | binary(send_e2e)'",
+]
+
 [tasks.ci]
 description = "Everything CI runs"
 depends = ["lint", "test", "deny"]

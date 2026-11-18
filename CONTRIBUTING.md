@@ -15,7 +15,10 @@ mise run ci         # everything CI runs: lint, test, deny
 ```
 
 Single tasks: `mise run fmt`, `mise run lint` (rustfmt check + clippy with `-D warnings`),
-`mise run test` (nextest), `mise run deny` (licenses and advisories).
+`mise run test` (nextest), `mise run deny` (licenses and advisories), `mise run e2e`
+(IMAP, SMTP, sync and the headless app against a real mail server: a pinned Stalwart
+release, downloaded into `target/stalwart/` and checksum-verified). In CI the `E2E`
+workflow runs them after CI, from the test binaries CI built.
 
 - macOS: Xcode Command Line Tools.
 - Linux: the GPUI system packages. On Debian and Ubuntu, `script/linux-deps` installs them.

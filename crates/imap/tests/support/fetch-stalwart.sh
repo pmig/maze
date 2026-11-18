@@ -6,6 +6,10 @@
 #
 # Stalwart 0.15.x is used because 0.16 replaced the TOML configuration with a
 # web-UI bootstrap flow that cannot be scripted without its JSON schema.
+#
+# Test processes run this concurrently. Each one downloads into a private temporary
+# folder and moves the binary into place with one rename, so no process ever runs a
+# half-written binary ("Text file busy"); `mise run e2e` fetches it once up front.
 set -eu
 
 VERSION="v0.15.5"
@@ -26,7 +30,9 @@ case "$(uname -s)-$(uname -m)" in
 esac
 
 mkdir -p "${dest}"
-archive="${dest}/stalwart.tar.gz"
+work="$(mktemp -d "${dest}/.fetch.XXXXXX")"
+trap 'rm -rf "${work}"' EXIT
+archive="${work}/stalwart.tar.gz"
 curl -fsSL -o "${archive}" \
   "https://github.com/stalwartlabs/stalwart/releases/download/${VERSION}/stalwart-${target}.tar.gz"
 
@@ -37,11 +43,10 @@ else
 fi
 if [ "${actual}" != "${sha}" ]; then
   echo "checksum mismatch for ${archive}: ${actual}" >&2
-  rm -f "${archive}"
   exit 1
 fi
 
-tar -xzf "${archive}" -C "${dest}" stalwart
-chmod +x "${bin}"
-rm -f "${archive}"
+tar -xzf "${archive}" -C "${work}" stalwart
+chmod +x "${work}/stalwart"
+mv -f "${work}/stalwart" "${bin}"
 echo "${bin}"
