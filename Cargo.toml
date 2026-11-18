@@ -45,7 +45,7 @@ imap = { path = "crates/imap" }
 # External crates, pinned here and inherited with `workspace = true`
 # The ACP client SDK (Apache-2.0, ADR-006); the reference clone is 3.3.0.
 agent-client-protocol = "5.0"
-ammonia = "4.2.4"
+ammonia = "4.2.5"
 anyhow = "1"
 # GPUI comes from Zed's `gpui-pre-*` snapshots. gpui-kit pins the exact snapshot it was
 # built against (PLAN ADR-002); keep these pins equal to the ones in gpui-kit's manifest.
@@ -79,8 +79,8 @@ libc = "0.2"
 # SMTP submission (PLAN §4.5): async transport over Tokio with rustls (aws-lc-rs, like
 # every TLS client in Maze) and the platform certificate verifier; messages are built
 # elsewhere.
-lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "tokio1-rustls", "aws-lc-rs", "rustls-platform-verifier"] }
-mail-auth = { version = "0.14.1", default-features = false, features = ["aws-lc-rs", "arc"] }
+lettre = { version = "0.11.24", default-features = false, features = ["smtp-transport", "tokio1-rustls", "aws-lc-rs", "rustls-platform-verifier"] }
+mail-auth = { version = "0.15.1", default-features = false, features = ["aws-lc-rs", "arc"] }
 notify = "8"
 # New-mail notifications (ADR-021): the freedesktop D-Bus service on Linux, over zbus
 # on Tokio. On macOS, UNUserNotificationCenter through mac-usernotifications (the

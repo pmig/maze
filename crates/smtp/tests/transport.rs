@@ -150,10 +150,8 @@ async fn serve(
                 };
                 data.extend_from_slice(raw);
             }
-            // The CRLF before the final dot belongs to the terminator (RFC 5321 4.1.1.4).
-            if data.ends_with(b"\r\n") {
-                data.truncate(data.len() - 2);
-            }
+            // The CRLF before the final dot ends the message's last line (RFC 5321
+            // 4.1.1.4), so it stays part of the data.
             log.lock().unwrap().data.push(data);
             replies.data.into()
         } else if upper == "QUIT" {

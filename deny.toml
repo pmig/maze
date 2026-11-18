@@ -18,6 +18,7 @@ ignore = [
   { id = "RUSTSEC-2026-0371", reason = "zbus_names: GPUI Linux (zbus), unmaintained only" },
   { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: GPUI Linux (zbus), unmaintained only" },
   { id = "RUSTSEC-2026-0441", reason = "pin-utils: via async-imap (no release without it), unmaintained only" },
+  { id = "RUSTSEC-2026-0543", reason = "chrono: via async-imap, GPUI and gpui-kit, unmaintained only" },
   # SQLite before 3.54 with a WAL whose page size differs from the database's. The only
   # foreign SQLite file Maze opens is a Thunderbird address book, and the import refuses
   # such a pair (import::thunderbird::abook::check_wal). The fix can't land yet: Servo's
