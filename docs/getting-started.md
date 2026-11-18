@@ -896,11 +896,11 @@ every new message in the Inbox of their account (or of every account).
   subject, the list (`List-Id`), whether there are attachments, and the message text.
   Text matches with *contains*, *doesn't contain*, *is*, *isn't*, *begins with* and
   *ends with*, ignoring case. A rule needs all its conditions, or any of them.
-- **Actions** mark read or unread, flag, add a tag, copy to a folder, move to a folder,
+- **Actions** mark read or unread, star, add a tag, copy to a folder, move to a folder,
   archive, move to the Trash, report junk, and stop (no further rules for that
-  message). Like in Thunderbird, a rule's flags and tags come first, then copies, then
-  the move; once a message has been moved, no further rule looks at it. Rules never
-  delete mail for good.
+  message). Like in Thunderbird, a rule's read and star changes and its tags come
+  first, then copies, then the move; once a message has been moved, no further rule
+  looks at it. Rules never delete mail for good.
 - **The text** a rule sees is the start of the message (the preview Maze keeps). When a
   rule looks at the text and the message's body hasn't been downloaded yet, Maze fetches
   it and waits up to five minutes before deciding without it.
@@ -1400,7 +1400,7 @@ at once. These are bound today:
 | Report junk (mark and move to Junk)         | `j`                                                  |
 | Move to a folder (Quick Move)               | `shift-m`                                            |
 | Delete (move to Trash)                      | `backspace`, `delete`                                |
-| Undo the last archive, move, delete or flag | `cmd-z`                                              |
+| Undo the last archive, move, delete or star | `cmd-z`                                              |
 | **Address Book**                            |                                                      |
 | Next / previous contact, first / last       | `down` / `up`, `home` / `end`                        |
 | Filter the contacts                         | `cmd-f`                                              |

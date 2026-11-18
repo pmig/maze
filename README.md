@@ -60,7 +60,7 @@ Works today:
 - the folder pane with Favorites and each account's special folders first, the message
   list as cards or a table sorted by any column, multi-select, Quick Move (`shift-m`)
   and right-click menus
-- archive, move, delete (`backspace`; in Trash permanently, after asking), tag, flag
+- archive, move, delete (`backspace`; in Trash permanently, after asking), tag, star
   and mark read, with undo (`cmd-z`), and a sync button (`cmd-shift-t`)
 - tabs and splits like Zed's: mail views, single messages and drafts side by side,
   dragged into splits, restored after a restart, with the agent column staying right
