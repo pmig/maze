@@ -92,10 +92,12 @@ WebGL/WebGPU/WebXR/WebCrypto/Bluetooth/GStreamer.
   stays, through `bundled-sqlcipher`); and Servo links `freetype-sys` 0.23 on Linux
   while GPUI's font-kit fork wants 0.20, so `third_party/zed-font-kit` (one changed line,
   README.maze.md) is patched in. Both go away when the versions line up again.
-- **Build requirements.** Servo's build scripts need Python 3.11+ (or `uv`), and
-  `mozjs_sys` downloads a prebuilt SpiderMonkey static library from Servo's GitHub
-  releases on the first build (it builds from source with `MOZJS_FROM_SOURCE`, which
-  needs clang). Clean build of the Servo crates: about 3 m 45 s debug; the release
+- **Build requirements.** Servo's build scripts need Python 3.11+ (or `uv`).
+  `mozjs_sys` only downloads a prebuilt SpiderMonkey when its `jit` feature is on, so
+  without the JIT it compiles SpiderMonkey from source and generates its bindings with
+  bindgen, which needs clang and libclang: Xcode provides them on macOS, `mise.toml`
+  installs them from conda packages on Linux (`LIBCLANG_PATH` is set in
+  `script/mise-env`). Clean build of the Servo crates: about 3 m 45 s debug; the release
   build with Servo took 10.5 min against 7.6 min without (fat LTO).
 - **Size.** The stripped macOS release binary (fat LTO) grows from 48.6 MB (the same as
   `main` today, already above the 40 MB budget of CONCEPT §3) to 122.8 MB, +74 MB.
