@@ -45,8 +45,8 @@ every saved search searches all folders.
 **Favorites stay folders of an account.** A saved search can't be a favorite; its
 section already pins it near the top. `folder_pane.favorites` is unchanged.
 
-**CLI:** `mazemail saved-search list|add|rename|edit|delete`, and `mazemail search
---saved <name|id> [query]` runs one (the query narrows it). Listing is `read`; adding,
+**CLI:** `mazemail saved-searches`, `mazemail saved-search add|rename|edit|delete`,
+and `mazemail search --saved <name|id> [query]` runs one (the query narrows it). Listing is `read`; adding,
 renaming and editing are `draft` (they change what Maze shows, never mail); deleting
 asks (`ask`), because it loses the user's query. The saved searches are global, not per
 account, so every token sees their names and queries; `search --saved` still only

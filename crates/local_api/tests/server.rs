@@ -274,7 +274,7 @@ fn error_code(response: &Response) -> ErrorCode {
 #[tokio::test]
 async fn search_end_to_end() {
     let mut h = Harness::start(ScriptedApprover::approve_all()).await;
-    let (token, record) = h.token(Profile::ReadOnly, false).await;
+    let (token, record) = h.token(Profile::Read, false).await;
     let mut client = h.client(Some(&token)).await;
     let data = client
         .call("search", json!({ "query": "from:anna@example.com" }))
@@ -444,7 +444,7 @@ async fn invalid_expired_and_revoked_tokens() {
     // Minted a minute ago with a one-second lifetime: already expired, without a sleep.
     let (expired, record) = mint(
         &Grant {
-            profile: Profile::Writer,
+            profile: Profile::Write,
             scope: TokenScope::all(),
             lifetime: Some(Duration::from_secs(1)),
             allow_send: false,
@@ -462,7 +462,7 @@ async fn invalid_expired_and_revoked_tokens() {
     assert_eq!(status["signed_in"], false);
     assert_eq!(status["token_error"], "the session token has expired");
 
-    let (token, record) = h.token(Profile::Writer, false).await;
+    let (token, record) = h.token(Profile::Write, false).await;
     h.tokens
         .revoke(&record.id, OffsetDateTime::now_utc())
         .await
@@ -491,7 +491,7 @@ async fn profiles_decide_execute_propose_or_deny() {
         .await
         .unwrap();
     assert_eq!(data["outcome"], "proposed");
-    let (writer, _) = h.token(Profile::Writer, false).await;
+    let (writer, _) = h.token(Profile::Write, false).await;
     let data = h
         .client(Some(&writer))
         .await
@@ -499,7 +499,7 @@ async fn profiles_decide_execute_propose_or_deny() {
         .await
         .unwrap();
     assert_eq!(data["outcome"], "applied");
-    let (read_only, _) = h.token(Profile::ReadOnly, false).await;
+    let (read_only, _) = h.token(Profile::Read, false).await;
     let error = h
         .client(Some(&read_only))
         .await
@@ -535,7 +535,7 @@ async fn send_is_disabled_unless_enabled_and_then_always_asks() {
     let mut h = Harness::start(ScriptedApprover::approve_all()).await;
     let args = json!({ "draft": "d_b" });
 
-    let (plain, _) = h.token(Profile::Writer, false).await;
+    let (plain, _) = h.token(Profile::Write, false).await;
     let error = api_error(
         h.client(Some(&plain))
             .await
@@ -546,7 +546,7 @@ async fn send_is_disabled_unless_enabled_and_then_always_asks() {
     assert_eq!(error.code, ErrorCode::PermissionDenied);
     assert!(error.message.contains("--allow-send"), "{}", error.message);
 
-    let (enabled, record) = h.token(Profile::Writer, true).await;
+    let (enabled, record) = h.token(Profile::Write, true).await;
     let mut progress = Vec::new();
     h.client(Some(&enabled))
         .await
@@ -578,7 +578,7 @@ async fn ask_commands_wait_for_approval() {
         Some(Decision::Deny),
         None,
         Some(Decision::Approve(Grant {
-            profile: Profile::ReadOnly,
+            profile: Profile::Read,
             scope: TokenScope::all(),
             lifetime: None,
             allow_send: false,
@@ -699,29 +699,29 @@ async fn tokens_cant_mint_tokens() {
     // The approver only grants read-only, whatever is asked.
     let mut h = Harness::start(ScriptedApprover::new(|request| {
         let mut grant = request.requested_grant();
-        grant.profile = Profile::ReadOnly;
+        grant.profile = Profile::Read;
         grant.allow_send = false;
         Some(Decision::Approve(grant))
     }))
     .await;
-    let (writer, writer_record) = h.token(Profile::Writer, true).await;
+    let (writer, writer_record) = h.token(Profile::Write, true).await;
     let mut client = h.client(Some(&writer)).await;
 
-    // Holding a writer token doesn't skip the approval, and the new token gets only
+    // Holding a write token doesn't skip the approval, and the new token gets only
     // what was approved.
     let data = client
         .call(
             "token.create",
-            json!({ "profile": "writer", "allow_send": true }),
+            json!({ "profile": "write", "allow_send": true }),
         )
         .await
         .unwrap();
-    assert_eq!(data["profile"], "read-only");
+    assert_eq!(data["profile"], "read");
     assert_eq!(data["allow_send"], false);
     let requests = h.approver.requests();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].requester_token, Some(writer_record.id.clone()));
-    assert_eq!(requests[0].profile, Profile::Writer);
+    assert_eq!(requests[0].profile, Profile::Write);
 
     let minted = SessionToken::from_string(data["token"].as_str().unwrap().to_owned());
     let error = h
@@ -737,7 +737,7 @@ async fn tokens_cant_mint_tokens() {
 #[tokio::test]
 async fn login_with_a_token_is_denied_without_approval() {
     let mut h = Harness::start(ScriptedApprover::new(|_| Some(Decision::Deny))).await;
-    let (writer, _) = h.token(Profile::Writer, false).await;
+    let (writer, _) = h.token(Profile::Write, false).await;
     let error = h
         .client(Some(&writer))
         .await
@@ -782,7 +782,7 @@ async fn token_scopes_follow_the_existing_accounts() {
     h2.stop().await;
 
     // A token for every account covers what exists: none after the last one is gone.
-    let (token, _) = h.token(Profile::Writer, false).await;
+    let (token, _) = h.token(Profile::Write, false).await;
     h.accounts.set([]);
     let error = api_error(
         h.client(Some(&token))
@@ -795,7 +795,7 @@ async fn token_scopes_follow_the_existing_accounts() {
     // Commands that touch no mail still work, e.g. adding an account.
     h.client(Some(&token))
         .await
-        .call("account.list", json!({}))
+        .call("accounts", json!({}))
         .await
         .unwrap();
     h.stop().await;
@@ -804,11 +804,11 @@ async fn token_scopes_follow_the_existing_accounts() {
 #[tokio::test]
 async fn token_list_and_revoke() {
     let mut h = Harness::start(ScriptedApprover::new(|_| Some(Decision::Deny))).await;
-    let (token, record) = h.token(Profile::ReadOnly, false).await;
-    let (_, other) = h.token(Profile::Writer, false).await;
+    let (token, record) = h.token(Profile::Read, false).await;
+    let (_, other) = h.token(Profile::Write, false).await;
     let mut client = h.client(Some(&token)).await;
 
-    let list = client.call("token.list", json!({})).await.unwrap();
+    let list = client.call("tokens", json!({})).await.unwrap();
     assert_eq!(list.as_array().unwrap().len(), 2);
     assert!(!list.to_string().contains("hash"));
 
@@ -825,11 +825,11 @@ async fn token_list_and_revoke() {
         .unwrap();
     assert_eq!(data["revoked"], true);
     assert!(h.approver.requests().is_empty());
-    let error = client.call("token.list", json!({})).await.unwrap_err();
+    let error = client.call("tokens", json!({})).await.unwrap_err();
     assert_eq!(error.exit_code(), ExitCode::NotSignedIn);
 
-    // A writer revoking another token is asked (denied here), unknown ids are not found.
-    let (writer, _) = h.token(Profile::Writer, false).await;
+    // A write token revoking another token is asked (denied here), unknown ids are not found.
+    let (writer, _) = h.token(Profile::Write, false).await;
     let mut client = h.client(Some(&writer)).await;
     let error = client
         .call("token.revoke", json!({ "id": other.id }))
@@ -842,7 +842,7 @@ async fn token_list_and_revoke() {
 #[tokio::test]
 async fn handler_errors_and_bad_arguments() {
     let mut h = Harness::start(ScriptedApprover::approve_all()).await;
-    let (token, _) = h.token(Profile::Writer, false).await;
+    let (token, _) = h.token(Profile::Write, false).await;
     let mut client = h.client(Some(&token)).await;
 
     let error = api_error(
@@ -885,7 +885,7 @@ async fn handler_errors_and_bad_arguments() {
 #[tokio::test]
 async fn long_running_commands_stream_progress() {
     let mut h = Harness::start(ScriptedApprover::approve_all()).await;
-    let (token, _) = h.token(Profile::Writer, false).await;
+    let (token, _) = h.token(Profile::Write, false).await;
     let mut progress = Vec::new();
     let data = h
         .client(Some(&token))
@@ -1083,10 +1083,10 @@ async fn account_management_needs_a_writer_token_and_approval() {
     assert!(approver.requests().is_empty());
     // Listing and syncing are reads; they work without any account in scope.
     let mut reader = h.client(Some(&triage)).await;
-    reader.call("account.list", json!({})).await.unwrap();
+    reader.call("accounts", json!({})).await.unwrap();
     reader.call("sync", json!({})).await.unwrap();
 
-    let (writer, _) = h.token(Profile::Writer, false).await;
+    let (writer, _) = h.token(Profile::Write, false).await;
     h.client(Some(&writer))
         .await
         .call("account.add", args)

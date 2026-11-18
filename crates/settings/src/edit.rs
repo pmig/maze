@@ -54,9 +54,9 @@ pub enum EditError {
     NameTaken {
         /// The file.
         path: PathBuf,
-        /// The account's current label.
+        /// The account's current name.
         old: String,
-        /// The label it was to get.
+        /// The name it was to get.
         new: String,
         /// Where both are (`accounts`).
         key: String,
@@ -118,16 +118,16 @@ pub fn write_setting(file: &Path, keys: &[&str], value: &Value) -> Result<(), Ed
     replace_file(&target, &out).map_err(io_error)
 }
 
-/// Moves what the settings file keeps for the account labelled `old` to the label
+/// Moves what the settings file keeps for the account named `old` to the name
 /// `new`, for a renamed account: `accounts.<old>` is renamed in place (its values,
 /// comments and formatting stay as they are), and the
-/// account's favorite folders (`folder_pane.favorites`) get the new label. Returns
+/// account's favorite folders (`folder_pane.favorites`) get the new name. Returns
 /// whether the file changed (`false` without a file or with nothing to move).
 ///
 /// Settings that already exist under `new` stay and apply to the renamed account, as
-/// for any account with that label, except where both labels have an entry in
+/// for any account with that name, except where both names have an entry in
 /// `accounts`: that can't be merged, so the file is left alone with
-/// [`EditError::NameTaken`]. A favorite listed under both labels is kept once. A file
+/// [`EditError::NameTaken`]. A favorite listed under both names is kept once. A file
 /// that isn't valid JSONC is left alone ([`EditError::Syntax`]).
 pub fn rename_account(file: &Path, old: &str, new: &str) -> Result<bool, EditError> {
     move_account(file, old, new, true)

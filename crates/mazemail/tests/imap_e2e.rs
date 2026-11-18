@@ -174,7 +174,7 @@ async fn headless_maze_syncs_a_real_imap_server() {
         socket(&env.data).exists()
     });
 
-    let login = env.json(&["login", "--profile", "writer", "--ttl", "1h"], None);
+    let login = env.json(&["login", "--profile", "write", "--ttl", "1h"], None);
     env.token = Some(login["token"].as_str().unwrap().to_owned());
 
     let port = server.port.to_string();
@@ -185,11 +185,11 @@ async fn headless_maze_syncs_a_real_imap_server() {
             "alice@example.org",
             "--name",
             "Test",
-            "--host",
+            "--imap-host",
             "127.0.0.1",
-            "--port",
+            "--imap-port",
             &port,
-            "--security",
+            "--imap-security",
             "none",
             "--username",
             support::USER,
@@ -206,11 +206,11 @@ async fn headless_maze_syncs_a_real_imap_server() {
             "account",
             "add",
             "bob@example.org",
-            "--host",
+            "--imap-host",
             "127.0.0.1",
-            "--port",
+            "--imap-port",
             &port,
-            "--security",
+            "--imap-security",
             "none",
             "--username",
             "alice",
@@ -251,7 +251,7 @@ async fn headless_maze_syncs_a_real_imap_server() {
     });
     eprintln!("new mail was searchable after {took:?}");
 
-    // Archive with the writer token: replayed on the server into Archive/<year>.
+    // Archive with the write token: replayed on the server into Archive/<year>.
     let first = env.json(&["search", "subject:\"Budget report 1\""], None)[0]["id"]
         .as_str()
         .unwrap()

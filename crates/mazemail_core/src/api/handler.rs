@@ -21,7 +21,7 @@
 //! a Thunderbird profile) through the `import` crate, and `export` writes the matches
 //! of a query as mbox or Maildir (both `ask`, so the user approved them).
 //! The `rule` commands are in [`super::rules`]. Commands whose crates aren't part of
-//! this build yet (`draft new|edit`, `send`, `attachment save`) fail with a typed "not available in this version"
+//! this build yet (`draft create|edit`, `send`, `attachment save`) fail with a typed "not available in this version"
 //! error (`internal`, exit code 1).
 
 use std::collections::{BTreeSet, HashMap};
@@ -30,8 +30,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use local_api::registry::args::{
-    ArchiveArgs, ContactsArgs, ExportArgs, FlagArgs, FoldersArgs, IdentitiesArgs, ImportArgs,
-    MoveArgs, ProposeArgs, ProposedAction, ReadArgs, SearchArgs, ShowArgs, ShowFormat, TagArgs,
+    ArchiveArgs, ContactsArgs, ExportArgs, FoldersArgs, IdentitiesArgs, ImportArgs, MoveArgs,
+    ProposeArgs, ProposedAction, ReadArgs, SearchArgs, ShowArgs, ShowFormat, StarArgs, TagArgs,
 };
 use local_api::registry::output::{
     AttachmentMeta as ApiAttachment, ContactInfo, ExportOutput, FolderInfo, IdentityInfo,
@@ -508,7 +508,7 @@ impl CoreCommandHandler {
                         .filter(|s| !s.is_empty())
                         .map(Sensitive::new),
                     unread: !flags.contains(Flags::SEEN),
-                    flagged: flags.contains(Flags::FLAGGED),
+                    starred: flags.contains(Flags::FLAGGED),
                     tags: detail
                         .tags
                         .iter()
@@ -878,12 +878,12 @@ impl CoreCommandHandler {
                     remove,
                     reason,
                 } => (self.tag_command(ctx, ids, add, remove)?, reason),
-                ProposedAction::Flag {
+                ProposedAction::Star {
                     ids,
-                    flagged,
+                    starred,
                     reason,
                 } => (
-                    self.flag_command(ctx, ids, Flags::FLAGGED, *flagged)?,
+                    self.flag_command(ctx, ids, Flags::FLAGGED, *starred)?,
                     reason,
                 ),
                 ProposedAction::MarkRead { ids, read, reason } => {
@@ -1026,8 +1026,8 @@ impl CommandHandler for CoreCommandHandler {
                 let command = self.tag_command(ctx, &ids, &add, &remove)?;
                 self.mutate(ctx, command).await
             }
-            Command::Flag(FlagArgs { clear, ids }) => {
-                let command = self.flag_command(ctx, &ids, Flags::FLAGGED, !clear)?;
+            Command::Star(StarArgs { unstar, ids }) => {
+                let command = self.flag_command(ctx, &ids, Flags::FLAGGED, !unstar)?;
                 self.mutate(ctx, command).await
             }
             Command::Read(ReadArgs { unread, ids }) => {
@@ -1037,7 +1037,7 @@ impl CommandHandler for CoreCommandHandler {
             Command::Propose(args) => self.propose_batch(ctx, args).await,
             Command::Export(args) => self.export(ctx, args).await,
             Command::Import(args) => self.import(ctx, args).await,
-            Command::AccountList(_) => output(&super::accounts::list(&self.core, ctx)?, Vec::new()),
+            Command::Accounts(_) => output(&super::accounts::list(&self.core, ctx)?, Vec::new()),
             Command::AccountAdd(args) => {
                 let added = super::accounts::add(&self.core, args).await?;
                 let id = added.id.clone();
@@ -1058,7 +1058,7 @@ impl CommandHandler for CoreCommandHandler {
                 let ids = synced.accounts.clone();
                 output(&synced, ids)
             }
-            Command::SavedSearchList(_) => {
+            Command::SavedSearches(_) => {
                 let list: Vec<SavedSearchInfo> = self
                     .core
                     .saved_searches()
@@ -1105,7 +1105,7 @@ impl CommandHandler for CoreCommandHandler {
                 };
                 output(&deleted, Vec::new())
             }
-            Command::RuleList(args) => super::rules::list(&self.core, ctx, &args),
+            Command::Rules(args) => super::rules::list(&self.core, ctx, &args),
             Command::RuleShow(args) => super::rules::show(&self.core, ctx, &args),
             Command::RuleAdd(args) => super::rules::add(&self.core, ctx, args).await,
             Command::RuleEnable(args) => {
@@ -1117,7 +1117,7 @@ impl CommandHandler for CoreCommandHandler {
             Command::RuleDelete(args) => super::rules::delete(&self.core, ctx, &args).await,
             Command::RuleRun(args) => super::rules::run(&self.core, ctx, &args).await,
             command @ (Command::AttachmentSave(_)
-            | Command::DraftNew(_)
+            | Command::DraftCreate(_)
             | Command::DraftEdit(_)
             | Command::Send(_)) => Err(not_available(command.name())),
         }

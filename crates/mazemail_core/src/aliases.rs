@@ -1,4 +1,4 @@
-//! Aliases: more From addresses of an account, from `accounts.<label>.aliases` in the
+//! Aliases: more From addresses of an account, from `accounts.<name>.aliases` in the
 //! settings (Outlook's and Gmail's "send as" addresses).
 //!
 //! Each alias is an identity of its account, so the composer's From offers it and a

@@ -4,12 +4,12 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use super::args::{
-    AccountAddArgs, AccountListArgs, AccountRemoveArgs, AccountSetArgs, ArchiveArgs,
-    AttachmentSaveArgs, ContactsArgs, DraftEditArgs, DraftNewArgs, ExportArgs, FlagArgs,
-    FoldersArgs, IdentitiesArgs, ImportArgs, ImportFormat, MoveArgs, OAuthProvider, ProposeArgs,
-    ReadArgs, RuleAddArgs, RuleIdArgs, RuleListArgs, RuleRunArgs, SavedSearchAddArgs,
-    SavedSearchDeleteArgs, SavedSearchEditArgs, SavedSearchListArgs, SavedSearchRenameArgs,
-    SearchArgs, SendArgs, ShowArgs, SyncArgs, TagArgs, TagsArgs,
+    AccountAddArgs, AccountRemoveArgs, AccountSetArgs, AccountsArgs, ArchiveArgs,
+    AttachmentSaveArgs, ContactsArgs, DraftCreateArgs, DraftEditArgs, ExportArgs, FoldersArgs,
+    IdentitiesArgs, ImportArgs, ImportFormat, MoveArgs, OAuthProvider, ProposeArgs, ReadArgs,
+    RuleAddArgs, RuleIdArgs, RuleRunArgs, RulesArgs, SavedSearchAddArgs, SavedSearchDeleteArgs,
+    SavedSearchEditArgs, SavedSearchRenameArgs, SavedSearchesArgs, SearchArgs, SendArgs, ShowArgs,
+    StarArgs, SyncArgs, TagArgs, TagsArgs,
 };
 
 /// Arguments that don't match a command's schema.
@@ -81,8 +81,8 @@ mail_commands! {
     /// `mazemail attachment save`. Return
     /// [`AttachmentData`](crate::registry::output::AttachmentData); the CLI writes the file.
     AttachmentSave(AttachmentSaveArgs) = "attachment.save",
-    /// `mazemail draft new`.
-    DraftNew(DraftNewArgs) = "draft.new",
+    /// `mazemail draft create`.
+    DraftCreate(DraftCreateArgs) = "draft.create",
     /// `mazemail draft edit`.
     DraftEdit(DraftEditArgs) = "draft.edit",
     /// `mazemail archive`. Honor [`ExecutionMode`](crate::ExecutionMode).
@@ -91,16 +91,16 @@ mail_commands! {
     Move(MoveArgs) = "move",
     /// `mazemail tag`. Honor [`ExecutionMode`](crate::ExecutionMode).
     Tag(TagArgs) = "tag",
-    /// `mazemail flag`. Honor [`ExecutionMode`](crate::ExecutionMode).
-    Flag(FlagArgs) = "flag",
+    /// `mazemail star`. Honor [`ExecutionMode`](crate::ExecutionMode).
+    Star(StarArgs) = "star",
     /// `mazemail read`. Honor [`ExecutionMode`](crate::ExecutionMode).
     Read(ReadArgs) = "read",
     /// `mazemail propose`. Always creates a proposal.
     Propose(ProposeArgs) = "propose",
     /// `mazemail rule add`. Already approved by the user when it arrives.
     RuleAdd(RuleAddArgs) = "rule.add",
-    /// `mazemail rule list`.
-    RuleList(RuleListArgs) = "rule.list",
+    /// `mazemail rules`.
+    Rules(RulesArgs) = "rules",
     /// `mazemail rule show`.
     RuleShow(RuleIdArgs) = "rule.show",
     /// `mazemail rule enable`. Already approved by the user when it arrives.
@@ -117,8 +117,8 @@ mail_commands! {
     Export(ExportArgs) = "export",
     /// `mazemail import`. Already approved by the user when it arrives.
     Import(ImportArgs) = "import",
-    /// `mazemail account list`. Only accounts in the request's scope.
-    AccountList(AccountListArgs) = "account.list",
+    /// `mazemail accounts`. Only accounts in the request's scope.
+    Accounts(AccountsArgs) = "accounts",
     /// `mazemail account add`. Already approved by the user when it arrives.
     AccountAdd(AccountAddArgs) = "account.add",
     /// `mazemail account remove`. Already approved by the user when it arrives.
@@ -127,8 +127,8 @@ mail_commands! {
     AccountSet(AccountSetArgs) = "account.set",
     /// `mazemail sync`.
     Sync(SyncArgs) = "sync",
-    /// `mazemail saved-search list`.
-    SavedSearchList(SavedSearchListArgs) = "saved-search.list",
+    /// `mazemail saved-searches`.
+    SavedSearches(SavedSearchesArgs) = "saved-searches",
     /// `mazemail saved-search add`.
     SavedSearchAdd(SavedSearchAddArgs) = "saved-search.add",
     /// `mazemail saved-search rename`.
@@ -146,7 +146,7 @@ impl Command {
             Self::Archive(args) => Some(&args.ids),
             Self::Move(args) => Some(&args.ids),
             Self::Tag(args) => Some(&args.ids),
-            Self::Flag(args) => Some(&args.ids),
+            Self::Star(args) => Some(&args.ids),
             Self::Read(args) => Some(&args.ids),
             _ => None,
         };
@@ -162,6 +162,17 @@ impl Command {
                         .is_none_or(|q| q.expose().trim().is_empty()) =>
             {
                 Err(ArgsError("query: give a query or a saved search".into()))
+            }
+            Self::DraftCreate(args)
+                if [&args.reply, &args.reply_all, &args.forward]
+                    .iter()
+                    .filter(|id| id.is_some())
+                    .count()
+                    > 1 =>
+            {
+                Err(ArgsError(
+                    "reply, reply_all and forward exclude each other".into(),
+                ))
             }
             Self::Tag(args) if args.add.is_empty() && args.remove.is_empty() => {
                 Err(ArgsError("add or remove at least one tag".into()))

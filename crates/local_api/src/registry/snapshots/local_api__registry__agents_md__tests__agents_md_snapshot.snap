@@ -11,7 +11,7 @@ expression: agents_md()
 ## Signing in
 
 - Commands that touch mail need a session token in `MAZEMAIL_SESSION`. Agents started by Maze already have one.
-- Otherwise run `eval "$(mazemail login --profile read-only --ttl 8h)"`. Maze shows which program is asking and waits for approval ("waiting for approval in Maze…").
+- Otherwise run `eval "$(mazemail login --profile read --ttl 8h)"`. Maze shows which program is asking and waits for approval ("waiting for approval in Maze…").
 - Without a token only `mazemail help`, `mazemail status` and `mazemail login` work (exit code 6).
 - Your token decides what you can do (see the table below) and which accounts and folders you can see.
 
@@ -31,14 +31,14 @@ expression: agents_md()
 
 `allow` runs directly, `propose` becomes a proposal you review in Maze, `ask` waits for approval in Maze, `deny` fails with exit code 3.
 
-| Command | read-only | triage | writer |
+| Command | read | triage | write |
 | ------- | --- | --- | --- |
 | `status` | allow (no token needed) | allow (no token needed) | allow (no token needed) |
 | `help` | allow (no token needed) | allow (no token needed) | allow (no token needed) |
 | `login` | ask (no token needed) | ask (no token needed) | ask (no token needed) |
 | `open` | allow (no token needed) | allow (no token needed) | allow (no token needed) |
 | `token create` | ask (no token needed) | ask (no token needed) | ask (no token needed) |
-| `token list` | allow | allow | allow |
+| `tokens` | allow | allow | allow |
 | `token revoke` | deny | ask | ask |
 | `search` | allow | allow | allow |
 | `show` | allow | allow | allow |
@@ -47,15 +47,15 @@ expression: agents_md()
 | `contacts` | allow | allow | allow |
 | `identities` | allow | allow | allow |
 | `attachment save` | allow | allow | allow |
-| `draft new` | deny | allow | allow |
+| `draft create` | deny | allow | allow |
 | `draft edit` | deny | allow | allow |
 | `archive` | deny | propose | allow |
 | `move` | deny | propose | allow |
 | `tag` | deny | propose | allow |
-| `flag` | deny | propose | allow |
+| `star` | deny | propose | allow |
 | `read` | deny | propose | allow |
 | `propose` | deny | allow | allow |
-| `rule list` | allow | allow | allow |
+| `rules` | allow | allow | allow |
 | `rule show` | allow | allow | allow |
 | `rule add` | deny | ask | ask |
 | `rule enable` | deny | ask | ask |
@@ -65,12 +65,12 @@ expression: agents_md()
 | `send` | deny | deny (ask with `--allow-send`) | deny (ask with `--allow-send`) |
 | `export` | deny | ask | ask |
 | `import` | deny | ask | ask |
-| `account list` | allow | allow | allow |
+| `accounts` | allow | allow | allow |
 | `account add` | deny | deny | ask |
 | `account remove` | deny | deny | ask |
 | `account set` | deny | deny | ask |
 | `sync` | allow | allow | allow |
-| `saved-search list` | allow | allow | allow |
+| `saved-searches` | allow | allow | allow |
 | `saved-search add` | deny | allow | allow |
 | `saved-search rename` | deny | allow | allow |
 | `saved-search edit` | deny | allow | allow |
@@ -113,7 +113,7 @@ Output (`--json`):
     expires_at?: string | null,  // Expiry (RFC 3339), `null` = never.
     id: string,  // Public id (`tk_…`).
     label?: string | null,  // Label.
-    profile: "read-only" | "triage" | "writer",  // Profile.
+    profile: "read" | "triage" | "write",  // Profile.
     revoked: boolean,  // Whether it was revoked.
     scope: {
       accounts?: string[] | null,  // Account ids (`a_…`), or `null` for all.
@@ -147,7 +147,7 @@ mazemail help [<TOPIC>...]
 
 | Argument | Description |
 | -------- | ----------- |
-| `<TOPIC>...` | A command (`draft new`) or `agents` for the AGENTS.md text. |
+| `<TOPIC>...` | A command (`draft create`) or `agents` for the AGENTS.md text. |
 
 Output (`--json`):
 
@@ -156,7 +156,7 @@ Output (`--json`):
   commands: [
     {
       access?: "allow" | "propose" | "ask" | "deny" | null,  // What happens with the caller's token (`null` without a token).
-      command: string,  // As typed after `mazemail` (`draft new`).
+      command: string,  // As typed after `mazemail` (`draft create`).
       permission: "read" | "draft" | "propose" | "ask" | "disabled" | "admin",  // Permission class.
       requires_token: boolean,  // Whether the command needs a token.
       summary: string,  // One-line summary.
@@ -169,7 +169,7 @@ Examples:
 
 ```sh
 # Help for one command
-mazemail help draft new
+mazemail help draft create
 # Write the agent guide
 mazemail help agents > AGENTS.md
 ```
@@ -188,7 +188,7 @@ mazemail login [OPTIONS]
 
 | Argument | Description |
 | -------- | ----------- |
-| `--profile <PROFILE>` | Profile of the new token. One of `read-only`, `triage`, `writer`. Default: `read-only`. |
+| `--profile <PROFILE>` | Profile of the new token. One of `read`, `triage`, `write`. Default: `read`. |
 | `--ttl <TTL>` | How long the token is valid: 30m, 8h, 7d, 1h30m (at most 30d). Default: `8h`. |
 | `--label <LABEL>` | A label shown in Settings and the audit log. |
 | `--account <ACCOUNT>...` | Limit the token to this account (repeatable; default: every account). |
@@ -203,7 +203,7 @@ Output (`--json`):
   expires_at?: string | null,  // Expiry (RFC 3339).
   export: string,  // `export MAZEMAIL_SESSION=…`, for `eval "$(mazemail login)"`.
   id: string,  // The token's public id.
-  profile: "read-only" | "triage" | "writer",  // The approved profile.
+  profile: "read" | "triage" | "write",  // The approved profile.
   scope: {
     accounts?: string[] | null,  // Account ids (`a_…`), or `null` for all.
     folders?: string[] | null,  // Folder ids (`f_…`), or `null` for all.
@@ -216,7 +216,7 @@ Examples:
 
 ```sh
 # Sign in the current shell
-eval "$(mazemail login --profile read-only --ttl 8h)"
+eval "$(mazemail login --profile read --ttl 8h)"
 # A triage token for one account
 mazemail login --profile triage --account a_b --label claude
 ```
@@ -266,7 +266,7 @@ mazemail token create [OPTIONS]
 
 | Argument | Description |
 | -------- | ----------- |
-| `--profile <PROFILE>` | Profile of the new token. One of `read-only`, `triage`, `writer`. Default: `read-only`. |
+| `--profile <PROFILE>` | Profile of the new token. One of `read`, `triage`, `write`. Default: `read`. |
 | `--ttl <TTL>` | How long the token is valid: 30m, 8h, 7d, 1h30m (at most 30d). Default: `8h`. |
 | `--label <LABEL>` | A label shown in Settings and the audit log. |
 | `--account <ACCOUNT>...` | Limit the token to this account (repeatable; default: every account). |
@@ -281,7 +281,7 @@ Output (`--json`):
   expires_at?: string | null,  // Expiry (RFC 3339).
   export: string,  // `export MAZEMAIL_SESSION=…`, for `eval "$(mazemail login)"`.
   id: string,  // The token's public id.
-  profile: "read-only" | "triage" | "writer",  // The approved profile.
+  profile: "read" | "triage" | "write",  // The approved profile.
   scope: {
     accounts?: string[] | null,  // Account ids (`a_…`), or `null` for all.
     folders?: string[] | null,  // Folder ids (`f_…`), or `null` for all.
@@ -294,10 +294,10 @@ Examples:
 
 ```sh
 # Print just the token
-mazemail token create --profile read-only --ttl 1h --json | jq -r .token
+mazemail token create --profile read --ttl 1h --json | jq -r .token
 ```
 
-### `mazemail token list`
+### `mazemail tokens`
 
 List API tokens.
 
@@ -306,7 +306,7 @@ Lists every token with its profile, scope, expiry and creator. Secrets are never
 Permission: `read`
 
 ```sh
-mazemail token list
+mazemail tokens
 ```
 
 Output (`--json`):
@@ -326,7 +326,7 @@ Output (`--json`):
     expires_at?: string | null,  // Expiry (RFC 3339), `null` = never.
     id: string,  // Public id (`tk_…`).
     label?: string | null,  // Label.
-    profile: "read-only" | "triage" | "writer",  // Profile.
+    profile: "read" | "triage" | "write",  // Profile.
     revoked: boolean,  // Whether it was revoked.
     scope: {
       accounts?: string[] | null,  // Account ids (`a_…`), or `null` for all.
@@ -340,7 +340,7 @@ Examples:
 
 ```sh
 # Show tokens
-mazemail token list
+mazemail tokens
 ```
 
 ### `mazemail token revoke`
@@ -357,7 +357,7 @@ mazemail token revoke <TOKEN_ID>
 
 | Argument | Description |
 | -------- | ----------- |
-| `<TOKEN_ID>` | The token's id (`tk_…`, from `mazemail token list`). |
+| `<TOKEN_ID>` | The token's id (`tk_…`, from `mazemail tokens`). |
 
 Output (`--json`):
 
@@ -379,7 +379,7 @@ mazemail token revoke tk_q3x7k2mz4b5ca
 
 Search mail.
 
-Searches every account and folder in your token's scope, newest first. The query language is Thunderbird's quick filter plus Gmail-style operators. --saved runs a saved search (`mazemail saved-search list`); a query given with it narrows the results.
+Searches every account and folder in your token's scope, newest first. The query language is Thunderbird's quick filter plus Gmail-style operators. --saved runs a saved search (`mazemail saved-searches`); a query given with it narrows the results.
 
 Permission: `read`
 
@@ -390,7 +390,7 @@ mazemail search [OPTIONS] [<QUERY>]
 | Argument | Description |
 | -------- | ----------- |
 | `<QUERY>` | The query: words plus `from:`, `to:`, `subject:`, `has:attachment`, `is:unread`, `tag:`, `in:`, `list:`, `after:`, `before:`, `older_than:`. With --saved it narrows the saved search. |
-| `--saved <NAME_OR_ID>` | Run a saved search, by name or id (`s_…`, from `mazemail saved-search list`). |
+| `--saved <NAME_OR_ID>` | Run a saved search, by name or id (`s_…`, from `mazemail saved-searches`). |
 | `--limit <LIMIT>` | Maximum number of results. Default: `50`. |
 | `--ids` | Print only message ids, one per line (for `$(…)`). |
 
@@ -401,12 +401,12 @@ Output (`--json`):
   {
     account: string,  // Account id.
     date: string,  // Date (RFC 3339).
-    flagged: boolean,  // Flagged.
     folder?: string | null,  // Folder id.
     from: string,  // Sender ("Name <address>").
     has_attachments: boolean,  // Has attachments.
     id: string,  // Message id.
     snippet?: string | null,  // Start of the body.
+    starred: boolean,  // Starred.
     subject: string,  // Subject.
     tags: string[],  // Tag names.
     thread: string,  // Thread id.
@@ -589,7 +589,7 @@ mazemail contacts anna
 
 List your sending identities.
 
-Lists the identities (From addresses) of the accounts in scope. `draft new` picks one automatically when you don't pass --identity.
+Lists the identities (From addresses) of the accounts in scope. `draft create` picks one automatically when you don't pass --identity.
 
 Permission: `read`
 
@@ -657,7 +657,7 @@ Examples:
 mazemail attachment save m_8f3a2c.2 --to .
 ```
 
-### `mazemail draft new`
+### `mazemail draft create`
 
 Write a new draft, reply or forward.
 
@@ -666,13 +666,13 @@ Creates a draft in Maze for you to review and send. Drafts are harmless: nothing
 Permission: `draft`
 
 ```sh
-mazemail draft new [OPTIONS]
+mazemail draft create [OPTIONS]
 ```
 
 | Argument | Description |
 | -------- | ----------- |
-| `--reply-to <ID>` | Reply to this message (`m_…`). |
-| `--reply-all` | Reply to all recipients (with --reply-to). |
+| `--reply <ID>` | Reply to the sender of this message (`m_…`). |
+| `--reply-all <ID>` | Reply to the sender and all recipients of this message (`m_…`). |
 | `--forward <ID>` | Forward this message (`m_…`). |
 | `--identity <IDENTITY>` | Identity to write from; picked automatically from the recipients and the replied-to message when omitted. |
 | `--to <ADDRESS>...` | Recipient (repeatable). |
@@ -698,9 +698,9 @@ Examples:
 
 ```sh
 # Reply; identity picked automatically
-mazemail draft new --reply-to m_8f3a2c --body-file reply.md
+mazemail draft create --reply m_8f3a2c --body-file reply.md
 # New message with the body from stdin
-echo 'See you then.' | mazemail draft new --to anna@example.com --subject Friday --body-file -
+echo 'See you then.' | mazemail draft create --to anna@example.com --subject Friday --body-file -
 ```
 
 ### `mazemail draft edit`
@@ -749,7 +749,7 @@ mazemail draft edit d_42 --subject 'Re: Friday' --body-file reply.md
 
 Archive messages or threads.
 
-Under the triage profile this becomes a proposal that you accept or reject in Maze's review UI; under the writer profile it runs directly.
+Under the triage profile this becomes a proposal that you accept or reject in Maze's review UI; under the write profile it runs directly.
 
 Permission: `propose`
 
@@ -782,7 +782,7 @@ mazemail archive $(mazemail search 'list:news older_than:7d' --ids)
 
 Move messages or threads to a folder.
 
-Under the triage profile this becomes a proposal that you accept or reject in Maze's review UI; under the writer profile it runs directly.
+Under the triage profile this becomes a proposal that you accept or reject in Maze's review UI; under the write profile it runs directly.
 
 Permission: `propose`
 
@@ -816,7 +816,7 @@ mazemail move --to f_k2 m_8f3a2c t_19bd
 
 Add or remove tags.
 
-Under the triage profile this becomes a proposal that you accept or reject in Maze's review UI; under the writer profile it runs directly.
+Under the triage profile this becomes a proposal that you accept or reject in Maze's review UI; under the write profile it runs directly.
 
 Permission: `propose`
 
@@ -847,21 +847,21 @@ Examples:
 mazemail tag --add 'To Do' --remove Later m_8f3a2c
 ```
 
-### `mazemail flag`
+### `mazemail star`
 
-Flag or unflag messages.
+Star or unstar messages.
 
-Under the triage profile this becomes a proposal that you accept or reject in Maze's review UI; under the writer profile it runs directly.
+Under the triage profile this becomes a proposal that you accept or reject in Maze's review UI; under the write profile it runs directly.
 
 Permission: `propose`
 
 ```sh
-mazemail flag [OPTIONS] <ID>...
+mazemail star [OPTIONS] <ID>...
 ```
 
 | Argument | Description |
 | -------- | ----------- |
-| `--clear` | Remove the flag instead. |
+| `--unstar` | Remove the star instead. |
 | `<ID>...` | Message (`m_…`) or thread (`t_…`) ids. |
 
 Output (`--json`):
@@ -877,15 +877,17 @@ Output (`--json`):
 Examples:
 
 ```sh
-# Flag a message
-mazemail flag m_8f3a2c
+# Star a message
+mazemail star m_8f3a2c
+# Unstar a thread
+mazemail star --unstar t_19bd
 ```
 
 ### `mazemail read`
 
 Mark messages read or unread.
 
-Under the triage profile this becomes a proposal that you accept or reject in Maze's review UI; under the writer profile it runs directly.
+Under the triage profile this becomes a proposal that you accept or reject in Maze's review UI; under the write profile it runs directly.
 
 Permission: `propose`
 
@@ -919,7 +921,7 @@ mazemail read --unread t_19bd
 
 Propose a batch of actions for review.
 
-Sends a list of actions (archive, move, tag, flag, mark_read, unsubscribe) that shows up grouped in Maze's review UI, where you accept or reject each item. Nothing changes until you accept.
+Sends a list of actions (archive, move, tag, star, mark_read, unsubscribe) that shows up grouped in Maze's review UI, where you accept or reject each item. Nothing changes until you accept.
 
 Permission: `draft`
 
@@ -948,7 +950,7 @@ Examples:
 mazemail propose --title 'Inbox triage' --file actions.json
 ```
 
-### `mazemail rule list`
+### `mazemail rules`
 
 List message rules (filters).
 
@@ -957,7 +959,7 @@ Lists the rules in the order they run, with their conditions, actions and whethe
 Permission: `read`
 
 ```sh
-mazemail rule list [OPTIONS]
+mazemail rules [OPTIONS]
 ```
 
 | Argument | Description |
@@ -988,9 +990,9 @@ Examples:
 
 ```sh
 # Show every rule
-mazemail rule list
+mazemail rules
 # Imported rules that can be enabled
-mazemail rule list --json | jq -r '.[] | select(.imported and .runnable and (.enabled | not)) | .id'
+mazemail rules --json | jq -r '.[] | select(.imported and .runnable and (.enabled | not)) | .id'
 ```
 
 ### `mazemail rule show`
@@ -1007,7 +1009,7 @@ mazemail rule show <RULE>
 
 | Argument | Description |
 | -------- | ----------- |
-| `<RULE>` | The rule's id (`r_…`, from `mazemail rule list`). |
+| `<RULE>` | The rule's id (`r_…`, from `mazemail rules`). |
 
 Output (`--json`):
 
@@ -1050,7 +1052,7 @@ mazemail rule add [OPTIONS] --name <NAME> --when <QUERY> --then <ACTION>...
 | -------- | ----------- |
 | `--name <NAME>` | Name shown in the rules list. Required. |
 | `--when <QUERY>` | Which messages the rule matches, as a search query: from:, to:, cc:, subject:, list:, has:attachment and free text (the message text), negated with `-`, all of them (`a b`) or any (`a OR b`). Required. |
-| `--then <ACTION>...` | What to do (repeatable): archive, read, flag, trash, stop, move:&lt;folder-id&gt;, copy:&lt;folder-id&gt;, tag:&lt;name&gt;. Required. |
+| `--then <ACTION>...` | What to do (repeatable): archive, read, star, trash, stop, move:&lt;folder-id&gt;, copy:&lt;folder-id&gt;, tag:&lt;name&gt;. Required. |
 | `--account <ACCOUNT>` | Limit the rule to one account. |
 | `--apply-now` | Also run the rule on the messages in the Inbox now. |
 
@@ -1084,7 +1086,7 @@ mazemail rule enable <RULE>
 
 | Argument | Description |
 | -------- | ----------- |
-| `<RULE>` | The rule's id (`r_…`, from `mazemail rule list`). |
+| `<RULE>` | The rule's id (`r_…`, from `mazemail rules`). |
 
 Output (`--json`):
 
@@ -1125,7 +1127,7 @@ mazemail rule disable <RULE>
 
 | Argument | Description |
 | -------- | ----------- |
-| `<RULE>` | The rule's id (`r_…`, from `mazemail rule list`). |
+| `<RULE>` | The rule's id (`r_…`, from `mazemail rules`). |
 
 Output (`--json`):
 
@@ -1166,7 +1168,7 @@ mazemail rule delete <RULE>
 
 | Argument | Description |
 | -------- | ----------- |
-| `<RULE>` | The rule's id (`r_…`, from `mazemail rule list`). |
+| `<RULE>` | The rule's id (`r_…`, from `mazemail rules`). |
 
 Output (`--json`):
 
@@ -1331,7 +1333,7 @@ mazemail import ~/Library/Thunderbird/Profiles/abcd.default-release
 mazemail import ~/.thunderbird/abcd.default-release --only contacts,filters
 ```
 
-### `mazemail account list`
+### `mazemail accounts`
 
 List mail accounts and their sync state.
 
@@ -1340,7 +1342,7 @@ Lists the accounts in your token's scope with their server, sign-in method and s
 Permission: `read`
 
 ```sh
-mazemail account list
+mazemail accounts
 ```
 
 Output (`--json`):
@@ -1364,14 +1366,14 @@ Examples:
 
 ```sh
 # Accounts that need a new sign-in
-mazemail account list --json | jq -r '.[] | select(.state == "auth_required") | .id'
+mazemail accounts --json | jq -r '.[] | select(.state == "auth_required") | .id'
 ```
 
 ### `mazemail account add`
 
 Add an IMAP, Gmail or Microsoft account.
 
-Maze connects, logs in and lists the folders before it saves anything, then keeps the password (or the sign-in) in its encrypted storage and starts syncing. The password is read from the terminal without echo, or from stdin with --password-stdin; it is never a command-line argument. With --oauth google or --oauth microsoft, Maze opens the browser for the sign-in instead (Google needs auth.google.client_id in settings.json). Microsoft sign-ins use the auth.microsoft.tenant setting (default common); --tenant overrides it for this account, e.g. with your organization's tenant ID or domain when its app registration only allows its own accounts. Host, port and security are detected for well-known providers; so is the SMTP server for sending (override it with --smtp-host, --smtp-port and --smtp-security; it logs in like IMAP). Needs a writer token, and you approve every account in Maze.
+Maze connects, logs in and lists the folders before it saves anything, then keeps the password (or the sign-in) in its encrypted storage and starts syncing. The password is read from the terminal without echo, or from stdin with --password-stdin; it is never a command-line argument. With --oauth google or --oauth microsoft, Maze opens the browser for the sign-in instead (Google needs auth.google.client_id in settings.json). Microsoft sign-ins use the auth.microsoft.tenant setting (default common); --tenant overrides it for this account, e.g. with your organization's tenant ID or domain when its app registration only allows its own accounts. The IMAP host, port and security are detected for well-known providers; so is the SMTP server for sending (override it with --smtp-host, --smtp-port and --smtp-security; it logs in like IMAP). Needs a write token, and you approve every account in Maze.
 
 Permission: `admin`
 
@@ -1385,9 +1387,9 @@ mazemail account add [OPTIONS] <EMAIL>
 | `--name <NAME>` | The name in the folder pane (default: the address). |
 | `--oauth <OAUTH>` | Sign in with Google or Microsoft in the browser (no password). One of `google`, `microsoft`. |
 | `--tenant <TENANT>` | With `--oauth microsoft`: the organization's tenant ID or domain, or `common`, `organizations`, `consumers` (default: the `auth.microsoft.tenant` setting). |
-| `--host <HOST>` | IMAP host (default: detected from the address). |
-| `--port <PORT>` | IMAP port (default: 993 for TLS, 143 otherwise). |
-| `--security <SECURITY>` | Transport security. One of `tls`, `starttls`, `none`. |
+| `--imap-host <IMAP_HOST>` | IMAP host (default: detected from the address). |
+| `--imap-port <IMAP_PORT>` | IMAP port (default: 993 for TLS, 143 otherwise). |
+| `--imap-security <IMAP_SECURITY>` | IMAP transport security. One of `tls`, `starttls`, `none`. |
 | `--username <USERNAME>` | Login name (default: the address). |
 | `--password-stdin` | Read the password from stdin (first line) instead of prompting on the terminal. |
 | `--smtp-host <SMTP_HOST>` | SMTP host for sending (default: derived from the address and the IMAP host). |
@@ -1413,7 +1415,7 @@ Examples:
 
 ```sh
 # Add an account; asks for the password
-mazemail account add alice@example.org --host imap.example.org
+mazemail account add alice@example.org --imap-host imap.example.org
 # Password from stdin (scripts)
 printf '%s\n' "$PASSWORD" | mazemail account add alice@example.org --password-stdin
 # Sign in with Google in the browser
@@ -1426,7 +1428,7 @@ mazemail account add dana@contoso.com --oauth microsoft --tenant contoso.com
 
 Remove a mail account.
 
-Stops syncing the account and deletes its local mail, folders, identities and saved password or sign-in. Nothing changes on the server. Needs a writer token, and you approve it in Maze.
+Stops syncing the account and deletes its local mail, folders, identities and saved password or sign-in. Nothing changes on the server. Needs a write token, and you approve it in Maze.
 
 Permission: `admin`
 
@@ -1458,7 +1460,7 @@ mazemail account remove a_b
 
 Change an account's name, password or servers.
 
-Changes what you pass and keeps the rest. A new --name moves the account's settings in settings.json (accounts.<name>, favorite folders) along with it. --password asks for a new password on the terminal without echo (--password-stdin reads it from stdin); it is never a command-line argument. Changing the IMAP server (--host, --port, --security), the login name (--username) or the SMTP server (--smtp-host, --smtp-port, --smtp-security) asks for the password again: Maze only sends a saved password to the servers it was saved for. Like adding, Maze connects, logs in and lists the folders before it saves anything, then restarts the account's sync. Google and Microsoft accounts sign in again in the browser with --sign-in (--tenant changes a Microsoft account's tenant). Needs a writer token, and you approve it in Maze.
+Changes what you pass and keeps the rest. A new --name moves the account's settings in settings.json (accounts.<name>, favorite folders) along with it. --password asks for a new password on the terminal without echo (--password-stdin reads it from stdin); it is never a command-line argument. Changing the IMAP server (--imap-host, --imap-port, --imap-security), the login name (--username) or the SMTP server (--smtp-host, --smtp-port, --smtp-security) asks for the password again: Maze only sends a saved password to the servers it was saved for. Like adding, Maze connects, logs in and lists the folders before it saves anything, then restarts the account's sync. Google and Microsoft accounts sign in again in the browser with --sign-in (--tenant changes a Microsoft account's tenant). Needs a write token, and you approve it in Maze.
 
 Permission: `admin`
 
@@ -1468,11 +1470,11 @@ mazemail account set [OPTIONS] <ACCOUNT>
 
 | Argument | Description |
 | -------- | ----------- |
-| `<ACCOUNT>` | The account (`a_…`, see `mazemail account list`). |
+| `<ACCOUNT>` | The account (`a_…`, see `mazemail accounts`). |
 | `--name <NAME>` | A new name in the folder pane. |
-| `--host <HOST>` | IMAP host. |
-| `--port <PORT>` | IMAP port. |
-| `--security <SECURITY>` | IMAP transport security. One of `tls`, `starttls`, `none`. |
+| `--imap-host <IMAP_HOST>` | IMAP host. |
+| `--imap-port <IMAP_PORT>` | IMAP port. |
+| `--imap-security <IMAP_SECURITY>` | IMAP transport security. One of `tls`, `starttls`, `none`. |
 | `--username <USERNAME>` | Login name ("" for the address). |
 | `--password` | Set a new password: asks for it on the terminal (without echo). Server changes ask for it anyway. |
 | `--password-stdin` | Read the password from stdin (first line) instead of asking on the terminal. |
@@ -1505,7 +1507,7 @@ mazemail account set a_b --password
 # Rename an account (its settings move along)
 mazemail account set a_b --name Work
 # Move to other servers (asks for the password)
-mazemail account set a_b --host mail.example.org --smtp-host mail.example.org
+mazemail account set a_b --imap-host mail.example.org --smtp-host mail.example.org
 # Sign a Google or Microsoft account in again
 mazemail account set a_c --sign-in
 ```
@@ -1514,7 +1516,7 @@ mazemail account set a_c --sign-in
 
 Sync accounts now.
 
-Asks every account in your token's scope (or --account) to look for new mail and replay pending changes now, and retries at once when an account is offline. Returns right away; `mazemail account list` shows the progress.
+Asks every account in your token's scope (or --account) to look for new mail and replay pending changes now, and retries at once when an account is offline. Returns right away; `mazemail accounts` shows the progress.
 
 Permission: `read`
 
@@ -1543,7 +1545,7 @@ mazemail sync
 mazemail sync --account a_b
 ```
 
-### `mazemail saved-search list`
+### `mazemail saved-searches`
 
 List saved searches.
 
@@ -1552,7 +1554,7 @@ Lists the saved searches that Maze's folder pane shows under Saved Searches, wit
 Permission: `read`
 
 ```sh
-mazemail saved-search list
+mazemail saved-searches
 ```
 
 Output (`--json`):
@@ -1571,7 +1573,7 @@ Examples:
 
 ```sh
 # Names of the saved searches
-mazemail saved-search list --json | jq -r '.[].name'
+mazemail saved-searches --json | jq -r '.[].name'
 ```
 
 ### `mazemail saved-search add`

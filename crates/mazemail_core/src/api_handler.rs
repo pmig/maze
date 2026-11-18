@@ -14,7 +14,7 @@
 //! # Wiring local_api in
 //!
 //! `local_api` resolves a presented token to its profile and scope (`TokenStore`),
-//! decides per command (read-only, triage, writer; per-account access from settings),
+//! decides per command (read, triage, write; per-account access from settings),
 //! and may ask the user (`Approver`). It implements [`CommandAuthorizer`] with that
 //! logic and is passed in [`CoreConfig::authorizer`](crate::CoreConfig::authorizer).
 //! Its `CommandHandler` implementation for the socket server calls the `CoreHandle`

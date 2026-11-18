@@ -615,7 +615,7 @@ impl CommandAuthorizer for Policy {
                 reason: Some("Looks like spam".to_owned()),
             },
             _ => Authorization::Deny {
-                reason: "read-only token".to_owned(),
+                reason: "read token".to_owned(),
             },
         }
     }
@@ -693,9 +693,7 @@ async fn agent_commands_go_through_the_authorizer() {
     let refused = core
         .apply(delete.clone(), Origin::Agent { token: refuse })
         .await;
-    assert!(
-        matches!(refused, Err(Error::PermissionDenied { reason }) if reason == "read-only token")
-    );
+    assert!(matches!(refused, Err(Error::PermissionDenied { reason }) if reason == "read token"));
 
     let applied = core
         .apply(delete, Origin::Agent { token: allow })

@@ -970,7 +970,7 @@ async fn microsoft_accounts_refresh_with_the_tenant_they_signed_in_with() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_local_api_adds_lists_syncs_and_removes_accounts() {
-    use local_api::registry::args::{AccountAddArgs, AccountListArgs, AccountRemoveArgs, SyncArgs};
+    use local_api::registry::args::{AccountAddArgs, AccountRemoveArgs, AccountsArgs, SyncArgs};
     use local_api::{
         Command, DenyAllApprover, EffectiveScope, ErrorCode, ExecutionMode, PeerInfo, ProcessInfo,
         RequestContext, TokenScope,
@@ -1034,9 +1034,9 @@ async fn the_local_api_adds_lists_syncs_and_removes_accounts() {
             name: Some("Work".into()),
             oauth: None,
             tenant: None,
-            host: Some("imap.example.org".into()),
-            port: None,
-            security: None,
+            imap_host: Some("imap.example.org".into()),
+            imap_port: None,
+            imap_security: None,
             username: None,
             password: Some(Sensitive::new(password.into())),
             smtp_host: None,
@@ -1069,7 +1069,7 @@ async fn the_local_api_adds_lists_syncs_and_removes_accounts() {
     .await;
 
     let list = handler
-        .handle(&ctx(), Command::AccountList(AccountListArgs {}))
+        .handle(&ctx(), Command::Accounts(AccountsArgs {}))
         .await
         .unwrap();
     let list = list.data.expose().clone();

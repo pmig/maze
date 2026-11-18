@@ -312,7 +312,7 @@ const TASKS: Task[] = [
   },
   {
     title: "Mail that needs a reply",
-    prompt: "Go through my unread inbox and flag everything that still needs a reply from me",
+    prompt: "Go through my unread inbox and star everything that still needs a reply from me",
     agent: "Cursor",
     mode: "Agent",
     select: "tom",
@@ -323,11 +323,11 @@ const TASKS: Task[] = [
         hit: "anna tom bank1 lea",
       },
       { cmd: "mazemail show t_19bd t_2a07 t_31c4 … --format md", out: ["23 threads, 41 messages"] },
-      { cmd: "mazemail flag t_19bd t_2a07 t_31c4 t_4f82", out: ['{"outcome":"proposed","proposal":"p_6b12"}'] },
+      { cmd: "mazemail star t_19bd t_2a07 t_31c4 t_4f82", out: ['{"outcome":"proposed","proposal":"p_6b12"}'] },
     ],
     say: "4 of the 23 unread messages ask you something directly. The rest are notifications.",
     proposal: {
-      title: "Flag 4 threads",
+      title: "Star 4 threads",
       total: 4,
       items: [
         { summary: "Anna Berger: Q4 planning: can you confirm the budget by Friday?", reason: "Asks you to confirm the budget" },
@@ -337,9 +337,9 @@ const TASKS: Task[] = [
       more: "and 1 more",
     },
     effect: { flag: "anna tom lea" },
-    final: "Done. The 4 threads are flagged in your Inbox.",
+    final: "Done. The 4 threads are starred in your Inbox.",
     summary:
-      "“Go through my unread inbox and flag everything that still needs a reply from me.” The agent reads the unread threads and proposes flagging the 4 that ask you something; once accepted, they carry a star in the list.",
+      "“Go through my unread inbox and star everything that still needs a reply from me.” The agent reads the unread threads and proposes starring the 4 that ask you something; once accepted, they carry a star in the list.",
   },
 ];
 

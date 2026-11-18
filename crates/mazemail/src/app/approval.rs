@@ -193,7 +193,7 @@ mod tests {
                 }),
             },
             requester_token: None,
-            profile: Profile::ReadOnly,
+            profile: Profile::Read,
             scope: TokenScope::all(),
             lifetime: Some(Duration::from_secs(3600)),
             command: "login".into(),
@@ -210,7 +210,7 @@ mod tests {
         };
         assert_eq!(get("Program"), Some("/usr/local/bin/mazemail (pid 42)"));
         assert_eq!(get("Started by"), Some("/bin/zsh (pid 7)"));
-        assert_eq!(get("Profile"), Some("read-only"));
+        assert_eq!(get("Profile"), Some("read"));
         assert_eq!(get("Scope"), Some("all accounts"));
         assert_eq!(get("Lifetime"), Some("1h"));
         assert_eq!(get("Label"), Some("claude"));
@@ -226,7 +226,7 @@ mod tests {
                 parent: None,
             },
             requester_token: None,
-            profile: Profile::Writer,
+            profile: Profile::Write,
             scope: TokenScope::all(),
             lifetime: None,
             command: "import".into(),

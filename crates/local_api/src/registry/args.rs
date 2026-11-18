@@ -34,7 +34,7 @@ fn default_contacts_limit() -> u32 {
 }
 
 fn default_profile() -> Profile {
-    Profile::ReadOnly
+    Profile::Read
 }
 
 fn yes() -> bool {
@@ -50,7 +50,7 @@ pub struct StatusArgs {}
 #[derive(Debug, Clone, Default, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HelpArgs {
-    /// A command (`draft new`) or `agents` for the AGENTS.md text.
+    /// A command (`draft create`) or `agents` for the AGENTS.md text.
     #[arg(value_name = "TOPIC")]
     #[serde(default)]
     pub topic: Vec<String>,
@@ -71,7 +71,7 @@ pub struct OpenArgs {
 #[serde(deny_unknown_fields)]
 pub struct LoginArgs {
     /// Profile of the new token.
-    #[arg(long, value_enum, default_value_t = Profile::ReadOnly)]
+    #[arg(long, value_enum, default_value_t = Profile::Read)]
     #[serde(default = "default_profile")]
     pub profile: Profile,
     /// How long the token is valid: 30m, 8h, 7d, 1h30m (at most 30d).
@@ -101,7 +101,7 @@ pub struct LoginArgs {
 impl Default for LoginArgs {
     fn default() -> Self {
         Self {
-            profile: Profile::ReadOnly,
+            profile: Profile::Read,
             ttl: Ttl::default(),
             label: None,
             accounts: Vec::new(),
@@ -111,16 +111,16 @@ impl Default for LoginArgs {
     }
 }
 
-/// `mazemail token list`.
+/// `mazemail tokens`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct TokenListArgs {}
+pub struct TokensArgs {}
 
 /// `mazemail token revoke`.
 #[derive(Debug, Clone, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TokenRevokeArgs {
-    /// The token's id (`tk_…`, from `mazemail token list`).
+    /// The token's id (`tk_…`, from `mazemail tokens`).
     #[arg(value_name = "TOKEN_ID")]
     pub id: TokenId,
 }
@@ -136,7 +136,7 @@ pub struct SearchArgs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<String>")]
     pub query: Option<Sensitive<String>>,
-    /// Run a saved search, by name or id (`s_…`, from `mazemail saved-search list`).
+    /// Run a saved search, by name or id (`s_…`, from `mazemail saved-searches`).
     #[arg(long, value_name = "NAME_OR_ID")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub saved: Option<String>,
@@ -253,15 +253,15 @@ pub struct AttachmentUpload {
     pub data: Sensitive<String>,
 }
 
-/// `mazemail draft new` as typed on the command line.
+/// `mazemail draft create` as typed on the command line.
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
-pub struct DraftNewCliArgs {
-    /// Reply to this message (`m_…`).
+pub struct DraftCreateCliArgs {
+    /// Reply to the sender of this message (`m_…`).
+    #[arg(long, value_name = "ID", conflicts_with_all = ["reply_all", "forward"])]
+    pub reply: Option<String>,
+    /// Reply to the sender and all recipients of this message (`m_…`).
     #[arg(long, value_name = "ID", conflicts_with = "forward")]
-    pub reply_to: Option<String>,
-    /// Reply to all recipients (with --reply-to).
-    #[arg(long, requires = "reply_to")]
-    pub reply_all: bool,
+    pub reply_all: Option<String>,
     /// Forward this message (`m_…`).
     #[arg(long, value_name = "ID")]
     pub forward: Option<String>,
@@ -292,16 +292,16 @@ pub struct DraftNewCliArgs {
     pub attach: Vec<PathBuf>,
 }
 
-/// `draft.new` on the wire.
+/// `draft.create` on the wire.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct DraftNewArgs {
-    /// Message id to reply to.
+pub struct DraftCreateArgs {
+    /// Message id to reply to (the sender only).
     #[serde(default)]
-    pub reply_to: Option<String>,
-    /// Reply to all recipients.
+    pub reply: Option<String>,
+    /// Message id to reply to (the sender and all recipients).
     #[serde(default)]
-    pub reply_all: bool,
+    pub reply_all: Option<String>,
     /// Message id to forward.
     #[serde(default)]
     pub forward: Option<String>,
@@ -440,14 +440,14 @@ pub struct TagArgs {
     pub ids: Vec<String>,
 }
 
-/// `mazemail flag`.
+/// `mazemail star`.
 #[derive(Debug, Clone, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct FlagArgs {
-    /// Remove the flag instead.
+pub struct StarArgs {
+    /// Remove the star instead.
     #[arg(long)]
     #[serde(default)]
-    pub clear: bool,
+    pub unstar: bool,
     /// Message (`m_…`) or thread (`t_…`) ids.
     #[arg(value_name = "ID", required = true)]
     pub ids: Vec<String>,
@@ -530,13 +530,13 @@ pub enum ProposedAction {
         #[schemars(with = "Option<String>")]
         reason: Option<Sensitive<String>>,
     },
-    /// Set or clear the flag.
-    Flag {
+    /// Star or unstar.
+    Star {
         /// Message or thread ids.
         ids: Vec<String>,
-        /// `true` to flag, `false` to clear.
+        /// `true` to star, `false` to unstar.
         #[serde(default = "yes")]
-        flagged: bool,
+        starred: bool,
         /// Why, shown in the review UI.
         #[serde(default)]
         #[schemars(with = "Option<String>")]
@@ -572,7 +572,7 @@ impl ProposedAction {
             Self::Archive { ids, .. }
             | Self::Move { ids, .. }
             | Self::Tag { ids, .. }
-            | Self::Flag { ids, .. }
+            | Self::Star { ids, .. }
             | Self::MarkRead { ids, .. }
             | Self::Unsubscribe { ids, .. } => ids,
         }
@@ -587,8 +587,8 @@ pub enum RuleAction {
     Archive,
     /// Mark read.
     MarkRead,
-    /// Flag.
-    Flag,
+    /// Star.
+    Star,
     /// Move to a folder.
     Move {
         /// Target folder id.
@@ -617,7 +617,7 @@ pub enum RuleAction {
 impl FromStr for RuleAction {
     type Err = RuleActionError;
 
-    /// `archive`, `read`, `flag`, `move:<folder-id>`, `copy:<folder-id>`, `tag:<name>`,
+    /// `archive`, `read`, `star`, `move:<folder-id>`, `copy:<folder-id>`, `tag:<name>`,
     /// `trash`, `stop`.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (verb, value) = match s.split_once(':') {
@@ -627,7 +627,7 @@ impl FromStr for RuleAction {
         match (verb, value) {
             ("archive", None) => Ok(Self::Archive),
             ("read", None) => Ok(Self::MarkRead),
-            ("flag", None) => Ok(Self::Flag),
+            ("star", None) => Ok(Self::Star),
             ("trash", None) => Ok(Self::Trash),
             ("stop", None) => Ok(Self::Stop),
             ("move", Some(folder)) => FolderId::parse_public(folder)
@@ -649,7 +649,7 @@ impl fmt::Display for RuleAction {
         match self {
             Self::Archive => f.write_str("archive"),
             Self::MarkRead => f.write_str("read"),
-            Self::Flag => f.write_str("flag"),
+            Self::Star => f.write_str("star"),
             Self::Trash => f.write_str("trash"),
             Self::Stop => f.write_str("stop"),
             Self::Move { to } => write!(f, "move:{to}"),
@@ -659,11 +659,11 @@ impl fmt::Display for RuleAction {
     }
 }
 
-/// A rule action that isn't one of `archive`, `read`, `flag`, `trash`, `stop`,
+/// A rule action that isn't one of `archive`, `read`, `star`, `trash`, `stop`,
 /// `move:<folder-id>`, `copy:<folder-id>` or `tag:<name>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error(
-    "expected archive, read, flag, trash, stop, move:<folder-id>, copy:<folder-id> or tag:<name>"
+    "expected archive, read, star, trash, stop, move:<folder-id>, copy:<folder-id> or tag:<name>"
 )]
 pub struct RuleActionError;
 
@@ -680,7 +680,7 @@ pub struct RuleAddArgs {
     #[arg(long, value_name = "QUERY")]
     #[schemars(with = "String")]
     pub when: Sensitive<String>,
-    /// What to do (repeatable): archive, read, flag, trash, stop, move:<folder-id>,
+    /// What to do (repeatable): archive, read, star, trash, stop, move:<folder-id>,
     /// copy:<folder-id>, tag:<name>.
     #[arg(long = "then", value_name = "ACTION", required = true)]
     pub actions: Vec<RuleAction>,
@@ -695,10 +695,10 @@ pub struct RuleAddArgs {
     pub apply_now: bool,
 }
 
-/// `mazemail rule list`.
+/// `mazemail rules`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct RuleListArgs {
+pub struct RulesArgs {
     /// Only this account's rules (and the rules for every account).
     #[arg(long, value_name = "ACCOUNT")]
     #[serde(default, with = "pubid::option")]
@@ -710,7 +710,7 @@ pub struct RuleListArgs {
 #[derive(Debug, Clone, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RuleIdArgs {
-    /// The rule's id (`r_…`, from `mazemail rule list`).
+    /// The rule's id (`r_…`, from `mazemail rules`).
     #[arg(value_name = "RULE")]
     pub id: String,
 }
@@ -731,10 +731,10 @@ pub struct RuleRunArgs {
     pub id: Option<String>,
 }
 
-/// `mazemail saved-search list`.
+/// `mazemail saved-searches`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct SavedSearchListArgs {}
+pub struct SavedSearchesArgs {}
 
 /// `mazemail saved-search add`.
 #[derive(Debug, Clone, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
@@ -935,10 +935,10 @@ impl ImportArgs {
     }
 }
 
-/// `mazemail account list`.
+/// `mazemail accounts`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct AccountListArgs {}
+pub struct AccountsArgs {}
 
 /// Providers with a browser sign-in.
 #[derive(
@@ -988,13 +988,13 @@ pub struct AccountAddArgs {
     pub tenant: Option<MicrosoftTenant>,
     /// IMAP host (default: detected from the address).
     #[serde(default)]
-    pub host: Option<String>,
+    pub imap_host: Option<String>,
     /// IMAP port (default: 993 for TLS, 143 otherwise).
     #[serde(default)]
-    pub port: Option<u16>,
-    /// Transport security (default: tls).
+    pub imap_port: Option<u16>,
+    /// IMAP transport security (default: tls).
     #[serde(default)]
-    pub security: Option<SecurityArg>,
+    pub imap_security: Option<SecurityArg>,
     /// Login name (default: the address).
     #[serde(default)]
     #[schemars(with = "Option<String>")]
@@ -1024,7 +1024,7 @@ pub struct AccountAddCliArgs {
     #[arg(long)]
     pub name: Option<String>,
     /// Sign in with Google or Microsoft in the browser (no password).
-    #[arg(long, value_enum, conflicts_with_all = ["password_stdin", "host", "port", "security", "username", "smtp_host", "smtp_port", "smtp_security"])]
+    #[arg(long, value_enum, conflicts_with_all = ["password_stdin", "imap_host", "imap_port", "imap_security", "username", "smtp_host", "smtp_port", "smtp_security"])]
     pub oauth: Option<OAuthProvider>,
     /// With `--oauth microsoft`: the organization's tenant ID or domain, or `common`,
     /// `organizations`, `consumers` (default: the `auth.microsoft.tenant` setting).
@@ -1032,13 +1032,13 @@ pub struct AccountAddCliArgs {
     pub tenant: Option<MicrosoftTenant>,
     /// IMAP host (default: detected from the address).
     #[arg(long)]
-    pub host: Option<String>,
+    pub imap_host: Option<String>,
     /// IMAP port (default: 993 for TLS, 143 otherwise).
     #[arg(long)]
-    pub port: Option<u16>,
-    /// Transport security.
+    pub imap_port: Option<u16>,
+    /// IMAP transport security.
     #[arg(long, value_enum)]
-    pub security: Option<SecurityArg>,
+    pub imap_security: Option<SecurityArg>,
     /// Login name (default: the address).
     #[arg(long)]
     pub username: Option<String>,
@@ -1083,13 +1083,13 @@ pub struct AccountSetArgs {
     pub name: Option<String>,
     /// IMAP host.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub host: Option<String>,
+    pub imap_host: Option<String>,
     /// IMAP port (default: the current one, or the new security's usual port).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub port: Option<u16>,
+    pub imap_port: Option<u16>,
     /// IMAP transport security.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub security: Option<SecurityArg>,
+    pub imap_security: Option<SecurityArg>,
     /// Login name (empty: the address).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<String>")]
@@ -1120,9 +1120,9 @@ pub struct AccountSetArgs {
 impl AccountSetArgs {
     /// Whether a server setting or the login name changes (which needs the password).
     pub fn changes_servers(&self) -> bool {
-        self.host.is_some()
-            || self.port.is_some()
-            || self.security.is_some()
+        self.imap_host.is_some()
+            || self.imap_port.is_some()
+            || self.imap_security.is_some()
             || self.username.is_some()
             || self.smtp_host.is_some()
             || self.smtp_port.is_some()
@@ -1133,7 +1133,7 @@ impl AccountSetArgs {
 /// `mazemail account set` on the command line.
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub struct AccountSetCliArgs {
-    /// The account (`a_…`, see `mazemail account list`).
+    /// The account (`a_…`, see `mazemail accounts`).
     #[arg(value_name = "ACCOUNT")]
     pub id: AccountId,
     /// A new name in the folder pane.
@@ -1141,13 +1141,13 @@ pub struct AccountSetCliArgs {
     pub name: Option<String>,
     /// IMAP host.
     #[arg(long)]
-    pub host: Option<String>,
+    pub imap_host: Option<String>,
     /// IMAP port.
     #[arg(long)]
-    pub port: Option<u16>,
+    pub imap_port: Option<u16>,
     /// IMAP transport security.
     #[arg(long, value_enum)]
-    pub security: Option<SecurityArg>,
+    pub imap_security: Option<SecurityArg>,
     /// Login name ("" for the address).
     #[arg(long)]
     pub username: Option<String>,
@@ -1168,7 +1168,7 @@ pub struct AccountSetCliArgs {
     #[arg(long, value_enum)]
     pub smtp_security: Option<SecurityArg>,
     /// Sign in with Google or Microsoft again, in the browser.
-    #[arg(long, conflicts_with_all = ["password", "password_stdin", "host", "port", "security", "username", "smtp_host", "smtp_port", "smtp_security"])]
+    #[arg(long, conflicts_with_all = ["password", "password_stdin", "imap_host", "imap_port", "imap_security", "username", "smtp_host", "smtp_port", "smtp_security"])]
     pub sign_in: bool,
     /// With `--sign-in` on a Microsoft account: the tenant ID or domain, or `common`,
     /// `organizations`, `consumers` (default: the one it signed in with).
@@ -1196,7 +1196,7 @@ mod tests {
 
     #[test]
     fn rule_actions_parse_and_print() {
-        for text in ["archive", "read", "flag", "move:f_b", "tag:Receipts"] {
+        for text in ["archive", "read", "star", "move:f_b", "tag:Receipts"] {
             let action: RuleAction = text.parse().unwrap();
             assert_eq!(action.to_string(), text);
         }

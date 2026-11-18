@@ -266,7 +266,7 @@ fn target_account(
                     "there is no IMAP account to import into; add one first",
                 )),
                 _ => Err(CommandError::invalid_args(
-                    "choose the account to import into with --account (`mazemail account list` \
+                    "choose the account to import into with --account (`mazemail accounts` \
                      shows them)",
                 )),
             }

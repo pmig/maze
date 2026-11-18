@@ -487,7 +487,7 @@ impl CoreHandle {
     }
 
     /// Adds `folder` to the favorite folders or removes it. Favorites are the setting
-    /// `folder_pane.favorites` in `settings.json`: the account's label and the folder's
+    /// `folder_pane.favorites` in `settings.json`: the account's name and the folder's
     /// path ([`folders::folder_path`]), which survive restarts and re-syncs. The file's
     /// comments and other keys are kept. The settings are reloaded before this returns,
     /// so [`CoreHandle::folders`] shows the change at once (and a
@@ -547,7 +547,7 @@ impl CoreHandle {
         Ok(())
     }
 
-    /// Moves the settings of the account labelled `old` to `new` in `settings.json`
+    /// Moves the settings of the account named `old` to `new` in `settings.json`
     /// ([`settings::rename_account`]) and reloads them, or with `check_only` only says
     /// whether that would work. Nothing to do without a settings file.
     pub(crate) fn rename_account_settings(
@@ -571,7 +571,7 @@ impl CoreHandle {
     }
 
     /// The aliases of `account` as the settings list them
-    /// (`accounts.<label>.aliases`, see [`crate::aliases`]).
+    /// (`accounts.<name>.aliases`, see [`crate::aliases`]).
     pub fn aliases(&self, account: AccountId) -> Result<Vec<settings::Alias>> {
         self.ensure_open()?;
         let row = self

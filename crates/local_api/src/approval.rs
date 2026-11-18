@@ -330,7 +330,7 @@ mod tests {
                 }),
             },
             requester_token: None,
-            profile: Profile::ReadOnly,
+            profile: Profile::Read,
             scope: TokenScope::all(),
             lifetime: Some(Duration::from_secs(8 * 3600)),
             command: "login".into(),
@@ -346,7 +346,7 @@ mod tests {
         assert_eq!(
             login_request().describe(),
             "/usr/local/bin/mazemail (pid 42), started by /bin/zsh (pid 7) asks to sign in to \
-             Maze with profile read-only, all accounts, for 8h labeled \"claude\"."
+             Maze with profile read, all accounts, for 8h labeled \"claude\"."
         );
         let mut command = login_request();
         command.command = "rule.add".into();
@@ -382,7 +382,7 @@ mod tests {
         let text = command.describe();
         assert!(
             text.contains(
-                "`mazemail import` with profile read-only. It imports only accounts and \
+                "`mazemail import` with profile read. It imports only accounts and \
                  filters from /home/anna/.thunderbird/abcd.default."
             ),
             "{text}"

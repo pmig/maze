@@ -140,7 +140,7 @@ impl fmt::Display for Action {
             ActionKind::AddTag => write!(f, "tag {value}"),
             ActionKind::MarkRead => f.write_str("mark read"),
             ActionKind::MarkUnread => f.write_str("mark unread"),
-            ActionKind::MarkFlagged => f.write_str("flag"),
+            ActionKind::MarkFlagged => f.write_str("star"),
             ActionKind::Archive => f.write_str("archive"),
             ActionKind::Trash => f.write_str("move to Trash"),
             ActionKind::Junk => f.write_str("mark as junk"),

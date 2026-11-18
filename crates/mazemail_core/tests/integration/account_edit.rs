@@ -552,7 +552,7 @@ async fn the_local_api_changes_accounts() {
 
     // The core enforces the password rule even for a request the wire check didn't see.
     let moved = handler
-        .handle(&ctx(&[id]), set(serde_json::json!({ "port": 1993 })))
+        .handle(&ctx(&[id]), set(serde_json::json!({ "imap_port": 1993 })))
         .await
         .unwrap_err();
     assert_eq!(moved.code, ErrorCode::InvalidArgs);
@@ -560,7 +560,7 @@ async fn the_local_api_changes_accounts() {
     let wrong = handler
         .handle(
             &ctx(&[id]),
-            set(serde_json::json!({ "security": "starttls", "password": "hunter2" })),
+            set(serde_json::json!({ "imap_security": "starttls", "password": "hunter2" })),
         )
         .await
         .unwrap_err();
@@ -571,7 +571,7 @@ async fn the_local_api_changes_accounts() {
     let starttls = handler
         .handle(
             &ctx(&[id]),
-            set(serde_json::json!({ "security": "starttls", "password": "old" })),
+            set(serde_json::json!({ "imap_security": "starttls", "password": "old" })),
         )
         .await
         .unwrap();

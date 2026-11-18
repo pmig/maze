@@ -31,9 +31,9 @@ use output::*;
 /// One command.
 #[derive(Debug, Clone, Copy)]
 pub struct CommandSpec {
-    /// Wire name (`search`, `draft.new`).
+    /// Wire name (`search`, `draft.create`).
     pub name: &'static str,
-    /// Words after `mazemail` (`["draft", "new"]`).
+    /// Words after `mazemail` (`["draft", "create"]`).
     pub path: &'static [&'static str],
     /// One-line summary (clap `about`).
     pub summary: &'static str,
@@ -87,7 +87,7 @@ pub struct Column {
 }
 
 impl CommandSpec {
-    /// The command as typed after `mazemail` (`draft new`).
+    /// The command as typed after `mazemail` (`draft create`).
     pub fn cli_name(&self) -> String {
         self.path.join(" ")
     }
@@ -130,7 +130,7 @@ const fn col(header: &'static str, field: &'static str) -> Column {
 }
 
 const MUTATION_HELP_SUFFIX: &str = "Under the triage profile this becomes a proposal that you accept \
-or reject in Maze's review UI; under the writer profile it runs directly.";
+or reject in Maze's review UI; under the write profile it runs directly.";
 
 static REGISTRY: &[CommandSpec] = &[
     CommandSpec {
@@ -162,7 +162,7 @@ static REGISTRY: &[CommandSpec] = &[
         requires_token: false,
         touches_mail: false,
         examples: &[
-            ex("mazemail help draft new", "Help for one command"),
+            ex("mazemail help draft create", "Help for one command"),
             ex("mazemail help agents > AGENTS.md", "Write the agent guide"),
         ],
         args_schema: schema::<HelpArgs>,
@@ -186,7 +186,7 @@ static REGISTRY: &[CommandSpec] = &[
         touches_mail: false,
         examples: &[
             ex(
-                "eval \"$(mazemail login --profile read-only --ttl 8h)\"",
+                "eval \"$(mazemail login --profile read --ttl 8h)\"",
                 "Sign in the current shell",
             ),
             ex(
@@ -226,7 +226,7 @@ static REGISTRY: &[CommandSpec] = &[
         requires_token: false,
         touches_mail: false,
         examples: &[ex(
-            "mazemail token create --profile read-only --ttl 1h --json | jq -r .token",
+            "mazemail token create --profile read --ttl 1h --json | jq -r .token",
             "Print just the token",
         )],
         args_schema: schema::<LoginArgs>,
@@ -234,16 +234,16 @@ static REGISTRY: &[CommandSpec] = &[
         human: Human::Field("export"),
     },
     CommandSpec {
-        name: "token.list",
-        path: &["token", "list"],
+        name: "tokens",
+        path: &["tokens"],
         summary: "List API tokens",
         help: "Lists every token with its profile, scope, expiry and creator. Secrets are never \
                shown; Maze only keeps hashes.",
         permission: Permission::Read,
         requires_token: true,
         touches_mail: false,
-        examples: &[ex("mazemail token list", "Show tokens")],
-        args_schema: schema::<TokenListArgs>,
+        examples: &[ex("mazemail tokens", "Show tokens")],
+        args_schema: schema::<TokensArgs>,
         output_schema: schema::<Vec<crate::token::TokenInfo>>,
         human: Human::Table(&[
             col("ID", "id"),
@@ -276,7 +276,7 @@ static REGISTRY: &[CommandSpec] = &[
         summary: "Search mail",
         help: "Searches every account and folder in your token's scope, newest first. The query \
                language is Thunderbird's quick filter plus Gmail-style operators. --saved runs \
-               a saved search (`mazemail saved-search list`); a query given with it narrows \
+               a saved search (`mazemail saved-searches`); a query given with it narrows \
                the results.",
         permission: Permission::Read,
         requires_token: true,
@@ -376,7 +376,7 @@ static REGISTRY: &[CommandSpec] = &[
         name: "identities",
         path: &["identities"],
         summary: "List your sending identities",
-        help: "Lists the identities (From addresses) of the accounts in scope. `draft new` picks \
+        help: "Lists the identities (From addresses) of the accounts in scope. `draft create` picks \
                one automatically when you don't pass --identity.",
         permission: Permission::Read,
         requires_token: true,
@@ -409,8 +409,8 @@ static REGISTRY: &[CommandSpec] = &[
         human: Human::Field("path"),
     },
     CommandSpec {
-        name: "draft.new",
-        path: &["draft", "new"],
+        name: "draft.create",
+        path: &["draft", "create"],
         summary: "Write a new draft, reply or forward",
         help: "Creates a draft in Maze for you to review and send. Drafts are harmless: nothing \
                is sent. The identity is picked automatically from the recipients and the \
@@ -420,15 +420,15 @@ static REGISTRY: &[CommandSpec] = &[
         touches_mail: true,
         examples: &[
             ex(
-                "mazemail draft new --reply-to m_8f3a2c --body-file reply.md",
+                "mazemail draft create --reply m_8f3a2c --body-file reply.md",
                 "Reply; identity picked automatically",
             ),
             ex(
-                "echo 'See you then.' | mazemail draft new --to anna@example.com --subject Friday --body-file -",
+                "echo 'See you then.' | mazemail draft create --to anna@example.com --subject Friday --body-file -",
                 "New message with the body from stdin",
             ),
         ],
-        args_schema: schema::<DraftNewArgs>,
+        args_schema: schema::<DraftCreateArgs>,
         output_schema: schema::<DraftOutput>,
         human: Human::Field("id"),
     },
@@ -497,15 +497,18 @@ static REGISTRY: &[CommandSpec] = &[
         human: Human::Fields,
     },
     CommandSpec {
-        name: "flag",
-        path: &["flag"],
-        summary: "Flag or unflag messages",
+        name: "star",
+        path: &["star"],
+        summary: "Star or unstar messages",
         help: MUTATION_HELP_SUFFIX,
         permission: Permission::Propose,
         requires_token: true,
         touches_mail: true,
-        examples: &[ex("mazemail flag m_8f3a2c", "Flag a message")],
-        args_schema: schema::<FlagArgs>,
+        examples: &[
+            ex("mazemail star m_8f3a2c", "Star a message"),
+            ex("mazemail star --unstar t_19bd", "Unstar a thread"),
+        ],
+        args_schema: schema::<StarArgs>,
         output_schema: schema::<MutationOutput>,
         human: Human::Fields,
     },
@@ -526,7 +529,7 @@ static REGISTRY: &[CommandSpec] = &[
         name: "propose",
         path: &["propose"],
         summary: "Propose a batch of actions for review",
-        help: "Sends a list of actions (archive, move, tag, flag, mark_read, unsubscribe) that \
+        help: "Sends a list of actions (archive, move, tag, star, mark_read, unsubscribe) that \
                shows up grouped in Maze's review UI, where you accept or reject each item. \
                Nothing changes until you accept.",
         permission: Permission::Draft,
@@ -541,8 +544,8 @@ static REGISTRY: &[CommandSpec] = &[
         human: Human::Fields,
     },
     CommandSpec {
-        name: "rule.list",
-        path: &["rule", "list"],
+        name: "rules",
+        path: &["rules"],
         summary: "List message rules (filters)",
         help: "Lists the rules in the order they run, with their conditions, actions and \
                whether they are enabled. Rules imported from Thunderbird start disabled; \
@@ -551,13 +554,13 @@ static REGISTRY: &[CommandSpec] = &[
         requires_token: true,
         touches_mail: true,
         examples: &[
-            ex("mazemail rule list", "Show every rule"),
+            ex("mazemail rules", "Show every rule"),
             ex(
-                "mazemail rule list --json | jq -r '.[] | select(.imported and .runnable and (.enabled | not)) | .id'",
+                "mazemail rules --json | jq -r '.[] | select(.imported and .runnable and (.enabled | not)) | .id'",
                 "Imported rules that can be enabled",
             ),
         ],
-        args_schema: schema::<RuleListArgs>,
+        args_schema: schema::<RulesArgs>,
         output_schema: schema::<Vec<RuleInfo>>,
         human: Human::Table(&[
             col("ID", "id"),
@@ -735,8 +738,8 @@ static REGISTRY: &[CommandSpec] = &[
         human: Human::Fields,
     },
     CommandSpec {
-        name: "account.list",
-        path: &["account", "list"],
+        name: "accounts",
+        path: &["accounts"],
         summary: "List mail accounts and their sync state",
         help: "Lists the accounts in your token's scope with their server, sign-in method and \
                sync state (up to date, syncing, offline, sign-in required).",
@@ -744,10 +747,10 @@ static REGISTRY: &[CommandSpec] = &[
         requires_token: true,
         touches_mail: false,
         examples: &[ex(
-            "mazemail account list --json | jq -r '.[] | select(.state == \"auth_required\") | .id'",
+            "mazemail accounts --json | jq -r '.[] | select(.state == \"auth_required\") | .id'",
             "Accounts that need a new sign-in",
         )],
-        args_schema: schema::<AccountListArgs>,
+        args_schema: schema::<AccountsArgs>,
         output_schema: schema::<Vec<AccountOutput>>,
         human: Human::Table(&[
             col("ID", "id"),
@@ -769,16 +772,16 @@ static REGISTRY: &[CommandSpec] = &[
                auth.google.client_id in settings.json). Microsoft sign-ins use the \
                auth.microsoft.tenant setting (default common); --tenant overrides it for this \
                account, e.g. with your organization's tenant ID or domain when its app \
-               registration only allows its own accounts. Host, port and security are detected \
+               registration only allows its own accounts. The IMAP host, port and security are detected \
                for well-known providers; so is the SMTP server for sending (override it with \
                --smtp-host, --smtp-port and --smtp-security; it logs in like IMAP). Needs a \
-               writer token, and you approve every account in Maze.",
+               write token, and you approve every account in Maze.",
         permission: Permission::Admin,
         requires_token: true,
         touches_mail: false,
         examples: &[
             ex(
-                "mazemail account add alice@example.org --host imap.example.org",
+                "mazemail account add alice@example.org --imap-host imap.example.org",
                 "Add an account; asks for the password",
             ),
             ex(
@@ -803,7 +806,7 @@ static REGISTRY: &[CommandSpec] = &[
         path: &["account", "remove"],
         summary: "Remove a mail account",
         help: "Stops syncing the account and deletes its local mail, folders, identities and \
-               saved password or sign-in. Nothing changes on the server. Needs a writer token, and you \
+               saved password or sign-in. Nothing changes on the server. Needs a write token, and you \
                approve it in Maze.",
         permission: Permission::Admin,
         requires_token: true,
@@ -821,13 +824,13 @@ static REGISTRY: &[CommandSpec] = &[
                settings in settings.json (accounts.<name>, favorite folders) \
                along with it. --password asks for a new password on the terminal \
                without echo (--password-stdin reads it from stdin); it is never a command-line \
-               argument. Changing the IMAP server (--host, --port, --security), the login name \
-               (--username) or the SMTP server (--smtp-host, --smtp-port, --smtp-security) asks \
+               argument. Changing the IMAP server (--imap-host, --imap-port, \
+               --imap-security), the login name (--username) or the SMTP server (--smtp-host, --smtp-port, --smtp-security) asks \
                for the password again: Maze only sends a saved password to the servers it was \
                saved for. Like adding, Maze connects, logs in and lists the folders before it \
                saves anything, then restarts the account's sync. Google and Microsoft accounts \
                sign in again in the browser with --sign-in (--tenant changes a Microsoft \
-               account's tenant). Needs a writer token, and you approve it in Maze.",
+               account's tenant). Needs a write token, and you approve it in Maze.",
         permission: Permission::Admin,
         requires_token: true,
         touches_mail: false,
@@ -841,7 +844,7 @@ static REGISTRY: &[CommandSpec] = &[
                 "Rename an account (its settings move along)",
             ),
             ex(
-                "mazemail account set a_b --host mail.example.org --smtp-host mail.example.org",
+                "mazemail account set a_b --imap-host mail.example.org --smtp-host mail.example.org",
                 "Move to other servers (asks for the password)",
             ),
             ex(
@@ -859,7 +862,7 @@ static REGISTRY: &[CommandSpec] = &[
         summary: "Sync accounts now",
         help: "Asks every account in your token's scope (or --account) to look for new mail and \
                replay pending changes now, and retries at once when an account is offline. \
-               Returns right away; `mazemail account list` shows the progress.",
+               Returns right away; `mazemail accounts` shows the progress.",
         permission: Permission::Read,
         requires_token: true,
         touches_mail: false,
@@ -872,8 +875,8 @@ static REGISTRY: &[CommandSpec] = &[
         human: Human::Fields,
     },
     CommandSpec {
-        name: "saved-search.list",
-        path: &["saved-search", "list"],
+        name: "saved-searches",
+        path: &["saved-searches"],
         summary: "List saved searches",
         help: "Lists the saved searches that Maze's folder pane shows under Saved Searches, \
                with their queries. `mazemail search --saved <name>` runs one.",
@@ -881,10 +884,10 @@ static REGISTRY: &[CommandSpec] = &[
         requires_token: true,
         touches_mail: false,
         examples: &[ex(
-            "mazemail saved-search list --json | jq -r '.[].name'",
+            "mazemail saved-searches --json | jq -r '.[].name'",
             "Names of the saved searches",
         )],
-        args_schema: schema::<SavedSearchListArgs>,
+        args_schema: schema::<SavedSearchesArgs>,
         output_schema: schema::<Vec<SavedSearchInfo>>,
         human: Human::Table(&[col("ID", "id"), col("NAME", "name"), col("QUERY", "query")]),
     },
@@ -968,7 +971,7 @@ pub fn find(name: &str) -> Option<&'static CommandSpec> {
     REGISTRY.iter().find(|spec| spec.name == name)
 }
 
-/// The command with CLI path `path` (`["draft", "new"]`).
+/// The command with CLI path `path` (`["draft", "create"]`).
 pub fn find_by_path(path: &[&str]) -> Option<&'static CommandSpec> {
     REGISTRY.iter().find(|spec| spec.path == path)
 }
@@ -1014,8 +1017,12 @@ mod tests {
             let _ = (spec.args_schema)();
             let _ = (spec.output_schema)();
         }
-        assert_eq!(find("draft.new").unwrap().cli_name(), "draft new");
-        assert_eq!(find_by_path(&["token", "list"]).unwrap().name, "token.list");
+        assert_eq!(find("draft.create").unwrap().cli_name(), "draft create");
+        assert_eq!(find_by_path(&["tokens"]).unwrap().name, "tokens");
+        assert_eq!(
+            find_by_path(&["saved-searches"]).unwrap().name,
+            "saved-searches"
+        );
         assert!(find("delete").is_none());
     }
 
@@ -1026,7 +1033,7 @@ mod tests {
             "help",
             "login",
             "token.create",
-            "token.list",
+            "tokens",
             "token.revoke",
             "search",
             "show",
@@ -1035,16 +1042,16 @@ mod tests {
             "contacts",
             "identities",
             "attachment.save",
-            "draft.new",
+            "draft.create",
             "draft.edit",
             "archive",
             "move",
             "tag",
-            "flag",
+            "star",
             "read",
             "propose",
             "rule.add",
-            "rule.list",
+            "rules",
             "rule.show",
             "rule.enable",
             "rule.disable",
@@ -1053,12 +1060,12 @@ mod tests {
             "send",
             "export",
             "import",
-            "account.list",
+            "accounts",
             "account.add",
             "account.remove",
             "account.set",
             "sync",
-            "saved-search.list",
+            "saved-searches",
             "saved-search.add",
             "saved-search.rename",
             "saved-search.edit",
@@ -1076,8 +1083,8 @@ mod tests {
             // Mail commands need a token; all but account management touch mail.
             if is_mail {
                 assert!(spec.requires_token, "{}", spec.name);
-                let manages_maze = spec.name.starts_with("account.")
-                    || spec.name.starts_with("saved-search.")
+                let manages_maze = spec.name.starts_with("account")
+                    || spec.name.starts_with("saved-search")
                     || spec.name == "sync";
                 assert_eq!(spec.touches_mail, !manages_maze, "{}", spec.name);
             }
@@ -1116,10 +1123,10 @@ mod tests {
         ] {
             assert_eq!(triage(name), Allow, "{name}");
         }
-        for name in ["draft.new", "draft.edit", "propose"] {
+        for name in ["draft.create", "draft.edit", "propose"] {
             assert_eq!(triage(name), Allow, "{name}");
         }
-        for name in ["archive", "move", "tag", "flag", "read"] {
+        for name in ["archive", "move", "tag", "star", "read"] {
             assert_eq!(triage(name), Propose, "{name}");
         }
         for name in [
@@ -1131,10 +1138,10 @@ mod tests {
         ] {
             assert_eq!(triage(name), Ask, "{name}");
         }
-        assert_eq!(triage("rule.list"), Allow);
+        assert_eq!(triage("rules"), Allow);
         // Saved searches change what Maze shows, never mail: a read, harmless additions
         // and changes and a delete that asks.
-        assert_eq!(triage("saved-search.list"), Allow);
+        assert_eq!(triage("saved-searches"), Allow);
         for name in [
             "saved-search.add",
             "saved-search.rename",
@@ -1145,31 +1152,26 @@ mod tests {
         assert_eq!(triage("saved-search.delete"), Ask);
         assert_eq!(triage("rule.show"), Allow);
         // Accounts: listing and syncing are reads; adding, removing and changing need a
-        // writer token and the user's approval.
-        assert_eq!(triage("account.list"), Allow);
+        // write token and the user's approval.
+        assert_eq!(triage("accounts"), Allow);
         assert_eq!(triage("sync"), Allow);
         for name in ["account.add", "account.remove", "account.set"] {
             assert_eq!(triage(name), Deny, "{name}");
-            assert_eq!(find(name).unwrap().access(Profile::Writer, true), Ask);
+            assert_eq!(find(name).unwrap().access(Profile::Write, true), Ask);
         }
         assert_eq!(triage("send"), Deny);
         assert_eq!(find("send").unwrap().access(Profile::Triage, true), Ask);
         assert_eq!(triage("login"), Ask);
-        assert_eq!(find("login").unwrap().access(Profile::Writer, false), Ask);
+        assert_eq!(find("login").unwrap().access(Profile::Write, false), Ask);
         assert_eq!(triage("status"), Allow);
-        // Read-only can only read.
+        // Read tokens can only read.
         for spec in registry().iter().filter(|spec| spec.requires_token) {
             let expected = if spec.permission == Permission::Read {
                 Allow
             } else {
                 Deny
             };
-            assert_eq!(
-                spec.access(Profile::ReadOnly, true),
-                expected,
-                "{}",
-                spec.name
-            );
+            assert_eq!(spec.access(Profile::Read, true), expected, "{}", spec.name);
         }
     }
 }

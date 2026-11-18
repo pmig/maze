@@ -88,7 +88,7 @@ folder, `a_…` account, `tk_…` token.
 
 - Commands that touch mail need a session token in `MAZEMAIL_SESSION`. Agents started by \
   Maze already have one.
-- Otherwise run `eval \"$(mazemail login --profile read-only --ttl 8h)\"`. Maze shows which \
+- Otherwise run `eval \"$(mazemail login --profile read --ttl 8h)\"`. Maze shows which \
   program is asking and waits for approval (\"waiting for approval in Maze…\").
 - Without a token only `mazemail help`, `mazemail status` and `mazemail login` work (exit \
   code 6).

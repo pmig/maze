@@ -14,18 +14,18 @@ pub enum Permission {
     /// Reads mail or metadata: allowed for every profile.
     Read,
     /// Creates things you review before they have an effect (drafts, proposals):
-    /// Triage and Writer.
+    /// Triage and Write.
     Draft,
     /// Changes mail state (archive, move, tag, flag, read): a proposal under Triage,
-    /// runs directly under Writer.
+    /// runs directly under Write.
     Propose,
     /// Has lasting or wide effects (rules, imports, exports, revoking tokens): asks the
-    /// user every time, under Triage and Writer.
+    /// user every time, under Triage and Write.
     Ask,
     /// Disabled by default (`send`). A token approved with `allow_send` may run it, and
     /// then it always asks and is never auto-approved.
     Disabled,
-    /// Changes Maze itself (adding and removing accounts): only writer tokens may ask,
+    /// Changes Maze itself (adding and removing accounts): only write tokens may ask,
     /// and the user approves every time.
     Admin,
 }
@@ -96,30 +96,30 @@ impl fmt::Display for Access {
 ///
 /// `allow_send` is the token's opt-in for [`Permission::Disabled`] commands.
 ///
-/// | Permission | read-only | triage   | writer |
-/// | ---------- | --------- | -------- | ------ |
-/// | read       | allow     | allow    | allow  |
-/// | draft      | deny      | allow    | allow  |
-/// | propose    | deny      | propose  | allow  |
-/// | ask        | deny      | ask      | ask    |
-/// | disabled   | deny      | deny / ask with `allow_send` | deny / ask with `allow_send` |
-/// | admin      | deny      | deny     | ask    |
+/// | Permission | read  | triage   | write |
+/// | ---------- | ----- | -------- | ----- |
+/// | read       | allow | allow    | allow |
+/// | draft      | deny  | allow    | allow |
+/// | propose    | deny  | propose  | allow |
+/// | ask        | deny  | ask      | ask   |
+/// | disabled   | deny  | deny / ask with `allow_send` | deny / ask with `allow_send` |
+/// | admin      | deny  | deny     | ask   |
 ///
 /// Permanent delete is not a command at all, so no token can ever run it.
 pub fn access(profile: Profile, permission: Permission, allow_send: bool) -> Access {
     use Access as A;
     use Permission as P;
-    use Profile::{ReadOnly, Triage, Writer};
+    use Profile::{Read, Triage, Write};
     match (profile, permission) {
         (_, P::Read) => A::Allow,
-        (ReadOnly, _) => A::Deny,
-        (Triage | Writer, P::Draft) => A::Allow,
+        (Read, _) => A::Deny,
+        (Triage | Write, P::Draft) => A::Allow,
         (Triage, P::Propose) => A::Propose,
-        (Writer, P::Propose) => A::Allow,
-        (Triage | Writer, P::Ask) => A::Ask,
+        (Write, P::Propose) => A::Allow,
+        (Triage | Write, P::Ask) => A::Ask,
         (Triage, P::Admin) => A::Deny,
-        (Writer, P::Admin) => A::Ask,
-        (Triage | Writer, P::Disabled) => {
+        (Write, P::Admin) => A::Ask,
+        (Triage | Write, P::Disabled) => {
             if allow_send {
                 A::Ask
             } else {
@@ -139,7 +139,7 @@ mod tests {
         use Profile::*;
         #[rustfmt::skip]
         let table = [
-            // permission,          read-only, triage,  writer,  triage+send, writer+send
+            // permission,          read,      triage,  write,   triage+send, write+send
             (Permission::Read,     [Allow,     Allow,   Allow,   Allow,       Allow]),
             (Permission::Draft,    [Deny,      Allow,   Allow,   Allow,       Allow]),
             (Permission::Propose,  [Deny,      Propose, Allow,   Propose,     Allow]),
@@ -149,15 +149,15 @@ mod tests {
         ];
         for (permission, expected) in table {
             let actual = [
-                access(ReadOnly, permission, false),
+                access(Read, permission, false),
                 access(Triage, permission, false),
-                access(Writer, permission, false),
+                access(Write, permission, false),
                 access(Triage, permission, true),
-                access(Writer, permission, true),
+                access(Write, permission, true),
             ];
             assert_eq!(actual, expected, "{permission}");
-            // `allow_send` never helps a read-only token.
-            assert_eq!(access(ReadOnly, permission, true), expected[0]);
+            // `allow_send` never helps a read token.
+            assert_eq!(access(Read, permission, true), expected[0]);
         }
     }
 }

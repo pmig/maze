@@ -45,7 +45,7 @@ yourself.
 Get a token with `mazemail login` (or its alias `mazemail token create`):
 
 ```sh
-eval "$(mazemail login --profile read-only --ttl 8h)"
+eval "$(mazemail login --profile read --ttl 8h)"
 ```
 
 1. The CLI prints "waiting for approval in Maze…".
@@ -60,11 +60,11 @@ Options:
 
 | Option                  | Meaning                                                                  |
 | ----------------------- | ------------------------------------------------------------------------ |
-| `--profile <profile>`   | `read-only` (default), `triage` or `writer`, see below                   |
+| `--profile <profile>`   | `read` (default), `triage` or `write`, see below                         |
 | `--ttl <duration>`      | lifetime, e.g. `30m`, `8h`, `7d`, `1h30m`; default `8h`, at most `30d`   |
 | `--account <a_…>`       | limit the token to this account (repeatable)                             |
 | `--folder <f_…>`        | limit the token to this folder (repeatable)                              |
-| `--label <text>`        | a name shown in the token list and the audit log, e.g. `claude`          |
+| `--label <text>`        | a name shown in `mazemail tokens` and the audit log, e.g. `claude`          |
 | `--allow-send`          | allow `mazemail send` for this token (every send still asks)             |
 
 Some rules:
@@ -74,7 +74,7 @@ Some rules:
 - A token covers every account unless it was created for some (`--account`).
 - Anything outside a token's scope looks like it doesn't exist (`not found`), so a
   token can't probe other accounts.
-- Maze keeps only a hash of each token. `mazemail token list` shows the tokens with
+- Maze keeps only a hash of each token. `mazemail tokens` shows the tokens with
   their profile, scope and expiry; `mazemail token revoke tk_…` revokes one (your own
   always works, another one asks first).
 - The server only accepts connections from your own user id, and every request goes
@@ -86,13 +86,13 @@ The profile decides what a token may do. Each command either runs (**allow**), b
 a proposal you review in Maze (**propose**), waits for your approval in Maze (**ask**),
 or fails with exit code 3 (**deny**).
 
-| Commands                                                      | read-only | triage  | writer |
-| ------------------------------------------------------------- | --------- | ------- | ------ |
-| `search`, `show`, `folders`, `tags`, `contacts`, `identities`, `token list`, `rule list`, `rule show`, `saved-search list` | allow | allow | allow |
-| `draft new`, `draft edit`, `propose`, `saved-search add`, `saved-search rename`, `saved-search edit` | deny | allow | allow |
-| `archive`, `move`, `tag`, `flag`, `read`                      | deny      | propose | allow  |
+| Commands                                                      | read  | triage  | write |
+| ------------------------------------------------------------- | ----- | ------- | ----- |
+| `search`, `show`, `folders`, `tags`, `contacts`, `identities`, `tokens`, `rules`, `rule show`, `saved-searches` | allow | allow | allow |
+| `draft create`, `draft edit`, `propose`, `saved-search add`, `saved-search rename`, `saved-search edit` | deny | allow | allow |
+| `archive`, `move`, `tag`, `star`, `read`                      | deny  | propose | allow |
 | `import`, `export`, `rule add`, `rule enable`, `rule disable`, `rule delete`, `rule run`, `token revoke` (other tokens), `saved-search delete` | deny | ask | ask |
-| `send`                                                        | deny      | ask with `--allow-send` | ask with `--allow-send` |
+| `send`                                                        | deny  | ask with `--allow-send` | ask with `--allow-send` |
 
 Permanent delete isn't available to tokens at all. `mazemail help` lists every command
 with what your current token may do with it.
@@ -130,7 +130,7 @@ Message rules (filters) run on new mail in the Inbox, in their order; see
 arrive disabled:
 
 ```sh
-mazemail rule list                       # every rule, in order, with its problems
+mazemail rules                           # every rule, in order, with its problems
 mazemail rule show r_b                   # one rule, with the import's note
 mazemail rule run --folder f_k2 r_b      # try a rule on a folder first
 mazemail rule enable r_b                 # it runs on new mail from now on
@@ -140,7 +140,7 @@ mazemail rule add --name Receipts --when 'from:receipts@shop.example' \
 
 `rule add --when` takes `from:`, `to:`, `cc:`, `subject:`, `list:`, `has:attachment` and
 free text (matched against the message text), each negated with `-`; all terms must
-match, or any of them with `OR`. Actions (`--then`, repeatable) are `read`, `flag`,
+match, or any of them with `OR`. Actions (`--then`, repeatable) are `read`, `star`,
 `tag:<name>`, `copy:<folder-id>`, `move:<folder-id>`, `archive`, `trash` and `stop`. A
 rule with a move or copy belongs to that folder's account; otherwise pass `--account`
 (a rule for every account needs a token for every account). Enabling, running, adding
@@ -156,7 +156,7 @@ running requests finish, removes the socket and closes the store.
 Without a window, approvals are asked on the terminal Maze was started from:
 
 ```
-Maze: /usr/local/bin/mazemail (pid 4242), started by /bin/zsh (pid 4100) asks to sign in to Maze with profile read-only, all accounts, for 8h.
+Maze: /usr/local/bin/mazemail (pid 4242), started by /bin/zsh (pid 4100) asks to sign in to Maze with profile read, all accounts, for 8h.
 Allow? [y/N]
 ```
 
@@ -173,7 +173,7 @@ Saved searches are the named searches Maze's folder pane lists under Saved Searc
 id (`s_…`):
 
 ```sh
-mazemail saved-search list
+mazemail saved-searches
 mazemail saved-search add Invoices 'invoice has:attachment'
 mazemail saved-search rename Invoices Bills
 mazemail saved-search edit Bills 'invoice OR receipt has:attachment'
@@ -201,16 +201,18 @@ pane shows the changes at once.
 
 ## What works in this version
 
-`status`, `help`, `login`, `token`, `search`, `show`, `folders`, `tags`, `contacts`,
-`identities`, `archive`, `move`, `tag`, `flag`, `read`, `propose`, `import`,
-`export`, `rule list|show|add|enable|disable|delete|run`, `account list`, `account add` (with `--smtp-host`, `--smtp-port` and
-`--smtp-security` for the server Maze sends through, and `--tenant` for the
-organization of a `--oauth microsoft` sign-in), `account set` (a new name, password or
-servers, or `--sign-in` again), `account remove`, `sync` and `saved-search` work.
-Writing and sending mail works in the app; the CLI commands for it (`draft new`,
+`status`, `help`, `login`, `tokens`, `token`, `search`, `show`, `folders`, `tags`, `contacts`,
+`identities`, `archive`, `move`, `tag`, `star`, `read`, `propose`, `import`,
+`export`, `rules`, `rule show|add|enable|disable|delete|run`, `accounts`, `account add`
+(with `--imap-host`, `--imap-port` and `--imap-security` for the server Maze reads
+from, `--smtp-host`, `--smtp-port` and `--smtp-security` for the server Maze sends
+through, and `--tenant` for the organization of a `--oauth microsoft` sign-in),
+`account set` (a new name, password or servers, or `--sign-in` again),
+`account remove`, `sync`, `saved-searches` and `saved-search` work.
+Writing and sending mail works in the app; the CLI commands for it (`draft create`,
 `draft edit`, `send`) and `attachment save` fail with "not available in this version"
 (exit code 1), and so does a `propose` batch with an `unsubscribe` item.
-Proposals (from `propose` and from a triage token's `archive`, `move`, `tag`, `flag`
+Proposals (from `propose` and from a triage token's `archive`, `move`, `tag`, `star`
 and `read`) show at the top of Maze's agent column (`cmd-?`), where you accept or
 reject each item; nothing changes until you accept. See
 [agents.md](agents.md#proposals).
@@ -218,7 +220,7 @@ reject each item; nothing changes until you accept. See
 ## Agents
 
 Agents you run yourself (Claude Code, Codex and others in a terminal) use the CLI like
-you do: give them a token, preferably `read-only` or `triage`, with a short lifetime and
+you do: give them a token, preferably `read` or `triage`, with a short lifetime and
 a `--label`, and point them at [AGENTS-cli.md](AGENTS-cli.md) (or the output of
 `mazemail help agents`). Agents that Maze starts itself, in its agent column and inside
 a sandbox, get a token for their session automatically (`MAZEMAIL_SESSION`), revoked

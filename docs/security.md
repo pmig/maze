@@ -52,7 +52,7 @@ use and never logged.
 A saved account password only goes to the servers it was saved for. Changing an
 account's user name or its IMAP or SMTP server (host, port or security) in Edit Account
 or with `mazemail account set` needs the password again. Neither a typo nor a program
-with a writer token can redirect it somewhere else or onto an unencrypted connection.
+with a write token can redirect it somewhere else or onto an unencrypted connection.
 
 API keys and tokens you paste into the agent column's sign-in card are stored the same
 way (table `agent_secret`) and handed only to that agent, in its environment. Keys
@@ -267,7 +267,7 @@ rules are:
   lifetime. Tokens can't mint tokens: a program that already holds one still goes
   through the dialog.
 - Tokens are 256-bit random secrets with the prefix `mazemail_s_`, stored only as a
-  BLAKE3 hash, with a profile (read-only, triage or writer), a scope (accounts,
+  BLAKE3 hash, with a profile (read, triage or write), a scope (accounts,
   folders), an expiry (at most 30 days) and a label. `mazemail token revoke` revokes
   one.
 - The server rejects connections from other user ids, and records every request (the
@@ -288,7 +288,7 @@ rules are:
 
 Agents you start yourself, outside Maze, are not sandboxed by Maze. Encryption keeps
 them out of the store, and they see only what the token you gave them allows. Prefer
-`read-only` or `triage` tokens with a short lifetime and a label.
+`read` or `triage` tokens with a short lifetime and a label.
 
 Agents that Maze starts itself (the agent column) run in an operating system sandbox:
 Seatbelt on macOS, bubblewrap on Linux (the seccomp filter against new Unix sockets is

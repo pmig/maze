@@ -18,7 +18,7 @@
 //!   Use ids `>= 1`; `0` is what the server answers when it can't read the id.
 //! - `token` is optional: without it only `help`, `status` and `login` work.
 //! - `cmd` is a wire name from the [registry](crate::registry) (`search`,
-//!   `draft.new`, …), `args` its arguments object (default `{}`).
+//!   `draft.create`, …), `args` its arguments object (default `{}`).
 //!
 //! # Responses
 //!
@@ -89,7 +89,7 @@ pub struct Request {
     /// The session token, from `MAZEMAIL_SESSION`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<SessionToken>,
-    /// The command's wire name (`search`, `draft.new`, …).
+    /// The command's wire name (`search`, `draft.create`, …).
     pub cmd: String,
     /// The command's arguments.
     #[serde(default = "empty_args")]

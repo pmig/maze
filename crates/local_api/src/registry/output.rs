@@ -45,7 +45,7 @@ pub struct HelpOutput {
 /// One command in `help`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct HelpEntry {
-    /// As typed after `mazemail` (`draft new`).
+    /// As typed after `mazemail` (`draft create`).
     pub command: String,
     /// One-line summary.
     pub summary: String,
@@ -120,8 +120,8 @@ pub struct SearchHit {
     pub snippet: Option<Sensitive<String>>,
     /// Unread.
     pub unread: bool,
-    /// Flagged.
-    pub flagged: bool,
+    /// Starred.
+    pub starred: bool,
     /// Tag names.
     pub tags: Vec<String>,
     /// Has attachments.
@@ -210,7 +210,7 @@ pub struct TagInfo {
     pub color: Option<String>,
 }
 
-/// One saved search in `saved-search list`, and what `saved-search add`, `rename` and
+/// One saved search in `saved-searches`, and what `saved-search add`, `rename` and
 /// `edit` return.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SavedSearchInfo {
@@ -291,7 +291,7 @@ pub struct AttachmentSaved {
     pub size: u64,
 }
 
-/// `draft new`, `draft edit`.
+/// `draft create`, `draft edit`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DraftOutput {
     /// Draft id.
@@ -345,7 +345,7 @@ pub struct RuleOutput {
     pub name: String,
 }
 
-/// `rule list`, `rule show`, `rule enable`, `rule disable`.
+/// `rules`, `rule show`, `rule enable`, `rule disable`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RuleInfo {
     /// Rule id (`r_…`).
@@ -429,7 +429,7 @@ pub struct ImportOutput {
     pub skipped: Vec<String>,
 }
 
-/// One account in `account list`, and what `account add` returns.
+/// One account in `accounts`, and what `account add` returns.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AccountOutput {
     /// Account id.

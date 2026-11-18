@@ -18,9 +18,9 @@ pub const SESSION_TOKEN_LIFETIME: Duration = Duration::from_secs(24 * 3600);
 /// The local API profile for a settings profile.
 pub fn profile(profile: SessionProfile) -> Profile {
     match profile {
-        SessionProfile::ReadOnly => Profile::ReadOnly,
+        SessionProfile::Read => Profile::Read,
         SessionProfile::Triage => Profile::Triage,
-        SessionProfile::Writer => Profile::Writer,
+        SessionProfile::Write => Profile::Write,
     }
 }
 
@@ -138,13 +138,13 @@ mod tests {
     #[tokio::test]
     async fn leftover_session_tokens_are_revoked_at_startup() {
         let store = MemoryTokenStore::new();
-        let minted = mint_session_token(&store, Profile::ReadOnly, "x", "s_old")
+        let minted = mint_session_token(&store, Profile::Read, "x", "s_old")
             .await
             .unwrap();
         // A user token stays.
         let (_, user) = mint(
             &Grant {
-                profile: Profile::ReadOnly,
+                profile: Profile::Read,
                 scope: TokenScope::all(),
                 lifetime: None,
                 allow_send: false,

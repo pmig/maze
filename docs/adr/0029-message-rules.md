@@ -57,7 +57,7 @@ keywords. `trash` never deletes for good: messages already in the Trash are skip
 condition Maze can't evaluate (Thunderbird's age, size, priority, regular expressions,
 custom headers other than `List-Id`, grouped and/or) can't be enabled; unsupported
 actions (reply, forward, priority, thread watching, add-on actions) are skipped and
-listed as problems. Through the local API, `rule list` and `rule show` are reads;
+listed as problems. Through the local API, `rules` and `rule show` are reads;
 `rule add`, `enable`, `disable`, `delete` and `run` are `ask`, because a rule keeps
 changing mail after the token is gone. A token sees only rules of accounts in its scope
 and global rules; only a token for every account may add a global rule.

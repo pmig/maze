@@ -45,7 +45,7 @@ pub struct Settings {
     /// Sync the Trash folders in the background too. Off: a Trash is synced only while
     /// it is open. Can be overridden per account; applies after a restart.
     pub sync_trash: bool,
-    /// Overrides per account, keyed by account label.
+    /// Overrides per account, keyed by account name.
     pub accounts: BTreeMap<String, AccountOverrides>,
     /// Which domains Maze fetches a favicon for, from the domain's own website (one
     /// request per domain, at most every 30 days; never a third-party icon service).
@@ -98,8 +98,8 @@ impl Default for Settings {
 
 impl Settings {
     /// The settings that apply to one account: its overrides over the global values.
-    pub fn account(&self, label: &str) -> AccountSettings {
-        let overrides = self.accounts.get(label);
+    pub fn account(&self, name: &str) -> AccountSettings {
+        let overrides = self.accounts.get(name);
         AccountSettings {
             offline: overrides.and_then(|o| o.offline).unwrap_or(self.offline),
             offline_recent_days: overrides
@@ -117,11 +117,11 @@ impl Settings {
         }
     }
 
-    /// The mailboxes whose shared contacts the account `label` syncs
-    /// (`accounts.<label>.shared_contacts`), trimmed, without empty entries.
-    pub fn shared_contacts(&self, label: &str) -> Vec<String> {
+    /// The mailboxes whose shared contacts the account `name` syncs
+    /// (`accounts.<name>.shared_contacts`), trimmed, without empty entries.
+    pub fn shared_contacts(&self, name: &str) -> Vec<String> {
         self.accounts
-            .get(label)
+            .get(name)
             .map(|o| {
                 o.shared_contacts
                     .iter()
@@ -134,8 +134,8 @@ impl Settings {
 
     /// The footer and the "Sent with Maze" default of one account: its overrides over
     /// `compose.footer` and `compose.support_maze`.
-    pub fn footer_for(&self, label: &str) -> FooterSettings {
-        let overrides = self.accounts.get(label);
+    pub fn footer_for(&self, name: &str) -> FooterSettings {
+        let overrides = self.accounts.get(name);
         FooterSettings {
             footer: overrides
                 .and_then(|o| o.footer.as_deref())
@@ -148,10 +148,10 @@ impl Settings {
         }
     }
 
-    /// The aliases of the account labelled `label` (`accounts.<label>.aliases`):
+    /// The aliases of the account named `name` (`accounts.<name>.aliases`):
     /// trimmed, without entries that aren't addresses, each address once.
-    pub fn aliases(&self, label: &str) -> Vec<Alias> {
-        let Some(overrides) = self.accounts.get(label) else {
+    pub fn aliases(&self, name: &str) -> Vec<Alias> {
+        let Some(overrides) = self.accounts.get(name) else {
             return Vec::new();
         };
         let mut out: Vec<Alias> = Vec::new();
@@ -185,11 +185,11 @@ impl Settings {
         out
     }
 
-    /// Whether messages sent from the account labelled `label` get a copy in its Inbox:
+    /// Whether messages sent from the account named `name` get a copy in its Inbox:
     /// its override over `compose.copy_sent_to_inbox`.
-    pub fn copy_sent_to_inbox(&self, label: &str) -> bool {
+    pub fn copy_sent_to_inbox(&self, name: &str) -> bool {
         self.accounts
-            .get(label)
+            .get(name)
             .and_then(|o| o.copy_sent_to_inbox)
             .unwrap_or(self.compose.copy_sent_to_inbox)
     }
@@ -392,7 +392,7 @@ impl Default for FolderPaneSettings {
 /// ids, so a favorite survives restarts and re-syncs.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct FavoriteFolder {
-    /// The account's label, as in `accounts`.
+    /// The account's name, as in `accounts`.
     pub account: String,
     /// The folder's path in the account's folder tree, names joined with `/`, e.g.
     /// `Customers/Acme`.
@@ -710,7 +710,7 @@ pub struct AccountOverrides {
     pub aliases: Vec<AliasSetting>,
 }
 
-/// One entry of `accounts.<label>.aliases`.
+/// One entry of `accounts.<name>.aliases`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum AliasSetting {
@@ -790,15 +790,15 @@ impl Default for AgentSettings {
 
 /// The profile of an agent session's token (CONCEPT §10.3).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "lowercase")]
 pub enum SessionProfile {
     /// Search and read only.
-    ReadOnly,
+    Read,
     /// Read, write drafts; archive, move, tag and flag become proposals.
     #[default]
     Triage,
     /// Read, write drafts and change mail directly.
-    Writer,
+    Write,
 }
 
 /// An ACP agent that isn't in the registry.

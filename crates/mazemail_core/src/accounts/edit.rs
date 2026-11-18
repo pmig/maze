@@ -45,7 +45,7 @@ use crate::{Error, Result};
 /// What to change about an account; `None` keeps what it has.
 #[derive(Clone, Default)]
 pub struct AccountChanges {
-    /// The name in the folder pane (and the account's label in `settings.json`).
+    /// The name in the folder pane (and the account's key in `settings.json`).
     pub name: Option<String>,
     /// The IMAP server.
     pub server: Option<ImapServer>,

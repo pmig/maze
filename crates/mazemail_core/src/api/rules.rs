@@ -4,7 +4,7 @@
 //! doesn't exist. Rules for every account are visible to every token; adding one
 //! needs a token whose scope covers every account (otherwise `--account` is required).
 
-use local_api::registry::args::{RuleAction, RuleAddArgs, RuleIdArgs, RuleListArgs, RuleRunArgs};
+use local_api::registry::args::{RuleAction, RuleAddArgs, RuleIdArgs, RuleRunArgs, RulesArgs};
 use local_api::registry::output::{RuleDeleted, RuleInfo, RuleOutput, RuleRunOutput};
 use local_api::{CommandError, CommandOutput, RequestContext};
 use mazemail_types::{AccountId, FolderRole, PublicId};
@@ -67,7 +67,7 @@ fn visible_rule(
 pub(super) fn list(
     core: &CoreHandle,
     ctx: &RequestContext,
-    args: &RuleListArgs,
+    args: &RulesArgs,
 ) -> Result<CommandOutput, CommandError> {
     if args.account.is_some_and(|a| !ctx.scope.allows_account(a)) {
         return Err(CommandError::not_found("no such account"));
@@ -169,7 +169,7 @@ pub(super) async fn add(
         actions.push(match action {
             RuleAction::Archive => Action::new(ActionKind::Archive),
             RuleAction::MarkRead => Action::new(ActionKind::MarkRead),
-            RuleAction::Flag => Action::new(ActionKind::MarkFlagged),
+            RuleAction::Star => Action::new(ActionKind::MarkFlagged),
             RuleAction::Trash => Action::new(ActionKind::Trash),
             RuleAction::Stop => Action::new(ActionKind::Stop),
             RuleAction::Move { to } | RuleAction::Copy { to } => {

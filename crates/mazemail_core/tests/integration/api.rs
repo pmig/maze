@@ -12,7 +12,7 @@ use imap::fake::FakeServer;
 use import::maildir::MaildirWriter;
 use local_api::registry::args::{
     ArchiveArgs, ExportArgs, ExportFormat, FoldersArgs, ImportArgs, ImportPart, SavedSearchAddArgs,
-    SavedSearchDeleteArgs, SavedSearchEditArgs, SavedSearchListArgs, SavedSearchRenameArgs,
+    SavedSearchDeleteArgs, SavedSearchEditArgs, SavedSearchRenameArgs, SavedSearchesArgs,
     SearchArgs, ShowArgs, ShowFormat,
 };
 use local_api::{
@@ -251,7 +251,7 @@ async fn saved_search_commands_and_search_saved() {
     let hits = run(&t, &ctx, saved("Numbers", None)).await.unwrap();
     assert_eq!(ids(&hits), BTreeSet::from([t.projects_mail.to_string()]));
 
-    let list = run(&t, &ctx, Command::SavedSearchList(SavedSearchListArgs {}))
+    let list = run(&t, &ctx, Command::SavedSearches(SavedSearchesArgs {}))
         .await
         .unwrap();
     assert_eq!(list.as_array().unwrap().len(), 1);
@@ -265,7 +265,7 @@ async fn saved_search_commands_and_search_saved() {
     .await
     .unwrap();
     assert_eq!(deleted["id"], id.as_str());
-    let list = run(&t, &ctx, Command::SavedSearchList(SavedSearchListArgs {}))
+    let list = run(&t, &ctx, Command::SavedSearches(SavedSearchesArgs {}))
         .await
         .unwrap();
     assert!(list.as_array().unwrap().is_empty());
@@ -274,7 +274,7 @@ async fn saved_search_commands_and_search_saved() {
 #[tokio::test]
 async fn account_scope_hides_other_accounts() {
     let t = open().await;
-    let record = token(&t, Profile::ReadOnly, accounts(&[t.fixture.work])).await;
+    let record = token(&t, Profile::Read, accounts(&[t.fixture.work])).await;
     let ctx = ctx(&t, &record, ExecutionMode::Execute);
 
     let hits = run(&t, &ctx, search("example")).await.unwrap();
@@ -363,7 +363,7 @@ async fn folder_scopes_narrow_tokens() {
         accounts: None,
         folders: Some(BTreeSet::from([t.fixture.inbox, t.fixture.g_inbox])),
     };
-    let record = token(&t, Profile::ReadOnly, scope).await;
+    let record = token(&t, Profile::Read, scope).await;
     let ctx = ctx(&t, &record, ExecutionMode::Execute);
     let hits = run(&t, &ctx, search("example")).await.unwrap();
     assert_eq!(
@@ -417,8 +417,8 @@ async fn triage_proposes_and_writer_applies() {
         mazemail_core::CommandOutcome::Proposed(_)
     ));
 
-    // Writer: applied.
-    let writer = token(&t, Profile::Writer, TokenScope::all()).await;
+    // Write: applied.
+    let writer = token(&t, Profile::Write, TokenScope::all()).await;
     let out = run(&t, &ctx(&t, &writer, ExecutionMode::Execute), archive())
         .await
         .unwrap();
@@ -437,8 +437,8 @@ async fn triage_proposes_and_writer_applies() {
         .collect();
     assert!(!folders.contains(&t.fixture.inbox), "{folders:?}");
 
-    // A read-only token never changes mail, whatever reaches `apply`.
-    let reader_token = token(&t, Profile::ReadOnly, TokenScope::all()).await;
+    // A read token never changes mail, whatever reaches `apply`.
+    let reader_token = token(&t, Profile::Read, TokenScope::all()).await;
     let id = t.authorizer.cache().store_id(&reader_token.id).unwrap();
     let error = t
         .core
@@ -519,7 +519,7 @@ async fn tokens_live_in_the_store() {
 #[tokio::test]
 async fn audit_events_land_in_the_audit_log() {
     let t = open().await;
-    let record = token(&t, Profile::ReadOnly, TokenScope::all()).await;
+    let record = token(&t, Profile::Read, TokenScope::all()).await;
     let sink = StoreAuditSink::new(&t.core, Arc::clone(t.authorizer.cache()));
     sink.record(AuditEvent {
         at: OffsetDateTime::now_utc(),
@@ -602,7 +602,7 @@ fn mbox() -> String {
 #[tokio::test]
 async fn import_queues_uploads_and_export_writes_mbox() {
     let t = open().await;
-    let writer = token(&t, Profile::Writer, TokenScope::all()).await;
+    let writer = token(&t, Profile::Write, TokenScope::all()).await;
     let ctx = ctx(&t, &writer, ExecutionMode::Execute);
     let source = t.dir.path().join("old.mbox");
     std::fs::write(&source, mbox()).unwrap();
@@ -768,7 +768,7 @@ async fn imported_mail_is_uploaded_to_the_imap_server_once() {
     wait_for("the folder list", || folder_named("Archive").is_some()).await;
 
     let grant = Grant {
-        profile: Profile::Writer,
+        profile: Profile::Write,
         scope: TokenScope::all(),
         lifetime: Some(Duration::from_secs(3600)),
         allow_send: false,
@@ -894,7 +894,7 @@ fn ctx_all(t: &ApiCore, record: &TokenRecord) -> RequestContext {
 #[tokio::test]
 async fn unbuilt_commands_say_so() {
     let t = open().await;
-    let record = token(&t, Profile::Writer, TokenScope::all()).await;
+    let record = token(&t, Profile::Write, TokenScope::all()).await;
     let error = run(
         &t,
         &ctx(&t, &record, ExecutionMode::Execute),
@@ -973,7 +973,7 @@ async fn socket_round_trip() {
         .await
         .unwrap();
     assert_eq!(archived["outcome"], "proposed");
-    let listed = client.call("token.list", json!({})).await.unwrap();
+    let listed = client.call("tokens", json!({})).await.unwrap();
     assert_eq!(listed.as_array().unwrap().len(), 1);
 
     let _ = stop.send(());
@@ -1058,7 +1058,7 @@ async fn account_scope_limits_synced_contacts_to_its_accounts() {
             limit: 50,
         })
     };
-    let record = token(&t, Profile::ReadOnly, accounts(&[t.fixture.work])).await;
+    let record = token(&t, Profile::Read, accounts(&[t.fixture.work])).await;
     let scoped = run(&t, &ctx(&t, &record, ExecutionMode::Execute), command())
         .await
         .unwrap();
@@ -1069,7 +1069,7 @@ async fn account_scope_limits_synced_contacts_to_its_accounts() {
             "imported@example.org".to_owned()
         ])
     );
-    let record = token(&t, Profile::ReadOnly, TokenScope::default()).await;
+    let record = token(&t, Profile::Read, TokenScope::default()).await;
     let all = run(&t, &ctx(&t, &record, ExecutionMode::Execute), command())
         .await
         .unwrap();
@@ -1078,16 +1078,14 @@ async fn account_scope_limits_synced_contacts_to_its_accounts() {
 
 #[tokio::test]
 async fn rule_commands_add_list_enable_run_and_delete() {
-    use local_api::registry::args::{
-        RuleAction, RuleAddArgs, RuleIdArgs, RuleListArgs, RuleRunArgs,
-    };
+    use local_api::registry::args::{RuleAction, RuleAddArgs, RuleIdArgs, RuleRunArgs, RulesArgs};
     let t = open().await;
     let fx = t.fixture;
-    let record = token(&t, Profile::Writer, TokenScope::all()).await;
+    let record = token(&t, Profile::Write, TokenScope::all()).await;
     let all = ctx_all(&t, &record);
 
     // A rule for every account is refused for a token that doesn't see every account.
-    let work_only = token(&t, Profile::Writer, accounts(&[fx.work])).await;
+    let work_only = token(&t, Profile::Write, accounts(&[fx.work])).await;
     let narrow = ctx(&t, &work_only, ExecutionMode::Execute);
     let add = |account, actions: Vec<RuleAction>| {
         Command::RuleAdd(RuleAddArgs {
@@ -1098,7 +1096,7 @@ async fn rule_commands_add_list_enable_run_and_delete() {
             apply_now: false,
         })
     };
-    let error = run(&t, &narrow, add(None, vec![RuleAction::Flag]))
+    let error = run(&t, &narrow, add(None, vec![RuleAction::Star]))
         .await
         .unwrap_err();
     assert_eq!(error.code, ErrorCode::InvalidArgs, "{error:?}");
@@ -1116,7 +1114,7 @@ async fn rule_commands_add_list_enable_run_and_delete() {
     .unwrap();
     let id = added["id"].as_str().unwrap().to_owned();
     assert!(id.starts_with("r_"), "{added}");
-    let listed = run(&t, &narrow, Command::RuleList(RuleListArgs::default()))
+    let listed = run(&t, &narrow, Command::Rules(RulesArgs::default()))
         .await
         .unwrap();
     assert_eq!(listed[0]["account"], fx.work.to_string());
@@ -1128,7 +1126,7 @@ async fn rule_commands_add_list_enable_run_and_delete() {
     assert_eq!(listed[0]["actions"], "mark read, move to Projects");
 
     // Gmail's token doesn't see the Work rule.
-    let gmail_only = token(&t, Profile::Writer, accounts(&[fx.gmail])).await;
+    let gmail_only = token(&t, Profile::Write, accounts(&[fx.gmail])).await;
     let gmail = ctx(&t, &gmail_only, ExecutionMode::Execute);
     let hidden = run(&t, &gmail, Command::RuleShow(RuleIdArgs { id: id.clone() }))
         .await

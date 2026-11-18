@@ -1,4 +1,4 @@
-//! `mazemail account list|add|set|remove` and `mazemail sync` (PLAN §4.11).
+//! `mazemail accounts`, `mazemail account add|set|remove` and `mazemail sync` (PLAN §4.11).
 //!
 //! # Permissions
 //!
@@ -111,7 +111,7 @@ fn smtp_settings(
     })
 }
 
-/// `account list`.
+/// `accounts`.
 pub(crate) fn list(
     core: &CoreHandle,
     ctx: &RequestContext,
@@ -145,14 +145,14 @@ pub(crate) async fn add(
             .await
         }
         None => {
-            let security = args.security.map(security);
+            let security = args.imap_security.map(security);
             let suggested = suggest_imap_server(&email);
-            let host = match (args.host, &suggested) {
+            let host = match (args.imap_host, &suggested) {
                 (Some(host), _) => host,
                 (None, Some(suggestion)) => suggestion.server.host.clone(),
                 (None, None) => {
                     return Err(CommandError::invalid_args(
-                        "host: can't be detected from the address; pass --host",
+                        "imap_host: can't be detected from the address; pass --imap-host",
                     ));
                 }
             };
@@ -164,7 +164,7 @@ pub(crate) async fn add(
                         .map(|s| s.server.security)
                 })
                 .unwrap_or_default();
-            let port = args.port.unwrap_or_else(|| security.default_port());
+            let port = args.imap_port.unwrap_or_else(|| security.default_port());
             let password = args.password.ok_or_else(|| {
                 CommandError::invalid_args("password: required unless signing in with oauth")
             })?;
@@ -221,24 +221,25 @@ pub(crate) async fn set(
         return Ok(account_output(&info));
     }
     let details = core.account_details(args.id).await.map_err(account_error)?;
-    let server = (args.host.is_some() || args.port.is_some() || args.security.is_some())
-        .then(|| {
-            let current = details.info.server.clone().ok_or_else(|| {
-                CommandError::invalid_args("this account has no server settings to change")
-            })?;
-            let security = args.security.map_or(current.security, security);
-            let port = args.port.unwrap_or(if args.security.is_some() {
-                security.default_port()
-            } else {
-                current.port
-            });
-            Ok::<_, CommandError>(ImapServer {
-                host: args.host.clone().unwrap_or(current.host),
-                port,
-                security,
+    let server =
+        (args.imap_host.is_some() || args.imap_port.is_some() || args.imap_security.is_some())
+            .then(|| {
+                let current = details.info.server.clone().ok_or_else(|| {
+                    CommandError::invalid_args("this account has no server settings to change")
+                })?;
+                let security = args.imap_security.map_or(current.security, security);
+                let port = args.imap_port.unwrap_or(if args.imap_security.is_some() {
+                    security.default_port()
+                } else {
+                    current.port
+                });
+                Ok::<_, CommandError>(ImapServer {
+                    host: args.imap_host.clone().unwrap_or(current.host),
+                    port,
+                    security,
+                })
             })
-        })
-        .transpose()?;
+            .transpose()?;
     let smtp =
         (args.smtp_host.is_some() || args.smtp_port.is_some() || args.smtp_security.is_some())
             .then(|| {

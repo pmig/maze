@@ -13,7 +13,7 @@
 //! ([`SyncEngine::fetch_contact_photo`]).
 //!
 //! A Microsoft account also syncs the mailboxes listed in its
-//! `accounts.<label>.shared_contacts` setting: each one's shared Contacts folder
+//! `accounts.<name>.shared_contacts` setting: each one's shared Contacts folder
 //! (`microsoft-shared:<uuid>:<mailbox>`, read-only, no photos) with the account's
 //! shared-contacts token (`Contacts.Read.Shared`). A missing shared permission marks
 //! only that book; a mailbox taken out of the setting loses its local copy.

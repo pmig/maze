@@ -123,7 +123,7 @@ or not.
 
 ### Proposals
 
-Under the default `triage` profile, `mazemail archive|move|tag|flag|read` and
+Under the default `triage` profile, `mazemail archive|move|tag|star|read` and
 `mazemail propose --file` don't change mail; they become proposals that show at the top
 of the agent column, grouped, with **✓** and **✗** per item. Click an item to give the
 review focus, then `y` accepts and `n` rejects the highlighted item (`up`/`down` move).
@@ -131,8 +131,8 @@ review focus, then `y` accepts and `n` rejects the highlighted item (`up`/`down`
 Accepted items are applied like your own commands and are listed in the audit log under
 the agent's token.
 
-`agent.session_profile` sets what an agent session's token may do: `"read-only"`,
-`"triage"` (default) or `"writer"` (changes apply directly).
+`agent.session_profile` sets what an agent session's token may do: `"read"`,
+`"triage"` (default) or `"write"` (changes apply directly).
 
 ## Maze Magic
 

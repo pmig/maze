@@ -110,8 +110,8 @@ impl TokenCache {
 
 /// Decides agent commands in [`CoreHandle::apply`](crate::CoreHandle::apply) from the
 /// token's profile, with the same matrix the local API dispatcher uses
-/// ([`local_api::access`]): read-only tokens can't change mail, triage tokens get
-/// proposals, writer tokens apply directly. Commands no local API command maps to
+/// ([`local_api::access`]): read tokens can't change mail, triage tokens get
+/// proposals, write tokens apply directly. Commands no local API command maps to
 /// (deleting messages, folder management) are refused for every token.
 ///
 /// Pass it as [`CoreConfig::authorizer`](crate::CoreConfig::authorizer) and hand the
@@ -214,9 +214,9 @@ pub(crate) fn proposal_title(command: &MailCommand) -> String {
             } else if remove.contains(Flags::SEEN) {
                 "Mark unread:"
             } else if add.contains(Flags::FLAGGED) {
-                "Flag"
+                "Star"
             } else if remove.contains(Flags::FLAGGED) {
-                "Unflag"
+                "Unstar"
             } else {
                 "Change flags of"
             };
@@ -501,9 +501,9 @@ mod tests {
         ));
 
         for (id, profile) in [
-            (1, Profile::ReadOnly),
+            (1, Profile::Read),
             (2, Profile::Triage),
-            (3, Profile::Writer),
+            (3, Profile::Write),
         ] {
             authorizer.cache().remember(TokenId(id), &record(profile));
         }
@@ -538,7 +538,7 @@ mod tests {
             Authorization::Deny { .. }
         ));
         // Expired tokens are refused.
-        let mut expired = record(Profile::Writer);
+        let mut expired = record(Profile::Write);
         expired.expires_at = Some(OffsetDateTime::UNIX_EPOCH);
         authorizer.cache().remember(TokenId(4), &expired);
         assert!(matches!(

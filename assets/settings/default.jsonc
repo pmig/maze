@@ -55,7 +55,7 @@
   // and "recent".
   "folder_pane": {
     "modes": ["favorite", "unified"],
-    // Folders shown under Favorites, by account label and folder path, e.g.
+    // Folders shown under Favorites, by account name and folder path, e.g.
     // { "account": "work", "folder": "Customers/Acme" }. "Add to Favorites" and
     // "Remove from Favorites" (right-click a folder) edit this list. Favorites are
     // checked for new mail every 30 seconds and notify like the Inbox (except Sent).
@@ -115,7 +115,7 @@
   // websites learns that Maze looked); "off": none.
   "favicons": "contacts",
 
-  // Settings per account, keyed by the account's label, e.g.
+  // Settings per account, keyed by the account's name, e.g.
   // "work": { "offline": "all", "remote_content": "never" }
   // Overrides of the global values: "offline", "offline_recent_days", "sync_trash",
   // "remote_content", "footer", "support_maze", "copy_sent_to_inbox", "contacts_sync".
@@ -153,8 +153,8 @@
     // "codex-acp", "gemini", "cursor", "pi-acp"), a short name ("claude", "codex",
     // "pi") or a key of "custom".
     "default": "claude",
-    // What the session token of an agent started by Maze may do: "read-only",
-    // "triage" (changes become proposals you review) or "writer".
+    // What the session token of an agent started by Maze may do: "read",
+    // "triage" (changes become proposals you review) or "write".
     "session_profile": "triage",
     // Your own ACP agents, e.g.
     // "my-agent": { "name": "My agent", "command": "/usr/local/bin/my-agent",

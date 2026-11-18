@@ -164,9 +164,9 @@ mod tests {
         let show = invocation(&["show", "t_19bd", "--format", "md"]);
         assert_eq!(show.args, json!({ "id": "t_19bd", "format": "md" }));
 
-        let login = invocation(&["login", "--profile", "read-only", "--ttl", "1h"]);
+        let login = invocation(&["login", "--profile", "read", "--ttl", "1h"]);
         assert_eq!(login.cmd(), "login");
-        assert_eq!(login.args["profile"], "read-only");
+        assert_eq!(login.args["profile"], "read");
         assert_eq!(login.args["ttl"], "1h");
 
         let archive = invocation(&["archive", "m_b", "t_c"]);

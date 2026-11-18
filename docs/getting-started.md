@@ -144,28 +144,28 @@ message's body is downloaded when you open it.
   before it saves anything, so a wrong password or an unreachable server keeps the
   dialog open with the error. **Test Connection** checks the IMAP login and then the
   SMTP login, without saving or sending anything.
-- **From the command line** (needs a **writer** token, and you approve every account
+- **From the command line** (needs a **write** token, and you approve every account
   in Maze):
 
   ```sh
-  eval "$(mazemail login --profile writer)"
+  eval "$(mazemail login --profile write)"
 
   mazemail account add anna@example.com                    # asks for the password
   security find-generic-password -s mail -w | mazemail account add anna@example.com --password-stdin
   mazemail account add anna@company.com --oauth microsoft  # browser sign-in
   mazemail account add anna@gmail.com --oauth google       # needs auth.google.client_id
-  mazemail account add me@example.org --host mail.example.org --port 143 --security starttls
+  mazemail account add me@example.org --imap-host mail.example.org --imap-port 143 --imap-security starttls
   mazemail account add me@example.org --smtp-host mail.example.org --smtp-port 465 --smtp-security tls
 
-  mazemail account list      # accounts and their sync state
+  mazemail accounts          # accounts and their sync state
   mazemail sync              # look for new mail now
   mazemail account remove a_…
   ```
 
   The password is read from the terminal without echo, or with `--password-stdin` from
-  the first line of stdin; it is never a command-line argument. `--name`, `--host`,
-  `--port`, `--security` (`tls`, `starttls`, `none`) and `--username` override the
-  detected settings; `--smtp-host`, `--smtp-port` and `--smtp-security` the SMTP
+  the first line of stdin; it is never a command-line argument. `--name`, `--imap-host`,
+  `--imap-port`, `--imap-security` (`tls`, `starttls`, `none`) and `--username`
+  override the detected settings; `--smtp-host`, `--smtp-port` and `--smtp-security` the SMTP
   server's.
 - **From Thunderbird:** the [Thunderbird import](#import-mail) takes over your
   accounts with their server settings. Passwords aren't imported; Maze lists the
@@ -210,12 +210,12 @@ Saving works like adding: Maze connects, logs in and lists the folders first, so
 wrong password or an unreachable server keeps the dialog open with the error. **Test
 Connection** checks IMAP and SMTP without saving. The account keeps its mail; Maze
 restarts its sync with the new settings, which also ends a "sign-in required" state.
-From the command line (with a **writer** token, and you approve each change in Maze):
+From the command line (with a **write** token, and you approve each change in Maze):
 
 ```sh
 mazemail account set a_… --password        # asks for the new password
 mazemail account set a_… --name Work
-mazemail account set a_… --host mail.example.org --smtp-host mail.example.org
+mazemail account set a_… --imap-host mail.example.org --smtp-host mail.example.org
 mazemail account set a_… --sign-in         # Google or Microsoft, in the browser
 ```
 
@@ -460,7 +460,7 @@ Maze keeps all mail in your server accounts: it speaks IMAP (including Gmail and
 Microsoft 365) and has no POP3 and no Local Folders ([ADR-019](adr/0019-imap-only.md)).
 It imports whole Thunderbird profiles, and uploads mbox files and Maildir directories
 into a folder of one of your accounts. Importing goes through the CLI and needs a token
-with the **triage** or **writer** profile, and Maze asks you to approve every import:
+with the **triage** or **write** profile, and Maze asks you to approve every import:
 
 ```sh
 eval "$(mazemail login --profile triage)"     # approve in Maze
@@ -496,7 +496,7 @@ From a Thunderbird profile Maze takes over:
   identities, signatures and SMTP servers
 - tags, saved searches (`virtualFolders.dat`) and address books
 - message filters, imported as **disabled** [rules](#rules): review them in the Rules tab
-  ("Rules: Show") or with `mazemail rule list`, and enable the ones you want
+  ("Rules: Show") or with `mazemail rules`, and enable the ones you want
 
 POP3 accounts and Local Folders are skipped, and the import result says so. For a POP3
 account, enable IMAP at your provider and add the account in Maze. To keep mail from
@@ -593,7 +593,7 @@ the same unread count. Maze checks favorites for new mail every 30 seconds (othe
 folders every 2 minutes, the Inbox at once) and shows a
 [notification](#notifications) for new mail in them, except in Sent.
 
-Favorites are saved in `settings.json` as the account's label and the folder's path,
+Favorites are saved in `settings.json` as the account's name and the folder's path,
 so they survive restarts and re-syncs, and you can edit them by hand:
 
 ```jsonc
@@ -817,7 +817,8 @@ narrow it like a folder.
 Saved searches live in Maze's database, so they stay with your mail; a
 [Thunderbird import](#thunderbird-profiles) brings yours along. They search every
 folder, can't be favorites, and don't show unread counts yet. On the command line,
-`mazemail saved-search list|add|rename|edit|delete` manages them and
+`mazemail saved-searches` lists them, `mazemail saved-search add|rename|edit|delete`
+manages them and
 `mazemail search --saved <name>` runs one (see the [CLI guide](cli.md)).
 
 ### Syncing
@@ -1092,7 +1093,7 @@ the mail or folder you have open (or your only account) and lets you pick anothe
 the address, and a name if it should show another one, and press `enter` or **Add
 Alias**. A problem (not an address, a settings file that can't be read) shows in the
 dialog; once saved, Maze says so. Maze keeps aliases in `settings.json`, under the
-account's label. To remove one, delete it there. You can also edit them by hand, as plain addresses or with a name and a Reply-To of their own:
+account's name. To remove one, delete it there. You can also edit them by hand, as plain addresses or with a name and a Reply-To of their own:
 
 ```jsonc
 "accounts": {
@@ -1223,7 +1224,7 @@ reaches an agent until you start one; an agent you start can read all your accou
 - **Sandboxed:** every agent runs in an operating system sandbox (Seatbelt on macOS,
   bubblewrap on Linux). It can't read Maze's store or your home folder and reaches mail
   only through the `mazemail` CLI, with a token limited to the accounts you shared.
-- **Proposals:** by default an agent's archive, move, tag, flag and mark-read requests
+- **Proposals:** by default an agent's archive, move, tag, star and mark-read requests
   become proposals at the top of the column. Accept or reject each item (`y` / `n`) or
   all of them (`cmd-shift-enter` / `cmd-shift-backspace`).
 - **Maze Magic:** `cmd-m` in a draft has an agent improve it, with the conversation as

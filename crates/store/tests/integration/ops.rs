@@ -306,7 +306,7 @@ fn tokens_store_only_hashes() {
     let secret = "mazemail_s_0123456789abcdef0123456789abcdef";
     let token = NewApiToken {
         hash: token_hash(secret),
-        profile: "read-only".to_owned(),
+        profile: "read".to_owned(),
         scope_json: "{}".to_owned(),
         expires: Some(i64::MAX),
         label: Some("claude".to_owned()),

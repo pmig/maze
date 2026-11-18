@@ -143,7 +143,7 @@ real (encrypted) store with demo mail that the CLI can talk to.
    Inside the app bundle the CLI is `/Applications/Maze.app/Contents/MacOS/mazemail`;
    link it into your `PATH` or use an alias.
 3. **Add an account.** Use **Add Account…** in the folder pane, or the CLI with a
-   writer token (`mazemail account add you@example.com`, password from the terminal or
+   write token (`mazemail account add you@example.com`, password from the terminal or
    `--password-stdin`; `--oauth google` or `--oauth microsoft` for the browser
    sign-in). Gmail works with an app password; the browser sign-in for Gmail and
    Microsoft needs your own OAuth client ID for now, see
@@ -195,7 +195,7 @@ directories.
   keychain item and reads it once per launch.
 - The CLI never opens the store. It asks the running app over a Unix socket (mode
   0600), and every request that touches mail needs a token you approved, scoped to a
-  profile (read-only, triage or writer), accounts and a lifetime.
+  profile (read, triage or write), accounts and a lifetime.
 - On purpose in plaintext: what you export, what the CLI prints for an approved token,
   the thread you attach to an agent conversation (while the session runs), and the
   Thunderbird profile you imported from.

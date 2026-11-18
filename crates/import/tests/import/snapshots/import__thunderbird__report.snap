@@ -77,7 +77,7 @@ unsupported:
   - item: 1 message filters
     reason: "skipped: they belong to accounts Maze doesn't import"
   - item: 2 message filters
-    reason: "imported disabled; review them with `mazemail rule list` (or Rules: Show in Maze) and enable the ones you want with `mazemail rule enable`"
+    reason: "imported disabled; review them with `mazemail rules` (or Rules: Show in Maze) and enable the ones you want with `mazemail rule enable`"
   - item: 1 mailing lists in Personal Address Book
     reason: Maze has no contact lists yet; their members are imported as contacts
   - item: calendars and tasks

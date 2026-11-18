@@ -1252,7 +1252,7 @@ pub enum SourceError {
     Unavailable(String),
 }
 
-/// An alias of an account (`accounts.<label>.aliases`): a From address of its own.
+/// An alias of an account (`accounts.<name>.aliases`): a From address of its own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AliasEntry {
     /// The address.

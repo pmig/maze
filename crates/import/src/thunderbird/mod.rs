@@ -199,7 +199,7 @@ impl ThunderbirdProfile {
             report.unsupported.push(Unsupported {
                 item: format!("{} message filters", report.filters),
                 reason:
-                    "imported disabled; review them with `mazemail rule list` (or Rules: Show in \
+                    "imported disabled; review them with `mazemail rules` (or Rules: Show in \
                          Maze) and enable the ones you want with `mazemail rule enable`"
                         .to_owned(),
             });

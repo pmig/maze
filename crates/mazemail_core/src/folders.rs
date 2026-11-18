@@ -7,7 +7,7 @@
 //!    of that role. Its list scope is [`ListScope::Unified`].
 //! 2. **Favorites**: the folders in the setting `folder_pane.favorites`, flat, with
 //!    their own counts, in account order and then folder tree order. Favorites name
-//!    their folder by account label and [folder path](folder_path), so they survive
+//!    their folder by account name and [folder path](folder_path), so they survive
 //!    re-syncs; favorites whose folder doesn't exist are left out (and kept in the
 //!    settings).
 //! 3. **One node per account** with its folder tree.

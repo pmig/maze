@@ -1103,7 +1103,7 @@ pub struct SentReceipt {
 pub struct ApiToken {
     pub id: TokenId,
     pub hash: [u8; 32],
-    /// `read-only`, `triage` or `writer`.
+    /// `read`, `triage` or `write`.
     pub profile: String,
     pub scope_json: String,
     pub expires: Option<UnixTime>,

@@ -35,6 +35,8 @@ pub enum CliCommand {
     Login(LoginArgs),
     /// `mazemail open`.
     Open(OpenArgs),
+    /// `mazemail tokens`.
+    Tokens(TokensArgs),
     /// `mazemail token …`.
     #[command(subcommand)]
     Token(TokenCommand),
@@ -62,12 +64,14 @@ pub enum CliCommand {
     Move(MoveArgs),
     /// `mazemail tag`.
     Tag(TagArgs),
-    /// `mazemail flag`.
-    Flag(FlagArgs),
+    /// `mazemail star`.
+    Star(StarArgs),
     /// `mazemail read`.
     Read(ReadArgs),
     /// `mazemail propose`.
     Propose(ProposeCliArgs),
+    /// `mazemail rules`.
+    Rules(RulesArgs),
     /// `mazemail rule …`.
     #[command(subcommand)]
     Rule(RuleCommand),
@@ -77,11 +81,15 @@ pub enum CliCommand {
     Export(ExportArgs),
     /// `mazemail import`.
     Import(ImportArgs),
+    /// `mazemail accounts`.
+    Accounts(AccountsArgs),
     /// `mazemail account …`.
     #[command(subcommand)]
     Account(AccountCommand),
     /// `mazemail sync`.
     Sync(SyncArgs),
+    /// `mazemail saved-searches`.
+    SavedSearches(SavedSearchesArgs),
     /// `mazemail saved-search …`.
     #[command(subcommand)]
     SavedSearch(SavedSearchCommand),
@@ -90,8 +98,6 @@ pub enum CliCommand {
 /// `mazemail saved-search …`.
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum SavedSearchCommand {
-    /// `mazemail saved-search list`.
-    List(SavedSearchListArgs),
     /// `mazemail saved-search add`.
     Add(SavedSearchAddArgs),
     /// `mazemail saved-search rename`.
@@ -105,8 +111,6 @@ pub enum SavedSearchCommand {
 /// `mazemail account …`.
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum AccountCommand {
-    /// `mazemail account list`.
-    List(AccountListArgs),
     /// `mazemail account add`.
     Add(AccountAddCliArgs),
     /// `mazemail account remove`.
@@ -120,8 +124,6 @@ pub enum AccountCommand {
 pub enum TokenCommand {
     /// `mazemail token create`.
     Create(LoginArgs),
-    /// `mazemail token list`.
-    List(TokenListArgs),
     /// `mazemail token revoke`.
     Revoke(TokenRevokeArgs),
 }
@@ -136,8 +138,8 @@ pub enum AttachmentCommand {
 /// `mazemail draft …`.
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum DraftCommand {
-    /// `mazemail draft new`.
-    New(DraftNewCliArgs),
+    /// `mazemail draft create`.
+    Create(DraftCreateCliArgs),
     /// `mazemail draft edit`.
     Edit(DraftEditCliArgs),
 }
@@ -145,8 +147,6 @@ pub enum DraftCommand {
 /// `mazemail rule …`.
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum RuleCommand {
-    /// `mazemail rule list`.
-    List(RuleListArgs),
     /// `mazemail rule show`.
     Show(RuleIdArgs),
     /// `mazemail rule add`.
@@ -408,7 +408,7 @@ impl CliCommand {
             Self::Login(_) => &["login"],
             Self::Open(_) => &["open"],
             Self::Token(TokenCommand::Create(_)) => &["token", "create"],
-            Self::Token(TokenCommand::List(_)) => &["token", "list"],
+            Self::Tokens(_) => &["tokens"],
             Self::Token(TokenCommand::Revoke(_)) => &["token", "revoke"],
             Self::Search(_) => &["search"],
             Self::Show(_) => &["show"],
@@ -417,15 +417,15 @@ impl CliCommand {
             Self::Contacts(_) => &["contacts"],
             Self::Identities(_) => &["identities"],
             Self::Attachment(AttachmentCommand::Save(_)) => &["attachment", "save"],
-            Self::Draft(DraftCommand::New(_)) => &["draft", "new"],
+            Self::Draft(DraftCommand::Create(_)) => &["draft", "create"],
             Self::Draft(DraftCommand::Edit(_)) => &["draft", "edit"],
             Self::Archive(_) => &["archive"],
             Self::Move(_) => &["move"],
             Self::Tag(_) => &["tag"],
-            Self::Flag(_) => &["flag"],
+            Self::Star(_) => &["star"],
             Self::Read(_) => &["read"],
             Self::Propose(_) => &["propose"],
-            Self::Rule(RuleCommand::List(_)) => &["rule", "list"],
+            Self::Rules(_) => &["rules"],
             Self::Rule(RuleCommand::Show(_)) => &["rule", "show"],
             Self::Rule(RuleCommand::Add(_)) => &["rule", "add"],
             Self::Rule(RuleCommand::Enable(_)) => &["rule", "enable"],
@@ -435,12 +435,12 @@ impl CliCommand {
             Self::Send(_) => &["send"],
             Self::Export(_) => &["export"],
             Self::Import(_) => &["import"],
-            Self::Account(AccountCommand::List(_)) => &["account", "list"],
+            Self::Accounts(_) => &["accounts"],
             Self::Account(AccountCommand::Add(_)) => &["account", "add"],
             Self::Account(AccountCommand::Remove(_)) => &["account", "remove"],
             Self::Account(AccountCommand::Set(_)) => &["account", "set"],
             Self::Sync(_) => &["sync"],
-            Self::SavedSearch(SavedSearchCommand::List(_)) => &["saved-search", "list"],
+            Self::SavedSearches(_) => &["saved-searches"],
             Self::SavedSearch(SavedSearchCommand::Add(_)) => &["saved-search", "add"],
             Self::SavedSearch(SavedSearchCommand::Rename(_)) => &["saved-search", "rename"],
             Self::SavedSearch(SavedSearchCommand::Edit(_)) => &["saved-search", "edit"],
@@ -461,7 +461,7 @@ impl CliCommand {
                 Invocation::new(name, &args)
             }
             Self::Open(args) => Invocation::new(name, &args),
-            Self::Token(TokenCommand::List(args)) => Invocation::new(name, &args),
+            Self::Tokens(args) => Invocation::new(name, &args),
             Self::Token(TokenCommand::Revoke(args)) => Invocation::new(name, &args),
             Self::Search(args) => {
                 let ids_only = args.ids;
@@ -481,10 +481,10 @@ impl CliCommand {
                 invocation.post = PostAction::SaveAttachment { dir };
                 Ok(invocation)
             }
-            Self::Draft(DraftCommand::New(args)) => {
+            Self::Draft(DraftCommand::Create(args)) => {
                 let body = body(env, args.body_file.as_deref(), args.body)?;
-                let wire = DraftNewArgs {
-                    reply_to: args.reply_to,
+                let wire = DraftCreateArgs {
+                    reply: args.reply,
                     reply_all: args.reply_all,
                     forward: args.forward,
                     identity: args.identity,
@@ -515,7 +515,7 @@ impl CliCommand {
             Self::Archive(args) => Invocation::new(name, &args),
             Self::Move(args) => Invocation::new(name, &args),
             Self::Tag(args) => Invocation::new(name, &args),
-            Self::Flag(args) => Invocation::new(name, &args),
+            Self::Star(args) => Invocation::new(name, &args),
             Self::Read(args) => Invocation::new(name, &args),
             Self::Propose(args) => {
                 let bytes = read_input(env, &args.file)?;
@@ -524,7 +524,7 @@ impl CliCommand {
                 })?;
                 Invocation::new(name, &wire)
             }
-            Self::Rule(RuleCommand::List(args)) => Invocation::new(name, &args),
+            Self::Rules(args) => Invocation::new(name, &args),
             Self::Rule(RuleCommand::Add(args)) => Invocation::new(name, &args),
             Self::Rule(
                 RuleCommand::Show(args)
@@ -542,7 +542,7 @@ impl CliCommand {
                 args.path = cwd(env)?.join(&args.path);
                 Invocation::new(name, &args)
             }
-            Self::Account(AccountCommand::List(args)) => Invocation::new(name, &args),
+            Self::Accounts(args) => Invocation::new(name, &args),
             Self::Account(AccountCommand::Add(args)) => {
                 let password = if args.oauth.is_some() {
                     None
@@ -555,9 +555,9 @@ impl CliCommand {
                     name: args.name,
                     oauth: args.oauth,
                     tenant: args.tenant,
-                    host: args.host,
-                    port: args.port,
-                    security: args.security,
+                    imap_host: args.imap_host,
+                    imap_port: args.imap_port,
+                    imap_security: args.imap_security,
                     username: args.username.map(Sensitive::new),
                     password,
                     smtp_host: args.smtp_host,
@@ -571,9 +571,9 @@ impl CliCommand {
                 let mut wire = AccountSetArgs {
                     id: args.id,
                     name: args.name,
-                    host: args.host,
-                    port: args.port,
-                    security: args.security,
+                    imap_host: args.imap_host,
+                    imap_port: args.imap_port,
+                    imap_security: args.imap_security,
                     username: args.username.map(Sensitive::new),
                     password: None,
                     smtp_host: args.smtp_host,
@@ -590,7 +590,7 @@ impl CliCommand {
                 Invocation::new(name, &wire)
             }
             Self::Sync(args) => Invocation::new(name, &args),
-            Self::SavedSearch(SavedSearchCommand::List(args)) => Invocation::new(name, &args),
+            Self::SavedSearches(args) => Invocation::new(name, &args),
             Self::SavedSearch(SavedSearchCommand::Add(args)) => Invocation::new(name, &args),
             Self::SavedSearch(SavedSearchCommand::Rename(args)) => Invocation::new(name, &args),
             Self::SavedSearch(SavedSearchCommand::Edit(args)) => Invocation::new(name, &args),
@@ -822,7 +822,7 @@ mod tests {
         let cmd = cli_command();
         let search = cmd.find_subcommand("search").unwrap();
         assert_eq!(search.get_about().unwrap().to_string(), "Search mail");
-        let help = local_help(&["draft".into(), "new".into()]).unwrap();
+        let help = local_help(&["draft".into(), "create".into()]).unwrap();
         assert!(help.contains("Write a new draft"), "{help}");
         assert!(help.contains("--body-file"), "{help}");
         assert!(help.contains("Examples:"), "{help}");
@@ -837,7 +837,7 @@ mod tests {
             (&["status"][..], "status"),
             (&["login", "--profile", "triage", "--ttl", "1h"], "login"),
             (&["token", "create"], "token.create"),
-            (&["token", "list"], "token.list"),
+            (&["tokens"], "tokens"),
             (&["token", "revoke", "tk_abc"], "token.revoke"),
             (&["show", "t_b", "--format", "raw"], "show"),
             (&["folders", "--account", "a_b"], "folders"),
@@ -847,7 +847,8 @@ mod tests {
             (&["archive", "m_b", "t_c"], "archive"),
             (&["move", "--to", "f_b", "m_b"], "move"),
             (&["tag", "--add", "x", "m_b"], "tag"),
-            (&["flag", "--clear", "m_b"], "flag"),
+            (&["star", "--unstar", "m_b"], "star"),
+            (&["star", "m_b"], "star"),
             (&["read", "--unread", "m_b"], "read"),
             (
                 &[
@@ -862,7 +863,7 @@ mod tests {
                 ],
                 "rule.add",
             ),
-            (&["rule", "list", "--account", "a_b"], "rule.list"),
+            (&["rules", "--account", "a_b"], "rules"),
             (&["rule", "show", "r_b"], "rule.show"),
             (&["rule", "enable", "r_b"], "rule.enable"),
             (&["rule", "disable", "r_b"], "rule.disable"),
@@ -871,7 +872,7 @@ mod tests {
             (&["rule", "run", "--folder", "f_b", "r_c"], "rule.run"),
             (&["send", "d_b"], "send"),
             (&["import", "mail.mbox"], "import"),
-            (&["account", "list"], "account.list"),
+            (&["accounts"], "accounts"),
             (&["account", "add", "a@example.org"], "account.add"),
             (
                 &["account", "add", "b@gmail.com", "--oauth", "google"],
@@ -883,7 +884,8 @@ mod tests {
             (&["sync", "--account", "a_b"], "sync"),
             (&["search", "--saved", "Invoices"], "search"),
             (&["search", "--saved", "s_b", "is:unread"], "search"),
-            (&["saved-search", "list"], "saved-search.list"),
+            (&["saved-searches"], "saved-searches"),
+            (&["draft", "create", "--reply-all", "m_b"], "draft.create"),
             (
                 &["saved-search", "add", "Invoices", "invoice has:attachment"],
                 "saved-search.add",
@@ -935,7 +937,13 @@ mod tests {
             &["move", "--to", "m_b", "m_c"],
             &["login", "--ttl", "forever"],
             &["login", "--profile", "admin"],
-            &["draft", "new", "--body", "x", "--body-file", "y"],
+            &["draft", "create", "--body", "x", "--body-file", "y"],
+            &["draft", "create", "--reply", "m_b", "--forward", "m_c"],
+            &["draft", "create", "--reply", "m_b", "--reply-all", "m_b"],
+            &["draft", "new"],
+            &["flag", "m_b"],
+            &["account", "list"],
+            &["account", "add", "a@example.org", "--host", "h"],
             &[
                 "rule", "add", "--name", "n", "--when", "q", "--then", "delete",
             ],
@@ -965,7 +973,7 @@ mod tests {
         let invocation = invoke(
             &[
                 "draft",
-                "new",
+                "create",
                 "--to",
                 "anna@example.com",
                 "--subject",
@@ -980,13 +988,13 @@ mod tests {
         assert_eq!(
             invocation.args,
             json!({
-                "reply_to": null, "reply_all": false, "forward": null, "identity": null,
+                "reply": null, "reply_all": null, "forward": null, "identity": null,
                 "to": ["anna@example.com"], "cc": [], "bcc": [], "subject": "Hi",
                 "body": "Hello Anna",
                 "attachments": [{ "name": "a.pdf", "content_type": null, "data": "AQID" }]
             })
         );
-        let error = parse(&["draft", "new", "--body-file", "missing.md"])
+        let error = parse(&["draft", "create", "--body-file", "missing.md"])
             .into_invocation(&env)
             .unwrap_err();
         assert_eq!(error.exit_code(), ExitCode::Usage);
@@ -1182,14 +1190,14 @@ mod account_tests {
                 "account",
                 "add",
                 "alice@example.org",
-                "--host",
+                "--imap-host",
                 "imap.example.org",
             ],
             &env,
         )
         .unwrap();
         assert_eq!(typed.args["password"], "typed secret");
-        assert_eq!(typed.args["host"], "imap.example.org");
+        assert_eq!(typed.args["imap_host"], "imap.example.org");
         assert_eq!(*env.prompts.borrow(), ["Password for alice@example.org: "]);
 
         let piped = Env {
@@ -1202,17 +1210,17 @@ mod account_tests {
                 "add",
                 "alice@example.org",
                 "--password-stdin",
-                "--security",
+                "--imap-security",
                 "none",
-                "--port",
+                "--imap-port",
                 "1143",
             ],
             &piped,
         )
         .unwrap();
         assert_eq!(invocation.args["password"], "from stdin");
-        assert_eq!(invocation.args["security"], "none");
-        assert_eq!(invocation.args["port"], 1143);
+        assert_eq!(invocation.args["imap_security"], "none");
+        assert_eq!(invocation.args["imap_port"], 1143);
         assert!(piped.prompts.borrow().is_empty());
         // What the CLI sends parses on the server side.
         super::super::Command::from_wire("account.add", invocation.args)
@@ -1277,7 +1285,7 @@ mod account_tests {
                     "account",
                     "set",
                     "a_b",
-                    "--host",
+                    "--imap-host",
                     "mail.example.org",
                     "--smtp-security",
                     "tls",
@@ -1286,7 +1294,7 @@ mod account_tests {
             )
             .unwrap(),
         );
-        assert_eq!(moved["host"], "mail.example.org");
+        assert_eq!(moved["imap_host"], "mail.example.org");
         assert_eq!(moved["smtp_security"], "tls");
         assert_eq!(moved["password"], "typed secret");
         assert_eq!(
@@ -1337,7 +1345,7 @@ mod account_tests {
         );
         for bad in [
             &["account", "set", "a_c", "--sign-in", "--password"][..],
-            &["account", "set", "a_c", "--sign-in", "--host", "h"],
+            &["account", "set", "a_c", "--sign-in", "--imap-host", "h"],
             &["account", "set", "a_c", "--tenant", "contoso.com"],
             &["account", "set", "a_c", "--password", "x"],
         ] {
@@ -1356,13 +1364,13 @@ mod account_tests {
         let error = |args| from_wire(args).unwrap_err().0;
         assert!(error(json!({ "id": "a_b" })).contains("nothing to change"));
         // Other clients must send the password with a server change, too.
-        assert!(error(json!({ "id": "a_b", "host": "h" })).contains("password"));
+        assert!(error(json!({ "id": "a_b", "imap_host": "h" })).contains("password"));
         assert!(error(json!({ "id": "a_b", "password": "" })).contains("password"));
         assert!(
             error(json!({ "id": "a_b", "sign_in": true, "password": "x" })).contains("sign_in")
         );
         assert!(error(json!({ "id": "a_b", "tenant": "common", "name": "x" })).contains("tenant"));
-        assert!(from_wire(json!({ "id": "a_b", "host": "h", "password": "x" })).is_ok());
+        assert!(from_wire(json!({ "id": "a_b", "imap_host": "h", "password": "x" })).is_ok());
     }
 
     #[test]

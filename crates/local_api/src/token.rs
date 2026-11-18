@@ -224,7 +224,7 @@ impl From<TokenId> for String {
 #[error("expected a token id like tk_abcdefghijklm")]
 pub struct TokenIdError;
 
-/// What a token may do (CONCEPT §10.3). Ordered by rights: `ReadOnly < Triage < Writer`.
+/// What a token may do (CONCEPT §10.3). Ordered by rights: `Read < Triage < Write`.
 #[derive(
     Debug,
     Clone,
@@ -239,26 +239,26 @@ pub struct TokenIdError;
     JsonSchema,
     clap::ValueEnum,
 )]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "lowercase")]
 pub enum Profile {
     /// Search and read, nothing else.
-    ReadOnly,
+    Read,
     /// Read, write drafts; archive/move/tag/flag become proposals; rules ask first.
     Triage,
     /// Read, write drafts and change mail directly; rules ask first.
-    Writer,
+    Write,
 }
 
 impl Profile {
     /// Every profile, from fewest to most rights.
-    pub const ALL: [Self; 3] = [Self::ReadOnly, Self::Triage, Self::Writer];
+    pub const ALL: [Self; 3] = [Self::Read, Self::Triage, Self::Write];
 
-    /// The wire and CLI name (`read-only`, `triage`, `writer`).
+    /// The wire and CLI name (`read`, `triage`, `write`).
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::ReadOnly => "read-only",
+            Self::Read => "read",
             Self::Triage => "triage",
-            Self::Writer => "writer",
+            Self::Write => "write",
         }
     }
 }
@@ -434,7 +434,7 @@ impl TokenRecord {
     }
 }
 
-/// A token as `token list` and `status` show it (no hash, no secret).
+/// A token as `tokens` and `status` show it (no hash, no secret).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TokenInfo {
     /// Public id (`tk_…`).
@@ -867,7 +867,7 @@ mod tests {
     #[test]
     fn records_never_contain_the_secret() {
         let (token, record) = mint(
-            &grant(Profile::Writer),
+            &grant(Profile::Write),
             Some("ci".into()),
             CreatedBy::User,
             NOW,
@@ -879,12 +879,12 @@ mod tests {
         assert!(!format!("{record:?}").contains(secret_body));
         let back: TokenRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(back, record);
-        assert_eq!(record.grant(), grant(Profile::Writer));
+        assert_eq!(record.grant(), grant(Profile::Write));
     }
 
     #[test]
     fn non_expiring_tokens() {
-        let mut grant = grant(Profile::ReadOnly);
+        let mut grant = grant(Profile::Read);
         grant.lifetime = None;
         let (_, record) = mint(
             &grant,
@@ -918,8 +918,8 @@ mod tests {
         assert_eq!(TokenScope::all().describe(), "all accounts");
 
         let base = grant(Profile::Triage);
-        assert!(grant(Profile::ReadOnly).is_within(&base));
-        assert!(!grant(Profile::Writer).is_within(&base));
+        assert!(grant(Profile::Read).is_within(&base));
+        assert!(!grant(Profile::Write).is_within(&base));
         let mut longer = base.clone();
         longer.lifetime = Some(Duration::from_secs(7200));
         assert!(!longer.is_within(&base));

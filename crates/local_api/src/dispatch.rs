@@ -310,7 +310,7 @@ impl Dispatcher {
                     .await
             }
             "open" => self.open(args),
-            "token.list" => self.list_tokens().await,
+            "tokens" => self.list_tokens().await,
             "token.revoke" => {
                 // Checked above: the command requires a token.
                 let token = token.ok_or_else(not_signed_in)?;
@@ -475,10 +475,10 @@ impl Dispatcher {
                 ),
             ));
         }
-        if args.allow_send && args.profile == crate::Profile::ReadOnly {
+        if args.allow_send && args.profile == crate::Profile::Read {
             return Err(ApiError::new(
                 ErrorCode::InvalidArgs,
-                "allow_send needs the triage or writer profile",
+                "allow_send needs the triage or write profile",
             ));
         }
         let scope = TokenScope {
@@ -516,7 +516,7 @@ impl Dispatcher {
             accounts.retain(|account| existing.contains(account));
         }
         check_accounts(&grant.scope, &existing)?;
-        if grant.profile == crate::Profile::ReadOnly {
+        if grant.profile == crate::Profile::Read {
             grant.allow_send = false;
         }
 
@@ -697,7 +697,7 @@ fn help(token: Option<&TokenRecord>) -> Outcome {
             access: token
                 .map(|token| spec.access(token.profile, token.allow_send))
                 .or_else(|| {
-                    (!spec.requires_token).then(|| spec.access(crate::Profile::ReadOnly, false))
+                    (!spec.requires_token).then(|| spec.access(crate::Profile::Read, false))
                 }),
         })
         .collect();
