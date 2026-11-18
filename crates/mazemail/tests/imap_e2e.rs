@@ -222,7 +222,7 @@ async fn headless_maze_syncs_a_real_imap_server() {
     assert!(String::from_utf8_lossy(&wrong.stderr).contains("rejected the login"));
 
     wait_for("the initial sync", Duration::from_secs(60), || {
-        env.json(&["account", "list"], None)[0]["state"] == "idle"
+        env.json(&["accounts"], None)[0]["state"] == "idle"
     });
     let folders = env.json(&["folders"], None);
     let inbox = folders
@@ -280,7 +280,7 @@ async fn headless_maze_syncs_a_real_imap_server() {
     let synced = env.json(&["sync", "--account", &account], None);
     assert_eq!(synced["accounts"][0], account.as_str());
     env.json(&["account", "remove", &account], None);
-    assert_eq!(hits(&env.json(&["account", "list"], None)), 0);
+    assert_eq!(hits(&env.json(&["accounts"], None)), 0);
     let secrets = std::fs::read_to_string(env.data.join("insecure-dev-secrets.json")).unwrap();
     assert!(!secrets.contains(support::PASSWORD));
     let _ = other.logout().await;
