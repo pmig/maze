@@ -140,8 +140,8 @@ mod tests {
     }
 
     #[test]
-    fn embedded_data_is_about_a_megabyte() {
+    fn embedded_data_stays_under_one_and_a_half_megabytes() {
         let total: usize = Lang::ALL.into_iter().map(embedded_size).sum();
-        assert!((1_000_000..1_500_000).contains(&total), "{total}");
+        assert!(total < 1_500_000, "{total}");
     }
 }

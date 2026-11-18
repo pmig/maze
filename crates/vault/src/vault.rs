@@ -171,6 +171,14 @@ impl fmt::Debug for Vault {
     }
 }
 
+// The vault and its ciphers are shared across threads.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Vault>();
+    assert_send_sync::<BlobCipher>();
+    assert_send_sync::<BlockCipher>();
+};
+
 fn store_verified(store: &dyn KeyStore, key: &MasterKey) -> Result<(), Error> {
     store.store(key)?;
     match store.load()? {
@@ -335,13 +343,5 @@ mod tests {
                 .ct_eq(vault.master_key())
         );
         assert_eq!(vault.sqlcipher_pragma_key().expose_secret().len(), 67);
-    }
-
-    #[test]
-    fn vault_is_send_and_sync() {
-        fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<Vault>();
-        assert_send_sync::<BlobCipher>();
-        assert_send_sync::<BlockCipher>();
     }
 }

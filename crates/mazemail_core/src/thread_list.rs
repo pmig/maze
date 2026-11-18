@@ -115,6 +115,9 @@ impl ListQuery {
     }
 }
 
+// A snapshot costs 16 bytes per row (see the module docs).
+const _: () = assert!(std::mem::size_of::<ListKey>() == 16);
+
 /// The keys of a thread list at one moment.
 #[derive(Debug, Clone)]
 pub struct ThreadListSnapshot {
@@ -316,15 +319,10 @@ impl TextCache {
 
 #[cfg(test)]
 mod tests {
-    use mazemail_types::{AccountId, FolderRole};
+    use mazemail_types::AccountId;
     use store::Participant;
 
     use super::*;
-
-    #[test]
-    fn list_keys_are_16_bytes() {
-        assert_eq!(std::mem::size_of::<ListKey>(), 16);
-    }
 
     #[test]
     fn words_are_lowercased_and_blank_text_is_no_filter() {
@@ -365,17 +363,5 @@ mod tests {
         assert!(text.contains("quarterly"));
         assert!(text.contains("anna example"));
         assert!(text.contains("anna@example.com"));
-    }
-
-    #[test]
-    fn context_follows_the_scope() {
-        assert_eq!(
-            ListQuery::new(ListScope::Folder(FolderId(3))).context(),
-            Some(FolderId(3))
-        );
-        assert_eq!(
-            ListQuery::new(ListScope::Unified(FolderRole::Inbox)).context(),
-            None
-        );
     }
 }

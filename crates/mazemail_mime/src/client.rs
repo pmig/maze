@@ -625,34 +625,59 @@ mod tests {
     }
 
     #[test]
-    fn a_named_client_wins_over_fingerprints() {
-        let headers = [
-            ("Message-ID", "<CAF=abc@mail.gmail.com>"),
-            ("Thread-Index", "AdtYQ2l0"),
+    fn which_header_wins() {
+        type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], Option<&'a str>);
+        let cases: &[Case<'_>] = &[
             (
-                "User-Agent",
-                "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Thunderbird/128.3.1",
+                "a named client wins over fingerprints",
+                &[
+                    ("Message-ID", "<CAF=abc@mail.gmail.com>"),
+                    ("Thread-Index", "AdtYQ2l0"),
+                    (
+                        "User-Agent",
+                        "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Thunderbird/128.3.1",
+                    ),
+                ],
+                Some("Thunderbird 128.3 (Linux)"),
+            ),
+            (
+                "User-Agent wins over X-Mailer",
+                &[
+                    ("X-Mailer", "Microsoft Outlook 16.0"),
+                    ("User-Agent", "Mutt/2.2.12 (2023-09-09)"),
+                ],
+                Some("Mutt 2.2"),
+            ),
+            (
+                "a fingerprint wins over an unknown agent",
+                &[
+                    ("X-Mailer", "nlserver, Build 7.0.0.10651"),
+                    ("X-SES-Outgoing", "2024.10.21-54.240.8.97"),
+                ],
+                Some("Amazon SES"),
+            ),
+            (
+                "the first occurrence of a header counts",
+                &[
+                    ("X-Mailer", "Apple Mail (2.3826)"),
+                    ("X-Mailer", "Evolution 3.52"),
+                ],
+                Some("Apple Mail"),
+            ),
+            ("no headers", &[], None),
+            (
+                "nothing to go on",
+                &[
+                    ("Message-ID", "<1234@example.org>"),
+                    ("User-Agent", "   "),
+                    ("Subject", "Hello"),
+                ],
+                None,
             ),
         ];
-        assert_eq!(name(&headers).as_deref(), Some("Thunderbird 128.3 (Linux)"));
-    }
-
-    #[test]
-    fn user_agent_wins_over_x_mailer() {
-        let headers = [
-            ("X-Mailer", "Microsoft Outlook 16.0"),
-            ("User-Agent", "Mutt/2.2.12 (2023-09-09)"),
-        ];
-        assert_eq!(name(&headers).as_deref(), Some("Mutt 2.2"));
-    }
-
-    #[test]
-    fn a_fingerprint_wins_over_an_unknown_agent() {
-        let headers = [
-            ("X-Mailer", "nlserver, Build 7.0.0.10651"),
-            ("X-SES-Outgoing", "2024.10.21-54.240.8.97"),
-        ];
-        assert_eq!(name(&headers).as_deref(), Some("Amazon SES"));
+        for (case, headers, expected) in cases {
+            assert_eq!(name(headers).as_deref(), *expected, "{case}");
+        }
     }
 
     #[test]
@@ -690,28 +715,6 @@ mod tests {
         assert_eq!(
             client.map(|c| (c.name, c.raw)),
             Some(("The Bat! 10.5".to_owned(), "The Bat! 10.5.3".to_owned()))
-        );
-    }
-
-    #[test]
-    fn the_first_occurrence_of_a_header_counts() {
-        let headers = [
-            ("X-Mailer", "Apple Mail (2.3826)"),
-            ("X-Mailer", "Evolution 3.52"),
-        ];
-        assert_eq!(name(&headers).as_deref(), Some("Apple Mail"));
-    }
-
-    #[test]
-    fn nothing_to_go_on() {
-        assert_eq!(name(&[]), None);
-        assert_eq!(
-            name(&[
-                ("Message-ID", "<1234@example.org>"),
-                ("User-Agent", "   "),
-                ("Subject", "Hello"),
-            ]),
-            None
         );
     }
 

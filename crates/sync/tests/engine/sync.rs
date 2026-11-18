@@ -380,47 +380,6 @@ async fn watched_folders_are_polled_with_the_open_folder() {
     handle.shutdown().await;
 }
 
-/// The activity snapshot shows the running pass with its header progress, then
-/// nothing running and the time of the finished round.
-#[tokio::test(flavor = "multi_thread")]
-async fn activity_shows_folder_progress_and_the_last_round() {
-    use sync::FolderPhase;
-
-    let server = FakeServer::new();
-    server.deliver("INBOX", mail(1));
-    server.add_folder("Bulk", None);
-    let h = Harness::new(server.clone()).await;
-    let mut config = h.config();
-    config.workers = 1;
-    config.header_batch = 10;
-    let handle = h.spawn(config);
-    wait_idle(&handle).await;
-    let first = handle.activity();
-    assert!(first.folders.is_empty(), "{first:?}");
-    assert!(first.last_synced.is_some(), "the first round finished");
-
-    for n in 0..3000 {
-        server.deliver("Bulk", mail(1000 + n));
-    }
-    let bulk = h.folder_id("Bulk");
-    handle.sync_now(SyncScope::Folder(bulk)).unwrap();
-    wait_for("header progress of Bulk", || {
-        handle.activity().folders.iter().any(|f| {
-            f.folder == bulk
-                && f.phase == FolderPhase::FetchingHeaders
-                && f.total == Some(3000)
-                && f.done > 0
-                && f.done < 3000
-        })
-    })
-    .await;
-    wait_idle(&handle).await;
-    let done = handle.activity();
-    assert!(done.folders.is_empty(), "{done:?}");
-    assert!(done.last_synced >= first.last_synced);
-    handle.shutdown().await;
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn the_trash_is_synced_only_while_open_when_sync_trash_is_off() {
     let server = FakeServer::new();

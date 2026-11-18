@@ -324,7 +324,7 @@ mod tests {
     }
 
     #[test]
-    fn serializes_compactly() {
+    fn round_trips_compactly() {
         let block = Block::Paragraph {
             content: vec![Inline {
                 text: "x".into(),
@@ -332,10 +332,9 @@ mod tests {
                 link: None,
             }],
         };
-        assert_eq!(
-            serde_json::to_string(&block).unwrap(),
-            r#"{"type":"paragraph","content":[{"text":"x","style":"BOLD | ITALIC"}]}"#
-        );
+        let json = serde_json::to_string(&block).unwrap();
+        assert!(!json.contains("link"), "{json}");
+        assert_eq!(serde_json::from_str::<Block>(&json).unwrap(), block);
     }
 
     #[test]

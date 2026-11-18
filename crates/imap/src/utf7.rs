@@ -158,48 +158,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ascii_passes_through() {
-        assert_eq!(encode("INBOX"), "INBOX");
-        assert_eq!(encode("[Gmail]/All Mail"), "[Gmail]/All Mail");
-        assert_eq!(decode("Sent Items").unwrap(), "Sent Items");
-    }
-
-    #[test]
-    fn ampersand_is_escaped() {
-        assert_eq!(encode("Tom & Jerry"), "Tom &- Jerry");
-        assert_eq!(decode("Tom &- Jerry").unwrap(), "Tom & Jerry");
-        assert_eq!(decode("&-&-").unwrap(), "&&");
-    }
-
-    #[test]
-    fn rfc3501_example() {
-        // RFC 3501 §5.1.3: "~peter/mail/台北/日本語"
-        let name = "~peter/mail/\u{53f0}\u{5317}/\u{65e5}\u{672c}\u{8a9e}";
-        let wire = "~peter/mail/&U,BTFw-/&ZeVnLIqe-";
-        assert_eq!(encode(name), wire);
-        assert_eq!(decode(wire).unwrap(), name);
-    }
-
-    #[test]
-    fn german_and_emoji() {
-        assert_eq!(encode("Entwürfe"), "Entw&APw-rfe");
-        assert_eq!(decode("Entw&APw-rfe").unwrap(), "Entwürfe");
-        assert_eq!(encode("Gelöschte Elemente"), "Gel&APY-schte Elemente");
-        // Astral plane characters use surrogate pairs.
-        let emoji = "Mail \u{1f4e7}";
-        assert_eq!(decode(&encode(emoji)).unwrap(), emoji);
-        assert_eq!(encode(emoji), "Mail &2D3c5w-");
-    }
-
-    #[test]
-    fn rejects_malformed_input() {
-        assert_eq!(decode("&U,BTFw"), Err(Utf7Error::Unterminated(0)));
-        assert_eq!(decode("a&U*-"), Err(Utf7Error::InvalidBase64(3)));
-        assert_eq!(decode("caf\u{e9}"), Err(Utf7Error::InvalidByte(3)));
-        // A lone high surrogate (D83D) is not valid UTF-16.
-        assert_eq!(decode("&2D0-"), Err(Utf7Error::InvalidUtf16(0)));
-        // Odd number of bytes.
-        assert_eq!(decode("&AP-"), Err(Utf7Error::InvalidUtf16(0)));
+    fn encodes_decodes_and_rejects() {
+        let pairs = [
+            // ASCII passes through.
+            ("INBOX", "INBOX"),
+            ("[Gmail]/All Mail", "[Gmail]/All Mail"),
+            ("Sent Items", "Sent Items"),
+            // `&` is escaped.
+            ("Tom & Jerry", "Tom &- Jerry"),
+            ("&&", "&-&-"),
+            // RFC 3501 §5.1.3: "~peter/mail/台北/日本語".
+            (
+                "~peter/mail/\u{53f0}\u{5317}/\u{65e5}\u{672c}\u{8a9e}",
+                "~peter/mail/&U,BTFw-/&ZeVnLIqe-",
+            ),
+            ("Entwürfe", "Entw&APw-rfe"),
+            ("Gelöschte Elemente", "Gel&APY-schte Elemente"),
+            // Astral plane characters use surrogate pairs.
+            ("Mail \u{1f4e7}", "Mail &2D3c5w-"),
+        ];
+        for (name, wire) in pairs {
+            assert_eq!(encode(name), wire, "{name}");
+            assert_eq!(decode(wire).unwrap(), name, "{wire}");
+        }
+        let malformed = [
+            ("&U,BTFw", Utf7Error::Unterminated(0)),
+            ("a&U*-", Utf7Error::InvalidBase64(3)),
+            ("caf\u{e9}", Utf7Error::InvalidByte(3)),
+            // A lone high surrogate (D83D) is not valid UTF-16.
+            ("&2D0-", Utf7Error::InvalidUtf16(0)),
+            // Odd number of bytes.
+            ("&AP-", Utf7Error::InvalidUtf16(0)),
+        ];
+        for (wire, error) in malformed {
+            assert_eq!(decode(wire), Err(error), "{wire}");
+        }
     }
 
     #[test]

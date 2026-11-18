@@ -160,39 +160,35 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
-    fn base(s: &str) -> String {
-        normalize_subject(s)
-    }
-
     #[test]
-    fn strips_prefixes_in_many_languages() {
-        assert_eq!(base("Re: Lunch"), "Lunch");
-        assert_eq!(base("RE: re: Fwd:  Lunch  plans "), "Lunch plans");
-        assert_eq!(base("AW: WG: Angebot"), "Angebot");
-        assert_eq!(base("Antw: Vergadering"), "Vergadering");
-        assert_eq!(base("SV: Möte"), "Möte");
-        assert_eq!(base("TR : Réunion"), "Réunion");
-        assert_eq!(base("Re[3]: Status"), "Status");
-        assert_eq!(base("Re^2: Status"), "Status");
-        assert_eq!(base("回复：会议"), "会议");
-        assert_eq!(base("Status update (fwd)"), "Status update");
-    }
-
-    #[test]
-    fn strips_list_tags() {
-        assert_eq!(base("[dev] Release 1.0"), "Release 1.0");
-        assert_eq!(base("Re: [dev] Re: [dev] Release 1.0"), "Release 1.0");
-        assert_eq!(base("[a][b] x"), "x");
-    }
-
-    #[test]
-    fn leaves_ordinary_subjects_alone() {
-        assert_eq!(base("Regarding: the plan"), "Regarding: the plan");
-        assert_eq!(base("Reply needed"), "Reply needed");
-        assert_eq!(base("Re:"), "");
-        assert_eq!(base("[] empty tag"), "[] empty tag");
-        assert_eq!(base("[unterminated tag"), "[unterminated tag");
-        assert_eq!(base("Ergebnis: 3:1"), "Ergebnis: 3:1");
+    fn normalizes_subjects() {
+        let cases = [
+            // Prefixes in many languages.
+            ("Re: Lunch", "Lunch"),
+            ("RE: re: Fwd:  Lunch  plans ", "Lunch plans"),
+            ("AW: WG: Angebot", "Angebot"),
+            ("Antw: Vergadering", "Vergadering"),
+            ("SV: Möte", "Möte"),
+            ("TR : Réunion", "Réunion"),
+            ("Re[3]: Status", "Status"),
+            ("Re^2: Status", "Status"),
+            ("回复：会议", "会议"),
+            ("Status update (fwd)", "Status update"),
+            // List tags.
+            ("[dev] Release 1.0", "Release 1.0"),
+            ("Re: [dev] Re: [dev] Release 1.0", "Release 1.0"),
+            ("[a][b] x", "x"),
+            // Ordinary subjects stay alone.
+            ("Regarding: the plan", "Regarding: the plan"),
+            ("Reply needed", "Reply needed"),
+            ("Re:", ""),
+            ("[] empty tag", "[] empty tag"),
+            ("[unterminated tag", "[unterminated tag"),
+            ("Ergebnis: 3:1", "Ergebnis: 3:1"),
+        ];
+        for (subject, expected) in cases {
+            assert_eq!(normalize_subject(subject), expected, "{subject:?}");
+        }
     }
 
     #[test]

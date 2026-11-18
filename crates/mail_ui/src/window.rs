@@ -2525,6 +2525,25 @@ mod tests {
         });
         assert_eq!(shown, expected);
 
+        // Up and down stop at the ends of the list, in both list modes.
+        for mode in ["cards", "table"] {
+            if mode == "table" {
+                cx.simulate_keystrokes("cmd-alt-t");
+                cx.run_until_parked();
+            }
+            cx.simulate_keystrokes("home up up");
+            cx.run_until_parked();
+            assert_eq!(selected(cx), Some(0), "{mode}: up at the top stays there");
+            cx.simulate_keystrokes("end down down");
+            cx.run_until_parked();
+            let len = view.read_with(cx, |w, cx| w.thread_list(cx).unwrap().read(cx).len());
+            assert_eq!(
+                selected(cx),
+                Some(len - 1),
+                "{mode}: down at the bottom stays there"
+            );
+        }
+
         // Workspace bindings toggle columns.
         assert!(view.read_with(cx, |w, _| w.prefs().folder_pane_visible));
         cx.simulate_keystrokes("cmd-b");
@@ -3321,43 +3340,6 @@ mod tests {
         cx.simulate_keystrokes("down");
         cx.run_until_parked();
         assert_eq!(items(cx).len(), 1);
-    }
-
-    #[gpui::test]
-    fn up_and_down_stop_at_the_ends_of_the_list(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            ui::init(cx);
-            crate::init(cx);
-        });
-        let source: Arc<dyn MailSource> =
-            Arc::new(FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC)));
-        let (view, cx) = cx.add_window_view(|window, cx| {
-            MailWindow::new(source, &MailWindowOptions::default(), window, cx)
-        });
-        cx.run_until_parked();
-        let at = |cx: &mut VisualTestContext| {
-            view.read_with(cx, |w, cx| {
-                let list = w.thread_list(cx).unwrap().read(cx);
-                (list.selected_index(), list.len())
-            })
-        };
-        for mode in ["cards", "table"] {
-            if mode == "table" {
-                cx.simulate_keystrokes("cmd-alt-t");
-                cx.run_until_parked();
-            }
-            cx.simulate_keystrokes("home up up");
-            cx.run_until_parked();
-            assert_eq!(at(cx).0, Some(0), "{mode}: up at the top stays there");
-            cx.simulate_keystrokes("end down down");
-            cx.run_until_parked();
-            let (selected, len) = at(cx);
-            assert_eq!(
-                selected,
-                Some(len - 1),
-                "{mode}: down at the bottom stays there"
-            );
-        }
     }
 
     #[gpui::test]

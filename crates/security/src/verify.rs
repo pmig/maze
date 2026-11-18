@@ -672,6 +672,13 @@ fn assess(facts: &Facts<'_>) -> (Verdict, String) {
     )
 }
 
+/// Compile-time check, never called: [`Verifier::verify`]'s future is `Send`, so it can
+/// run on any runtime thread.
+fn _verify_future_is_send(verifier: &Verifier, ctx: &VerifyContext<'_>) {
+    fn assert_send<T: Send>(_: &T) {}
+    assert_send(&verifier.verify(b"", ctx));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

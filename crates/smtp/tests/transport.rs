@@ -162,8 +162,9 @@ async fn serve(
         } else {
             "502 5.5.2 Unknown command".into()
         };
-        write.write_all(reply.as_bytes()).await?;
-        write.write_all(b"\r\n").await?;
+        // One write per reply: a reply split in two waits for the client's delayed ACK
+        // (Nagle), 40 ms per command.
+        write.write_all(format!("{reply}\r\n").as_bytes()).await?;
     }
 }
 

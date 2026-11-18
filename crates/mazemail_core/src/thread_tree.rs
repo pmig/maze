@@ -177,19 +177,6 @@ mod tests {
     }
 
     #[test]
-    fn cyclic_references_still_list_every_message_once() {
-        let nodes = build(&[
-            message(1, 10, "a@x", &["b@x"]),
-            message(2, 20, "b@x", &["a@x"]),
-            message(3, 30, "c@x", &["c@x"]),
-        ]);
-        let mut ids: Vec<i64> = nodes.iter().map(|n| n.message.0).collect();
-        ids.sort_unstable();
-        assert_eq!(ids, vec![1, 2, 3]);
-        assert!(nodes.iter().any(|n| n.depth == 0));
-    }
-
-    #[test]
     fn flatten_breaks_cycles_and_dangling_links() {
         // 0 → 1 → 2 → 0 is a cycle; 3's parent doesn't exist; 4 is a child of 3.
         let parent = [Some(2), Some(0), Some(1), Some(99), Some(3)];
@@ -204,6 +191,17 @@ mod tests {
         // The cycle got exactly one root and hangs below it.
         let roots = out.iter().filter(|(n, _, d)| *d == 0 && *n < 3).count();
         assert_eq!(roots, 1);
+
+        // From messages: cyclic and self references still list every message once.
+        let nodes = build(&[
+            message(1, 10, "a@x", &["b@x"]),
+            message(2, 20, "b@x", &["a@x"]),
+            message(3, 30, "c@x", &["c@x"]),
+        ]);
+        let mut ids: Vec<i64> = nodes.iter().map(|n| n.message.0).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![1, 2, 3]);
+        assert!(nodes.iter().any(|n| n.depth == 0));
     }
 
     #[test]

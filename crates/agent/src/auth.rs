@@ -567,9 +567,15 @@ mod tests {
         let urls = dir.path().join("urls");
         let opened = dir.path().join("opened");
         let login = dir.path().join("login.sh");
+        // The login waits until the link was opened (at most 5 s), then ends.
         std::fs::write(
             &login,
-            "#!/bin/sh\nopen https://claude.example/oauth?code=1\nsleep 2\nexit 0\n",
+            format!(
+                "#!/bin/sh\nopen https://claude.example/oauth?code=1\ni=0\n\
+                 while [ ! -s {opened} ] && [ $i -lt 100 ]; do sleep 0.05; i=$((i + 1)); done\n\
+                 exit 0\n",
+                opened = sh_quote(&opened.display().to_string())
+            ),
         )
         .unwrap();
         use std::os::unix::fs::PermissionsExt as _;
@@ -592,9 +598,11 @@ mod tests {
             "printf '%s\\n' \"$url\" >> {}",
             sh_quote(&opened.display().to_string())
         );
+        // And poll for links more often than once a second.
         let script = script
             .replace("/usr/bin/open \"$url\"", &recorder)
-            .replace("xdg-open \"$url\"", &recorder);
+            .replace("xdg-open \"$url\"", &recorder)
+            .replace("    sleep 1\n  done", "    sleep 0.05\n  done");
         let path = dir.path().join("run.sh");
         std::fs::write(&path, script).unwrap();
         let output = std::process::Command::new("/bin/sh")

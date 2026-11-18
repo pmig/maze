@@ -830,66 +830,56 @@ mod tests {
     }
 
     #[test]
-    fn detects_by_email_domain() {
-        assert_eq!(
-            ProviderKind::from_email("Bob@Gmail.com"),
-            Some(ProviderKind::Google)
-        );
-        assert_eq!(
-            ProviderKind::from_email("bob@googlemail.com"),
-            Some(ProviderKind::Google)
-        );
-        for domain in ["outlook.com", "hotmail.com", "live.com", "hotmail.co.uk"] {
-            assert_eq!(
-                ProviderKind::from_email(&format!("bob@{domain}")),
-                Some(ProviderKind::Microsoft),
-                "{domain}"
-            );
-        }
+    fn detects_the_provider_by_address_and_host() {
+        let (google, microsoft) = (Some(ProviderKind::Google), Some(ProviderKind::Microsoft));
         // Google Workspace and Microsoft 365 custom domains can't be detected by name.
-        assert_eq!(ProviderKind::from_email("bob@example.org"), None);
-        assert_eq!(ProviderKind::from_email("not-an-address"), None);
-        assert_eq!(ProviderKind::from_email("bob@notgmail.com"), None);
-    }
-
-    #[test]
-    fn detects_by_host() {
-        for host in ["imap.gmail.com", "smtp.gmail.com", "imap.googlemail.com"] {
+        let emails = [
+            ("Bob@Gmail.com", google),
+            ("bob@googlemail.com", google),
+            ("bob@outlook.com", microsoft),
+            ("bob@hotmail.com", microsoft),
+            ("bob@live.com", microsoft),
+            ("bob@hotmail.co.uk", microsoft),
+            ("bob@example.org", None),
+            ("not-an-address", None),
+            ("bob@notgmail.com", None),
+        ];
+        for (email, expected) in emails {
+            assert_eq!(ProviderKind::from_email(email), expected, "{email}");
+        }
+        let hosts = [
+            ("imap.gmail.com", google),
+            ("smtp.gmail.com", google),
+            ("imap.googlemail.com", google),
+            ("outlook.office365.com", microsoft),
+            ("smtp.office365.com", microsoft),
+            ("outlook.office.com", microsoft),
+            ("smtp-mail.outlook.com", microsoft),
+            ("OUTLOOK.OFFICE365.COM.", microsoft),
+            ("imap.example.org", None),
+            ("evilgmail.com", None),
+            ("gmail.com.evil.org", None),
+        ];
+        for (host, expected) in hosts {
+            assert_eq!(ProviderKind::from_host(host), expected, "{host}");
+        }
+        // The host wins over the address.
+        let both = [
+            (
+                Some("bob@example.org"),
+                Some("outlook.office365.com"),
+                microsoft,
+            ),
+            (Some("bob@gmail.com"), Some("imap.example.org"), google),
+            (None, None, None),
+        ];
+        for (email, host, expected) in both {
             assert_eq!(
-                ProviderKind::from_host(host),
-                Some(ProviderKind::Google),
-                "{host}"
+                ProviderKind::detect(email, host),
+                expected,
+                "{email:?} {host:?}"
             );
         }
-        for host in [
-            "outlook.office365.com",
-            "smtp.office365.com",
-            "outlook.office.com",
-            "smtp-mail.outlook.com",
-            "OUTLOOK.OFFICE365.COM.",
-        ] {
-            assert_eq!(
-                ProviderKind::from_host(host),
-                Some(ProviderKind::Microsoft),
-                "{host}"
-            );
-        }
-        assert_eq!(ProviderKind::from_host("imap.example.org"), None);
-        assert_eq!(ProviderKind::from_host("evilgmail.com"), None);
-        assert_eq!(ProviderKind::from_host("gmail.com.evil.org"), None);
-    }
-
-    #[test]
-    fn host_wins_over_address() {
-        assert_eq!(
-            ProviderKind::detect(Some("bob@example.org"), Some("outlook.office365.com")),
-            Some(ProviderKind::Microsoft)
-        );
-        assert_eq!(
-            ProviderKind::detect(Some("bob@gmail.com"), Some("imap.example.org")),
-            Some(ProviderKind::Google)
-        );
-        assert_eq!(ProviderKind::detect(None, None), None);
     }
 
     #[test]

@@ -21,7 +21,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 
 use gpui::SharedString;
 use mazemail_types::{
@@ -114,6 +114,9 @@ const fn folder(
 }
 
 use FolderRole::{Archive, Drafts, Inbox, Junk, Sent, Trash};
+
+/// Index of the large folder in [`FOLDERS`].
+const LARGE_FOLDER: usize = 3;
 
 /// Every folder. Children follow their parent; the index is the folder's identity.
 const FOLDERS: &[FolderSpec] = &[
@@ -387,7 +390,8 @@ pub enum MoveItem {
 /// Synthetic mail for development and benchmarks. See the module docs.
 pub struct FakeMailSource {
     now: OffsetDateTime,
-    unread_base: Vec<u64>,
+    /// Generated unread threads per folder, counted on first use.
+    unread_base: Vec<OnceLock<u64>>,
     state: RwLock<State>,
     /// The state before the last change, for [`MailSource::undo`].
     undo: Mutex<Option<State>>,
@@ -412,6 +416,9 @@ pub struct FakeMailSource {
     folder_actions: Mutex<Vec<FolderAction>>,
     /// Aliases per account, as [`MailSource::set_alias`] left them.
     aliases: Mutex<HashMap<AccountId, Vec<crate::source::AliasEntry>>>,
+    /// Whether searches over all mail include the 1M folder (see
+    /// [`FakeMailSource::without_large_folder_in_searches`]).
+    search_large_folder: bool,
 }
 
 /// A folder action the fake was asked for (see [`FakeMailSource::folder_actions`]).
@@ -453,16 +460,9 @@ impl FakeMailSource {
 
     /// Synthetic mail relative to a fixed time, for reproducible tests.
     pub fn with_now(now: OffsetDateTime) -> Self {
-        let unread_base = (0..FOLDERS.len())
-            .map(|folder| {
-                (0..FOLDERS[folder].threads)
-                    .filter(|row| !Self::generated_flags(folder, *row).contains(Flags::SEEN))
-                    .count() as u64
-            })
-            .collect();
         Self {
             now,
-            unread_base,
+            unread_base: FOLDERS.iter().map(|_| OnceLock::new()).collect(),
             state: RwLock::new(State {
                 unread_delta: vec![0; FOLDERS.len()],
                 favorites: FAVORITES.iter().copied().collect(),
@@ -480,7 +480,16 @@ impl FakeMailSource {
             no_contacts: std::sync::atomic::AtomicBool::new(false),
             folder_actions: Mutex::new(Vec::new()),
             aliases: Mutex::new(HashMap::new()),
+            search_large_folder: true,
         }
+    }
+
+    /// Leaves the 1M folder out of searches over all mail, which would otherwise
+    /// generate and match every one of its rows (seconds in a debug build).
+    #[must_use]
+    pub fn without_large_folder_in_searches(mut self) -> Self {
+        self.search_large_folder = false;
+        self
     }
 
     /// Empties the address books (the Address Book's empty state).
@@ -534,7 +543,7 @@ impl FakeMailSource {
 
     /// The key of the 1,000,000-thread folder.
     pub fn large_folder() -> FolderKey {
-        FolderKey::Folder(folder_id(3))
+        FolderKey::Folder(folder_id(LARGE_FOLDER))
     }
 
     /// The folder a thread or message was moved to, if it was.
@@ -607,6 +616,23 @@ impl FakeMailSource {
             flags |= Flags::DRAFT;
         }
         flags
+    }
+
+    /// Generated unread threads of a folder. Counting the 1M folder row by row would
+    /// cost every test that builds the fake; past its newest 30 rows 0.3 % of threads
+    /// are unread (see [`Self::generated_flags`]), so the rest is estimated.
+    fn generated_unread(folder: usize) -> u64 {
+        const NEWEST: u32 = 30;
+        let spec = &FOLDERS[folder];
+        let count = |rows: std::ops::Range<u32>| {
+            rows.filter(|row| !Self::generated_flags(folder, *row).contains(Flags::SEEN))
+                .count() as u64
+        };
+        if spec.threads <= 100_000 || matches!(spec.role, Some(Sent | Drafts | Junk)) {
+            count(0..spec.threads)
+        } else {
+            count(0..NEWEST) + u64::from(spec.threads - NEWEST) * 3 / 1000
+        }
     }
 
     /// The flags of message `index`: set one by one, else from the thread's flags (only
@@ -927,13 +953,15 @@ impl FakeMailSource {
     }
 
     /// Folder indexes behind a scope.
-    fn scope_folders(scope: &ThreadScope) -> Result<Vec<usize>, SourceError> {
+    fn scope_folders(&self, scope: &ThreadScope) -> Result<Vec<usize>, SourceError> {
         match scope {
             ThreadScope::Folder(FolderKey::Folder(id)) => folder_index(*id)
                 .map(|ix| vec![ix])
                 .ok_or(SourceError::FolderNotFound),
             ThreadScope::Folder(FolderKey::Unified(role)) => Ok(Self::members(*role).collect()),
-            ThreadScope::AllFolders => Ok((0..FOLDERS.len()).collect()),
+            ThreadScope::AllFolders => Ok((0..FOLDERS.len())
+                .filter(|ix| self.search_large_folder || *ix != LARGE_FOLDER)
+                .collect()),
         }
     }
 
@@ -1395,8 +1423,10 @@ impl MailSource for FakeMailSource {
 
     fn unread_count(&self, folder: &FolderKey) -> u64 {
         let state = self.read_state();
-        let count =
-            |ix: usize| (self.unread_base[ix] as i64 + state.unread_delta[ix]).max(0) as u64;
+        let count = |ix: usize| {
+            let base = *self.unread_base[ix].get_or_init(|| Self::generated_unread(ix));
+            (base as i64 + state.unread_delta[ix]).max(0) as u64
+        };
         match folder {
             FolderKey::Folder(id) => folder_index(*id).map_or(0, count),
             FolderKey::Unified(role) => Self::members(*role).map(count).sum(),
@@ -1420,7 +1450,7 @@ impl MailSource for FakeMailSource {
         {
             return Ok(keys.clone());
         }
-        let folders = Self::scope_folders(scope)?;
+        let folders = self.scope_folders(scope)?;
         let keys: ThreadKeys = {
             let state = self.read_state();
             let lists = folders
@@ -1489,7 +1519,7 @@ impl MailSource for FakeMailSource {
         {
             return Ok(keys.clone());
         }
-        let folders = Self::scope_folders(scope)?;
+        let folders = self.scope_folders(scope)?;
         let keys: MessageKeys = {
             let state = self.read_state();
             let lists = folders

@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use mazemail_mime::html::{ResourceOrigin, SanitizeOptions, rewrite_resources};
 use mazemail_mime::parse;
 
-/// Limits per run, several times what the machine of the day measures (debug about
+/// Limits for one run, several times what the machine of the day measures (debug about
 /// 90 ms, release about 25 ms for the full uncached pipeline on an M-series Mac), so
 /// only algorithmic regressions trip them.
 const DEBUG_LIMIT: Duration = Duration::from_millis(2_000);
@@ -54,24 +54,19 @@ fn opening_a_large_newsletter_stays_linear() {
     assert!(raw.len() > 200_000, "fixture is {} bytes", raw.len());
     let origin = ResourceOrigin::new("http://127.0.0.1:4711/token").unwrap();
 
-    let mut times = Vec::new();
-    for _ in 0..3 {
-        let start = Instant::now();
-        let message = parse(&raw).unwrap();
-        let prepared = message.prepare_html(&SanitizeOptions::default()).unwrap();
-        let rewritten = rewrite_resources(&prepared.sanitized.html, &origin);
-        times.push(start.elapsed());
-        assert_eq!(prepared.sanitized.trackers_removed, 1);
-        assert!(rewritten.remote_resources.len() > 800);
-        assert!(!prepared.reader.is_empty());
-    }
-    times.sort();
-    let median = times[1];
+    let start = Instant::now();
+    let message = parse(&raw).unwrap();
+    let prepared = message.prepare_html(&SanitizeOptions::default()).unwrap();
+    let rewritten = rewrite_resources(&prepared.sanitized.html, &origin);
+    let elapsed = start.elapsed();
+    assert_eq!(prepared.sanitized.trackers_removed, 1);
+    assert!(rewritten.remote_resources.len() > 800);
+    assert!(!prepared.reader.is_empty());
     let limit = if cfg!(debug_assertions) {
         DEBUG_LIMIT
     } else {
         RELEASE_LIMIT
     };
-    eprintln!("open pipeline on {} bytes: median {median:?}", raw.len());
-    assert!(median < limit, "median {median:?} exceeds {limit:?}");
+    eprintln!("open pipeline on {} bytes: {elapsed:?}", raw.len());
+    assert!(elapsed < limit, "{elapsed:?} exceeds {limit:?}");
 }

@@ -197,9 +197,14 @@ mod tests {
     #[tokio::test]
     async fn the_guard_kills_the_whole_group() {
         let dir = tempfile::tempdir().unwrap();
+        let started = dir.path().join("started");
         let marker = dir.path().join("survivor");
         // The shell starts a grandchild that would write the marker after a while.
-        let script = format!("(sleep 1; touch '{}') & wait", marker.display());
+        let script = format!(
+            "(touch '{}'; sleep 0.2; touch '{}') & wait",
+            started.display(),
+            marker.display()
+        );
         let spec = LaunchSpec {
             program: PathBuf::from("/bin/sh"),
             args: vec!["-c".to_owned(), script],
@@ -208,9 +213,15 @@ mod tests {
         };
         let child = command(&spec, None).unwrap().spawn().unwrap();
         let guard = ProcessGroupGuard::new(child.id());
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        for _ in 0..500 {
+            if started.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(started.exists(), "the grandchild didn't start");
         drop(guard);
-        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
         assert!(!marker.exists(), "the grandchild survived the group kill");
     }
 }

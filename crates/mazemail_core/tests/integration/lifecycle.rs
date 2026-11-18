@@ -131,27 +131,8 @@ async fn the_crash_guard_counts_launches_that_never_became_healthy() {
     core.shutdown().await.unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn an_owned_runtime_runs_the_core_and_stops_with_it() {
-    let dir = tempfile::tempdir().unwrap();
-    let keys = Arc::new(MemoryKeyStore::new());
-    let mut config = common::config(dir.path(), &keys);
-    config.runtime = RuntimeConfig::Owned {
-        worker_threads: Some(2),
-    };
-    let core = CoreHandle::open(config).await.unwrap();
-    let f = common::fixture(&core).await;
-    let results = core
-        .search("anything", mazemail_core::SearchOpts::default())
-        .await
-        .unwrap();
-    assert_eq!(results.total_messages, 0);
-    assert_eq!(core.folders().unwrap().len(), 3, "{f:?}");
-    core.shutdown().await.unwrap();
-}
-
 #[test]
-fn open_works_without_an_ambient_runtime() {
+fn an_owned_runtime_runs_the_core_without_an_ambient_one() {
     // The GUI calls `open` from GPUI's executor, not from Tokio.
     let dir = tempfile::tempdir().unwrap();
     let keys = Arc::new(MemoryKeyStore::new());
@@ -167,6 +148,11 @@ fn open_works_without_an_ambient_runtime() {
     executor.block_on(async {
         let core = CoreHandle::open(config).await.unwrap();
         assert!(core.accounts().unwrap().is_empty());
+        let results = core
+            .search("anything", mazemail_core::SearchOpts::default())
+            .await
+            .unwrap();
+        assert_eq!(results.total_messages, 0);
         core.shutdown().await.unwrap();
     });
 }

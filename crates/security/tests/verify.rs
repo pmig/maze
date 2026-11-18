@@ -457,11 +457,3 @@ async fn report_round_trips_through_json() {
     let debug = format!("{report:?}");
     assert!(!debug.contains("example.com"), "{debug}");
 }
-
-#[test]
-fn verify_future_is_send() {
-    fn assert_send<T: Send>(_: T) {}
-    let verifier = Verifier::new(Resolver::from_static(StaticDns::new()).unwrap());
-    let ctx = VerifyContext::new();
-    assert_send(verifier.verify(b"", &ctx));
-}

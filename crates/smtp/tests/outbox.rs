@@ -360,7 +360,7 @@ async fn permanent_failures_are_not_retried() {
 }
 
 #[tokio::test]
-async fn items_without_an_envelope_fail_and_sent_items_are_pruned() {
+async fn items_without_an_envelope_fail_and_recent_sent_items_are_kept() {
     let s = setup();
     let blob = s.store.blobs().put(&raw("bare@example.org")).unwrap();
     let id = s
@@ -381,7 +381,8 @@ async fn items_without_an_envelope_fail_and_sent_items_are_pruned() {
         .send(id, &OneRoute::default(), hook())
         .await
         .unwrap();
-    // Too recent for a one-hour cutoff, gone with a zero one.
+    // Too recent for a one-hour cutoff (the store's tests cover the exact cutoff;
+    // `created` is in whole seconds, so a zero cutoff would need a sleep here).
     assert_eq!(
         s.outbox
             .prune(std::time::Duration::from_secs(3600))
@@ -389,8 +390,5 @@ async fn items_without_an_envelope_fail_and_sent_items_are_pruned() {
             .unwrap(),
         0
     );
-    // `created` is in whole seconds; wait so it is strictly older than "now".
-    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
-    assert_eq!(s.outbox.prune(std::time::Duration::ZERO).await.unwrap(), 1);
-    assert!(s.store.reader().unwrap().outbox_item(id).unwrap().is_none());
+    assert!(s.store.reader().unwrap().outbox_item(id).unwrap().is_some());
 }

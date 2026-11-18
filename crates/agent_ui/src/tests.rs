@@ -410,29 +410,15 @@ fn proposals_are_reviewed_with_y_n_and_accept_all(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn the_picker_lists_built_in_agents_and_the_pi_notice(cx: &mut TestAppContext) {
+fn the_picker_selects_claude_by_default(cx: &mut TestAppContext) {
+    // The catalog's order and notices are the agent crate's tests.
     let h = Harness::new();
     let (panel, cx) = h.open(cx);
     cx.run_until_parked();
-    let ids: Vec<String> = panel.read_with(cx, |panel, _| {
-        panel.catalog().iter().map(|s| s.entry.id.clone()).collect()
-    });
-    assert_eq!(
-        &ids[..5],
-        ["claude-acp", "codex-acp", "gemini", "cursor", "pi-acp"]
-    );
     assert_eq!(
         panel.read_with(cx, |panel, _| panel.selected_agent().to_owned()),
         "claude-acp"
     );
-    let pi = panel.read_with(cx, |panel, _| {
-        panel
-            .catalog()
-            .iter()
-            .find(|s| s.entry.id == "pi-acp")
-            .and_then(|s| s.entry.notice)
-    });
-    assert_eq!(pi, Some(agent::PI_NOTICE));
 }
 
 fn click(cx: &mut VisualTestContext, selector: &'static str) {

@@ -202,65 +202,93 @@ mod tests {
     }
 
     #[test]
-    fn default_widths_on_a_wide_window() {
-        let (l, v) = layout(1680., LayoutPrefs::default());
-        assert_eq!(l.folder_pane, Some(240.));
-        assert_eq!(v.list, Some(360.));
+    fn a_wide_window_uses_the_preferred_widths() {
+        let (c, p) = (LayoutConfig::default(), LayoutPrefs::default());
+        let (l, v) = layout(1680., p);
+        assert_eq!(l.folder_pane, Some(p.folder_pane));
+        assert_eq!(v.list, Some(p.list));
         assert_eq!(v.message, MessagePlacement::Beside);
-        assert_eq!(l.agent, AgentPlacement::Expanded(380.));
-        assert_eq!(l.center, 1680. - 44. - 240. - 380.);
+        assert_eq!(l.agent, AgentPlacement::Expanded(p.agent));
+        assert_eq!(l.center, 1680. - c.spaces_bar - p.folder_pane - p.agent);
     }
 
     #[test]
-    fn agent_collapses_below_1400() {
-        assert!(layout(1400., LayoutPrefs::default()).0.agent_expanded());
-        let (l, v) = layout(1399., LayoutPrefs::default());
+    fn thresholds_collapse_the_agent_then_stack_the_message() {
+        let (c, p) = (LayoutConfig::default(), LayoutPrefs::default());
+        assert!(layout(c.agent_collapse_below, p).0.agent_expanded());
+        let (l, v) = layout(c.agent_collapse_below - 1., p);
         assert_eq!(l.agent, AgentPlacement::Strip);
         assert_eq!(v.message, MessagePlacement::Beside);
-    }
 
-    #[test]
-    fn message_moves_below_the_list_under_1000() {
         assert_eq!(
-            layout(1000., LayoutPrefs::default()).1.message,
+            layout(c.stack_message_below, p).1.message,
             MessagePlacement::Beside
         );
-        let (_, v) = layout(999., LayoutPrefs::default());
+        let (_, v) = layout(c.stack_message_below - 1., p);
         assert_eq!(v.message, MessagePlacement::Below);
         assert_eq!(v.list, None, "the list flexes when the message is below");
-    }
 
-    #[test]
-    fn a_narrow_pane_stacks_its_message() {
-        let prefs = LayoutPrefs::default();
-        let config = LayoutConfig::default();
-        assert_eq!(
-            resolve_mail_view(600., &prefs, &config).message,
-            MessagePlacement::Below
-        );
-        let wide = resolve_mail_view(900., &prefs, &config);
-        assert_eq!(wide.message, MessagePlacement::Beside);
-        assert_eq!(wide.list, Some(360.));
-        // The message keeps its minimum: the list gives way.
-        assert_eq!(resolve_mail_view(800., &prefs, &config).list, Some(320.));
-    }
-
-    #[test]
-    fn user_choice_overrides_the_agent_threshold() {
+        // The user's choice overrides the agent threshold.
         let open = LayoutPrefs {
             agent_expanded: Some(true),
-            ..LayoutPrefs::default()
+            ..p
         };
         assert!(layout(1100., open).0.agent_expanded());
         let closed = LayoutPrefs {
             agent_expanded: Some(false),
-            ..LayoutPrefs::default()
+            ..p
         };
         assert!(!layout(2000., closed).0.agent_expanded());
     }
 
     #[test]
-    fn toggles_hide_columns() {
+    fn the_message_keeps_its_minimum_by_shrinking_list_then_folders() {
+        let (c, p) = (LayoutConfig::default(), LayoutPrefs::default());
+        // A pane narrower than list and message at their minimums stacks the message.
+        let both = c.min_list + c.min_message;
+        assert_eq!(
+            resolve_mail_view(both - 1., &p, &c).message,
+            MessagePlacement::Below
+        );
+        let wide = resolve_mail_view(p.list + c.min_message + 60., &p, &c);
+        assert_eq!(wide.message, MessagePlacement::Beside);
+        assert_eq!(wide.list, Some(p.list));
+        // The list gives way first.
+        assert_eq!(
+            resolve_mail_view(800., &p, &c).list,
+            Some(800. - c.min_message)
+        );
+
+        // In the window (agent strip): the list shrinks first...
+        let (l, v) = layout(1100., p);
+        let center = 1100. - c.spaces_bar - p.folder_pane - c.agent_strip;
+        assert_eq!(l.folder_pane, Some(p.folder_pane));
+        assert_eq!(v.list, Some(center - c.min_message));
+        // ...down to its minimum, then the folder pane.
+        let (l, v) = layout(c.stack_message_below, p);
+        assert_eq!(v.list, Some(c.min_list));
+        assert_eq!(
+            l.folder_pane,
+            Some(c.stack_message_below - c.spaces_bar - c.agent_strip - both)
+        );
+    }
+
+    #[test]
+    fn widths_are_clamped_and_toggles_hide_columns() {
+        let c = LayoutConfig::default();
+        let (l, v) = layout(
+            3000.,
+            LayoutPrefs {
+                folder_pane: 10.,
+                list: 5000.,
+                agent: 0.,
+                ..LayoutPrefs::default()
+            },
+        );
+        assert_eq!(l.folder_pane, Some(c.min_folder_pane));
+        assert_eq!(v.list, Some(c.max_column));
+        assert_eq!(l.agent, AgentPlacement::Expanded(c.min_agent));
+
         let (l, v) = layout(
             1680.,
             LayoutPrefs {
@@ -272,36 +300,5 @@ mod tests {
         assert_eq!(l.folder_pane, None);
         assert_eq!(v.message, MessagePlacement::Hidden);
         assert_eq!(v.list, None);
-    }
-
-    #[test]
-    fn keeps_the_message_at_its_minimum_by_shrinking_list_then_folders() {
-        // 1100 px, agent strip: 44 + 240 + 40 = 324 fixed, 776 for the center.
-        let (l, v) = layout(1100., LayoutPrefs::default());
-        let config = LayoutConfig::default();
-        assert_eq!(l.folder_pane, Some(240.));
-        assert_eq!(v.list, Some(776. - config.min_message));
-
-        // Narrower still: the list stops at its minimum, then folders shrink.
-        let (l, v) = layout(1000., LayoutPrefs::default());
-        assert_eq!(v.list, Some(config.min_list));
-        assert_eq!(l.folder_pane, Some(176.));
-    }
-
-    #[test]
-    fn widths_are_clamped() {
-        let (l, v) = layout(
-            3000.,
-            LayoutPrefs {
-                folder_pane: 10.,
-                list: 5000.,
-                agent: 0.,
-                ..LayoutPrefs::default()
-            },
-        );
-        let config = LayoutConfig::default();
-        assert_eq!(l.folder_pane, Some(config.min_folder_pane));
-        assert_eq!(v.list, Some(config.max_column));
-        assert_eq!(l.agent, AgentPlacement::Expanded(config.min_agent));
     }
 }

@@ -90,7 +90,18 @@ async fn a_burst_of_writes_arrives_as_few_batches_with_counts() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn sync_status_and_index_progress_reach_the_batches() {
-    let t = common::open().await;
+    // A short commit delay: the indexer commits on its own sooner than the default 1 s.
+    let dir = tempfile::tempdir().unwrap();
+    let keys = std::sync::Arc::new(vault::MemoryKeyStore::new());
+    let mut config = common::config(dir.path(), &keys);
+    config.index.commit.max_delay = Duration::from_millis(50);
+    let core = mazemail_core::CoreHandle::open(config).await.unwrap();
+    let t = common::TestCore {
+        core,
+        keys,
+        sync: std::sync::Arc::default(),
+        dir,
+    };
     let f = common::fixture(&t.core).await;
     let mut events = t.core.events();
     let sink = t.core.sync_status_sink();
@@ -132,7 +143,7 @@ async fn sync_status_and_index_progress_reach_the_batches() {
         ),
     )
     .await;
-    // The indexer commits on its own within the commit delay (1 s) and says so.
+    // The indexer commits on its own within the commit delay and says so.
     let batch = common::wait_for(&mut events, |b| b.index.is_some_and(|i| i.indexed == 1)).await;
     assert_eq!(batch.index.unwrap().pending, 0);
 }

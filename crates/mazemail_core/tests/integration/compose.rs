@@ -514,7 +514,7 @@ async fn drafts_are_kept_and_sending_delivers_once_with_a_sent_copy() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_footer_and_sent_with_maze_go_between_the_text_and_the_quote() {
+async fn the_footer_and_sent_with_maze_follow_the_settings() {
     let server = FakeServer::new();
     let s = open_with_settings(
         &server,
@@ -572,14 +572,11 @@ async fn the_footer_and_sent_with_maze_go_between_the_text_and_the_quote() {
     assert!(text.contains("Sent with Maze"), "{text}");
     let footer = text.find("Alice · **Example Org**").unwrap();
     assert!(footer < text.find("-------- Forwarded Message --------").unwrap());
-    s.core.shutdown().await.unwrap();
-}
 
-#[tokio::test(flavor = "multi_thread")]
-async fn support_maze_off_in_the_settings_drops_the_line() {
-    let server = FakeServer::new();
-    let s = open_with_settings(&server, Some(r#"{ "compose": { "support_maze": false } }"#)).await;
-    let message = account_with_original(&s).await;
+    // `compose.support_maze` off in the settings drops the line.
+    let settings = s._dir.path().join("settings.json");
+    std::fs::write(&settings, r#"{ "compose": { "support_maze": false } }"#).unwrap();
+    s.core.reload_settings();
     assert!(!s.core.new_draft().unwrap().support_maze);
     let mut reply = s.core.reply_draft(message, ReplyKind::All).await.unwrap();
     assert!(!reply.support_maze);
@@ -588,14 +585,13 @@ async fn support_maze_off_in_the_settings_drops_the_line() {
     reply.support_maze = true;
     s.core.send_draft(None, reply).await.unwrap();
     let submissions = s.mailer.submissions();
-    let parsed = MessageParser::default().parse(&submissions[0].raw).unwrap();
+    let parsed = MessageParser::default().parse(&submissions[2].raw).unwrap();
     assert!(!parsed.body_text(0).unwrap().contains("Sent with Maze"));
     assert!(!parsed.body_html(0).unwrap().contains("Sent with"));
     // A per-account override wins (accounts are keyed by their name).
     let account = s.core.store().reader().unwrap().accounts().unwrap()[0]
         .name
         .clone();
-    let settings = s._dir.path().join("settings.json");
     std::fs::write(
         &settings,
         format!(
@@ -606,7 +602,6 @@ async fn support_maze_off_in_the_settings_drops_the_line() {
     .unwrap();
     s.core.reload_settings();
     assert!(s.core.new_draft().unwrap().support_maze);
-    let alice = s.core.identities().unwrap()[0].id;
     assert_eq!(s.core.compose_footer(Some(alice)).footer, "Hi");
     assert_eq!(s.core.compose_footer(None).footer, "");
     s.core.shutdown().await.unwrap();

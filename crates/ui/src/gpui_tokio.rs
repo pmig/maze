@@ -208,10 +208,14 @@ mod tests {
             .enable_all()
             .build()
             .unwrap();
-        // A current-thread runtime only runs tasks while something drives it.
+        // A current-thread runtime only runs tasks while something drives it: here
+        // until the test is done.
         let handle = runtime.handle().clone();
+        let (done, until_done) = tokio::sync::oneshot::channel::<()>();
         let driver = std::thread::spawn(move || {
-            runtime.block_on(async { tokio::time::sleep(Duration::from_millis(500)).await });
+            runtime.block_on(async {
+                let _ = until_done.await;
+            });
         });
         let task = cx.update(|cx| {
             spawn_on(&handle, cx, async {
@@ -223,6 +227,7 @@ mod tests {
             task.await.unwrap(),
             tokio::runtime::RuntimeFlavor::CurrentThread
         );
+        drop(done);
         driver.join().unwrap();
     }
 
@@ -234,7 +239,7 @@ mod tests {
         let flag = finished.clone();
         let task = cx.update(|cx| {
             Tokio::spawn(cx, async move {
-                tokio::time::sleep(Duration::from_millis(200)).await;
+                tokio::time::sleep(Duration::from_millis(50)).await;
                 flag.store(true, Ordering::SeqCst);
             })
         });
@@ -242,7 +247,7 @@ mod tests {
         let handle = cx.update(|cx| Tokio::handle(cx));
         // Give the aborted task more than enough time to have finished otherwise.
         handle
-            .spawn(async { tokio::time::sleep(Duration::from_millis(400)).await })
+            .spawn(async { tokio::time::sleep(Duration::from_millis(150)).await })
             .await
             .unwrap();
         assert!(!finished.load(Ordering::SeqCst));

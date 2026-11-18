@@ -37,8 +37,7 @@
 //! # Threading and timings
 //!
 //! Nothing here may run on the UI thread: loading blocks, and suggestions take tens of
-//! milliseconds. Measured on an Apple M-series laptop, release build
-//! (`cargo nextest run -p spelling --release --run-ignored only timings --no-capture`):
+//! milliseconds. Measured on an Apple M-series laptop, release build:
 //!
 //! | | English | German |
 //! |---|---|---|

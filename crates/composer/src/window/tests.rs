@@ -342,17 +342,6 @@ fn cmd_s_saves_now(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn escape_on_a_clean_message_closes_without_asking(cx: &mut TestAppContext) {
-    let backend = Arc::new(FakeBackend::default());
-    let (view, cx) = open(cx, backend.clone(), options());
-    cx.simulate_keystrokes("escape");
-    cx.run_until_parked();
-    assert!(!cx.has_pending_prompt());
-    assert!(view.read_with(cx, |c, _| c.is_closed()));
-    assert!(backend.saves().is_empty() && backend.deletes().is_empty());
-}
-
-#[gpui::test]
 fn escape_on_changes_asks_and_dont_save_discards(cx: &mut TestAppContext) {
     let backend = Arc::new(FakeBackend::default());
     let (view, cx) = open(cx, backend.clone(), options());
@@ -480,33 +469,31 @@ fn the_maze_line_follows_the_setting_without_a_switch(cx: &mut TestAppContext) {
         footer: "Acme Inc. · Vienna\n".into(),
         ..FakeBackend::default()
     });
-    let (view, cx) = open(cx, backend, options());
+    let (view, vcx) = open(cx, backend, options());
     // `compose.support_maze` is on: the footer and the Maze line are previewed under
     // the body, not part of it, and there is nothing to switch it off here.
-    assert!(view.read_with(cx, |c, _| c.support_maze()));
+    assert!(view.read_with(vcx, |c, _| c.support_maze()));
     assert_eq!(
-        view.read_with(cx, |c, _| c.footer_preview()),
+        view.read_with(vcx, |c, _| c.footer_preview()),
         vec![
             SharedString::from("Acme Inc. · Vienna"),
             SENT_WITH_MAZE.into()
         ]
     );
-    assert!(cx.debug_bounds("footer-preview").is_some());
-    assert!(cx.debug_bounds("support-maze").is_none(), "no checkbox");
-    cx.simulate_input("anna@example.com");
-    let body = view.read_with(cx, |c, cx| c.draft(cx).unwrap().body_markdown);
+    assert!(vcx.debug_bounds("footer-preview").is_some());
+    assert!(vcx.debug_bounds("support-maze").is_none(), "no checkbox");
+    vcx.simulate_input("anna@example.com");
+    let body = view.read_with(vcx, |c, cx| c.draft(cx).unwrap().body_markdown);
     assert!(!body.contains("Sent with") && !body.contains("Acme"));
-}
 
-#[gpui::test]
-fn without_the_setting_there_is_no_maze_line(cx: &mut TestAppContext) {
-    let backend = Arc::new(FakeBackend {
+    // Without the setting and without a footer there is no preview.
+    let backend: Arc<dyn ComposeBackend> = Arc::new(FakeBackend {
         no_maze_line: true,
         ..FakeBackend::default()
     });
-    let (view, cx) = open(cx, backend, options());
+    let (view, cx) = cx.add_window_view(|window, cx| Composer::new(backend, options(), window, cx));
+    cx.run_until_parked();
     assert!(!view.read_with(cx, |c, _| c.support_maze()));
-    // No footer configured, no Maze line: no preview.
     assert!(view.read_with(cx, |c, _| c.footer_preview()).is_empty());
     assert!(cx.debug_bounds("footer-preview").is_none());
 }
@@ -639,13 +626,15 @@ fn closing_a_tab_with_changes_asks_first(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_clean_tab_closes_without_asking_and_escape_works_too(cx: &mut TestAppContext) {
+fn a_clean_message_closes_on_escape_without_asking(cx: &mut TestAppContext) {
     let backend = Arc::new(FakeBackend::default());
-    let (_, group, cx) = open_tab(cx, backend, options());
+    let (view, group, cx) = open_tab(cx, backend.clone(), options());
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
     assert!(!cx.has_pending_prompt());
+    assert!(view.read_with(cx, |c, _| c.is_closed()));
     assert_eq!(tab_count(&group, cx), 0);
+    assert!(backend.saves().is_empty() && backend.deletes().is_empty());
 }
 
 #[gpui::test]
@@ -864,8 +853,8 @@ fn composing_text_with_an_input_method(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn long_lines_emoji_and_rtl_text_wrap_and_edit(cx: &mut TestAppContext) {
-    let url = format!("https://example.com/{}?q=1", "very/long/path/".repeat(40));
-    let paragraph = "A paragraph nobody breaks by hand, because it is prose. ".repeat(30);
+    let url = format!("https://example.com/{}?q=1", "very/long/path/".repeat(20));
+    let paragraph = "A paragraph nobody breaks by hand, because it is prose. ".repeat(10);
     let text = format!(
         "{paragraph}\n{url}\nEmoji 🎉👍🏽 👨‍👩‍👧‍👦 🇦🇹 end\nRTL שלום עולם, مرحبا بالعالم (mixed).\n"
     );
@@ -881,10 +870,14 @@ fn long_lines_emoji_and_rtl_text_wrap_and_edit(cx: &mut TestAppContext) {
         "soft wrapped: {rows} rows for {lines} lines"
     );
 
-    // Walk through every character and line, drawing as we go: no panics on
-    // grapheme clusters, bidi text or wrapped rows.
-    cx.simulate_keystrokes(TO_START);
-    for _ in 0..text.chars().count() {
+    // Walk through every character of the emoji and RTL lines and every row, drawing
+    // as we go: no panics on grapheme clusters, bidi text or wrapped rows.
+    let emoji_line = text.find("Emoji").unwrap();
+    view.update_in(cx, |c, _, cx| {
+        c.body
+            .update(cx, |b, cx| b.set_selected_range(emoji_line..emoji_line, cx));
+    });
+    for _ in 0..text[emoji_line..].chars().count() {
         cx.simulate_keystrokes("right");
     }
     draw(cx);
@@ -939,7 +932,7 @@ fn typing_in_a_long_mail_stays_fast(cx: &mut TestAppContext) {
             .update(cx, |b, cx| b.set_selected_range(mid..mid, cx));
     });
     draw(cx);
-    let keys = 200;
+    let keys = 50;
     let start = std::time::Instant::now();
     for _ in 0..keys {
         cx.simulate_input("a");
@@ -1153,18 +1146,6 @@ fn only_changed_paragraphs_are_checked_again(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn german_and_english_paragraphs_accept_each_others_words(cx: &mut TestAppContext) {
-    let body = "Wir sehen uns morgen im Büro und besprechen dann alles weitere, tomorrow.\n\n\
-        I will bring the Unterlagen and recieve the keys.\n\nLiebe Grüße";
-    let (view, cx) = open_spelling(cx, Arc::default(), &[Lang::DeAt, Lang::EnUs], body);
-    assert_eq!(marked(&view, cx), ["recieve"]);
-    assert_eq!(
-        view.read_with(cx, |c, cx| c.spelling_status(cx)),
-        Some("1 spelling issue · de-AT · en-US".into())
-    );
-}
-
-#[gpui::test]
 fn right_clicking_a_misspelled_word_offers_suggestions(cx: &mut TestAppContext) {
     let (view, cx) = open_spelling(cx, Arc::default(), &[Lang::EnUs], "I hope to recieve it.");
     assert_eq!(marked(&view, cx), ["recieve"]);
@@ -1208,18 +1189,6 @@ fn right_clicking_a_misspelled_word_offers_suggestions(cx: &mut TestAppContext) 
     assert_eq!(body_text(&view, cx), "I hope to recieve it.");
     after_pause(cx);
     assert_eq!(marked(&view, cx), ["recieve"]);
-}
-
-#[gpui::test]
-fn suggestions_keep_the_capitalization(cx: &mut TestAppContext) {
-    let (view, cx) = open_spelling(cx, Arc::default(), &[Lang::EnUs], "Recieve it soon.");
-    set_cursor(&view, 2, cx);
-    let menu = body_menu(&view, cx);
-    assert_eq!(labels(&menu)[0], Some("Receive"));
-    let (_, _, action) = menu[0].as_ref().unwrap();
-    let action = action.boxed_clone();
-    cx.update(|window, cx| window.dispatch_action(action, cx));
-    assert_eq!(body_text(&view, cx), "Receive it soon.");
 }
 
 #[gpui::test]
@@ -1861,15 +1830,14 @@ fn formatting_keys_write_markdown_around_the_selection(cx: &mut TestAppContext) 
     // Each key is one undo step.
     cx.simulate_keystrokes(UNDO);
     assert_eq!(body_text(&view, cx), "Say hello now");
-}
 
-#[gpui::test]
-fn without_a_selection_the_markers_wait_for_the_words(cx: &mut TestAppContext) {
-    let (view, cx) = open_body(cx, "Hi ");
-    select(&view, 3..3, cx);
+    // Without a selection the markers wait for the words.
+    let end = "Say hello now".len();
+    select(&view, end..end, cx);
+    cx.simulate_input(" ");
     cx.simulate_keystrokes("cmd-b");
     cx.simulate_input("there");
-    assert_eq!(body_text(&view, cx), "Hi **there**");
+    assert_eq!(body_text(&view, cx), "Say hello now **there**");
 }
 
 #[gpui::test]

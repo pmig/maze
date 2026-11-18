@@ -621,7 +621,7 @@ async fn too_old_schemas_need_an_intermediate_release() {
 async fn concurrent_checks_are_coalesced() {
     let h = Harness::new().await;
     h.serve_manifest(&h.manifest("0.4.0"), &key()).await;
-    h.serve_artifact(true, Duration::from_millis(300)).await;
+    h.serve_artifact(true, Duration::from_millis(150)).await;
     let installer = Arc::new(FakeInstaller::default());
     let updater = h.updater(&installer);
 
@@ -641,9 +641,20 @@ async fn cancelling_a_download_restores_the_status() {
     h.serve_artifact(true, Duration::from_secs(30)).await;
     let updater = h.updater(&Arc::default());
 
-    let result =
-        tokio::time::timeout(Duration::from_millis(300), updater.check_and_download()).await;
-    assert!(result.is_err(), "the download should still be running");
+    // Drop the check once the download is under way. (The watch guard `wait_for`
+    // returns must be gone by then: the check's drop writes the status.)
+    let mut status = updater.subscribe();
+    let downloading = async move {
+        status
+            .wait_for(|s| matches!(s, UpdateStatus::Downloading { .. }))
+            .await
+            .map(|_| ())
+            .unwrap();
+    };
+    tokio::select! {
+        _ = updater.check_and_download() => panic!("the download should still be running"),
+        () = downloading => {}
+    }
     assert_eq!(updater.status(), UpdateStatus::Idle);
 }
 

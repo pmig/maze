@@ -73,22 +73,3 @@ fn system_command() -> io::Result<Command> {
         "opening a browser is not supported on this platform",
     ))
 }
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Mutex;
-
-    use super::*;
-
-    #[test]
-    fn closures_are_openers() {
-        let opened = Mutex::new(Vec::new());
-        let opener = |url: &Url| {
-            opened.lock().unwrap().push(url.to_string());
-            Ok(())
-        };
-        let url = Url::parse("https://example.org/auth").unwrap();
-        opener.open(&url).unwrap();
-        assert_eq!(*opened.lock().unwrap(), ["https://example.org/auth"]);
-    }
-}

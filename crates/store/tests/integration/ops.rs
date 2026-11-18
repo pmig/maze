@@ -228,8 +228,20 @@ fn outbox_claims_once_keeps_the_envelope_retries_and_prunes() {
             Ok(())
         })
         .unwrap();
+    // Only items created before the cutoff go.
+    let created = store
+        .reader()
+        .unwrap()
+        .outbox_item(id)
+        .unwrap()
+        .unwrap()
+        .created;
     let pruned = store
-        .write_blocking(|w| w.outbox_prune_sent(i64::MAX))
+        .write_blocking(move |w| w.outbox_prune_sent(created))
+        .unwrap();
+    assert_eq!(pruned, 0);
+    let pruned = store
+        .write_blocking(move |w| w.outbox_prune_sent(created + 1))
         .unwrap();
     assert_eq!(pruned, 1);
     assert!(store.reader().unwrap().outbox().unwrap().is_empty());

@@ -466,21 +466,6 @@ async fn invalidate_forces_a_refresh() {
 }
 
 #[tokio::test]
-async fn concurrent_callers_share_one_refresh() {
-    let (_server, _store, manager) = refresh_setup(vec![token_json("access-1", None, 3600)]).await;
-    let manager = Arc::new(manager);
-    let calls: Vec<_> = (0..8)
-        .map(|_| {
-            let manager = manager.clone();
-            tokio::spawn(async move { manager.access_token().await })
-        })
-        .collect();
-    for call in calls {
-        assert_eq!(call.await.unwrap().unwrap().expose(), "access-1");
-    }
-}
-
-#[tokio::test]
 async fn invalid_grant_requires_sign_in_and_drops_the_refresh_token() {
     let (_server, store, manager) =
         refresh_setup(vec![

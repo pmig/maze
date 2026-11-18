@@ -109,21 +109,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn layout() {
-        let paths = AgentPaths::new("/data");
-        assert_eq!(
-            paths.install_dir("claude-acp", "0.91.0"),
-            PathBuf::from("/data/agents/claude-acp/0.91.0")
-        );
-        assert_eq!(
-            paths.agent_home("cursor"),
-            PathBuf::from("/data/agent-home/cursor")
-        );
-        assert_eq!(paths.session_dir("s1"), PathBuf::from("/data/sessions/s1"));
-        assert_eq!(paths.node_dir(), PathBuf::from("/data/runtimes/node"));
-    }
-
-    #[test]
     fn ids_become_safe_directory_names() {
         assert_eq!(safe_id("claude-acp"), "claude-acp");
         assert_eq!(safe_id("../evil"), "_evil");

@@ -110,8 +110,13 @@ async fn opening_a_large_message_fetches_text_parts_only() {
     handle.shutdown().await;
 }
 
+/// While a long pass runs, the activity snapshot shows its header progress and an
+/// opened message's body jumps ahead of it; afterwards nothing runs and the activity
+/// has the time of the finished round.
 #[tokio::test(flavor = "multi_thread")]
-async fn an_opened_message_jumps_ahead_of_a_long_sync() {
+async fn a_long_sync_shows_progress_and_an_opened_message_jumps_ahead() {
+    use sync::FolderPhase;
+
     let server = FakeServer::new();
     server.deliver("INBOX", mail(1));
     server.add_folder("Bulk", None);
@@ -121,15 +126,27 @@ async fn an_opened_message_jumps_ahead_of_a_long_sync() {
     config.header_batch = 10;
     let handle = h.spawn(config);
     wait_idle(&handle).await;
+    let first = handle.activity();
+    assert!(first.folders.is_empty(), "{first:?}");
+    assert!(first.last_synced.is_some(), "the first round finished");
     let message = h.message_at("INBOX", 1);
 
     for n in 0..3000 {
         server.deliver("Bulk", mail(1000 + n));
     }
-    handle
-        .sync_now(SyncScope::Folder(h.folder_id("Bulk")))
-        .unwrap();
-    wait_for("the bulk sync to start", || h.folder("Bulk").total > 0).await;
+    let bulk_id = h.folder_id("Bulk");
+    handle.sync_now(SyncScope::Folder(bulk_id)).unwrap();
+    wait_for("header progress of Bulk", || {
+        h.folder("Bulk").total > 0
+            && handle.activity().folders.iter().any(|f| {
+                f.folder == bulk_id
+                    && f.phase == FolderPhase::FetchingHeaders
+                    && f.total == Some(3000)
+                    && f.done > 0
+                    && f.done < 3000
+            })
+    })
+    .await;
     let state = handle
         .fetch_body(message, BodyPriority::Interactive)
         .await
@@ -141,6 +158,9 @@ async fn an_opened_message_jumps_ahead_of_a_long_sync() {
     assert_ne!(bulk.sync.uidnext, Some(3001));
     wait_idle(&handle).await;
     assert_eq!(h.folder("Bulk").total, 3000);
+    let done = handle.activity();
+    assert!(done.folders.is_empty(), "{done:?}");
+    assert!(done.last_synced >= first.last_synced);
     // The resumed pass didn't fetch any header twice.
     let fetched: usize = server
         .command_log()

@@ -1367,7 +1367,11 @@ mod tests {
 
     #[gpui::test]
     fn show_mail_searches_the_mail_with_the_contact(cx: &mut TestAppContext) {
-        let (view, cx) = open(cx);
+        let (view, cx) = open_with(
+            FakeMailSource::with_now(datetime!(2026-10-22 10:12 UTC))
+                .without_large_folder_in_searches(),
+            cx,
+        );
         click(cx, "space-contacts");
         click(cx, "contact-show-mail");
         assert_eq!(space(&view, cx), Space::Mail);

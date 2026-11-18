@@ -275,7 +275,7 @@ mod tests {
     }
 
     #[test]
-    fn wire_encoding() {
+    fn wire_encoding_and_display() {
         assert_eq!(GmailLabel::Inbox.to_wire(), "\\Inbox");
         assert_eq!(GmailLabel::System("Muted".into()).to_wire(), "\\Muted");
         assert_eq!(
@@ -285,10 +285,7 @@ mod tests {
         let op = LabelOp::add([GmailLabel::Inbox, GmailLabel::User("Work".into())]);
         assert_eq!(op.wire_list(), "(\\Inbox \"Work\")");
         assert_eq!(LabelOp::archive().mode, StoreMode::Remove);
-    }
-
-    #[test]
-    fn display() {
+        // Display shows system labels like the wire, user labels unquoted.
         assert_eq!(GmailLabel::Inbox.to_string(), "\\Inbox");
         assert_eq!(GmailLabel::User("Work".into()).to_string(), "Work");
     }

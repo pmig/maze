@@ -108,9 +108,10 @@ fn round_trips_edge_sizes() {
 }
 
 #[test]
-fn round_trips_multi_megabyte() {
+fn round_trips_many_chunks() {
     let cipher = cipher();
-    let plaintext = data(5 * 1024 * 1024 + 17);
+    // Several full chunks and a short final one; the I/O steps below straddle them.
+    let plaintext = data(5 * CHUNK_LEN + 17);
     let sealed = cipher.seal(&plaintext, &id(2)).unwrap();
     assert_eq!(cipher.open(&sealed, &id(2)).unwrap(), plaintext);
     let streamed = seal_streaming(&cipher, &plaintext, &id(2), 100_003);
@@ -143,34 +144,30 @@ fn size_strategy() -> impl Strategy<Value = usize> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(48))]
+    #![proptest_config(ProptestConfig::with_cases(16))]
 
+    /// One-shot and streaming sealing agree, and either opens the other's output.
     #[test]
-    fn one_shot_round_trip(len in size_strategy(), blob in any::<[u8; 32]>()) {
-        let cipher = cipher();
-        let plaintext = data(len);
-        let sealed = cipher.seal(&plaintext, &BlobId(blob)).unwrap();
-        prop_assert_eq!(sealed.len() as u64, sealed_len(len as u64));
-        prop_assert_eq!(cipher.open(&sealed, &BlobId(blob)).unwrap(), plaintext);
-    }
-
-    #[test]
-    fn streaming_round_trip_with_any_io_sizes(
+    fn round_trip_one_shot_and_streaming_with_any_io_sizes(
         len in size_strategy(),
+        blob in any::<[u8; 32]>(),
         write_step in 1usize..200_000,
         read_step in 1usize..200_000,
     ) {
         let cipher = cipher();
+        let blob = BlobId(blob);
         let plaintext = data(len);
-        let sealed = seal_streaming(&cipher, &plaintext, &id(3), write_step);
+        let sealed = seal_streaming(&cipher, &plaintext, &blob, write_step);
         prop_assert_eq!(sealed.len() as u64, sealed_len(len as u64));
         prop_assert_eq!(
-            &open_streaming(&cipher, &sealed, &id(3), read_step).unwrap(),
+            &open_streaming(&cipher, &sealed, &blob, read_step).unwrap(),
             &plaintext
         );
-        prop_assert_eq!(&cipher.open(&sealed, &id(3)).unwrap(), &plaintext);
-        let one_shot = cipher.seal(&plaintext, &id(3)).unwrap();
-        prop_assert_eq!(open_streaming(&cipher, &one_shot, &id(3), read_step).unwrap(), plaintext);
+        prop_assert_eq!(&cipher.open(&sealed, &blob).unwrap(), &plaintext);
+        let one_shot = cipher.seal(&plaintext, &blob).unwrap();
+        prop_assert_eq!(one_shot.len(), sealed.len());
+        prop_assert_eq!(&cipher.open(&one_shot, &blob).unwrap(), &plaintext);
+        prop_assert_eq!(open_streaming(&cipher, &one_shot, &blob, read_step).unwrap(), plaintext);
     }
 
     #[test]

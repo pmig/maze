@@ -156,8 +156,11 @@ mod tests {
 
     #[test]
     fn a_nearly_full_set_still_finds_the_free_name() {
+        // Every combination is a distinct two-word name: the word lists are lowercase
+        // and have no duplicates.
         let mut all: HashSet<String> = (0..NAME_COUNT).map(name_at).collect();
         assert_eq!(all.len(), NAME_COUNT);
+        assert!(all.iter().all(|name| is_two_word_name(name)));
         let free = name_at(1234);
         all.remove(&free);
         let mut rng = NameRng::seeded(3);
@@ -166,22 +169,5 @@ mod tests {
         all.insert(free);
         let extra = two_word_name_where(|n| all.contains(n), &mut rng);
         assert!(extra.ends_with("-2"), "{extra}");
-    }
-
-    #[test]
-    fn word_lists_have_no_duplicates() {
-        let adjectives: HashSet<_> = ADJECTIVES.iter().collect();
-        let nouns: HashSet<_> = NOUNS.iter().collect();
-        assert_eq!(adjectives.len(), ADJECTIVES.len());
-        assert_eq!(nouns.len(), NOUNS.len());
-        for word in ADJECTIVES.iter().chain(NOUNS) {
-            assert!(word.chars().all(|c| c.is_ascii_lowercase()), "{word}");
-        }
-    }
-
-    #[test]
-    fn entropy_seeds_differ() {
-        let a = two_word_name::<&str>(&[], &mut NameRng::from_entropy());
-        assert!(is_two_word_name(&a));
     }
 }

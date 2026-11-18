@@ -438,15 +438,20 @@ async fn invalid_expired_and_revoked_tokens() {
     );
     assert_eq!(error.code, ErrorCode::NotSignedIn);
 
-    let (expired, _) = h
-        .token_with(Grant {
+    // Minted a minute ago with a one-second lifetime: already expired, without a sleep.
+    let (expired, record) = mint(
+        &Grant {
             profile: Profile::Writer,
             scope: TokenScope::all(),
             lifetime: Some(Duration::from_secs(1)),
             allow_send: false,
-        })
-        .await;
-    tokio::time::sleep(Duration::from_millis(1100)).await;
+        },
+        Some("test".into()),
+        CreatedBy::User,
+        OffsetDateTime::now_utc() - time::Duration::minutes(1),
+    )
+    .unwrap();
+    h.tokens.insert(record).await.unwrap();
     let mut client = h.client(Some(&expired)).await;
     let error = api_error(client.call("search", args.clone()).await.unwrap_err());
     assert!(error.message.contains("expired"), "{}", error.message);
@@ -604,6 +609,7 @@ async fn ask_commands_wait_for_approval() {
 async fn too_many_pending_approvals_are_busy() {
     let mut h = Harness::start_with(ScriptedApprover::new(|_| None), |config| {
         config.dispatch.max_pending_approvals = 1;
+        config.drain_timeout = Duration::from_millis(100);
     })
     .await;
     let (token, _) = h.token(Profile::Triage, false).await;
