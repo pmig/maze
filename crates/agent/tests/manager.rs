@@ -15,7 +15,7 @@ use agent::{
     StartRequest, Transcript,
 };
 use local_api::TokenStore as _;
-use mazemail_types::{AccountId, ThreadId};
+use mazemail_types::ThreadId;
 use settings::{CustomAgentSettings, Settings};
 
 const PROBE: &str = env!("CARGO_BIN_EXE_mazemail-probe-agent");
@@ -47,7 +47,7 @@ async fn a_started_agent_sees_only_its_session() {
     let data = home.join("Library/Application Support/mazemail");
     std::fs::create_dir_all(data.join("mail")).unwrap();
     std::fs::write(home.join("secret.txt"), "secret").unwrap();
-    let host = Arc::new(MemoryHost::new([AccountId(1)]));
+    let host = Arc::new(MemoryHost::default());
     host.add_thread_export(ThreadId(5), "# Offsite plan");
     let manager = AgentManager::new(ManagerConfig {
         paths: AgentPaths::new(&data),
@@ -173,7 +173,7 @@ async fn a_saved_key_reaches_the_agent_and_nothing_else() {
     let data = home.join("data");
     let settings_file = home.join("settings.json");
     std::fs::write(&settings_file, "{}").unwrap();
-    let host = Arc::new(MemoryHost::new([AccountId(1)]));
+    let host = Arc::new(MemoryHost::default());
     let manager = AgentManager::new(ManagerConfig {
         paths: AgentPaths::new(&data),
         home: Some(home.clone()),
@@ -266,7 +266,7 @@ async fn terminal_logins_become_a_script_without_secrets() {
     let dir = tempfile::tempdir().unwrap();
     let home = std::fs::canonicalize(dir.path()).unwrap();
     let data = home.join("data");
-    let host = Arc::new(MemoryHost::new([AccountId(1)]));
+    let host = Arc::new(MemoryHost::default());
     let manager = AgentManager::new(ManagerConfig {
         paths: AgentPaths::new(&data),
         home: Some(home.clone()),

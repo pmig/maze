@@ -10,9 +10,9 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::peer::PeerInfo;
-use crate::policy::EffectiveScope;
 use crate::protocol::{ApiError, ErrorCode, Progress, Response};
 use crate::registry::Command;
+use crate::scope::EffectiveScope;
 use crate::token::TokenRecord;
 
 /// How a state-changing command must be carried out.

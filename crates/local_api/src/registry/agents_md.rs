@@ -93,7 +93,7 @@ folder, `a_…` account, `tk_…` token.
 - Without a token only `mazemail help`, `mazemail status` and `mazemail login` work (exit \
   code 6).
 - Your token decides what you can do (see the table below) and which accounts and folders \
-  you can see. Accounts whose AI policy excludes agents are never visible.
+  you can see.
 ";
 
 fn access_cell(spec: &CommandSpec, profile: Profile) -> String {

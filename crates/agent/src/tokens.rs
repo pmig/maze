@@ -1,17 +1,13 @@
 //! Session tokens for agents Maze starts (PLAN §4.11, §4.12; CONCEPT §10.4).
 //!
 //! Each session gets its own `mazemail_s_…` token in `MAZEMAIL_SESSION`, created by
-//! Maze (`CreatedBy::Session`), revoked when the session ends. Its scope lists exactly
-//! the accounts whose AI policy is "any agent" when the session starts: accounts set to
-//! _off_ or _local models only_ are never in it. The local API intersects the scope
-//! with the policy again on every request, so turning an account off mid-session takes
-//! effect at once.
+//! Maze (`CreatedBy::Session`), revoked when the session ends. It covers every account
+//! (accounts added during the session too), with the profile of `agent.session_profile`.
 
 use std::time::Duration;
 
 use local_api::{
-    AccountPolicy, CreatedBy, Grant, Profile, SessionToken, TokenId, TokenRecord, TokenScope,
-    TokenStore, mint,
+    CreatedBy, Grant, Profile, SessionToken, TokenId, TokenRecord, TokenScope, TokenStore, mint,
 };
 use settings::SessionProfile;
 use time::OffsetDateTime;
@@ -48,21 +44,16 @@ pub struct MintedToken {
     pub record: TokenRecord,
 }
 
-/// Mints and stores a token for agent session `session`, scoped to the accounts the AI
-/// policy shares with external agents right now.
+/// Mints and stores a token for agent session `session`, for every account.
 pub async fn mint_session_token(
     store: &dyn TokenStore,
-    policy: &dyn AccountPolicy,
     profile: Profile,
     label: &str,
     session: &str,
 ) -> Result<MintedToken, SessionTokenError> {
     let grant = Grant {
         profile,
-        scope: TokenScope {
-            accounts: Some(policy.agent_accounts()),
-            folders: None,
-        },
+        scope: TokenScope::all(),
         lifetime: Some(SESSION_TOKEN_LIFETIME),
         allow_send: false,
     };
@@ -116,24 +107,17 @@ pub async fn revoke_stale_session_tokens(store: &dyn TokenStore) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-
-    use local_api::{EffectiveScope, MemoryTokenStore, StaticAccountPolicy, verify};
-    use mazemail_types::AccountId;
+    use local_api::{MemoryTokenStore, verify};
 
     use super::*;
 
     #[tokio::test]
-    async fn only_shared_accounts_are_in_scope() {
+    async fn a_session_token_covers_every_account_until_revoked() {
         let store = MemoryTokenStore::new();
-        let policy = StaticAccountPolicy::new([AccountId(1)]);
-        let minted = mint_session_token(&store, &policy, Profile::Triage, "Claude Code", "s_1")
+        let minted = mint_session_token(&store, Profile::Triage, "Claude Code", "s_1")
             .await
             .unwrap();
-        assert_eq!(
-            minted.record.scope.accounts,
-            Some(BTreeSet::from([AccountId(1)]))
-        );
+        assert_eq!(minted.record.scope, TokenScope::all());
         assert_eq!(
             minted.record.created_by,
             CreatedBy::Session {
@@ -143,10 +127,6 @@ mod tests {
         let record = verify(&store, &minted.token, OffsetDateTime::now_utc())
             .await
             .unwrap();
-        // Turning the policy off later empties the effective scope at once.
-        let effective = EffectiveScope::resolve(&record.scope, &BTreeSet::new());
-        assert!(effective.is_empty());
-
         revoke(&store, &record.id).await;
         assert!(
             verify(&store, &minted.token, OffsetDateTime::now_utc())
@@ -158,8 +138,7 @@ mod tests {
     #[tokio::test]
     async fn leftover_session_tokens_are_revoked_at_startup() {
         let store = MemoryTokenStore::new();
-        let policy = StaticAccountPolicy::default();
-        let minted = mint_session_token(&store, &policy, Profile::ReadOnly, "x", "s_old")
+        let minted = mint_session_token(&store, Profile::ReadOnly, "x", "s_old")
             .await
             .unwrap();
         // A user token stays.

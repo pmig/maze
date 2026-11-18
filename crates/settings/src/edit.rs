@@ -393,8 +393,8 @@ mod tests {
         let before = r#"{
   "accounts": {
     // My job.
-    "Work": { "offline": "all", "copy_sent_to_inbox": true, "agent": "any" },
-    "Home": { "sync_trash": false, "agent": "off" },
+    "Work": { "offline": "all", "copy_sent_to_inbox": true, "sync_trash": true },
+    "Home": { "sync_trash": false },
   },
   "folder_pane": {
     "favorites": [
@@ -412,7 +412,7 @@ mod tests {
         // Renamed in place: the comment and the value's formatting stay.
         assert!(
             after.contains(
-                "// My job.\n    \"Job\": { \"offline\": \"all\", \"copy_sent_to_inbox\": true, \"agent\": \"any\" },"
+                "// My job.\n    \"Job\": { \"offline\": \"all\", \"copy_sent_to_inbox\": true, \"sync_trash\": true },"
             ),
             "{after}"
         );
@@ -421,14 +421,8 @@ mod tests {
         let settings = loaded.settings;
         assert!(settings.copy_sent_to_inbox("Job"));
         assert!(!settings.copy_sent_to_inbox("Work"));
-        assert_eq!(
-            settings.account("Job").agent_access,
-            crate::AgentAccess::Any
-        );
-        assert_eq!(
-            settings.account("Work").agent_access,
-            crate::AgentAccess::Off
-        );
+        assert!(settings.account("Job").sync_trash);
+        assert!(!settings.account("Work").sync_trash, "the global value");
         assert!(!settings.account("Home").sync_trash, "others stay");
         // "Job / Inbox" was a favorite already: listed once.
         let favorite = |account: &str, folder: &str| FavoriteFolder {
@@ -458,7 +452,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         let before = r#"{
-  "accounts": { "Work": { "offline": "all" }, "Job": { "agent": "any" } },
+  "accounts": { "Work": { "offline": "all" }, "Job": { "sync_trash": true } },
 }
 "#;
         std::fs::write(&path, before).unwrap();

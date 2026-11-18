@@ -70,7 +70,7 @@ impl ComposeError {
 /// quote below it, which stays as it is.
 #[derive(Debug, Clone)]
 pub struct MagicInput {
-    /// The identity the draft is sent from (its account must share mail with agents).
+    /// The identity the draft is sent from.
     pub identity: Option<IdentityId>,
     /// The message the draft replies to or forwards.
     pub origin: Option<DraftOrigin>,

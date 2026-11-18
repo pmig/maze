@@ -275,7 +275,8 @@ rules are:
   encrypted audit log.
 - Commands that leave the store or change a lot (`import`, `export`, rules, sending)
   ask again for each request, and permanent delete isn't available to tokens at all.
-- Accounts whose AI policy excludes agents never appear in any token's scope.
+- A token covers every account or only the ones it was created for
+  (`mazemail login --account …`).
 
 ## Agents
 
@@ -289,14 +290,13 @@ not implemented yet). The policy hides your home directory except the agent's ow
 and its session folder, never lets an agent read `mail/`, other sessions, `~/.ssh` or
 the Thunderbird profile, lets it write only to its session and its own home, and allows
 no Unix socket except Maze's. Agents start with an empty environment plus what Maze
-sets. Each session gets a token scoped to the accounts you share with agents, revoked
-when it ends. Network access stays on, because agents have to reach their model
-provider. AI is off for every account unless you turn it on. Details in
+sets. Each session gets its own token, revoked when it ends. Network access stays on,
+because agents have to reach their model provider. No mail reaches an agent until you
+start one, and an agent you start can read every account. Details in
 [agents.md](agents.md).
 
 Maze Magic (`cmd-m` in a draft) sends your draft and the conversation it replies to
-to the agent you chose, which passes them to its model provider. It works only for
-accounts you share with agents. The run gets no token, can't use tools or run commands
+to the agent you chose, which passes them to its model provider. The run gets no token, can't use tools or run commands
 and isn't stored ([agents.md](agents.md#maze-magic)).
 
 ## Updates

@@ -180,8 +180,7 @@ static REGISTRY: &[CommandSpec] = &[
         help: "Maze shows which program is asking, the profile, scope and lifetime, and waits \
                for your approval. Approved, it prints `export MAZEMAIL_SESSION=…` for the \
                current shell. A program that already holds a token still needs approval, and \
-               the new token gets exactly what you approve. Accounts whose AI policy excludes \
-               agents are never in a token's scope.",
+               the new token gets exactly what you approve.",
         permission: Permission::Ask,
         requires_token: false,
         touches_mail: false,

@@ -110,8 +110,6 @@ pub struct AgentPanel {
     /// Agents the background update moved to a new version: id → version.
     updated: HashMap<String, String>,
     notice: Option<(SharedString, bool)>,
-    /// No account shares mail with agents (checked on settings changes, not per frame).
-    no_shared_accounts: bool,
     starting: bool,
     /// Agent id → environment variable of its saved key.
     keys: BTreeMap<String, String>,
@@ -192,7 +190,6 @@ impl AgentPanel {
             installs: HashMap::new(),
             updated: HashMap::new(),
             notice: None,
-            no_shared_accounts: false,
             starting: false,
             keys: BTreeMap::new(),
             accounts: HashSet::new(),
@@ -206,7 +203,6 @@ impl AgentPanel {
             _subscriptions: subscriptions,
             _tasks: Vec::new(),
         };
-        this.check_shared_accounts();
         if Tokio::is_initialized(cx) {
             this.load_registry(false, cx);
             this.refresh_proposals(cx);
@@ -225,17 +221,7 @@ impl AgentPanel {
     /// New settings (agent list, sandbox, default agent).
     pub fn set_settings(&mut self, settings: Settings, cx: &mut Context<'_, Self>) {
         self.settings = settings;
-        self.check_shared_accounts();
         self.reload_catalog(cx);
-    }
-
-    fn check_shared_accounts(&mut self) {
-        self.no_shared_accounts = self
-            .manager
-            .host()
-            .account_policy()
-            .agent_accounts()
-            .is_empty();
     }
 
     /// The thread selected in the window. New conversations attach it.
@@ -507,7 +493,7 @@ impl AgentPanel {
     }
 
     fn attach_current_thread(&mut self, cx: &mut Context<'_, Self>) {
-        // Exports the thread (AI policy permitting), rewrites thread.md in the scratch
+        // Exports the thread, rewrites thread.md in the scratch
         // dir and tells the session, which announces it with the next prompt.
         if self.session.is_none() {
             return;
@@ -546,8 +532,7 @@ impl AgentPanel {
                         }
                     }
                     Ok(Ok(None)) => {
-                        session.context_note =
-                            Some("This thread's account doesn't share mail with agents.".into());
+                        session.context_note = Some("The thread wasn't found.".into());
                     }
                     _ => {
                         session.context_note = Some("The thread couldn't be attached.".into());
@@ -1025,16 +1010,6 @@ impl AgentPanel {
             out.push(Self::banner(
                 "agent-pi-notice",
                 agent::PI_NOTICE.into(),
-                false,
-                cx,
-            ));
-        }
-        if self.no_shared_accounts {
-            out.push(Self::banner(
-                "agent-ai-off",
-                "No account shares mail with agents yet. Set \"agent\": \"any\" for an account \
-                 under \"accounts\" in settings; until then agents see no mail."
-                    .into(),
                 false,
                 cx,
             ));

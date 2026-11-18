@@ -474,8 +474,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        AccountOverrides, AgentAccess, FolderPaneMode, Layout, OfflinePolicy, RemoteContentPolicy,
-        ThemeMode, UpdateChannel,
+        AccountOverrides, FolderPaneMode, Layout, OfflinePolicy, RemoteContentPolicy, ThemeMode,
+        UpdateChannel,
     };
 
     #[test]
@@ -510,7 +510,7 @@ mod tests {
               "folder_pane": { "modes": ["all", "tags",], },
               "accounts": {
                 "work": { "offline": "all", "remote_content": "never" },
-                "personal": { "agent": "local_only" },
+                "personal": { "sync_trash": true },
               },
               "update_channel": "preview",
             }
@@ -533,7 +533,7 @@ mod tests {
                 ..AccountOverrides::default()
             })
         );
-        assert_eq!(s.account("personal").agent_access, AgentAccess::LocalOnly);
+        assert!(s.account("personal").sync_trash);
         assert_eq!(s.agent.default.as_deref(), Some("claude"));
         assert_eq!(s.update_channel, Some(UpdateChannel::Preview));
     }

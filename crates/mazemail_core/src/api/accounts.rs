@@ -7,8 +7,7 @@
 //! approves every request in Maze (the approval never shows the password, the
 //! dispatcher redacts it). Listing accounts and "sync now" are reads: they reveal no
 //! mail and only make Maze look for new mail sooner, so every profile may run them,
-//! limited to the accounts in the token's scope (accounts whose AI policy excludes
-//! agents stay invisible, as everywhere in the local API).
+//! limited to the accounts in the token's scope.
 //!
 //! A new account's password arrives in the request (the CLI read it from the terminal
 //! without echo, or from stdin) and goes straight into the encrypted store. `account

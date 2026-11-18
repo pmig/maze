@@ -1,14 +1,11 @@
-//! Agent sessions against a real core: the per-account AI policy in session tokens and
-//! thread exports (through the socket server too), stored conversations, and the
-//! proposal review.
+//! Agent sessions against a real core: session tokens and thread exports (through the
+//! socket server too), stored conversations, and the proposal review.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use local_api::{
-    AccountPolicy as _, LocalApiClient, LocalApiServer, Profile, ServerConfig, TokenStore as _,
-};
-use mazemail_core::api::{self, SettingsAccountPolicy, StoreTokenStore, TokenAuthorizer};
+use local_api::{LocalApiClient, LocalApiServer, Profile, ServerConfig, TokenStore as _};
+use mazemail_core::api::{self, StoreTokenStore, TokenAuthorizer};
 use mazemail_core::{CoreHandle, MailCommand, ProposalItemState};
 use mazemail_types::{MessageId, ThreadId};
 use serde_json::json;
@@ -27,15 +24,11 @@ struct AgentCore {
     _dir: tempfile::TempDir,
 }
 
-/// Work shares mail with agents ("any"); Gmail is "off".
+/// Two accounts, Work and Gmail, with a thread each.
 async fn open() -> AgentCore {
     let dir = tempfile::tempdir().unwrap();
     let settings = dir.path().join("settings.json");
-    std::fs::write(
-        &settings,
-        r#"{ "accounts": { "Work": { "agent": "any" }, "Gmail": { "agent": "off" } } }"#,
-    )
-    .unwrap();
+    std::fs::write(&settings, "{}").unwrap();
     let keys = Arc::new(MemoryKeyStore::new());
     let authorizer = TokenAuthorizer::new();
     let config = common::config(&dir.path().join("data"), &keys)
@@ -83,36 +76,29 @@ fn token_store(t: &AgentCore) -> StoreTokenStore {
 }
 
 #[tokio::test]
-async fn an_off_account_is_never_in_an_agent_session() {
+async fn an_agent_session_sees_every_account() {
     let t = open().await;
-    let policy = SettingsAccountPolicy::new(t.core.clone());
-    assert_eq!(policy.agent_accounts(), BTreeSet::from([t.fixture.work]));
 
-    // The session token's scope lists only the shared account.
+    // The session token covers every account.
     let store = token_store(&t);
-    let minted =
-        agent::tokens::mint_session_token(&store, &policy, Profile::Triage, "Claude Code", "s_1")
-            .await
-            .unwrap();
-    assert_eq!(
-        minted.record.scope.accounts,
-        Some(BTreeSet::from([t.fixture.work]))
-    );
-
-    // The thread export for the scratch dir refuses the Gmail thread.
-    let work = api::thread_markdown_for_agents(&t.core, t.work_thread)
+    let minted = agent::tokens::mint_session_token(&store, Profile::Triage, "Claude Code", "s_1")
         .await
-        .unwrap()
         .unwrap();
-    assert!(work.contains("Offsite budget"), "{work}");
-    assert!(
-        api::thread_markdown_for_agents(&t.core, t.gmail_thread)
+    assert_eq!(minted.record.scope, local_api::TokenScope::all());
+
+    // Both accounts' threads can be attached.
+    for (thread, subject) in [
+        (t.work_thread, "Offsite budget"),
+        (t.gmail_thread, "Offsite"),
+    ] {
+        let markdown = api::thread_markdown_for_agents(&t.core, thread)
             .await
             .unwrap()
-            .is_none()
-    );
+            .unwrap();
+        assert!(markdown.contains(subject), "{markdown}");
+    }
 
-    // Through the real socket with the session token: Gmail mail doesn't exist.
+    // Through the real socket with the session token: mail of both accounts.
     let socket_dir = tempfile::Builder::new()
         .prefix("mz")
         .tempdir_in("/tmp")
@@ -146,15 +132,17 @@ async fn an_off_account_is_never_in_an_agent_session() {
         .iter()
         .map(|hit| hit["id"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(ids, BTreeSet::from([t.work_mail.to_string()]));
-    let error = client
+    assert_eq!(
+        ids,
+        BTreeSet::from([t.work_mail.to_string(), t.gmail_mail.to_string()])
+    );
+    client
         .call(
             "show",
             json!({ "id": t.gmail_mail.to_string(), "format": "md" }),
         )
         .await
-        .unwrap_err();
-    assert_eq!(error.exit_code().code(), 1, "{error}");
+        .unwrap();
 
     // Revoked at the end of the session: no more mail.
     agent::tokens::revoke(&store, &minted.record.id).await;
@@ -208,11 +196,9 @@ async fn conversations_and_transcripts_are_stored() {
 async fn proposals_are_reviewed_item_by_item() {
     let t = open().await;
     let store = token_store(&t);
-    let policy = SettingsAccountPolicy::new(t.core.clone());
-    let minted =
-        agent::tokens::mint_session_token(&store, &policy, Profile::Triage, "Codex", "s_2")
-            .await
-            .unwrap();
+    let minted = agent::tokens::mint_session_token(&store, Profile::Triage, "Codex", "s_2")
+        .await
+        .unwrap();
     // The authorizer learns the token like on a request.
     store.find_by_hash(&minted.record.hash).await.unwrap();
     let token = t.authorizer.cache().store_id(&minted.record.id).unwrap();

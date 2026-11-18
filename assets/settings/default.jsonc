@@ -116,10 +116,7 @@
   "favicons": "contacts",
 
   // Settings per account, keyed by the account's label, e.g.
-  // "work": { "agent": "any", "offline": "all", "remote_content": "never" }
-  // "agent": what AI agents may do with the account: "off" (the default),
-  // "local_only" (local models only) or "any". Agents Maze starts, and Maze Magic,
-  // only ever see "any" accounts.
+  // "work": { "offline": "all", "remote_content": "never" }
   // Overrides of the global values: "offline", "offline_recent_days", "sync_trash",
   // "remote_content", "footer", "support_maze", "copy_sent_to_inbox", "contacts_sync".
   // "aliases": more
@@ -149,8 +146,8 @@
     }
   },
 
-  // AI agents (docs/agents.md). AI is off unless enabled per account
-  // ("accounts": { "Work": { "agent": "any" } }).
+  // AI agents (docs/agents.md). No mail reaches an agent until you start one; an agent
+  // you start can read all your accounts.
   "agent": {
     // The agent used when none is chosen explicitly: a registry id ("claude-acp",
     // "codex-acp", "gemini", "cursor", "pi-acp"), a short name ("claude", "codex",
@@ -177,7 +174,7 @@
 
   // Maze Magic (⌘M / Ctrl+M in the composer): an agent improves your draft, with the
   // conversation it replies to as context, and you review the result before it is
-  // sent. The sending account needs "agent": "any" in "accounts".
+  // sent.
   "maze_magic": {
     // The agent to use. null: agent.default.
     "agent": null,

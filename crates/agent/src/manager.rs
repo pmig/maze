@@ -514,11 +514,7 @@ impl AgentManager {
                 }
                 None => (
                     None,
-                    Some(
-                        "The selected thread isn't attached: its account doesn't share mail \
-                         with agents (\"agent\": \"any\" in accounts.<name> in settings)."
-                            .to_owned(),
-                    ),
+                    Some("The selected thread wasn't found, so it isn't attached.".to_owned()),
                 ),
             },
             None => (None, None),
@@ -549,7 +545,6 @@ impl AgentManager {
             Some(
                 tokens::mint_session_token(
                     token_store.as_ref(),
-                    host.account_policy().as_ref(),
                     tokens::profile(settings.agent.session_profile),
                     &format!("Maze agent session: {}", entry.name),
                     &session_id,

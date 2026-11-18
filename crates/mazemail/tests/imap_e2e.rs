@@ -158,11 +158,7 @@ async fn headless_maze_syncs_a_real_imap_server() {
         token: None,
     };
     std::fs::create_dir_all(&env.config).unwrap();
-    std::fs::write(
-        env.config.join("settings.json"),
-        r#"{ "accounts": { "Test": { "agent": "any" } } }"#,
-    )
-    .unwrap();
+    std::fs::write(env.config.join("settings.json"), "{}").unwrap();
     let log = std::fs::File::create(dir.path().join("headless.log")).unwrap();
     let _headless = Headless {
         child: env

@@ -71,7 +71,7 @@ Some rules:
 
 - **Tokens can't mint tokens.** `mazemail login` from a program that already holds a
   token still needs your approval, and the new token gets exactly what you approve.
-- Accounts whose AI policy excludes agents are never in a token's scope.
+- A token covers every account unless it was created for some (`--account`).
 - Anything outside a token's scope looks like it doesn't exist (`not found`), so a
   token can't probe other accounts.
 - Maze keeps only a hash of each token. `mazemail token list` shows the tokens with
@@ -176,6 +176,6 @@ Agents you run yourself (Claude Code, Codex and others in a terminal) use the CL
 you do: give them a token, preferably `read-only` or `triage`, with a short lifetime and
 a `--label`, and point them at [AGENTS-cli.md](AGENTS-cli.md) (or the output of
 `mazemail help agents`). Agents that Maze starts itself, in its agent column and inside
-a sandbox, get a token for their session automatically (`MAZEMAIL_SESSION`), limited to
-the accounts you share with agents and revoked when the session ends; see
+a sandbox, get a token for their session automatically (`MAZEMAIL_SESSION`), revoked
+when the session ends; see
 [agents.md](agents.md) and [security.md](security.md#agents).

@@ -1,6 +1,6 @@
-//! [`CoreAgentHost`]: the `agent` crate's [`AgentHost`] over the core — conversations
+//! [`CoreAgentHost`]: the `agent` crate's [`AgentHost`] over the core: conversations
 //! and transcripts in the encrypted store, thread exports through the local API's
-//! `show` with the AI policy's scope, session tokens in the `api_token` table (sharing
+//! `show`, session tokens in the `api_token` table (sharing
 //! the token authorizer's cache, so agent commands from a session are authorized), and
 //! the proposal review.
 
@@ -12,8 +12,8 @@ use agent::{
     ProposalItemView, ProposalView, ThreadExport,
 };
 use async_trait::async_trait;
-use local_api::{AccountPolicy, TokenStore};
-use mazemail_core::api::{self, SettingsAccountPolicy, StoreTokenStore, TokenAuthorizer};
+use local_api::TokenStore;
+use mazemail_core::api::{self, StoreTokenStore, TokenAuthorizer};
 use mazemail_core::{AgentThreadId, CoreHandle, ProposalId, ProposalItemId, ProposalItemState};
 use mazemail_types::{PublicId as _, Sensitive, ThreadId};
 
@@ -22,7 +22,6 @@ use mazemail_types::{PublicId as _, Sensitive, ThreadId};
 pub struct CoreAgentHost {
     core: CoreHandle,
     tokens: Arc<StoreTokenStore>,
-    policy: Arc<SettingsAccountPolicy>,
 }
 
 impl std::fmt::Debug for CoreAgentHost {
@@ -39,7 +38,6 @@ impl CoreAgentHost {
                 core.clone(),
                 Arc::clone(authorizer.cache()),
             )),
-            policy: Arc::new(SettingsAccountPolicy::new(core.clone())),
             core,
         }
     }
@@ -62,10 +60,6 @@ fn item_status(state: ProposalItemState) -> ProposalItemStatus {
 impl AgentHost for CoreAgentHost {
     fn token_store(&self) -> Arc<dyn TokenStore> {
         self.tokens.clone()
-    }
-
-    fn account_policy(&self) -> Arc<dyn AccountPolicy> {
-        self.policy.clone()
     }
 
     async fn thread_export(&self, thread: ThreadId) -> Result<Option<ThreadExport>, HostError> {

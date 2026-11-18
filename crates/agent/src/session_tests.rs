@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use local_api::{Profile, TokenStore as _};
-use mazemail_types::{AccountId, ThreadId};
+use mazemail_types::ThreadId;
 use pretty_assertions::assert_eq;
 
 use crate::fake::{FakeAgent, FakeStep};
@@ -36,7 +36,7 @@ impl Harness {
         Self {
             _dir: dir,
             dir: path,
-            host: Arc::new(MemoryHost::new([AccountId(1)])),
+            host: Arc::new(MemoryHost::default()),
         }
     }
 
@@ -445,7 +445,6 @@ async fn teardown_revokes_the_token_and_deletes_the_scratch_dir() {
     let scratch_dir = scratch.dir().to_owned();
     let minted = crate::tokens::mint_session_token(
         h.host.tokens().as_ref(),
-        h.host.account_policy().as_ref(),
         Profile::Triage,
         "test",
         "s_end",

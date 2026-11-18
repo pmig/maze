@@ -18,8 +18,7 @@
 //! is the composer's view of the core: identities, drafts, sending and the personal
 //! spelling dictionary. When a message only got queued (offline), the main window says
 //! so.
-//! - **Maze Magic** (`cmd-m` in a draft): [`CoreComposeBackend`] checks that the
-//!   sending account shares mail with agents (`accounts.<name>.agent`), adds the conversation
+//! - **Maze Magic** (`cmd-m` in a draft): [`CoreComposeBackend`] adds the conversation
 //!   the draft replies to (`maze_magic.include_thread`) and runs the agent
 //!   (`maze_magic.agent`, else `agent.default`) on the core's runtime with the agent
 //!   column's manager. Closing the dialog stops it.
@@ -36,7 +35,6 @@ use mail_ui::ComposeRequest;
 use mail_ui::links::MailTo;
 use mazemail_core::{CoreHandle, ReplyKind, SendResult};
 use mazemail_types::{Address, DraftId, IdentityId, PRODUCT_NAME, Sensitive};
-use settings::AgentAccess;
 use ui::assets::IconName;
 use ui::kit::component::{WindowExt as _, notification::Notification};
 use ui::panes::{ItemKind, Restore, SerializedItem};
@@ -177,23 +175,6 @@ async fn run_magic(core: CoreHandle, input: MagicInput) -> Result<Sensitive<Stri
         ));
     };
     let settings = core.settings().settings.clone();
-    let account = input.identity.and_then(|identity| {
-        core.identities()
-            .ok()?
-            .into_iter()
-            .find(|i| i.id == identity)
-            .map(|i| i.account_name)
-    });
-    let Some(account) = account else {
-        return Err(ComposeError::new("Choose an account to send from first."));
-    };
-    if settings.account(&account).agent_access != AgentAccess::Any {
-        return Err(ComposeError::new(format!(
-            "Maze Magic sends your draft to an agent, but the account “{account}” doesn't \
-             share mail with agents. Set \"agent\": \"any\" for it under \"accounts\" in \
-             the settings."
-        )));
-    }
     let Some(agent_id) = settings
         .maze_magic
         .agent

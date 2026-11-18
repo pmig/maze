@@ -6,8 +6,8 @@ Schema come from `crates/settings/src/content.rs`. Update this diagram with ever
 removed setting.
 
 **Bold** keys can be overridden per account in `accounts.<name>`; `accounts.<name>` also
-holds what only exists per account: the account's AI access (`agent`), its `aliases` and,
-for Microsoft accounts, `shared_contacts`.
+holds what only exists per account: its `aliases` and, for Microsoft accounts,
+`shared_contacts`.
 
 ```mermaid
 flowchart LR
@@ -41,7 +41,7 @@ flowchart LR
     sync_trash["<b>sync_trash</b>"]
     contacts["contacts<br/><b>sync</b> · sync_interval_minutes"]:::sec
     auth["auth<br/>google · microsoft (OAuth clients)"]:::sec
-    accounts["accounts.&lt;name&gt;<br/>agent · aliases · shared_contacts<br/>+ overrides (bold keys)"]:::acct
+    accounts["accounts.&lt;name&gt;<br/>aliases · shared_contacts<br/>+ overrides (bold keys)"]:::acct
   end
 
   subgraph AI["Agents"]
@@ -60,7 +60,7 @@ flowchart LR
   accounts -.->|overrides| contacts
   accounts -.->|overrides| compose
   accounts -.->|overrides| reader
-  accounts -.->|"agent: off · local_only · any"| agent
+
 ```
 
 Example:
@@ -70,7 +70,7 @@ Example:
   "theme": { "mode": "dark" },
   "compose": { "footer": "Acme Inc." },
   "accounts": {
-    "Work": { "agent": "any", "offline": "all", "remote_content": "never" },
+    "Work": { "offline": "all", "remote_content": "never" },
     "Private": { "footer": "", "support_maze": false }
   }
 }

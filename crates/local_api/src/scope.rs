@@ -1,9 +1,9 @@
-//! The per-account AI policy hook (CONCEPT §10.4, PLAN §4.12).
+//! What a request may touch: a token's scope resolved against the accounts that exist.
 //!
-//! Accounts whose AI policy is _off_ or _local models only_ are never in the scope of a
-//! token. `local_api` asks an [`AccountPolicy`] (implemented by `mazemail_core` from the
-//! settings) when a token is minted, and again on every request, so turning the policy
-//! off takes effect immediately for existing tokens.
+//! A token covers every account or a list of them (`mazemail login --accounts`).
+//! `local_api` asks an [`AccountList`] (implemented by `mazemail_core`) on every
+//! request, so a token for every account also covers accounts added later, and an
+//! account that was removed drops out of every scope.
 
 use std::collections::BTreeSet;
 use std::sync::RwLock;
@@ -12,28 +12,27 @@ use mazemail_types::{AccountId, FolderId};
 
 use crate::token::TokenScope;
 
-/// Which accounts external agents may access.
-pub trait AccountPolicy: Send + Sync {
-    /// Accounts whose AI policy is "any agent". Called on every request, so it should be
-    /// a cheap in-memory lookup.
-    fn agent_accounts(&self) -> BTreeSet<AccountId>;
+/// The accounts that exist.
+pub trait AccountList: Send + Sync {
+    /// Every account. Called on every request, so it should be a cheap lookup.
+    fn all_accounts(&self) -> BTreeSet<AccountId>;
 }
 
-/// A fixed, replaceable set of allowed accounts, for tests and headless setups.
+/// A fixed, replaceable set of accounts, for tests.
 #[derive(Debug, Default)]
-pub struct StaticAccountPolicy {
+pub struct StaticAccountList {
     accounts: RwLock<BTreeSet<AccountId>>,
 }
 
-impl StaticAccountPolicy {
-    /// Allows exactly `accounts`. The default allows none (AI is off by default).
+impl StaticAccountList {
+    /// Exactly `accounts`. The default has none.
     pub fn new(accounts: impl IntoIterator<Item = AccountId>) -> Self {
         Self {
             accounts: RwLock::new(accounts.into_iter().collect()),
         }
     }
 
-    /// Replaces the allowed accounts.
+    /// Replaces the accounts.
     pub fn set(&self, accounts: impl IntoIterator<Item = AccountId>) {
         *self
             .accounts
@@ -42,8 +41,8 @@ impl StaticAccountPolicy {
     }
 }
 
-impl AccountPolicy for StaticAccountPolicy {
-    fn agent_accounts(&self) -> BTreeSet<AccountId> {
+impl AccountList for StaticAccountList {
+    fn all_accounts(&self) -> BTreeSet<AccountId> {
         self.accounts
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -52,8 +51,8 @@ impl AccountPolicy for StaticAccountPolicy {
 }
 
 /// What a request may actually touch: the token's scope intersected with the accounts
-/// the AI policy allows right now. `mazemail_core` checks every message, thread, folder
-/// and account a command touches against it.
+/// that exist. `mazemail_core` checks every message, thread, folder and account a
+/// command touches against it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EffectiveScope {
     accounts: BTreeSet<AccountId>,
@@ -66,11 +65,11 @@ impl EffectiveScope {
         Self::default()
     }
 
-    /// `scope` restricted to `allowed` accounts.
-    pub fn resolve(scope: &TokenScope, allowed: &BTreeSet<AccountId>) -> Self {
+    /// `scope` resolved against the `existing` accounts.
+    pub fn resolve(scope: &TokenScope, existing: &BTreeSet<AccountId>) -> Self {
         let accounts = match &scope.accounts {
-            None => allowed.clone(),
-            Some(accounts) => accounts.intersection(allowed).copied().collect(),
+            None => existing.clone(),
+            Some(accounts) => accounts.intersection(existing).copied().collect(),
         };
         Self {
             accounts,
@@ -108,18 +107,6 @@ impl EffectiveScope {
     }
 }
 
-/// The accounts of `scope` that the policy excludes (empty for an "all accounts" scope,
-/// which follows the policy automatically).
-pub fn excluded_accounts(scope: &TokenScope, allowed: &BTreeSet<AccountId>) -> Vec<AccountId> {
-    scope
-        .accounts
-        .iter()
-        .flatten()
-        .filter(|account| !allowed.contains(account))
-        .copied()
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,33 +116,31 @@ mod tests {
     }
 
     #[test]
-    fn effective_scope_follows_policy() {
-        let allowed = set(&[1, 2]);
-        let all = EffectiveScope::resolve(&TokenScope::all(), &allowed);
-        assert_eq!(all.accounts(), &allowed);
+    fn effective_scope_follows_the_existing_accounts() {
+        let existing = set(&[1, 2]);
+        let all = EffectiveScope::resolve(&TokenScope::all(), &existing);
+        assert_eq!(all.accounts(), &existing);
 
         let scope = TokenScope {
             accounts: Some(set(&[2, 3])),
             folders: Some([FolderId(9)].into()),
         };
-        let effective = EffectiveScope::resolve(&scope, &allowed);
+        let effective = EffectiveScope::resolve(&scope, &existing);
         assert_eq!(effective.accounts(), &set(&[2]));
         assert!(effective.allows_folder(AccountId(2), FolderId(9)));
         assert!(!effective.allows_folder(AccountId(2), FolderId(8)));
         assert!(!effective.allows_folder(AccountId(3), FolderId(9)));
-        assert_eq!(excluded_accounts(&scope, &allowed), vec![AccountId(3)]);
-        assert!(excluded_accounts(&TokenScope::all(), &allowed).is_empty());
 
-        // Turning the policy off for every account empties the scope.
+        // Without accounts there is nothing in scope.
         assert!(EffectiveScope::resolve(&scope, &BTreeSet::new()).is_empty());
         assert!(EffectiveScope::none().is_empty());
     }
 
     #[test]
-    fn static_policy_is_replaceable() {
-        let policy = StaticAccountPolicy::default();
-        assert!(policy.agent_accounts().is_empty());
-        policy.set([AccountId(4)]);
-        assert_eq!(policy.agent_accounts(), set(&[4]));
+    fn static_account_list_is_replaceable() {
+        let list = StaticAccountList::default();
+        assert!(list.all_accounts().is_empty());
+        list.set([AccountId(4)]);
+        assert_eq!(list.all_accounts(), set(&[4]));
     }
 }

@@ -70,7 +70,7 @@ Works today:
   reply, a footer from the settings and an optional "Sent with Maze" line
 - spell checking as you type (German and English dictionaries built in, per paragraph
   in its language), with suggestions on right-click and a personal dictionary
-- AI agents in the agent column, off until you share an account with them: Claude Code,
+- AI agents in the agent column, only when you start one: Claude Code,
   Codex, Gemini CLI, Cursor, pi and custom ACP agents, installed and kept up to date by
   Maze, signed in from the column, with model, mode and thinking pickers, sandboxed
   (Seatbelt on macOS, bubblewrap on Linux), their changes reviewed as proposals

@@ -996,8 +996,7 @@ draft:
 
 Only your own text is changed: the quoted message or the forward below it stays
 exactly as it was. Maze Magic uses the agent column's agents (see [Agents](#agents)),
-so the agent has to be installed and signed in there once, and the account you send
-from has to share mail with agents (`"accounts": { "Work": { "agent": "any" } }`). The
+so the agent has to be installed and signed in there once. The
 agent gets your draft and the conversation in its prompt, nothing else: it has no
 access to the rest of your mail, every tool it asks for is refused, and the run isn't
 kept in the agent column's history.
@@ -1146,9 +1145,8 @@ What exactly is sent is in [security.md](security.md#favicons).
 ## Agents
 
 The agent column on the right (`cmd-?` shows and hides it) runs coding agents over the
-Agent Client Protocol: Claude Code, Codex, Gemini CLI, Cursor, pi or your own. AI is
-opt-in: it's off for every account until you share one with agents
-(`"accounts": { "Work": { "agent": "any" } }`).
+Agent Client Protocol: Claude Code, Codex, Gemini CLI, Cursor, pi or your own. No mail
+reaches an agent until you start one; an agent you start can read all your accounts.
 
 - **Install and sign in** from the column. Maze installs each agent (and the Node
   runtime npm agents need) itself and keeps installed agents up to date in the

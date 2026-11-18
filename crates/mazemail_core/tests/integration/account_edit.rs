@@ -416,7 +416,7 @@ async fn renaming_moves_the_settings_and_refuses_taken_names() {
     let s = setup(
         r#"{
   // Work things.
-  "accounts": { "Work": { "copy_sent_to_inbox": true, "agent": "any" }, "Job": { "agent": "off" } },
+  "accounts": { "Work": { "copy_sent_to_inbox": true, "sync_trash": true }, "Job": { "sync_trash": false } },
   "folder_pane": { "favorites": [{ "account": "Work", "folder": "INBOX" }] }
 }
 "#,
@@ -460,7 +460,7 @@ async fn renaming_moves_the_settings_and_refuses_taken_names() {
 
     std::fs::write(
         &s.settings,
-        before.replace(r#", "Job": { "agent": "off" }"#, ""),
+        before.replace(r#", "Job": { "sync_trash": false }"#, ""),
     )
     .unwrap();
     let info = s.core.update_account(work, rename(" Job ")).await.unwrap();
@@ -470,10 +470,7 @@ async fn renaming_moves_the_settings_and_refuses_taken_names() {
     assert!(file.contains("// Work things."), "{file}");
     let settings = s.core.settings();
     assert!(settings.settings.copy_sent_to_inbox("Job"));
-    assert_eq!(
-        settings.settings.account("Job").agent_access,
-        settings::AgentAccess::Any
-    );
+    assert!(settings.settings.account("Job").sync_trash);
     assert_eq!(settings.settings.folder_pane.favorites[0].account, "Job");
     // The SMTP server that carried the account's name, too.
     let reader = s.core.store().reader().unwrap();
@@ -501,7 +498,7 @@ async fn the_local_api_changes_accounts() {
     use mazemail_core::api::{self, TokenAuthorizer};
     use mazemail_types::PublicId as _;
 
-    let s = setup(r#"{ "accounts": { "Work": { "agent": "any" } } }"#).await;
+    let s = setup("{}").await;
     let id = s
         .core
         .add_imap_account(account("Work", "alice@example.org"))

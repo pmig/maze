@@ -82,8 +82,7 @@ pub struct LoginArgs {
     #[arg(long)]
     #[serde(default)]
     pub label: Option<String>,
-    /// Limit the token to this account (repeatable; default: every account whose AI
-    /// policy allows agents).
+    /// Limit the token to this account (repeatable; default: every account).
     #[arg(long = "account", value_name = "ACCOUNT")]
     #[serde(default, with = "pubid::vec")]
     #[schemars(with = "Vec<String>")]

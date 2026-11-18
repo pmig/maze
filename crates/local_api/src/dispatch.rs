@@ -20,13 +20,13 @@ use crate::handler::{
 };
 use crate::peer::PeerInfo;
 use crate::permission::Access;
-use crate::policy::{AccountPolicy, EffectiveScope, excluded_accounts};
 use crate::protocol::{ApiError, ErrorCode, PROTOCOL_VERSION, Progress, Request, Response};
 use crate::registry::args::{LoginArgs, OpenArgs, TokenRevokeArgs};
 use crate::registry::output::{
     HelpEntry, HelpOutput, LoginOutput, OpenOutput, RevokeOutput, StatusOutput,
 };
 use crate::registry::{Command, CommandSpec, find, registry};
+use crate::scope::{AccountList, EffectiveScope};
 use crate::token::{
     CreatedBy, Grant, SESSION_ENV, TokenId, TokenRecord, TokenRejection, TokenScope, TokenStore,
     mint, verify,
@@ -44,8 +44,8 @@ pub struct Services {
     pub approver: Arc<dyn Approver>,
     /// Receives one event per request.
     pub audit: Arc<dyn AuditSink>,
-    /// The per-account AI policy.
-    pub policy: Arc<dyn AccountPolicy>,
+    /// The accounts that exist.
+    pub accounts: Arc<dyn AccountList>,
     /// Opens `mailto:` links in the GUI (`mazemail open`); `None` without a window
     /// (`--headless`).
     pub opener: Option<Arc<dyn UrlOpener>>,
@@ -347,11 +347,11 @@ impl Dispatcher {
             Err(error) => return Err(ApiError::new(ErrorCode::InvalidArgs, error.0)),
         };
 
-        let scope = EffectiveScope::resolve(&token.scope, &self.services.policy.agent_accounts());
+        let scope = EffectiveScope::resolve(&token.scope, &self.services.accounts.all_accounts());
         if spec.touches_mail && scope.is_empty() {
             return Err(ApiError::new(
                 ErrorCode::PermissionDenied,
-                "no account in this token's scope allows external agents (AI policy)",
+                "none of the accounts in this token's scope exists any more",
             ));
         }
 
@@ -433,7 +433,7 @@ impl Dispatcher {
         rejection: Option<&TokenRejection>,
     ) -> Outcome {
         let scope = token.as_ref().map_or_else(EffectiveScope::none, |token| {
-            EffectiveScope::resolve(&token.scope, &self.services.policy.agent_accounts())
+            EffectiveScope::resolve(&token.scope, &self.services.accounts.all_accounts())
         });
         let info = token.as_ref().map(TokenRecord::info);
         let ctx = RequestContext::new(
@@ -485,8 +485,8 @@ impl Dispatcher {
             accounts: (!args.accounts.is_empty()).then(|| args.accounts.iter().copied().collect()),
             folders: (!args.folders.is_empty()).then(|| args.folders.iter().copied().collect()),
         };
-        let allowed = self.services.policy.agent_accounts();
-        check_policy(args.profile, &scope, &allowed)?;
+        let existing = self.services.accounts.all_accounts();
+        check_accounts(&scope, &existing)?;
 
         let request = ApprovalRequest {
             process: peer.process.clone(),
@@ -513,9 +513,9 @@ impl Dispatcher {
             grant.lifetime = Some(self.config.max_login_ttl);
         }
         if let Some(accounts) = &mut grant.scope.accounts {
-            accounts.retain(|account| allowed.contains(account));
+            accounts.retain(|account| existing.contains(account));
         }
-        check_policy(grant.profile, &grant.scope, &allowed)?;
+        check_accounts(&grant.scope, &existing)?;
         if grant.profile == crate::Profile::ReadOnly {
             grant.allow_send = false;
         }
@@ -658,43 +658,29 @@ fn denied(spec: &CommandSpec, token: &TokenRecord) -> ApiError {
     ApiError::new(ErrorCode::PermissionDenied, message)
 }
 
-/// A token's scope can never include accounts whose AI policy excludes agents.
-///
-/// One exception keeps the CLI usable before any account is shared: a writer token
-/// for all accounts may be approved while no account allows agents. It sees no mail
-/// (its effective scope is empty) and can only run `account add` (which asks again
-/// each time), `account list` and `sync`.
-fn check_policy(
-    profile: crate::Profile,
+/// A token restricted to accounts must name accounts that exist.
+fn check_accounts(
     scope: &TokenScope,
-    allowed: &BTreeSet<mazemail_types::AccountId>,
+    existing: &BTreeSet<mazemail_types::AccountId>,
 ) -> Result<(), ApiError> {
-    if allowed.is_empty() && profile == crate::Profile::Writer && *scope == TokenScope::all() {
+    let Some(accounts) = &scope.accounts else {
         return Ok(());
-    }
-    if allowed.is_empty() {
+    };
+    let missing: Vec<String> = accounts
+        .iter()
+        .filter(|account| !existing.contains(account))
+        .map(|account| account.to_public())
+        .collect();
+    if !missing.is_empty() {
         return Err(ApiError::new(
-            ErrorCode::PermissionDenied,
-            format!(
-                "no account allows external agents; enable AI for an account in {PRODUCT_NAME}'s settings"
-            ),
+            ErrorCode::InvalidArgs,
+            format!("no such account: {}", missing.join(", ")),
         ));
     }
-    let excluded = excluded_accounts(scope, allowed);
-    if !excluded.is_empty() {
-        let ids: Vec<String> = excluded.iter().map(|id| id.to_public()).collect();
+    if accounts.is_empty() {
         return Err(ApiError::new(
-            ErrorCode::PermissionDenied,
-            format!(
-                "the AI policy of {} doesn't allow external agents",
-                ids.join(", ")
-            ),
-        ));
-    }
-    if scope.accounts.as_ref().is_some_and(BTreeSet::is_empty) {
-        return Err(ApiError::new(
-            ErrorCode::PermissionDenied,
-            "the approved scope contains no account that allows external agents",
+            ErrorCode::InvalidArgs,
+            "the approved scope contains no account",
         ));
     }
     Ok(())

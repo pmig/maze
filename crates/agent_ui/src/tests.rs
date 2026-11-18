@@ -14,7 +14,7 @@ use agent::{
     SessionStatus, StartedSession, Transcript, start_with_transport,
 };
 use gpui::{Entity, TestAppContext, VisualTestContext};
-use mazemail_types::{AccountId, ThreadId};
+use mazemail_types::ThreadId;
 use settings::Settings;
 
 use crate::{AgentPanel, Launcher, MailContext};
@@ -56,7 +56,7 @@ impl Harness {
             .enable_all()
             .build()
             .unwrap();
-        let host = Arc::new(MemoryHost::new([AccountId(1)]));
+        let host = Arc::new(MemoryHost::default());
         let http = Arc::new(MemoryHttp::default());
         let manager = Arc::new(AgentManager::new(ManagerConfig {
             paths: AgentPaths::new(dir.path()),

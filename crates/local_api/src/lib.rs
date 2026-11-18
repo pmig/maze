@@ -15,8 +15,8 @@
 //!   a proposal, waits for approval or is refused ([`access`], [`Permission`]).
 //! - **Approvals.** `login` and `ask` commands wait for the user through an
 //!   [`Approver`]. Tokens can't mint tokens: a token holder's `login` asks as well.
-//! - **AI policy.** Accounts whose policy excludes agents are never in a token's
-//!   effective scope ([`AccountPolicy`]).
+//! - **Scope.** A token covers every account or a list of them, resolved against the
+//!   accounts that exist on every request ([`AccountList`]).
 //! - **Audit.** Every request, allowed or not, produces an [`AuditEvent`] with ids
 //!   only, never mail content.
 //!
@@ -26,7 +26,7 @@
 //! version negotiation.
 //!
 //! `mazemail_core` plugs in through [`CommandHandler`], [`TokenStore`],
-//! [`AccountPolicy`] and [`AuditSink`]; in-memory implementations are provided for
+//! [`AccountList`] and [`AuditSink`]; in-memory implementations are provided for
 //! tests and development.
 //!
 //! This crate is layer L2 and depends only on `mazemail_types` and `settings`.
@@ -39,10 +39,10 @@ mod dispatch;
 mod handler;
 mod peer;
 mod permission;
-mod policy;
 pub mod protocol;
 mod pubid;
 pub mod registry;
+mod scope;
 mod server;
 mod token;
 
@@ -56,12 +56,12 @@ pub use dispatch::{DispatchConfig, Dispatcher, Services, UrlOpener};
 pub use handler::{CommandError, CommandHandler, CommandOutput, ExecutionMode, RequestContext};
 pub use peer::{ParentProcess, PeerInfo, PeerRejected, ProcessInfo, check_peer_uid, current_uid};
 pub use permission::{Access, Permission, access};
-pub use policy::{AccountPolicy, EffectiveScope, StaticAccountPolicy, excluded_accounts};
 pub use protocol::{
     ApiError, ErrorCode, ExitCode, PROTOCOL_VERSION, Progress, ProgressCode, Request, Response,
     ResponseBody,
 };
 pub use registry::Command;
+pub use scope::{AccountList, EffectiveScope, StaticAccountList};
 pub use server::{LocalApiServer, ServerConfig, ServerError};
 pub use token::{
     CreatedBy, Grant, MemoryTokenStore, Profile, SESSION_ENV, SessionToken, TOKEN_PREFIX,

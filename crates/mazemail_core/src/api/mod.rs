@@ -5,7 +5,7 @@
 //! | ----------------- | -------------- | --------- |
 //! | [`CommandHandler`](local_api::CommandHandler) | [`CoreCommandHandler`] | the [`CoreHandle`] queries, [`CoreHandle::apply`], `import` |
 //! | [`TokenStore`](local_api::TokenStore) | [`StoreTokenStore`] | the encrypted `api_token` table |
-//! | [`AccountPolicy`](local_api::AccountPolicy) | [`SettingsAccountPolicy`] | `accounts.<name>.agent` in the settings |
+//! | [`AccountList`](local_api::AccountList) | [`CoreAccountList`] | `accounts.<name>.agent` in the settings |
 //! | [`AuditSink`](local_api::AuditSink) | [`StoreAuditSink`] | the encrypted `audit_log` |
 //!
 //! plus core's own permission hook, [`TokenAuthorizer`] (a
@@ -35,30 +35,30 @@
 //! verified by the server is known to the synchronous authorizer by the time the
 //! handler calls `apply`.
 
+mod account_list;
 mod accounts;
 mod agent_export;
 mod audit;
 mod export;
 mod handler;
 mod import;
-mod policy;
 mod tokens;
 
 use std::sync::Arc;
 
 use local_api::{Approver, Services};
 
+pub use account_list::CoreAccountList;
 pub use agent_export::thread_markdown_for_agents;
 pub use audit::StoreAuditSink;
 pub use handler::{CoreCommandHandler, ProposalPublicId, not_available};
-pub use policy::SettingsAccountPolicy;
 pub(crate) use tokens::proposal_title as proposal_summary;
 pub use tokens::{StoreTokenStore, TokenAuthorizer, TokenCache};
 
 use crate::handle::CoreHandle;
 
 /// The local API services over `core`: the command handler, token store, audit sink
-/// and account policy, sharing `authorizer`'s token cache, with `approver` answering
+/// and account list, sharing `authorizer`'s token cache, with `approver` answering
 /// logins and `ask` commands.
 ///
 /// `authorizer` must be the one `core` was opened with
@@ -76,7 +76,7 @@ pub fn services(
         tokens: Arc::new(StoreTokenStore::new(core.clone(), Arc::clone(&cache))),
         approver,
         audit: Arc::new(StoreAuditSink::new(core, cache)),
-        policy: Arc::new(SettingsAccountPolicy::new(core.clone())),
+        accounts: Arc::new(CoreAccountList::new(core.clone())),
         opener,
     }
 }

@@ -13,7 +13,7 @@ expression: agents_md()
 - Commands that touch mail need a session token in `MAZEMAIL_SESSION`. Agents started by Maze already have one.
 - Otherwise run `eval "$(mazemail login --profile read-only --ttl 8h)"`. Maze shows which program is asking and waits for approval ("waiting for approval in Maze…").
 - Without a token only `mazemail help`, `mazemail status` and `mazemail login` work (exit code 6).
-- Your token decides what you can do (see the table below) and which accounts and folders you can see. Accounts whose AI policy excludes agents are never visible.
+- Your token decides what you can do (see the table below) and which accounts and folders you can see.
 
 ## Exit codes
 
@@ -167,7 +167,7 @@ mazemail help agents > AGENTS.md
 
 Ask Maze for a session token.
 
-Maze shows which program is asking, the profile, scope and lifetime, and waits for your approval. Approved, it prints `export MAZEMAIL_SESSION=…` for the current shell. A program that already holds a token still needs approval, and the new token gets exactly what you approve. Accounts whose AI policy excludes agents are never in a token's scope.
+Maze shows which program is asking, the profile, scope and lifetime, and waits for your approval. Approved, it prints `export MAZEMAIL_SESSION=…` for the current shell. A program that already holds a token still needs approval, and the new token gets exactly what you approve.
 
 Permission: `ask` (works without a token)
 
@@ -180,7 +180,7 @@ mazemail login [OPTIONS]
 | `--profile <PROFILE>` | Profile of the new token. One of `read-only`, `triage`, `writer`. Default: `read-only`. |
 | `--ttl <TTL>` | How long the token is valid: 30m, 8h, 7d, 1h30m (at most 30d). Default: `8h`. |
 | `--label <LABEL>` | A label shown in Settings and the audit log. |
-| `--account <ACCOUNT>...` | Limit the token to this account (repeatable; default: every account whose AI policy allows agents). |
+| `--account <ACCOUNT>...` | Limit the token to this account (repeatable; default: every account). |
 | `--folder <FOLDER>...` | Limit the token to this folder (repeatable; default: all folders). |
 | `--allow-send` | Enable `mazemail send` for the token (every send still asks). |
 
@@ -258,7 +258,7 @@ mazemail token create [OPTIONS]
 | `--profile <PROFILE>` | Profile of the new token. One of `read-only`, `triage`, `writer`. Default: `read-only`. |
 | `--ttl <TTL>` | How long the token is valid: 30m, 8h, 7d, 1h30m (at most 30d). Default: `8h`. |
 | `--label <LABEL>` | A label shown in Settings and the audit log. |
-| `--account <ACCOUNT>...` | Limit the token to this account (repeatable; default: every account whose AI policy allows agents). |
+| `--account <ACCOUNT>...` | Limit the token to this account (repeatable; default: every account). |
 | `--folder <FOLDER>...` | Limit the token to this folder (repeatable; default: all folders). |
 | `--allow-send` | Enable `mazemail send` for the token (every send still asks). |
 

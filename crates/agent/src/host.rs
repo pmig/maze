@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
-use local_api::{AccountPolicy, MemoryTokenStore, StaticAccountPolicy, TokenStore};
-use mazemail_types::{AccountId, PublicId as _, Sensitive, ThreadId};
+use local_api::{MemoryTokenStore, TokenStore};
+use mazemail_types::{PublicId as _, Sensitive, ThreadId};
 use serde::{Deserialize, Serialize};
 
 /// An agent conversation in the store (`agent_thread`).
@@ -115,11 +115,7 @@ pub trait AgentHost: Send + Sync {
     /// Where session tokens are stored.
     fn token_store(&self) -> Arc<dyn TokenStore>;
 
-    /// The per-account AI policy.
-    fn account_policy(&self) -> Arc<dyn AccountPolicy>;
-
-    /// The thread as Markdown, `None` when its account doesn't share mail with external
-    /// agents (or it doesn't exist).
+    /// The thread as Markdown, `None` when it doesn't exist.
     async fn thread_export(&self, thread: ThreadId) -> Result<Option<ThreadExport>, HostError>;
 
     /// Starts a stored agent conversation.
@@ -185,7 +181,6 @@ struct MemoryState {
 #[derive(Debug)]
 pub struct MemoryHost {
     tokens: Arc<MemoryTokenStore>,
-    policy: Arc<StaticAccountPolicy>,
     state: Mutex<MemoryState>,
 }
 
@@ -193,21 +188,12 @@ impl Default for MemoryHost {
     fn default() -> Self {
         Self {
             tokens: Arc::new(MemoryTokenStore::new()),
-            policy: Arc::new(StaticAccountPolicy::default()),
             state: Mutex::default(),
         }
     }
 }
 
 impl MemoryHost {
-    /// A host whose AI policy shares `accounts`.
-    pub fn new(accounts: impl IntoIterator<Item = AccountId>) -> Self {
-        Self {
-            policy: Arc::new(StaticAccountPolicy::new(accounts)),
-            ..Self::default()
-        }
-    }
-
     fn state(&self) -> std::sync::MutexGuard<'_, MemoryState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -251,10 +237,6 @@ impl MemoryHost {
 impl AgentHost for MemoryHost {
     fn token_store(&self) -> Arc<dyn TokenStore> {
         self.tokens.clone()
-    }
-
-    fn account_policy(&self) -> Arc<dyn AccountPolicy> {
-        self.policy.clone()
     }
 
     async fn thread_export(&self, thread: ThreadId) -> Result<Option<ThreadExport>, HostError> {

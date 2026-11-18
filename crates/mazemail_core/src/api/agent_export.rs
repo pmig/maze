@@ -1,29 +1,27 @@
 //! Exporting a mail thread into an agent session's scratch dir (PLAN §4.12).
 //!
-//! The export goes through the same `show --format md` handler agents use, with the
-//! scope the AI policy allows, so a thread of an account set to _off_ or _local models
-//! only_ is never written for an external agent.
+//! The export goes through the same `show --format md` handler agents use, with a
+//! scope of every account.
 
 use std::sync::Arc;
 
 use local_api::registry::args::{ShowArgs, ShowFormat};
 use local_api::{
-    AccountPolicy as _, Command, CommandError, CommandHandler as _, EffectiveScope, ErrorCode,
+    AccountList as _, Command, CommandError, CommandHandler as _, EffectiveScope, ErrorCode,
     ExecutionMode, PeerInfo, ProcessInfo, RequestContext, TokenScope,
 };
 use mazemail_types::ThreadId;
 
-use super::{CoreCommandHandler, SettingsAccountPolicy, TokenCache};
+use super::{CoreAccountList, CoreCommandHandler, TokenCache};
 use crate::handle::CoreHandle;
 
-/// The thread as Markdown, or `None` when none of its messages is in an account that
-/// shares mail with external agents.
+/// The thread as Markdown, or `None` when it doesn't exist.
 pub async fn thread_markdown_for_agents(
     core: &CoreHandle,
     thread: ThreadId,
 ) -> Result<Option<String>, CommandError> {
-    let allowed = SettingsAccountPolicy::new(core.clone()).agent_accounts();
-    let scope = EffectiveScope::resolve(&TokenScope::all(), &allowed);
+    let accounts = CoreAccountList::new(core.clone()).all_accounts();
+    let scope = EffectiveScope::resolve(&TokenScope::all(), &accounts);
     if scope.is_empty() {
         return Ok(None);
     }

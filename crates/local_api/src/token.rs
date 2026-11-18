@@ -269,9 +269,9 @@ impl fmt::Display for Profile {
     }
 }
 
-/// Which accounts and folders a token covers. `None` means "all": all accounts whose AI
-/// policy allows external agents (checked on every request, see
-/// [`AccountPolicy`](crate::AccountPolicy)), all folders not marked "never share".
+/// Which accounts and folders a token covers. `None` means "all": every account that
+/// exists at the time of a request (see [`AccountList`](crate::AccountList)), all
+/// folders not marked "never share".
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TokenScope {
     /// Account ids (`a_…`), or `null` for all.
@@ -285,7 +285,7 @@ pub struct TokenScope {
 }
 
 impl TokenScope {
-    /// Every account and folder (subject to the AI policy).
+    /// Every account and folder.
     pub fn all() -> Self {
         Self::default()
     }

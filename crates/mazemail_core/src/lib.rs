@@ -42,7 +42,7 @@
 //! - **ingest**: [`CoreIndexSink`] implements `ingest::IndexSink` (see [`indexing`]);
 //!   ingest writes through [`CoreHandle::store`].
 //! - **local_api**: [`api`] implements `local_api`'s `CommandHandler`, `TokenStore`,
-//!   `AccountPolicy` and `AuditSink` over this handle, plus the [`CommandAuthorizer`]
+//!   `AccountList` and `AuditSink` over this handle, plus the [`CommandAuthorizer`]
 //!   of [`api_handler`] that holds agent commands to their token's profile.
 //! - **import**: [`api`]'s `import` command runs the `import` crate (same layer; it
 //!   writes through [`CoreHandle::store`] and indexes through [`CoreIndexSink`]).

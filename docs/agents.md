@@ -9,22 +9,14 @@ and can't see, the pi caveat, and adding your own agents.
 The design is in [ADR-006](adr/0006-agent-interface.md),
 [ADR-013](adr/0013-agent-sandbox.md) and [ADR-016](adr/0016-cursor-and-pi-agents.md).
 
-## Turn on AI for an account
+## What agents can reach
 
-AI is off for every account until you turn it on. In `settings.json`:
-
-```jsonc
-{
-  "agent": {
-    "accounts": { "Work": "any" }   // "off" (default), "local_only" or "any"
-  }
-}
-```
-
-Agents that Maze starts only ever see accounts set to `"any"`. Accounts set to `"off"`
-or `"local_only"` are never in an agent session's token, and a thread of such an
-account is never attached to a conversation. Changing the setting takes effect at once,
-even for running sessions.
+No mail reaches an agent until you start one: a conversation in the agent column, or
+Maze Magic in a draft. An agent Maze starts can then read all your accounts through
+the `mazemail` CLI, within its session's profile (`agent.session_profile`: by default
+its changes become proposals you review), and only from inside its sandbox (see
+[What an agent sees](#what-an-agent-sees)). A token you create yourself for an agent
+outside Maze can be limited to some accounts (`mazemail login --account …`).
 
 ## Pick and install an agent
 
@@ -162,9 +154,6 @@ answer:
 - **What is kept:** nothing. The run doesn't show in the column's history and no
   transcript is stored. The agent itself may keep its own logs in its home
   (`agent-home/<id>/`), as for every session.
-- **Which accounts:** only drafts sent from an account you share with agents (`"any"`
-  for the account: `"accounts": { "Work": { "agent": "any" } }`). For other accounts
-  Maze Magic says so and sends nothing.
 
 The answer replaces only your text: the quote or forwarded message below it stays as
 it was.

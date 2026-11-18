@@ -35,8 +35,7 @@ An ephemeral session (`SessionConfig::ephemeral`, `AgentManager::run_magic`):
 - runs in the same sandbox as other sessions, and ends when the answer is complete,
   after three minutes, or when the dialog closes.
 
-It only runs for drafts sent from an account whose agent access (`accounts.<name>.agent`) is `any`,
-the same rule as everything else agents see. Only the text above the quote
+Only the text above the quote
 (`quote_start`) is replaced; the quote stays as it was.
 
 ## Consequences

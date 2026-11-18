@@ -1,5 +1,5 @@
 //! The local API services over a real core: scope enforcement, execute vs. propose,
-//! tokens in the store, the audit log, the AI policy, import and export, and one
+//! tokens in the store, the audit log, import and export, and one
 //! round trip through the socket server.
 
 use std::collections::BTreeSet;
@@ -15,7 +15,7 @@ use local_api::registry::args::{
     ShowArgs, ShowFormat,
 };
 use local_api::{
-    AccountPolicy, ApprovalRequest, Approver, AuditEvent, AuditOutcome, AuditSink, Command,
+    AccountList, ApprovalRequest, Approver, AuditEvent, AuditOutcome, AuditSink, Command,
     CommandError, CommandHandler, CreatedBy, Decision, EffectiveScope, ErrorCode, ExecutionMode,
     Grant, LocalApiClient, LocalApiServer, PeerInfo, ProcessInfo, Profile, RequestContext,
     ServerConfig, TokenRecord, TokenScope, TokenStore, mint,
@@ -47,11 +47,7 @@ struct ApiCore {
 async fn open() -> ApiCore {
     let dir = tempfile::tempdir().unwrap();
     let settings = dir.path().join("settings.json");
-    std::fs::write(
-        &settings,
-        r#"{ "accounts": { "Work": { "agent": "any" }, "Gmail": { "agent": "any" } } }"#,
-    )
-    .unwrap();
+    std::fs::write(&settings, "{}").unwrap();
     let keys = Arc::new(MemoryKeyStore::new());
     let authorizer = TokenAuthorizer::new();
     let config = common::config(&dir.path().join("data"), &keys)
@@ -135,7 +131,7 @@ fn handler(t: &ApiCore) -> api::CoreCommandHandler {
 }
 
 fn ctx(t: &ApiCore, record: &TokenRecord, mode: ExecutionMode) -> RequestContext {
-    let allowed = api::SettingsAccountPolicy::new(t.core.clone()).agent_accounts();
+    let allowed = api::CoreAccountList::new(t.core.clone()).all_accounts();
     let scope = EffectiveScope::resolve(&record.scope, &allowed);
     RequestContext::new(1, peer(), Some(record.clone()), scope, mode)
 }
@@ -264,7 +260,7 @@ async fn account_scope_hides_other_accounts() {
 }
 
 #[tokio::test]
-async fn folder_scope_and_ai_policy_narrow_further() {
+async fn folder_scopes_narrow_tokens() {
     let t = open().await;
     let scope = TokenScope {
         accounts: None,
@@ -281,24 +277,6 @@ async fn folder_scope_and_ai_policy_narrow_further() {
         .await
         .unwrap_err();
     assert_eq!(error.code, ErrorCode::NotFound);
-
-    // Turning agents off for Gmail removes it from every token at once.
-    std::fs::write(
-        t.dir.path().join("settings.json"),
-        r#"{ "accounts": { "Work": { "agent": "any" }, "Gmail": { "agent": "off" } } }"#,
-    )
-    .unwrap();
-    let policy = api::SettingsAccountPolicy::new(t.core.clone());
-    tokio::time::timeout(Duration::from_secs(10), async {
-        while policy.agent_accounts().contains(&t.fixture.gmail) {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("the settings watcher picks up the change");
-    let ctx = crate::api::ctx(&t, &record, ExecutionMode::Execute);
-    let hits = run(&t, &ctx, search("example")).await.unwrap();
-    assert_eq!(ids(&hits), BTreeSet::from([t.work_mail.to_string()]));
 }
 
 #[tokio::test]
@@ -802,7 +780,7 @@ async fn imported_mail_is_uploaded_to_the_imap_server_once() {
     core.shutdown().await.unwrap();
 }
 
-/// A context whose scope includes every account, as the AI policy decides on each
+/// A context whose scope includes every account, as resolved on each
 /// request.
 fn ctx_all(t: &ApiCore, record: &TokenRecord) -> RequestContext {
     let all: BTreeSet<AccountId> = t.core.accounts().unwrap().iter().map(|a| a.id).collect();

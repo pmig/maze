@@ -126,7 +126,6 @@ impl Settings {
             remote_content: overrides
                 .and_then(|o| o.remote_content)
                 .unwrap_or(self.reader.remote_content),
-            agent_access: overrides.and_then(|o| o.agent).unwrap_or_default(),
             contacts_sync: overrides
                 .and_then(|o| o.contacts_sync)
                 .unwrap_or(self.contacts.sync),
@@ -692,10 +691,6 @@ pub enum OfflinePolicy {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct AccountOverrides {
-    /// What AI agents may do with this account: `off` (the default), `local_only` or
-    /// `any`. Agents Maze starts, and Maze Magic, only ever see `any` accounts.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent: Option<AgentAccess>,
     /// Overrides `offline`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offline: Option<OfflinePolicy>,
@@ -771,8 +766,6 @@ pub struct AccountSettings {
     pub sync_trash: bool,
     /// Remote content policy.
     pub remote_content: RemoteContentPolicy,
-    /// What agents may do with this account.
-    pub agent_access: AgentAccess,
     /// Whether the account's contacts are synced (once connected).
     pub contacts_sync: bool,
 }
@@ -835,19 +828,6 @@ pub struct CustomAgentSettings {
     pub args: Vec<String>,
     /// Extra environment variables.
     pub env: BTreeMap<String, String>,
-}
-
-/// What agents may do with an account (CONCEPT §10.4).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentAccess {
-    /// No agent sees this account.
-    #[default]
-    Off,
-    /// Only agents backed by local models.
-    LocalOnly,
-    /// Any agent.
-    Any,
 }
 
 /// The instructions Maze Magic sends with a draft unless `maze_magic.prompt` says
@@ -1131,7 +1111,6 @@ mod tests {
             AccountOverrides {
                 offline: Some(OfflinePolicy::All),
                 remote_content: Some(RemoteContentPolicy::Never),
-                agent: Some(AgentAccess::Any),
                 ..AccountOverrides::default()
             },
         );
@@ -1140,12 +1119,10 @@ mod tests {
         assert_eq!(work.offline, OfflinePolicy::All);
         assert_eq!(work.offline_recent_days, 90);
         assert_eq!(work.remote_content, RemoteContentPolicy::Never);
-        assert_eq!(work.agent_access, AgentAccess::Any);
 
         let other = settings.account("personal");
         assert_eq!(other.offline, OfflinePolicy::Recent);
         assert_eq!(other.remote_content, RemoteContentPolicy::Ask);
-        assert_eq!(other.agent_access, AgentAccess::Off);
     }
 
     #[test]

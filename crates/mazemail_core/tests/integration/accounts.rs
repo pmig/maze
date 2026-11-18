@@ -981,11 +981,7 @@ async fn the_local_api_adds_lists_syncs_and_removes_accounts() {
     server.deliver("INBOX", mail(1, OLD));
     let dir = tempfile::tempdir().unwrap();
     let settings = dir.path().join("settings.json");
-    std::fs::write(
-        &settings,
-        r#"{ "accounts": { "Work": { "agent": "any" } } }"#,
-    )
-    .unwrap();
+    std::fs::write(&settings, "{}").unwrap();
     let keys = Arc::new(MemoryKeyStore::new());
     let secrets = Arc::new(MemorySecretStore::new());
     let engine = SyncEngineConfig::new(secrets.clone())

@@ -140,7 +140,7 @@ struct Harness {
     tokens: Arc<MemoryTokenStore>,
     audit: Arc<MemoryAuditSink>,
     approver: Arc<ScriptedApprover>,
-    policy: Arc<StaticAccountPolicy>,
+    accounts: Arc<StaticAccountList>,
     shutdown: Option<oneshot::Sender<()>>,
     server: Option<tokio::task::JoinHandle<()>>,
 }
@@ -160,13 +160,13 @@ impl Harness {
         let tokens = Arc::new(MemoryTokenStore::new());
         let audit = Arc::new(MemoryAuditSink::new());
         let approver = Arc::new(approver);
-        let policy = Arc::new(StaticAccountPolicy::new([AccountId(1), AccountId(2)]));
+        let accounts = Arc::new(StaticAccountList::new([AccountId(1), AccountId(2)]));
         let services = Services {
             handler: core.clone(),
             tokens: tokens.clone(),
             approver: approver.clone(),
             audit: audit.clone(),
-            policy: policy.clone(),
+            accounts: accounts.clone(),
             opener: None,
         };
         let mut config = ServerConfig::default();
@@ -188,7 +188,7 @@ impl Harness {
             tokens,
             audit,
             approver,
-            policy,
+            accounts,
             shutdown: Some(tx),
             server: Some(task),
         }
@@ -323,7 +323,7 @@ async fn second_server_refuses_and_stale_socket_is_replaced() {
         tokens: Arc::new(MemoryTokenStore::new()),
         approver: Arc::new(DenyAllApprover),
         audit: Arc::new(MemoryAuditSink::new()),
-        policy: Arc::new(StaticAccountPolicy::default()),
+        accounts: Arc::new(StaticAccountList::default()),
         opener: None,
     };
     let error = LocalApiServer::bind(&h.paths, services(), ServerConfig::default())
@@ -352,7 +352,7 @@ async fn fallback_socket_for_long_data_dirs() {
         tokens: Arc::new(MemoryTokenStore::new()),
         approver: Arc::new(DenyAllApprover),
         audit: Arc::new(MemoryAuditSink::new()),
-        policy: Arc::new(StaticAccountPolicy::default()),
+        accounts: Arc::new(StaticAccountList::default()),
         opener: None,
     };
     let server = LocalApiServer::bind(&paths, services, ServerConfig::default())
@@ -747,22 +747,22 @@ async fn login_with_a_token_is_denied_without_approval() {
 }
 
 #[tokio::test]
-async fn ai_policy_limits_token_scopes() {
+async fn token_scopes_follow_the_existing_accounts() {
     let mut h = Harness::start(ScriptedApprover::approve_all()).await;
     let mut client = h.client(None).await;
 
-    // Asking for an excluded account fails before any dialog.
+    // Asking for an account that doesn't exist fails before any dialog.
     let error = api_error(
         client
             .call("login", json!({ "accounts": ["a_h"] }))
             .await
             .unwrap_err(),
     );
-    assert_eq!(error.code, ErrorCode::PermissionDenied);
+    assert_eq!(error.code, ErrorCode::InvalidArgs);
     assert!(error.message.contains("a_h"), "{}", error.message);
     assert!(h.approver.requests().is_empty());
 
-    // An approver widening the scope to an excluded account is clipped.
+    // An approver widening the scope to an account that doesn't exist is clipped.
     let mut h2 = Harness::start(ScriptedApprover::new(|request| {
         let mut grant = request.requested_grant();
         grant.scope.accounts = Some([AccountId(1), AccountId(7)].into());
@@ -778,9 +778,9 @@ async fn ai_policy_limits_token_scopes() {
     assert_eq!(data["scope"]["accounts"], json!(["a_b"]));
     h2.stop().await;
 
-    // Turning the policy off later takes effect for existing tokens.
+    // A token for every account covers what exists: none after the last one is gone.
     let (token, _) = h.token(Profile::Writer, false).await;
-    h.policy.set([]);
+    h.accounts.set([]);
     let error = api_error(
         h.client(Some(&token))
             .await
@@ -789,32 +789,12 @@ async fn ai_policy_limits_token_scopes() {
             .unwrap_err(),
     );
     assert_eq!(error.code, ErrorCode::PermissionDenied);
-    // And no new tokens can be made…
-    let error = api_error(client.call("login", json!({})).await.unwrap_err());
-    assert_eq!(error.code, ErrorCode::PermissionDenied);
-    // …except a writer token for all accounts, so accounts can be added from the CLI
-    // before any is shared. It sees no mail.
-    let data = client
-        .call("login", json!({ "profile": "writer" }))
+    // Commands that touch no mail still work, e.g. adding an account.
+    h.client(Some(&token))
+        .await
+        .call("account.list", json!({}))
         .await
         .unwrap();
-    let bootstrap = SessionToken::from_string(data["token"].as_str().unwrap().to_owned());
-    let mut bootstrap = h.client(Some(&bootstrap)).await;
-    let error = api_error(
-        bootstrap
-            .call("search", json!({ "query": "x" }))
-            .await
-            .unwrap_err(),
-    );
-    assert_eq!(error.code, ErrorCode::PermissionDenied);
-    bootstrap.call("account.list", json!({})).await.unwrap();
-    let error = api_error(
-        client
-            .call("login", json!({ "profile": "writer", "accounts": ["a_b"] }))
-            .await
-            .unwrap_err(),
-    );
-    assert_eq!(error.code, ErrorCode::PermissionDenied);
     h.stop().await;
 }
 
@@ -1144,7 +1124,7 @@ async fn open_hands_mailto_links_to_the_window_without_a_token() {
         tokens: Arc::new(MemoryTokenStore::new()),
         approver: Arc::new(DenyAllApprover),
         audit: Arc::new(MemoryAuditSink::new()),
-        policy: Arc::new(StaticAccountPolicy::default()),
+        accounts: Arc::new(StaticAccountList::default()),
         opener: Some(opener.clone()),
     };
     let server = LocalApiServer::bind(&paths, services, ServerConfig::default())

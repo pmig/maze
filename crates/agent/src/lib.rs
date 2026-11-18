@@ -17,8 +17,8 @@
 //!
 //! # Guarantees
 //!
-//! - Agents reach mail only through the `mazemail` CLI with a session token whose scope
-//!   never includes accounts whose AI policy is _off_ or _local models only_.
+//! - Agents reach mail only through the `mazemail` CLI with their session's token, within
+//!   its profile (`agent.session_profile`).
 //! - The agent process and every terminal command run in the agent sandbox
 //!   (`sandbox` crate) with an empty environment plus what Maze sets, and the whole
 //!   process group is killed when the session ends.
