@@ -225,7 +225,7 @@ pub(crate) async fn set(
     let server = (args.host.is_some() || args.port.is_some() || args.security.is_some())
         .then(|| {
             let current = details.info.server.clone().ok_or_else(|| {
-                CommandError::invalid_args("this account has no server to change (Local Folders)")
+                CommandError::invalid_args("this account has no server settings to change")
             })?;
             let security = args.security.map_or(current.security, security);
             let port = args.port.unwrap_or(if args.security.is_some() {
@@ -297,8 +297,8 @@ pub(crate) fn sync(
             }
             if !synced.contains(&account) {
                 return Err(CommandError::invalid_args(format!(
-                    "account {account} isn't synced (Local Folders of an older Maze, or it needs a \
-                     sign-in method Maze can't sync)"
+                    "account {account} isn't synced (no server settings, or it needs a sign-in \
+                     method Maze can't sync)"
                 )));
             }
             vec![account]

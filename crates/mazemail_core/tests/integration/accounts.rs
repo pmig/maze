@@ -1121,11 +1121,8 @@ fn files_containing(dir: &std::path::Path, needle: &[u8]) -> Vec<std::path::Path
     found
 }
 
-fn encrypted_engine(
-    server: &FakeServer,
-    legacy: Option<Arc<dyn auth::SecretStore>>,
-) -> SyncEngineConfig {
-    SyncEngineConfig::encrypted(legacy)
+fn encrypted_engine(server: &FakeServer) -> SyncEngineConfig {
+    SyncEngineConfig::encrypted()
         .with_connector(Arc::new(FakeConnector {
             server: server.clone(),
             reachable: true,
@@ -1141,7 +1138,7 @@ async fn the_encrypted_store_keeps_secrets_across_restarts_until_removal() {
     let keys = Arc::new(MemoryKeyStore::new());
     let open = || async {
         CoreHandle::open(
-            common::config(dir.path(), &keys).with_sync_engine(encrypted_engine(&server, None)),
+            common::config(dir.path(), &keys).with_sync_engine(encrypted_engine(&server)),
         )
         .await
         .unwrap()
@@ -1188,75 +1185,6 @@ async fn the_encrypted_store_keeps_secrets_across_restarts_until_removal() {
             "{kind}"
         );
     }
-    core.shutdown().await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn keychain_secrets_move_into_the_store_when_the_core_opens() {
-    let server = FakeServer::new();
-    server.deliver("INBOX", mail(1, OLD));
-    let dir = tempfile::tempdir().unwrap();
-    let keys = Arc::new(MemoryKeyStore::new());
-    let open = |legacy: Option<Arc<dyn auth::SecretStore>>| {
-        let config =
-            common::config(dir.path(), &keys).with_sync_engine(encrypted_engine(&server, legacy));
-        async move { CoreHandle::open(config).await.unwrap() }
-    };
-
-    // An account as an earlier version left it: the password in the keychain, the
-    // account on the list of the v5 migration.
-    let core = open(None).await;
-    let info = core.add_imap_account(input(PASSWORD)).await.unwrap();
-    wait_for("the first message", || inbox_count(&core) == 1).await;
-    let store_secrets = AccountSecrets::new(
-        Arc::new(StoreSecretStore::new(core.store().clone())),
-        info.uuid,
-    );
-    store_secrets.delete_all().await.unwrap();
-    let uuid = info.uuid;
-    core.store()
-        .write(move |w| w.list_legacy_secrets(uuid))
-        .await
-        .unwrap();
-    core.shutdown().await.unwrap();
-    let keychain = Arc::new(MemorySecretStore::new());
-    let password = SecretKey::new(info.uuid, SecretKind::Password);
-    keychain
-        .store(&password, &Sensitive::new(PASSWORD.to_owned()))
-        .unwrap();
-
-    // The next start moves it before the actor needs it, and deletes the item.
-    server.deliver("INBOX", mail(2, OLD));
-    let core = open(Some(keychain.clone())).await;
-    assert!(keychain.is_empty(), "the keychain item is deleted");
-    let store_secrets = StoreSecretStore::new(core.store().clone());
-    assert_eq!(
-        store_secrets.load(&password).unwrap().unwrap().expose(),
-        PASSWORD
-    );
-    assert!(
-        core.store()
-            .reader()
-            .unwrap()
-            .legacy_secret_accounts()
-            .unwrap()
-            .is_empty()
-    );
-    wait_for("mail that arrived while closed", || inbox_count(&core) == 2).await;
-    core.shutdown().await.unwrap();
-
-    // Once moved, the keychain is never consulted again for the account.
-    let stale = Arc::new(MemorySecretStore::new());
-    stale
-        .store(&password, &Sensitive::new("stale".to_owned()))
-        .unwrap();
-    let core = open(Some(stale.clone())).await;
-    assert!(stale.contains(&password));
-    let store_secrets = StoreSecretStore::new(core.store().clone());
-    assert_eq!(
-        store_secrets.load(&password).unwrap().unwrap().expose(),
-        PASSWORD
-    );
     core.shutdown().await.unwrap();
 }
 

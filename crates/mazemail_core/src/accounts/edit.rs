@@ -147,7 +147,7 @@ fn resolve(current: &Current, changes: &AccountChanges) -> Result<Resolved> {
         if wants_login_change {
             return Err(account_error(
                 AccountErrorKind::InvalidInput,
-                "this account has no server to change (Local Folders)",
+                "this account has no server settings to change",
             ));
         }
         return Ok(Resolved {
@@ -658,7 +658,7 @@ impl CoreHandle {
         let Some(config) = next.config else {
             return Err(account_error(
                 AccountErrorKind::InvalidInput,
-                "this account has no server to test (Local Folders)",
+                "this account has no server settings to test",
             ));
         };
         let smtp_server = next.smtp.or(current.smtp).ok_or_else(|| {
@@ -744,7 +744,7 @@ impl CoreHandle {
         let Some(mut config) = current.config else {
             return Err(account_error(
                 AccountErrorKind::InvalidInput,
-                "this account has no sign-in (Local Folders)",
+                "this account has no sign-in",
             ));
         };
         let Some(AccountAuth::OAuth(provider)) = config.auth() else {
@@ -1041,13 +1041,13 @@ mod tests {
         assert_eq!(fixed.config.unwrap().auth(), Some(AccountAuth::Password));
         assert!(fixed.reconnect);
 
-        let local = Current {
+        let unconfigured = Current {
             config: None,
             ..current("{}")
         };
         assert!(
             resolve(
-                &local,
+                &unconfigured,
                 &AccountChanges {
                     name: Some("Archive".into()),
                     ..AccountChanges::default()
@@ -1057,13 +1057,13 @@ mod tests {
         );
         assert!(
             invalid(resolve(
-                &local,
+                &unconfigured,
                 &AccountChanges {
                     password: password(),
                     ..AccountChanges::default()
                 }
             ))
-            .contains("Local Folders")
+            .contains("no server settings")
         );
     }
 }

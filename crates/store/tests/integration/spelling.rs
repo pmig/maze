@@ -1,4 +1,4 @@
-//! The personal spelling dictionary (schema v12).
+//! The personal spelling dictionary.
 
 use store::Queries as _;
 

@@ -214,12 +214,6 @@ pub trait Queries: sealed::Sealed {
         domains::domain_contacts(self.connection(sealed::Token), name)
     }
 
-    /// Whether messages stored before the domain index still wait for
-    /// [`WriteTx::backfill_domains`].
-    fn domain_backfill_pending(&self) -> Result<bool> {
-        domains::domain_backfill_pending(self.connection(sealed::Token))
-    }
-
     /// Every address book entry, without vCards (the Address Book's lists).
     fn contact_list(&self) -> Result<Vec<Contact>> {
         misc::contact_list(self.connection(sealed::Token))
@@ -534,13 +528,7 @@ pub trait Queries: sealed::Sealed {
         secrets::account_secret(self.connection(sealed::Token), account, kind)
     }
 
-    /// Accounts whose secrets may still be in the OS keychain: created before schema
-    /// v5 and not moved into the store yet.
-    fn legacy_secret_accounts(&self) -> Result<Vec<uuid::Uuid>> {
-        secrets::legacy_secret_accounts(self.connection(sealed::Token))
-    }
-
-    /// The sign-in key of an agent (schema v6): the environment variable it is passed
+    /// The sign-in key of an agent: the environment variable it is passed
     /// in and the secret, wiped from memory when dropped. Never log it.
     fn agent_secret(&self, agent_id: &str) -> Result<Option<(String, zeroize::Zeroizing<String>)>> {
         secrets::agent_secret(self.connection(sealed::Token), agent_id)

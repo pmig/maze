@@ -92,7 +92,7 @@ impl CoreHandle {
         }
         let mut out = Vec::new();
         for account in reader.accounts()? {
-            // Accounts without a server (legacy Local Folders) have nothing to sync.
+            // Accounts without server settings have nothing to sync.
             if AccountConfig::parse(&account.config_json).is_none() {
                 continue;
             }

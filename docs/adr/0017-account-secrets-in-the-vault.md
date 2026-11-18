@@ -29,18 +29,17 @@ keychain.
 
 The master key is Maze's only keychain item (Secret Service item on Linux). Account
 secrets live in the encrypted store: a table `account_secret` in `mazemail.db`
-(SQLCipher, schema v5), keyed by the account's UUID and the secret's kind, deleted
+(SQLCipher), keyed by the account's UUID and the secret's kind, deleted
 with its account in the same transaction. `auth` keeps the `SecretStore` trait;
 `mazemail_core::StoreSecretStore` implements it over the store, and the app and
 headless mode use it by default.
 
-Existing keychain items are moved once. Schema v5 lists every account that existed
-before it (`legacy_secret_account`). When the core opens, before any account starts
-syncing, it copies each listed account's items into the store (unless the store
-already has the secret), deletes the items, and takes the account off the list. A
-secret that can't be read or saved keeps the account listed, so the next start tries
-again; an item that was copied but can't be deleted is logged and left alone. Logs
-name items (`mazemail/<account-uuid>/<kind>`), never secrets.
+Development builds before this decision kept their keychain items, and the core moved
+them into the store once at startup (a `legacy_secret_account` list, one last round of
+prompts). No released version ever stored secrets in the keychain, so that move was
+removed with the store's v1 schema before the first release (0.1.0), together with
+`auth`'s keychain stores (`KeychainSecretStore`, `SecretServiceStore`). Logs name
+secrets by key (`mazemail/<account-uuid>/<kind>`), never by value.
 
 Secrets are `Sensitive` in logs and debug output, zeroized when the store hands them
 out, and never written in plaintext. `MAZEMAIL_INSECURE_DEV_SECRETS=1` still selects
@@ -52,9 +51,6 @@ the plain development file for scripted tests.
   are. Ad-hoc-signed dev builds still prompt once per rebuild; `script/dev-codesign`
   (run by `mise start`) signs them with a stable local identity when one exists, so
   "Always Allow" sticks (CONTRIBUTING.md).
-- The first start after the upgrade shows one last round of prompts, one per existing
-  item (possibly once to read and once to delete it). The release notes and
-  `docs/security.md` say so.
 - Account secrets inherit the master key's protection: on macOS a login-keychain item
   (data protection keychain once release signing provides the entitlement), on Linux
   an unlocked Secret Service collection. They lose their per-item ACL, which mattered
@@ -62,5 +58,5 @@ the plain development file for scripted tests.
 - Pre-migration backups (`backups/`) contain the secrets, encrypted with the same key.
   A recovery key (PLAN §4.17) restores them with the mail; "Start fresh" loses them
   with it, and the accounts ask to sign in again.
-- `auth`'s keychain stores (`KeychainSecretStore`, `SecretServiceStore`) stay only for
-  the move. They can go once no supported version can still have such items.
+- Keychain items a development build left behind and never moved stay in the keychain
+  untouched; the account asks for its password or sign-in again.

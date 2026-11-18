@@ -45,7 +45,7 @@ use crate::new_mail::{self, NewMailBatch};
 use crate::outgoing::{CoreRoutes, OutboxWake};
 use crate::row_cache::{RowCache, RowCacheStats};
 use crate::runtime::RuntimeHolder;
-use crate::secrets::{LegacyMoveReport, StoreSecretStore};
+use crate::secrets::StoreSecretStore;
 use crate::storage::{RefreshPolicy, StorageMeter, StorageUsage};
 use crate::sync_bridge::{FetchPriority, SyncBridge, SyncStatusSink};
 use crate::sync_engine::{AccountSecretsLocation, SyncEngine};
@@ -441,27 +441,6 @@ impl CoreHandle {
     pub fn accounts(&self) -> Result<Vec<Account>> {
         self.ensure_open()?;
         Ok(self.inner.store.reader()?.accounts()?)
-    }
-
-    /// Local Folders of an older Maze that still hold mail, with their message
-    /// counts (ADR-019). They stay readable and exportable, never sync, and a later
-    /// version removes them; the app says so at every start.
-    pub fn legacy_local_accounts(&self) -> Result<Vec<(Account, u64)>> {
-        self.ensure_open()?;
-        let reader = self.inner.store.reader()?;
-        let mut out = Vec::new();
-        for account in reader.accounts()? {
-            if account.kind != AccountKind::LegacyLocal {
-                continue;
-            }
-            let messages = reader
-                .message_ids_in_scope(&MessageScope::Account(account.id))?
-                .len() as u64;
-            if messages > 0 {
-                out.push((account, messages));
-            }
-        }
-        Ok(out)
     }
 
     /// The folder pane: unified folders, favorites and each account's folder tree, with
@@ -1304,40 +1283,12 @@ fn command_weight(command: &MailCommand) -> usize {
     }
 }
 
-/// The sync engine's secret store. For the encrypted store, first moves account
-/// secrets out of the keychain of earlier versions (once, see [`crate::secrets`]), so
-/// the actors that start next find them. A failed move is logged; the core opens
-/// anyway (an account without its secret asks for it again).
-async fn account_secrets(
-    location: &AccountSecretsLocation,
-    store: &Store,
-    runtime: &RuntimeHolder,
-) -> Arc<dyn auth::SecretStore> {
-    let (legacy, secrets) = match location {
-        AccountSecretsLocation::Custom(secrets) => return Arc::clone(secrets),
-        AccountSecretsLocation::Encrypted { legacy } => (
-            legacy.clone(),
-            Arc::new(StoreSecretStore::new(store.clone())) as Arc<dyn auth::SecretStore>,
-        ),
-    };
-    if let Some(legacy) = legacy {
-        let (store, target) = (store.clone(), Arc::clone(&secrets));
-        let moved = runtime
-            .blocking(move || crate::secrets::move_legacy_secrets(&store, &*target, &*legacy))
-            .await;
-        match moved {
-            Ok(report) if report == LegacyMoveReport::default() => {}
-            Ok(report) => tracing::info!(
-                moved = report.moved,
-                accounts_done = report.accounts_done,
-                accounts_pending = report.accounts_pending,
-                left_in_keychain = report.left_in_keychain,
-                "moved account secrets from the keychain into the encrypted store"
-            ),
-            Err(err) => tracing::warn!(%err, "moving account secrets out of the keychain"),
-        }
+/// The sync engine's secret store.
+fn account_secrets(location: &AccountSecretsLocation, store: &Store) -> Arc<dyn auth::SecretStore> {
+    match location {
+        AccountSecretsLocation::Custom(secrets) => Arc::clone(secrets),
+        AccountSecretsLocation::Encrypted => Arc::new(StoreSecretStore::new(store.clone())),
     }
-    secrets
 }
 
 /// Opens the store and index with an unlocked vault and starts the tasks.
@@ -1395,7 +1346,6 @@ pub(crate) async fn finish(
 
     let handle = runtime.handle();
     let tasks = vec![
-        handle.spawn(backfill_domains(store.clone())),
         handle.spawn(Arc::clone(&favicons).run()),
         handle.spawn(events::run_batcher(
             events_rx,
@@ -1428,7 +1378,7 @@ pub(crate) async fn finish(
 
     let engine = match config.sync_engine.clone() {
         Some(engine_config) => {
-            let secrets = account_secrets(&engine_config.secrets, &store, &runtime).await;
+            let secrets = account_secrets(&engine_config.secrets, &store);
             let sink = Arc::new(CoreIndexSink {
                 tx: indexer.sender(),
             });
@@ -1512,37 +1462,6 @@ pub(crate) async fn finish(
         "core opened"
     );
     Ok(core)
-}
-
-/// Messages a domain backfill write job indexes.
-const DOMAIN_BACKFILL_BATCH: usize = 2_000;
-
-/// Indexes the domains of mail stored before the domain index existed (see
-/// [`crate::domains`]): small write jobs with pauses, so sync and the UI's writes go
-/// first. Resumes where it stopped after a restart.
-async fn backfill_domains(store: Store) {
-    let mut indexed = 0usize;
-    loop {
-        match store
-            .write(|w| w.backfill_domains(DOMAIN_BACKFILL_BATCH))
-            .await
-        {
-            Ok(progress) => {
-                indexed += progress.indexed;
-                if progress.done {
-                    if indexed > 0 {
-                        tracing::info!(indexed, "indexed the domains of existing mail");
-                    }
-                    return;
-                }
-            }
-            Err(err) => {
-                tracing::warn!(%err, "indexing the domains of existing mail");
-                return;
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
 }
 
 /// Gives identities of older accounts their SMTP server, then starts the outbox runner

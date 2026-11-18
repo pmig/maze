@@ -204,9 +204,8 @@ async fn delete_moves_to_trash_and_the_message_stays_one() {
     handle.shutdown().await;
 }
 
-/// Builds before schema v8 dropped Gmail's quoted system labels (`"\\Inbox"`), so
-/// Inbox, Sent, Starred and Important stayed empty. The v8 migration sets All Mail's
-/// HIGHESTMODSEQ to 1; the next pass fetches every message's labels and fills them.
+/// With All Mail's HIGHESTMODSEQ set back to 1, the next pass fetches every message's
+/// labels again and fills the label folders (Inbox, Sent, Starred, Important).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_reset_modseq_fetches_all_labels_again() {
     let server = FakeServer::gmail();

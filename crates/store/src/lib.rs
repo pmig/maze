@@ -30,22 +30,13 @@
 //!
 //! # Data model notes
 //!
-//! - **Schema** v1 is the base schema (`migrations/main/0001_schema_v1.sql`); v2 adds
-//!   `account.uuid`; v3 adds `message_location.date` and the message list indexes; v4
-//!   adds local drafts ([`WriteTx::create_draft`]) and the outbox's SMTP envelope
-//!   ([`OutboxEnvelope`]); v5 adds account secrets ([`WriteTx::set_account_secret`]);
-//!   v6 adds agents' sign-in keys ([`WriteTx::set_agent_secret`]); v7 adds draft
-//!   names (the two-word tab title); v8 makes Gmail's All Mail fetch every
-//!   message's labels again once; v11 adds the senders allowed to load remote content
-//!   ([`WriteTx::allow_remote_content`], [`Queries::remote_content_allowed`]); v12 adds
-//!   the personal spelling dictionary ([`WriteTx::add_spelling_word`],
-//!   [`Queries::spelling_words`]); v13 adds contacts synced from an account's server
-//!   (`contact_source`, `contact_person`, `contact.resource_name`, `contact_photo`;
-//!   see [`WriteTx::upsert_server_contact`]); v14 adds the domain index
-//!   ([`Queries::domain_stats`], [`WriteTx::backfill_domains`], favicons in the cache:
-//!   see `repo::domains`).
-//!   Migrations only ever add files; opening an older database backs it up first (see
-//!   [`MigrationReport`]).
+//! - **Schema** v1 (`migrations/main/0001_schema_v1.sql`) is the schema of the first
+//!   release; it replaces the migrations of the development builds before it, and a
+//!   database those builds left at their last schema is converted when it is opened
+//!   (`migrate::dev_v14`). Later changes are new migration files; opening an older
+//!   database backs it up first (see [`MigrationReport`]). The domain index
+//!   ([`Queries::domain_stats`], favicons in the cache: see `repo::domains`) is filled
+//!   as messages are stored.
 //! - **Message lists** (threads off): [`Queries::message_list_keys`] pages through the
 //!   messages of a scope by `(date, message id)` like thread lists do, on
 //!   `location_list` (folders, with partial indexes for unread and starred) and
@@ -64,8 +55,6 @@
 //!   are rows of `account_secret` ([`Queries::account_secret`],
 //!   [`WriteTx::set_account_secret`]), encrypted like the rest of the database, so the
 //!   master key is Maze's only keychain item. They go with their account.
-//!   [`Queries::legacy_secret_accounts`] lists accounts whose secrets may still be in
-//!   the OS keychain from before v5; `mazemail_core` moves them over at startup.
 //! - **Bodies**: header-first sync stores a message without a body; when the body
 //!   arrives, [`WriteTx::update_body_summary`] sets the body and replaces what the
 //!   headers could only guess (snippet, size, attachment flag, body structure), keeping
@@ -179,8 +168,7 @@ pub use repo::contact_sync::{
     ContactPhotoState, ContactSourceState, ServerContact, StoredServerContact,
 };
 pub use repo::domains::{
-    DomainBackfill, DomainContact, DomainStats, FAVICON_CACHE_KIND, FAVICON_CACHE_VERSION,
-    FaviconState,
+    DomainContact, DomainStats, FAVICON_CACHE_KIND, FAVICON_CACHE_VERSION, FaviconState,
 };
 pub use repo::ops::{MAX_OP_ATTEMPTS, retry_backoff_secs};
 pub use sendlog::SendLog;

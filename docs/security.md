@@ -58,15 +58,6 @@ API keys and tokens you paste into the agent column's sign-in card are stored th
 way (table `agent_secret`) and handed only to that agent, in its environment. Keys
 written into `agent.env` in `settings.json` are plain text; the settings file says so.
 
-Earlier versions of Maze kept each of these secrets as its own keychain item (service
-`mazemail`, account `<account-uuid>/<kind>`, labelled "Maze account password", "Maze
-sign-in token" or "Maze SMTP password"). The first start of a newer Maze moves them
-into the encrypted database and deletes the items, so macOS may ask one last time for
-each of them (to read it, and possibly to delete it). If you deny a read, Maze asks
-again at the next start; if it can't delete an item after copying it, it logs a
-warning and leaves it, and you can delete it in Keychain Access (or Seahorse on
-Linux).
-
 ## Where the key lives
 
 - The master key is 32 random bytes, created on the first launch, read once on a
@@ -242,9 +233,7 @@ domains you correspond with):
 Maze keeps all mail in server accounts ([ADR-019](adr/0019-imap-only.md)), so `mail/` is
 a copy of what's on your servers and a lost key means syncing again. What only exists
 locally would be lost: uploads from an import that haven't reached the server yet, tags
-and saved searches that aren't on a server, API tokens, the audit log, and Local Folders
-left over from earlier versions of Maze (export them, see
-[Getting started](getting-started.md#local-folders-from-earlier-versions)).
+and saved searches that aren't on a server, API tokens and the audit log.
 
 If Maze finds encrypted mail but no key (a new Mac, a reset keychain, a restored
 backup), it opens a dialog that can't be dismissed, with two ways out:

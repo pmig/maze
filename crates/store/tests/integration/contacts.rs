@@ -1,4 +1,4 @@
-//! Contacts synced from a server (schema v13): people and their `contact` rows,
+//! Contacts synced from a server: people and their `contact` rows,
 //! shared addresses, full-sync cleanup, sync tokens, photos, and removal with the
 //! account.
 

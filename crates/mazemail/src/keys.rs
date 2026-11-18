@@ -11,9 +11,7 @@
 //!
 //! The master key is Maze's only keychain item (ADR-017). Account passwords and OAuth
 //! refresh tokens live in the encrypted store, under that key
-//! ([`mazemail_core::secrets`]); keychain items of earlier versions (service
-//! `mazemail`, [`auth::legacy_system_secret_store`]) are moved there once, at the first
-//! start of a version with schema v5. For automated end-to-end runs that plant or
+//! ([`mazemail_core::secrets`]). For automated end-to-end runs that plant or
 //! inspect secrets from outside, `MAZEMAIL_INSECURE_DEV_SECRETS=1` keeps them
 //! **unencrypted** in a file in the data directory ([`DEV_SECRETS_FILE`], mode 0600)
 //! instead, with the same warnings.
@@ -44,7 +42,7 @@ pub fn insecure_dev_secrets_requested() -> bool {
 }
 
 /// Where account secrets live: the file store if [`INSECURE_DEV_SECRETS_ENV`] is set,
-/// else the encrypted store, with the keychain of earlier versions to move them from.
+/// else the encrypted store.
 pub fn secret_store(data_dir: &Path) -> AccountSecretsLocation {
     if insecure_dev_secrets_requested() {
         let path = data_dir.join(DEV_SECRETS_FILE);
@@ -55,9 +53,7 @@ pub fn secret_store(data_dir: &Path) -> AccountSecretsLocation {
         );
         return AccountSecretsLocation::Custom(Arc::new(auth::FileSecretStore::new(path)));
     }
-    AccountSecretsLocation::Encrypted {
-        legacy: auth::legacy_system_secret_store(),
-    }
+    AccountSecretsLocation::Encrypted
 }
 
 /// No key store is available on this platform.
@@ -148,7 +144,7 @@ mod tests {
         if !insecure_dev_secrets_requested() {
             assert!(matches!(
                 secret_store(dir.path()),
-                AccountSecretsLocation::Encrypted { .. }
+                AccountSecretsLocation::Encrypted
             ));
         }
     }

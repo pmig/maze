@@ -352,7 +352,7 @@ fn open(state: Shared, window: &mut Window, cx: &mut App) {
                 server.port,
                 security_label(server.security)
             ),
-            _ => "Local Folders: no server".to_owned(),
+            _ => "No server settings".to_owned(),
         }
         .into();
         let problem: Option<SharedString> = details.info.sync.as_ref().and_then(|sync| {

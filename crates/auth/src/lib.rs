@@ -17,8 +17,7 @@
 //!   missing grant is [`ReauthReason::MissingScope`] for that capability only.
 //! - **Secrets**: passwords and refresh tokens under `mazemail/<account-uuid>/<kind>`
 //!   ([`SecretStore`], [`AccountSecrets`]). The app keeps them in its encrypted store
-//!   (ADR-017); the keychain stores of earlier versions remain for moving them out
-//!   ([`legacy_system_secret_store`]).
+//!   (ADR-017).
 //! - **SASL**: XOAUTH2 and OAUTHBEARER initial responses ([`sasl`]).
 //!
 //! Tokens, passwords, codes and addresses are wrapped in
@@ -66,13 +65,9 @@ pub use mazemail_types::{InvalidTenant, MicrosoftTenant};
 pub use provider::{
     ClientCredentials, ParseProviderKindError, Provider, ProviderKind, ProviderRegistry,
 };
-#[cfg(target_os = "macos")]
-pub use secret::KeychainSecretStore;
-#[cfg(target_os = "linux")]
-pub use secret::SecretServiceStore;
 pub use secret::{
     AccountSecrets, FileSecretStore, MemorySecretStore, SERVICE, SecretKey, SecretKind,
-    SecretStore, SecretStoreError, legacy_system_secret_store,
+    SecretStore, SecretStoreError,
 };
 pub use token::{
     MISSING_SCOPE_RETRY, OAuthTokenManager, REFRESH_MARGIN, StaticTokenProvider, TokenProvider,

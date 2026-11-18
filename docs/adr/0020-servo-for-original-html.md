@@ -77,8 +77,8 @@ WebGL/WebGPU/WebXR/WebCrypto/Bluetooth/GStreamer.
   message. Plain-text mail never uses the engine.
 - **Remote content:** `reader.remote_content` (per account) is enforced by the core:
   `never` never fetches, `always` fetches, `ask` blocks and offers "Load images" (this
-  message, not kept) and "Always for this sender" (store table `remote_content_sender`,
-  schema v11). `never` wins over the sender list. Inline parts always show.
+  message, not kept) and "Always for this sender" (store table
+  `remote_content_sender`). `never` wins over the sender list. Inline parts always show.
 - **Builds:** macOS release builds (`script/bundle-mac`) and `mise start` turn the
   feature on; a plain `cargo build`, CI clippy and the test suite don't, and then the
   view says the original is in release builds and shows the reader. The Servo engine

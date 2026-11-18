@@ -1,4 +1,4 @@
-//! The personal spelling dictionary ("Add to Dictionary" in the composer, schema v12).
+//! The personal spelling dictionary ("Add to Dictionary" in the composer).
 
 use rusqlite::{Connection, params};
 

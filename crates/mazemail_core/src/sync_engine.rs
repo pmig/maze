@@ -102,13 +102,8 @@ impl ImapConnector for NetworkImapConnector {
 #[derive(Clone)]
 pub enum AccountSecretsLocation {
     /// In the encrypted store ([`StoreSecretStore`](crate::StoreSecretStore), ADR-017),
-    /// as in the app. `legacy` is where earlier versions kept them (the OS keychain,
-    /// [`auth::legacy_system_secret_store`]): the core moves those items into the store
-    /// when it opens (see [`crate::secrets`]).
-    Encrypted {
-        /// The keychain store of earlier versions, if any.
-        legacy: Option<Arc<dyn SecretStore>>,
-    },
+    /// as in the app.
+    Encrypted,
     /// In this store instead (tests' in-memory store, the insecure development file).
     Custom(Arc<dyn SecretStore>),
 }
@@ -116,9 +111,7 @@ pub enum AccountSecretsLocation {
 impl fmt::Debug for AccountSecretsLocation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Encrypted { legacy } => {
-                f.debug_struct("Encrypted").field("legacy", legacy).finish()
-            }
+            Self::Encrypted => f.write_str("Encrypted"),
             Self::Custom(store) => f.debug_tuple("Custom").field(store).finish(),
         }
     }
@@ -159,11 +152,10 @@ impl fmt::Debug for SyncEngineConfig {
 }
 
 impl SyncEngineConfig {
-    /// The production setup: account secrets in the encrypted store, moved there from
-    /// `legacy` (the keychain of earlier versions) at startup; the network, the system
-    /// browser, the settings' OAuth clients, default timers.
-    pub fn encrypted(legacy: Option<Arc<dyn SecretStore>>) -> Self {
-        Self::at(AccountSecretsLocation::Encrypted { legacy })
+    /// The production setup: account secrets in the encrypted store; the network, the
+    /// system browser, the settings' OAuth clients, default timers.
+    pub fn encrypted() -> Self {
+        Self::at(AccountSecretsLocation::Encrypted)
     }
 
     /// Like [`SyncEngineConfig::encrypted`], with the account secrets in `secrets`

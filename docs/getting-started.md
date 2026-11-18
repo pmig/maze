@@ -178,10 +178,7 @@ keychain item, so starting Maze reads the keychain once, however many accounts y
 have. Removing an account deletes its local mail and its saved password or sign-in;
 nothing changes on the server.
 
-Earlier versions kept every password and token as its own keychain item. The first
-start of a newer Maze moves them into the encrypted database and deletes the items:
-macOS may ask once more for each of them, and then never again. See
-[security.md](security.md#what-is-encrypted).
+See [security.md](security.md#what-is-encrypted) for what is encrypted and how.
 
 On servers that keep track of subscriptions, Maze syncs only your **subscribed**
 folders, plus the Inbox and the special folders (Sent, Drafts, Trash, Junk, Archive),
@@ -515,18 +512,6 @@ so Thunderbird keeps working side by side. Passwords aren't imported: accounts t
 need one, or a new OAuth sign-in, are listed in the import result.
 
 Remember that the Thunderbird profile itself still holds all your mail in plaintext.
-
-### Local Folders from earlier versions
-
-Earlier versions of Maze imported into a local account called Local Folders. Empty
-ones are removed when you update. Local Folders that still hold mail stay readable,
-searchable and exportable, but they never sync, and a later version removes them. Maze
-reminds you at every start. To keep that mail, export it and upload it into an account:
-
-```sh
-mazemail export 'account:"Local Folders"' --to local-folders.mbox
-mazemail import local-folders.mbox --account a_… --folder "Local Folders"
-```
 
 ## The Maze window
 

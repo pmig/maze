@@ -7,11 +7,6 @@
 //! storage master key is Maze's only keychain item and a launch asks the keychain
 //! once, not once per account and secret.
 //!
-//! Before ADR-017 every secret was its own OS keychain item: on macOS a generic
-//! password with service [`SERVICE`] (`mazemail`) and account `<account-uuid>/<kind>`
-//! (`KeychainSecretStore`), on Linux a Secret Service item with the same attributes
-//! (`SecretServiceStore`). Those stores remain only so the core can move existing
-//! items into the encrypted store and delete them ([`legacy_system_secret_store`]).
 //! [`MemorySecretStore`] serves tests, [`FileSecretStore`] scripted end-to-end runs.
 
 use std::fmt;
@@ -21,20 +16,12 @@ use mazemail_types::Sensitive;
 use uuid::Uuid;
 
 mod file;
-#[cfg(target_os = "linux")]
-mod linux;
-#[cfg(target_os = "macos")]
-mod macos;
 mod memory;
 
 pub use file::FileSecretStore;
-#[cfg(target_os = "linux")]
-pub use linux::SecretServiceStore;
-#[cfg(target_os = "macos")]
-pub use macos::KeychainSecretStore;
 pub use memory::MemorySecretStore;
 
-/// The keychain service name of account secrets stored by Maze before ADR-017.
+/// The first part of a [`SecretKey`]'s name (`mazemail/<account-uuid>/<kind>`).
 pub const SERVICE: &str = "mazemail";
 
 /// Errors from a [`SecretStore`]. Never contain the secret.
@@ -114,8 +101,7 @@ impl SecretKey {
         Self { account, kind }
     }
 
-    /// The keychain account name: `<account-uuid>/<kind>` (the service is
-    /// [`SERVICE`]).
+    /// The name within [`SERVICE`]: `<account-uuid>/<kind>`.
     pub fn item_account(&self) -> String {
         format!("{}/{}", self.account.hyphenated(), self.kind)
     }
@@ -129,8 +115,8 @@ impl fmt::Display for SecretKey {
 
 /// Persistent storage for account secrets.
 ///
-/// Implementations never log or print secrets. Calls may block (a database write, or
-/// keychain IPC and a system prompt for the legacy stores), so async code goes through
+/// Implementations never log or print secrets. Calls may block (a database write), so
+/// async code goes through
 /// [`AccountSecrets`], which runs them on the blocking thread pool.
 pub trait SecretStore: fmt::Debug + Send + Sync {
     /// Reads a secret; `Ok(None)` if there is none.
@@ -141,24 +127,6 @@ pub trait SecretStore: fmt::Debug + Send + Sync {
 
     /// Deletes a secret. Deleting one that doesn't exist succeeds.
     fn delete(&self, key: &SecretKey) -> Result<(), SecretStoreError>;
-}
-
-/// Where Maze kept account secrets before ADR-017: the login keychain on macOS, the
-/// Secret Service on Linux; `None` elsewhere. Only for moving those items into the
-/// encrypted store; nothing stores new secrets there.
-pub fn legacy_system_secret_store() -> Option<Arc<dyn SecretStore>> {
-    #[cfg(target_os = "macos")]
-    {
-        Some(Arc::new(KeychainSecretStore::new()))
-    }
-    #[cfg(target_os = "linux")]
-    {
-        Some(Arc::new(SecretServiceStore::new()))
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        None
-    }
 }
 
 /// One account's secrets, with async accessors that run the store's calls on Tokio's

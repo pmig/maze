@@ -1,4 +1,9 @@
 //! Schema migrations, the pre-migration backup and the downgrade guard (PLAN §4.15).
+//!
+//! `PRAGMA user_version` is the number of applied migrations (`rusqlite_migration`).
+//! The one exception is a database of a development build from before the first
+//! release, at that build's schema 14: it is recognised, backed up and converted to v1
+//! ([`dev_v14`]).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,28 +17,14 @@ use vault::SecretString;
 use crate::conn::{self, Access};
 use crate::{Error, Result};
 
-const MAIN: &[M<'static>] = &[
-    M::up(include_str!("../migrations/main/0001_schema_v1.sql")).foreign_key_check(),
-    M::up(include_str!("../migrations/main/0002_account_uuid.sql")),
-    M::up(include_str!("../migrations/main/0003_message_list.sql")),
-    M::up(include_str!("../migrations/main/0004_compose.sql")),
-    M::up(include_str!("../migrations/main/0005_account_secret.sql")),
-    M::up(include_str!("../migrations/main/0006_agent_secret.sql")),
-    M::up(include_str!("../migrations/main/0007_draft_name.sql")),
-    M::up(include_str!(
-        "../migrations/main/0008_gmail_label_resync.sql"
-    )),
-    M::up(include_str!(
-        "../migrations/main/0009_draft_support_maze.sql"
-    )),
-    M::up(include_str!("../migrations/main/0010_imap_only.sql")),
-    M::up(include_str!(
-        "../migrations/main/0011_remote_content_senders.sql"
-    )),
-    M::up(include_str!("../migrations/main/0012_spelling_words.sql")),
-    M::up(include_str!("../migrations/main/0013_contact_sync.sql")),
-    M::up(include_str!("../migrations/main/0014_domains.sql")),
-];
+mod dev_v14;
+
+/// The main store's migrations. 0001 is the one schema of the first release; it
+/// replaces the 14 migrations of the development builds before it (see [`dev_v14`]).
+const MAIN: &[M<'static>] = &[M::up(SCHEMA_V1).foreign_key_check()];
+
+/// The v1 schema (migration 0001).
+const SCHEMA_V1: &str = include_str!("../migrations/main/0001_schema_v1.sql");
 
 const SENDLOG: &[M<'static>] = &[M::up(include_str!(
     "../migrations/sendlog/0001_sendlog_v1.sql"
@@ -72,13 +63,41 @@ pub(crate) fn user_version(conn: &Connection) -> Result<u32> {
 /// - An existing database (version ≥ 1) that needs migrating is first copied to
 ///   `backups/mazemail-<schema>-<app version>.db` with the online backup API, keyed with
 ///   the same key; only the newest [`BACKUPS_KEPT`] backups are kept.
+/// - A database of a development build at its schema 14 is backed up the same way and
+///   converted to v1 ([`dev_v14`]).
 pub(crate) fn migrate_main(
     conn: &mut Connection,
     key: &SecretString,
     backups_dir: &Path,
     app_version: &str,
 ) -> Result<MigrationReport> {
+    if dev_v14::is_dev_v14(conn)? {
+        let from = user_version(conn)?;
+        let backup = backup_before_migrating(conn, key, backups_dir, app_version, from)?;
+        dev_v14::convert(conn)?;
+        return Ok(MigrationReport {
+            from,
+            to: SCHEMA_VERSION,
+            backup: Some(backup),
+        });
+    }
     migrate_with_backup(conn, key, backups_dir, app_version, MAIN)
+}
+
+/// Copies the database to `backups/mazemail-<from>-<app version>.db` and prunes the
+/// older backups.
+fn backup_before_migrating(
+    conn: &Connection,
+    key: &SecretString,
+    backups_dir: &Path,
+    app_version: &str,
+    from: u32,
+) -> Result<PathBuf> {
+    let name = format!("mazemail-{from}-{}.db", sanitize(app_version));
+    let path = backups_dir.join(name);
+    backup_to(conn, key, &path)?;
+    prune_backups(backups_dir, BACKUPS_KEPT)?;
+    Ok(path)
 }
 
 fn migrate_with_backup(
@@ -99,10 +118,7 @@ fn migrate_with_backup(
     }
     let mut backup = None;
     if from > 0 && from < latest {
-        let name = format!("mazemail-{from}-{}.db", sanitize(app_version));
-        let path = backups_dir.join(name);
-        backup_to(conn, key, &path)?;
-        prune_backups(backups_dir, BACKUPS_KEPT)?;
+        let path = backup_before_migrating(conn, key, backups_dir, app_version, from)?;
         tracing::info!(from, to = latest, backup = %path.display(), "migrating the database");
         backup = Some(path);
     }
@@ -281,449 +297,6 @@ mod tests {
             Err(Error::WrongKey { .. })
         ));
         assert!(!fs::read(&backup).unwrap().starts_with(b"SQLite format 3"));
-    }
-
-    #[test]
-    fn v2_gives_every_account_a_stable_unique_uuid() {
-        let tmp = tempfile::tempdir().unwrap();
-        let key = key(4);
-        let mut conn = conn::open(&tmp.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
-        migrate_with_backup(&mut conn, &key, tmp.path(), "1.0.0", &MAIN[..1]).unwrap();
-        for name in ["a", "b", "c"] {
-            conn.execute(
-                "INSERT INTO account (kind, name) VALUES ('imap', ?1)",
-                [name],
-            )
-            .unwrap();
-        }
-        let report = migrate_main(&mut conn, &key, tmp.path(), "1.1.0").unwrap();
-        assert_eq!((report.from, report.to), (1, SCHEMA_VERSION));
-        assert!(report.backup.is_some());
-
-        // Inserted without a UUID after the migration: the trigger fills it in.
-        conn.execute("INSERT INTO account (kind, name) VALUES ('imap', 'd')", [])
-            .unwrap();
-        let uuids: Vec<String> = conn
-            .prepare("SELECT uuid FROM account ORDER BY id")
-            .unwrap()
-            .query_map([], |r| r.get(0))
-            .unwrap()
-            .map(|r| r.unwrap())
-            .collect();
-        assert_eq!(uuids.len(), 4);
-        for uuid in &uuids {
-            let parsed = uuid::Uuid::parse_str(uuid).unwrap();
-            assert_eq!(parsed.get_version_num(), 4, "{uuid}");
-            assert_eq!(parsed.get_variant(), uuid::Variant::RFC4122, "{uuid}");
-            assert_eq!(&parsed.hyphenated().to_string(), uuid);
-        }
-        let distinct: std::collections::BTreeSet<_> = uuids.iter().collect();
-        assert_eq!(distinct.len(), uuids.len());
-
-        // Never changed, never duplicated.
-        assert!(
-            conn.execute("UPDATE account SET uuid = 'x' WHERE id = 1", [])
-                .is_err()
-        );
-        assert!(
-            conn.execute(
-                "INSERT INTO account (kind, name, uuid) VALUES ('imap', 'e', ?1)",
-                [&uuids[0]],
-            )
-            .is_err()
-        );
-        // Other columns still update.
-        conn.execute("UPDATE account SET name = 'renamed' WHERE id = 1", [])
-            .unwrap();
-    }
-
-    #[test]
-    fn v3_copies_date_and_attachment_flag_to_existing_locations() {
-        let tmp = tempfile::tempdir().unwrap();
-        let key = key(5);
-        let mut conn = conn::open(&tmp.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
-        migrate_with_backup(&mut conn, &key, tmp.path(), "1.0.0", &MAIN[..2]).unwrap();
-        conn.execute_batch(
-            "INSERT INTO account (id, kind, name) VALUES (1, 'imap', 'Work');
-             INSERT INTO folder (id, account_id, display_name) VALUES (1, 1, 'Inbox');
-             INSERT INTO thread (id, account_id) VALUES (1, 1);
-             INSERT INTO message (id, account_id, thread_id, date, has_attachments)
-               VALUES (1, 1, 1, 1234, 1), (2, 1, 1, 99, 0);
-             INSERT INTO message_location (message_id, folder_id) VALUES (1, 1), (2, 1);",
-        )
-        .unwrap();
-        let report = migrate_main(&mut conn, &key, tmp.path(), "1.1.0").unwrap();
-        assert_eq!((report.from, report.to), (2, SCHEMA_VERSION));
-        let read = |conn: &Connection| -> Vec<(i64, i64, i64)> {
-            conn.prepare("SELECT message_id, date, attachment FROM message_location ORDER BY 1")
-                .unwrap()
-                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-                .unwrap()
-                .map(|r| r.unwrap())
-                .collect()
-        };
-        assert_eq!(read(&conn), vec![(1, 1234, 1), (2, 99, 0)]);
-        // The triggers follow later changes of the message.
-        conn.execute_batch("UPDATE message SET has_attachments = 1, date = 100 WHERE id = 2;")
-            .unwrap();
-        assert_eq!(read(&conn), vec![(1, 1234, 1), (2, 100, 1)]);
-    }
-
-    #[test]
-    fn v5_lists_existing_accounts_for_the_keychain_move() {
-        let tmp = tempfile::tempdir().unwrap();
-        let key = key(6);
-        let mut conn = conn::open(&tmp.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
-        migrate_with_backup(&mut conn, &key, tmp.path(), "1.0.0", &MAIN[..4]).unwrap();
-        for name in ["a", "b"] {
-            conn.execute(
-                "INSERT INTO account (kind, name) VALUES ('imap', ?1)",
-                [name],
-            )
-            .unwrap();
-        }
-        let report = migrate_main(&mut conn, &key, tmp.path(), "1.1.0").unwrap();
-        assert_eq!((report.from, report.to), (4, SCHEMA_VERSION));
-        let listed: i64 = conn
-            .query_row(
-                "SELECT count(*) FROM legacy_secret_account JOIN account ON uuid = account_uuid",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(listed, 2);
-
-        // An account added afterwards never had keychain items.
-        conn.execute("INSERT INTO account (kind, name) VALUES ('imap', 'c')", [])
-            .unwrap();
-        let listed: i64 = conn
-            .query_row("SELECT count(*) FROM legacy_secret_account", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        assert_eq!(listed, 2);
-    }
-
-    #[test]
-    fn v8_makes_gmail_all_mail_fetch_its_labels_again() {
-        let tmp = tempfile::tempdir().unwrap();
-        let key = key(7);
-        let mut conn = conn::open(&tmp.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
-        migrate_with_backup(&mut conn, &key, tmp.path(), "1.0.0", &MAIN[..7]).unwrap();
-        conn.execute_batch(
-            "INSERT INTO account (id, kind, name) VALUES (1, 'gmail', 'g'), (2, 'imap', 'i');
-             INSERT INTO folder (id, account_id, remote_name, display_name, role, is_label,
-                                 highestmodseq)
-             VALUES (1, 1, '[Gmail]/All Mail', 'All Mail', 'all', 0, 900),
-                    (2, 1, 'INBOX', 'Inbox', 'inbox', 1, NULL),
-                    (3, 1, '[Gmail]/Trash', 'Trash', 'trash', 0, 800),
-                    (4, 2, 'Archive', 'Archive', 'all', 0, 700),
-                    (5, 1, '[Gmail]/Alle Nachrichten', 'All', 'all', 0, NULL);",
-        )
-        .unwrap();
-        migrate_main(&mut conn, &key, tmp.path(), "1.1.0").unwrap();
-        let modseqs: Vec<(i64, Option<i64>)> = conn
-            .prepare("SELECT id, highestmodseq FROM folder ORDER BY id")
-            .unwrap()
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        // Only a synced Gmail All Mail goes back; never-synced folders stay unsynced.
-        assert_eq!(
-            modseqs,
-            [
-                (1, Some(1)),
-                (2, None),
-                (3, Some(800)),
-                (4, Some(700)),
-                (5, None)
-            ]
-        );
-    }
-
-    #[test]
-    fn v9_keeps_sent_with_maze_on_for_existing_drafts() {
-        let tmp = tempfile::tempdir().unwrap();
-        let key = key(9);
-        let mut conn = conn::open(&tmp.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
-        migrate_with_backup(&mut conn, &key, tmp.path(), "1.0.0", &MAIN[..8]).unwrap();
-        conn.execute_batch(
-            "INSERT INTO draft (id, to_json, cc_json, bcc_json, subject, body,
-                                references_json, attachments_json, created, updated, name)
-             VALUES (1, '[]', '[]', '[]', '', '', '[]', '[]', 1, 1, 'brave-otter');",
-        )
-        .unwrap();
-        let report = migrate_main(&mut conn, &key, tmp.path(), "1.1.0").unwrap();
-        assert_eq!((report.from, report.to), (8, SCHEMA_VERSION));
-        let on: i64 = conn
-            .query_row("SELECT support_maze FROM draft WHERE id = 1", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        assert_eq!(on, 1);
-        // New rows default to on as well; off is stored as 0.
-        conn.execute_batch(
-            "INSERT INTO draft (id, to_json, cc_json, bcc_json, subject, body,
-                                references_json, attachments_json, created, updated)
-             VALUES (2, '[]', '[]', '[]', '', '', '[]', '[]', 1, 1);
-             UPDATE draft SET support_maze = 0 WHERE id = 1;",
-        )
-        .unwrap();
-        let values: Vec<i64> = conn
-            .prepare("SELECT support_maze FROM draft ORDER BY id")
-            .unwrap()
-            .query_map([], |r| r.get(0))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        assert_eq!(values, [0, 1]);
-    }
-
-    #[test]
-    fn v10_removes_empty_local_accounts_and_keeps_the_ones_with_mail() {
-        let tmp = tempfile::tempdir().unwrap();
-        let key = key(10);
-        let mut conn = conn::open(&tmp.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
-        migrate_with_backup(&mut conn, &key, tmp.path(), "1.0.0", &MAIN[..9]).unwrap();
-        conn.execute_batch(
-            "INSERT INTO account (id, kind, name) VALUES
-               (1, 'local', 'Local Folders'), (2, 'local', 'Empty'), (3, 'imap', 'Work'),
-               (4, 'imap', 'Empty IMAP');
-             INSERT INTO folder (id, account_id, remote_name, display_name)
-             VALUES (1, 1, NULL, 'Inbox'), (2, 2, NULL, 'Inbox'), (3, 3, 'INBOX', 'Inbox');
-             INSERT INTO identity (id, account_id, email, sent_folder_id)
-             VALUES (1, 3, 'me@work.example', 2);
-             INSERT INTO thread (id, account_id, last_date) VALUES (1, 1, 1);
-             INSERT INTO message (id, account_id, thread_id, date) VALUES (1, 1, 1, 1);
-             INSERT INTO message_location (message_id, folder_id, flags, date)
-             VALUES (1, 1, 0, 1);",
-        )
-        .unwrap();
-        let report = migrate_main(&mut conn, &key, tmp.path(), "1.1.0").unwrap();
-        assert_eq!((report.from, report.to), (9, SCHEMA_VERSION));
-        let accounts: Vec<(i64, String)> = conn
-            .prepare("SELECT id, kind FROM account ORDER BY id")
-            .unwrap()
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        // The local account with mail stays (still a legacy local account), the empty
-        // one goes with its folder; IMAP accounts are untouched, empty or not.
-        assert_eq!(
-            accounts,
-            [
-                (1, "local".to_owned()),
-                (3, "imap".to_owned()),
-                (4, "imap".to_owned())
-            ]
-        );
-        let folders: Vec<i64> = conn
-            .prepare("SELECT id FROM folder ORDER BY id")
-            .unwrap()
-            .query_map([], |r| r.get(0))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        assert_eq!(folders, [1, 3]);
-        let messages: i64 = conn
-            .query_row("SELECT COUNT(*) FROM message", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(messages, 1);
-        // An identity that filed into the removed folder just loses that setting.
-        let sent: Option<i64> = conn
-            .query_row(
-                "SELECT sent_folder_id FROM identity WHERE id = 1",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(sent, None);
-
-        // Pending ops count as blob references.
-        conn.execute_batch(
-            "INSERT INTO blob (id, size, created) VALUES (x'01', 1, 1);
-             INSERT INTO pending_op (id, account_id, kind, payload_json, origin, created,
-                                     blob_id)
-             VALUES (1, 3, 'append', '{}', 'import', 1, x'01');",
-        )
-        .unwrap();
-        let refs = |conn: &Connection| -> i64 {
-            conn.query_row("SELECT refs FROM blob WHERE id = x'01'", [], |r| r.get(0))
-                .unwrap()
-        };
-        assert_eq!(refs(&conn), 1);
-        conn.execute_batch("DELETE FROM pending_op WHERE id = 1;")
-            .unwrap();
-        assert_eq!(refs(&conn), 0);
-    }
-
-    #[test]
-    fn v12_adds_the_spelling_dictionary_and_keeps_everything_else() {
-        let tmp = tempfile::tempdir().unwrap();
-        let key = key(12);
-        let mut conn = conn::open(&tmp.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
-        migrate_with_backup(&mut conn, &key, tmp.path(), "1.0.0", &MAIN[..11]).unwrap();
-        conn.execute_batch(
-            "INSERT INTO remote_content_sender (email, added) VALUES ('news@shop.example', 1);",
-        )
-        .unwrap();
-        let report = migrate_main(&mut conn, &key, tmp.path(), "1.1.0").unwrap();
-        assert_eq!((report.from, report.to), (11, SCHEMA_VERSION));
-        assert!(report.backup.is_some());
-        conn.execute(
-            "INSERT INTO spelling_word (word, added) VALUES ('Glasskube', 2)",
-            [],
-        )
-        .unwrap();
-        // The word is the key.
-        assert!(
-            conn.execute(
-                "INSERT INTO spelling_word (word, added) VALUES ('Glasskube', 3)",
-                []
-            )
-            .is_err()
-        );
-        let senders: i64 = conn
-            .query_row("SELECT COUNT(*) FROM remote_content_sender", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        assert_eq!(senders, 1);
-    }
-
-    #[test]
-    fn v13_adds_contact_sync_and_cleans_up_with_the_account() {
-        let tmp = tempfile::tempdir().unwrap();
-        let key = key(13);
-        let mut conn = conn::open(&tmp.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
-        migrate_with_backup(&mut conn, &key, tmp.path(), "1.0.0", &MAIN[..12]).unwrap();
-        conn.execute_batch(
-            "INSERT INTO account (id, kind, name) VALUES (1, 'gmail', 'Work');
-             INSERT INTO contact (book, display_name, email, frequency)
-             VALUES ('collected', 'Anna', 'anna@example.com', 3);",
-        )
-        .unwrap();
-        let report = migrate_main(&mut conn, &key, tmp.path(), "1.1.0").unwrap();
-        assert_eq!((report.from, report.to), (12, SCHEMA_VERSION));
-        assert!(report.backup.is_some());
-        // Existing contacts are local: no server id.
-        let resource: Option<String> = conn
-            .query_row("SELECT resource_name FROM contact", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(resource, None);
-        conn.execute_batch(
-            "INSERT INTO contact_source (book, account_id, kind) VALUES ('google:u', 1, 'google');
-             INSERT INTO contact_person (book, resource_name, emails, vcard, updated_at)
-             VALUES ('google:u', 'people/c1', 'anna@example.com', 'BEGIN:VCARD', 1);
-             INSERT INTO contact (book, display_name, email, resource_name)
-             VALUES ('google:u', 'Anna', 'anna@example.com', 'people/c1');
-             INSERT INTO contact_photo (url, fetched_at, found) VALUES ('https://p', 1, 0);",
-        )
-        .unwrap();
-        // A person needs its book, and states are checked.
-        assert!(
-            conn.execute(
-                "INSERT INTO contact_person (book, resource_name, vcard, updated_at)
-                 VALUES ('google:nope', 'people/c2', '', 1)",
-                []
-            )
-            .is_err()
-        );
-        assert!(
-            conn.execute("UPDATE contact_source SET state = 'weird'", [])
-                .is_err()
-        );
-        let count = |conn: &Connection, sql: &str| -> i64 {
-            conn.query_row(sql, [], |r| r.get(0)).unwrap()
-        };
-        assert_eq!(count(&conn, "SELECT COUNT(*) FROM contact"), 2);
-        // Removing the account removes its books, people and their contact rows; the
-        // collected address stays.
-        conn.execute("DELETE FROM account WHERE id = 1", [])
-            .unwrap();
-        assert_eq!(count(&conn, "SELECT COUNT(*) FROM contact_source"), 0);
-        assert_eq!(count(&conn, "SELECT COUNT(*) FROM contact_person"), 0);
-        let books: Vec<String> = conn
-            .prepare("SELECT book FROM contact")
-            .unwrap()
-            .query_map([], |r| r.get(0))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        assert_eq!(books, ["collected"]);
-    }
-
-    /// The migration before the domain index, found by file name, so the test holds
-    /// whatever migrations come before it.
-    fn before_domains() -> usize {
-        MAIN.iter()
-            .position(|m| format!("{m:?}").contains("CREATE TABLE domain ("))
-            .unwrap()
-    }
-
-    #[test]
-    fn v14_adds_the_domain_index_and_queues_existing_messages_for_the_backfill() {
-        let tmp = tempfile::tempdir().unwrap();
-        let key = key(14);
-        let mut conn = conn::open(&tmp.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
-        let before = before_domains();
-        migrate_with_backup(&mut conn, &key, tmp.path(), "1.0.0", &MAIN[..before]).unwrap();
-        conn.execute_batch(
-            "INSERT INTO account (id, kind, name) VALUES (1, 'imap', 'Work');
-             INSERT INTO thread (id, account_id) VALUES (1, 1);
-             INSERT INTO message (id, account_id, thread_id, date, from_addr)
-               VALUES (7, 1, 1, 50, 'anna@northwind.example'),
-                      (9, 1, 1, 70, 'bob@northwind.example');",
-        )
-        .unwrap();
-        let report = migrate_main(&mut conn, &key, tmp.path(), "1.1.0").unwrap();
-        assert_eq!(
-            (report.from, report.to),
-            (u32::try_from(before).unwrap(), SCHEMA_VERSION)
-        );
-        assert!(report.backup.is_some());
-        let backfill: (i64, i64) = conn
-            .query_row(
-                "SELECT next_message, last_message FROM domain_backfill",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!(backfill, (1, 9));
-
-        // The triggers keep the counters; message deletes cascade.
-        conn.execute_batch(
-            "INSERT INTO domain (id, name) VALUES (1, 'northwind.example');
-             INSERT INTO message_domain (domain_id, message_id, roles) VALUES (1, 7, 1), (1, 9, 5);",
-        )
-        .unwrap();
-        let read = |conn: &Connection| -> (i64, i64, i64, i64) {
-            conn.query_row(
-                "SELECT message_count, from_count, sent_count, last_seen FROM domain",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )
-            .unwrap()
-        };
-        assert_eq!(read(&conn), (2, 2, 1, 70));
-        conn.execute_batch("DELETE FROM message WHERE id = 9;")
-            .unwrap();
-        assert_eq!(read(&conn), (1, 1, 0, 70));
-        // A new database has nothing to backfill.
-        let fresh_dir = tempfile::tempdir().unwrap();
-        let mut fresh =
-            conn::open(&fresh_dir.path().join("db"), &key, Access::ReadWrite, 1024).unwrap();
-        migrate_main(&mut fresh, &key, fresh_dir.path(), "1.0.0").unwrap();
-        let pending: bool = fresh
-            .query_row(
-                "SELECT next_message <= last_message FROM domain_backfill",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert!(!pending);
     }
 
     #[test]

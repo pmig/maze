@@ -1,4 +1,4 @@
-//! Senders allowed to load remote content (schema v11).
+//! Senders allowed to load remote content.
 
 use store::Queries as _;
 

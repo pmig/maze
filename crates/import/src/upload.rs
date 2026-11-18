@@ -21,7 +21,7 @@ use ingest::{DEFAULT_BATCH, HeaderFingerprint};
 use mazemail_mime::thread::normalize_message_id;
 use mazemail_types::{AccountId, BlobId, Flags, FolderId};
 use rayon::prelude::*;
-use store::{AccountKind, MessageScope, Queries, StagedBlob, Store};
+use store::{MessageScope, Queries, StagedBlob, Store};
 use sync::ops::OpPayload;
 
 use crate::mbox::{Escaping, MboxReader};
@@ -174,22 +174,12 @@ pub fn upload_maildir(
     Ok(batch.stats)
 }
 
-/// The target must be a server folder of a synced account.
+/// The target must be a server folder of an existing account.
 fn check_target(store: &Store, target: UploadTarget) -> Result<()> {
     let reader = store.reader()?;
-    let account = reader
+    reader
         .account(target.account)?
         .ok_or_else(|| Error::InvalidTarget(format!("account {} doesn't exist", target.account)))?;
-    if !matches!(
-        account.kind,
-        AccountKind::Imap | AccountKind::Gmail | AccountKind::M365
-    ) {
-        return Err(Error::InvalidTarget(format!(
-            "account {} isn't an IMAP account; Maze imports into IMAP, Gmail and Microsoft 365 \
-             accounts",
-            target.account
-        )));
-    }
     let folder = reader
         .folder(target.folder)?
         .filter(|f| f.account == target.account)

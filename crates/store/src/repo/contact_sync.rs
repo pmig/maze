@@ -1,4 +1,4 @@
-//! Contacts synced from an account's server (schema v13, ADR-024).
+//! Contacts synced from an account's server (ADR-024).
 //!
 //! A synced person is a row of `contact_person` (its server id, etag, vCard and
 //! photo URL) plus one `contact` row per email address in the person's book, which

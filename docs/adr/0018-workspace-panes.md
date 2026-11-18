@@ -84,7 +84,7 @@ view (`MailView`, one `ThreadList` and `MessageView` each) and the message tab
 panel. Mail actions are handled on the window's root and go to the active tab.
 
 The layout is version 3 of `ui_state.json`: folder, message and draft ids plus a draft's
-two-word name, never subjects. Draft names live in the store (`draft.name`, schema v7).
+two-word name, never subjects. Draft names live in the store (`draft.name`).
 
 Key bindings follow Zed except where Thunderbird's win (the keymap's rule): `cmd-k` stays
 "search all messages", so Zed's `cmd-k <arrow>` chords, which would make `cmd-k` wait a

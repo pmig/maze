@@ -1,4 +1,4 @@
-//! Senders allowed to load remote content ("Always for this sender", schema v11).
+//! Senders allowed to load remote content ("Always for this sender").
 
 use rusqlite::{Connection, OptionalExtension, params};
 

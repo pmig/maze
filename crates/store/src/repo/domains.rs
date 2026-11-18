@@ -1,10 +1,8 @@
-//! The domain index (`migrations/main/0014_domains.sql`, PLAN-contacts §3b): the
+//! The domain index (`domain` and `message_domain`, PLAN-contacts §3b): the
 //! registrable domain of every address in mail, with message counts kept by triggers,
 //! contact counts derived from the `contact` table, and each domain's favicon state.
 //!
-//! - New messages are indexed when they are stored ([`WriteTx::upsert_message`]);
-//!   messages from before the migration by [`WriteTx::backfill_domains`], in batches,
-//!   idempotently.
+//! - Messages are indexed when they are stored ([`WriteTx::upsert_message`]).
 //! - Your own identity addresses are left out, so your own domain only shows the other
 //!   people there. A message from one of your identities marks its recipients' domains
 //!   as "sent to" (`sent_count`), which the favicon privacy default looks at.
@@ -111,15 +109,6 @@ impl fmt::Debug for DomainContact {
     }
 }
 
-/// How far [`WriteTx::backfill_domains`] got.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DomainBackfill {
-    /// Messages indexed by this call.
-    pub indexed: usize,
-    /// Whether every message from before the domain index is indexed now.
-    pub done: bool,
-}
-
 const STATS_COLUMNS: &str = "name, message_count, from_count, sent_count, last_seen, \
      favicon_state, favicon_checked, favicon_key";
 
@@ -215,16 +204,6 @@ pub(crate) fn domain_contacts(conn: &Connection, name: &str) -> Result<Vec<Domai
     Ok(contacts)
 }
 
-/// Whether messages from before the domain index still wait for
-/// [`WriteTx::backfill_domains`].
-pub(crate) fn domain_backfill_pending(conn: &Connection) -> Result<bool> {
-    let pending: Option<bool> = conn
-        .prepare_cached("SELECT next_message <= last_message FROM domain_backfill WHERE id = 1")?
-        .query_row([], |row| row.get(0))
-        .optional()?;
-    Ok(pending.unwrap_or(false))
-}
-
 /// Your identity addresses, lowercase.
 fn identity_emails(conn: &Connection) -> Result<HashSet<String>> {
     let mut stmt = conn.prepare_cached("SELECT lower(trim(email)) FROM identity")?;
@@ -289,9 +268,6 @@ fn insert_message_domains(
     Ok(added)
 }
 
-/// `id, from_addr, to_json, cc_json` of a message to backfill.
-type BackfillRow = (i64, Option<String>, Option<String>, Option<String>);
-
 /// A random id for a favicon's cache entry (so file names don't tell which domain it
 /// belongs to).
 fn random_cache_key() -> BlobId {
@@ -319,67 +295,6 @@ impl WriteTx<'_> {
             self.changes.domains = true;
         }
         Ok(())
-    }
-
-    /// Indexes up to `limit` messages stored before the domain index existed, in id
-    /// order, and remembers how far it got. Safe to run again (rows that exist are
-    /// kept); the core calls it in the background until it reports `done`.
-    pub fn backfill_domains(&mut self, limit: usize) -> Result<DomainBackfill> {
-        let range: Option<(i64, i64)> = self
-            .conn
-            .prepare_cached("SELECT next_message, last_message FROM domain_backfill WHERE id = 1")?
-            .query_row([], |row| Ok((row.get(0)?, row.get(1)?)))
-            .optional()?;
-        let Some((next, last)) = range else {
-            return Ok(DomainBackfill {
-                indexed: 0,
-                done: true,
-            });
-        };
-        if next > last {
-            return Ok(DomainBackfill {
-                indexed: 0,
-                done: true,
-            });
-        }
-        let limit = limit.max(1);
-        let rows: Vec<BackfillRow> = self
-            .conn
-            .prepare_cached(
-                "SELECT id, from_addr, to_json, cc_json FROM message
-                 WHERE id >= ?1 AND id <= ?2 ORDER BY id LIMIT ?3",
-            )?
-            .query_map(params![next, last, limit as i64], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-            })?
-            .collect::<rusqlite::Result<_>>()?;
-        let identities = identity_emails(self.conn)?;
-        let mut added = 0;
-        for (id, from, to, cc) in &rows {
-            // Unreadable address lists (never written by this store) are skipped.
-            let parse = |json: &Option<String>| -> Vec<Address> {
-                json.as_deref()
-                    .and_then(|json| serde_json::from_str(json).ok())
-                    .unwrap_or_default()
-            };
-            let domains = message_domains(from.as_deref(), &parse(to), &parse(cc), &identities);
-            added += insert_message_domains(self.conn, *id, &domains)?;
-        }
-        let new_next = if rows.len() < limit {
-            last + 1
-        } else {
-            rows.last().map_or(last + 1, |row| row.0 + 1)
-        };
-        self.conn
-            .prepare_cached("UPDATE domain_backfill SET next_message = ?1 WHERE id = 1")?
-            .execute([new_next])?;
-        if added > 0 {
-            self.changes.domains = true;
-        }
-        Ok(DomainBackfill {
-            indexed: rows.len(),
-            done: new_next > last,
-        })
     }
 
     /// Stores a domain's favicon (a small PNG) in the encrypted cache and marks it
@@ -571,7 +486,6 @@ mod tests {
             })
             .unwrap();
         assert_eq!(counts(&store), expected());
-        assert!(!store.reader().unwrap().domain_backfill_pending().unwrap());
 
         let first = ids[0];
         store
@@ -590,65 +504,6 @@ mod tests {
             .write_blocking(move |w| w.delete_account(account))
             .unwrap();
         assert_eq!(counts(&store), vec![]);
-    }
-
-    #[test]
-    fn backfill_indexes_older_messages_once() {
-        let tmp = tempfile::tempdir().unwrap();
-        let store = open(tmp.path());
-        let (account, inbox) = setup(&store);
-        let messages = sample(account, inbox);
-        store
-            .write_blocking(move |w| {
-                for m in &messages {
-                    w.upsert_message(m)?;
-                }
-                // As if these messages were stored before the domain index existed, with
-                // the first one indexed already (a backfill interrupted after its commit
-                // is the same situation).
-                w.conn.execute_batch(
-                    "DELETE FROM message_domain WHERE message_id <> 1;
-                     DELETE FROM domain WHERE message_count = 0;
-                     UPDATE domain_backfill
-                       SET next_message = 1, last_message = (SELECT max(id) FROM message);",
-                )?;
-                Ok(())
-            })
-            .unwrap();
-        assert!(store.reader().unwrap().domain_backfill_pending().unwrap());
-        let mut rounds = Vec::new();
-        loop {
-            let progress = store.write_blocking(|w| w.backfill_domains(2)).unwrap();
-            rounds.push(progress);
-            if progress.done {
-                break;
-            }
-        }
-        assert_eq!(
-            rounds,
-            vec![
-                DomainBackfill {
-                    indexed: 2,
-                    done: false
-                },
-                DomainBackfill {
-                    indexed: 1,
-                    done: true
-                }
-            ]
-        );
-        assert_eq!(counts(&store), expected());
-        assert!(!store.reader().unwrap().domain_backfill_pending().unwrap());
-        // Done stays done.
-        let again = store.write_blocking(|w| w.backfill_domains(2)).unwrap();
-        assert_eq!(
-            again,
-            DomainBackfill {
-                indexed: 0,
-                done: true
-            }
-        );
-        assert_eq!(counts(&store), expected());
     }
 
     #[test]

@@ -739,7 +739,7 @@ pub enum SyncState {
         /// Messages total.
         total: u64,
     },
-    /// No account syncs (none added yet, or only Local Folders of an older Maze).
+    /// No account syncs (none added yet).
     NoAccounts,
     /// What the sync engine says, for states without progress ("Connecting…",
     /// "Offline: … Maze will try again in 30 seconds.").

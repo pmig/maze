@@ -26,9 +26,9 @@ Folders. The Thunderbird import can stay."
 
 Maze is IMAP only, and every message lives in a server account.
 
-- There are no local accounts any more. Nothing creates one (the store refuses), the
-  importers don't, and the only code left for them reads the remaining legacy accounts
-  (below). POP3 is neither offered nor mentioned.
+- There are no local accounts any more. The store has no kind for them (`account.kind`
+  is `imap`, `gmail` or `m365`) and the importers don't create any. POP3 is neither
+  offered nor mentioned.
 - `mazemail import <file.mbox|maildir>` uploads into a folder of an IMAP account:
   `--account` picks the account (optional only when there is exactly one), `--folder`
   a slash-separated path below it (created on the server if missing; by default a
@@ -43,22 +43,15 @@ Maze is IMAP only, and every message lives in a server account.
   the offline body reuse for IMAP accounts. It skips POP3 accounts and Local Folders,
   each with an entry in the import result that says what to do instead, and skips the
   filters of skipped accounts.
-- `mazemail export` stays: it's how mail leaves Maze, and the way out for existing
-  Local Folders.
+- `mazemail export` stays: it's how mail leaves Maze.
 
-For **existing local accounts** we considered (a) keeping the rows while the app hides
-them, with a notice and an export path, and (b) deleting them, but only if they are
-empty. We do both, without hiding anything:
-
-- Store migration 0010 deletes local accounts that hold no messages.
-- Local accounts that still hold messages are kept, never synced, still visible,
-  searchable and exportable. At every start Maze shows a notification: Local Folders
-  are no longer supported; export them with
-  `mazemail export 'account:"<name>"' --to <file>.mbox` and import the file into an
-  IMAP account with `mazemail import <file>.mbox --account <account>`; they will be
-  removed in a later version.
-
-User mail is never deleted silently.
+For **existing local accounts** of the development builds we first kept the ones that
+held mail (read-only, never synced, exportable, with a notice at every start) and
+deleted the empty ones. That transition is done: before the first release (0.1.0) the
+store schema was squashed into one v1, the legacy account kind, the notice and the
+migration code were removed, and a development database still holding Local Folders
+loses them when it is converted to v1 (the pre-migration backup keeps them). No
+released version of Maze ever had Local Folders.
 
 ## Consequences
 
@@ -74,10 +67,7 @@ User mail is never deleted silently.
   op, the message is uploaded twice. Once the folder has synced, the next import run's
   Message-ID check recognizes the message, so a re-run never adds a third copy.
 - A pending `APPEND` must keep its message blob alive until the server has it.
-  Migration 0010 adds `pending_op.blob_id` with the same reference-count triggers as
-  the other blob references, so garbage collection keeps the blob until the op is done.
-- The store keeps parsing `kind = 'local'` as a legacy variant so the remaining Local
-  Folders stay readable; the `CHECK` constraint keeps the value. A later version
-  removes the variant together with the remaining local accounts.
+  `pending_op.blob_id` holds it, with the same reference-count triggers as the other
+  blob references, so garbage collection keeps the blob until the op is done.
 - Users who relied on Local Folders as an offline archive move that mail into a folder
   on their server (or keep an export).

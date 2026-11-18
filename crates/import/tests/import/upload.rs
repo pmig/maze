@@ -270,7 +270,7 @@ fn messages_without_message_id_are_recognized_by_date_sender_and_subject() {
 }
 
 #[test]
-fn only_server_folders_of_imap_accounts_are_targets() {
+fn only_server_folders_of_the_account_are_targets() {
     let env = Env::new();
     let path = env.scratch("src").join("x");
     write_mbox(&path, &[(message(1, ""), Flags::SEEN, vec![])]);
@@ -279,16 +279,16 @@ fn only_server_folders_of_imap_accounts_are_targets() {
         account: imap.account,
         folder: folder(&env.store, imap.account, None, "Nowhere", None),
     };
-    let jmap = account(&env.store, AccountKind::Jmap, "JMAP");
+    let other = account(&env.store, AccountKind::Gmail, "Other");
     let wrong_account = UploadTarget {
-        account: jmap,
+        account: other,
         folder: imap.folder,
     };
-    let jmap_folder = UploadTarget {
-        account: jmap,
-        folder: folder(&env.store, jmap, None, "Inbox", Some("Inbox")),
+    let missing_account = UploadTarget {
+        account: AccountId(9999),
+        folder: imap.folder,
     };
-    for target in [not_on_server, wrong_account, jmap_folder] {
+    for target in [not_on_server, wrong_account, missing_account] {
         assert!(
             matches!(
                 upload_mbox(&env.store, &path, target, "cli", &NoProgress),
@@ -297,19 +297,6 @@ fn only_server_folders_of_imap_accounts_are_targets() {
             "{target:?}"
         );
     }
-    // Nothing creates local accounts any more.
-    assert!(
-        env.store
-            .write_blocking(|w| {
-                w.create_account(&NewAccount {
-                    kind: AccountKind::LegacyLocal,
-                    name: "Local Folders".to_owned(),
-                    config_json: "{}".to_owned(),
-                    ordinal: 0,
-                })
-            })
-            .is_err()
-    );
     env.close();
 }
 

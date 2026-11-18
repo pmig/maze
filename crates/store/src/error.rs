@@ -43,6 +43,16 @@ pub enum Error {
         supported: u32,
     },
 
+    /// The database is from a development build of Maze before the first release, at
+    /// its last schema, but doesn't match it, so it isn't converted (nothing was
+    /// changed). The value names the schema objects that differ.
+    #[error(
+        "the database is from a development build of Maze and its schema can't be converted \
+         (differs in: {0}); open it with the build that wrote it, or start with a new data \
+         directory"
+    )]
+    DevSchema(String),
+
     /// Applying a schema migration failed. The pre-migration backup is untouched.
     #[error("database migration failed: {0}")]
     Migration(#[source] rusqlite_migration::Error),

@@ -142,7 +142,7 @@ pub use message::{AuthStatus, Body, MessageView, RENDERER_VERSION, RemoteContent
 pub use new_mail::{NewMail, NewMailBatch};
 pub use outgoing::{SmtpServerSettings, SmtpSuggestion, smtp_default_port, suggest_smtp_server};
 pub use row_cache::{DEFAULT_ROW_CACHE_CAPACITY, RowCacheStats};
-pub use secrets::{LegacyMoveReport, StoreSecretStore, move_legacy_secrets};
+pub use secrets::StoreSecretStore;
 pub use storage::StorageUsage;
 pub use sync_bridge::{
     FetchPriority, NoSync, RefreshScope, SyncBridge, SyncState, SyncStatus, SyncStatusSink,

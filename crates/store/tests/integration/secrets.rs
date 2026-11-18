@@ -87,12 +87,6 @@ fn secrets_round_trip_per_account_and_go_with_the_account() {
         secret(&store, home_uuid, "password").as_deref(),
         Some("home")
     );
-
-    // New accounts never had keychain items.
-    assert_eq!(
-        store.reader().unwrap().legacy_secret_accounts().unwrap(),
-        Vec::<store::Uuid>::new()
-    );
     common::close(store);
 }
 

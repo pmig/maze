@@ -1,6 +1,6 @@
 //! Account secrets (ADR-017): IMAP passwords, OAuth refresh tokens and SMTP
 //! passwords, in the encrypted database instead of separate OS keychain items. Also
-//! agents' sign-in keys (`agent_secret`, schema v6): an API key or token per agent and
+//! agents' sign-in keys (`agent_secret`): an API key or token per agent and
 //! the environment variable it is passed in.
 //!
 //! The store doesn't know what the secrets are: `kind` is the `auth` crate's name for
@@ -30,20 +30,6 @@ pub(crate) fn account_secret(
             row.get::<_, String>(0).map(Zeroizing::new)
         })
         .optional()?)
-}
-
-/// Accounts whose secrets may still be in the OS keychain (created before schema v5
-/// and not moved yet).
-pub(crate) fn legacy_secret_accounts(conn: &Connection) -> Result<Vec<Uuid>> {
-    let mut stmt = conn
-        .prepare_cached("SELECT account_uuid FROM legacy_secret_account ORDER BY account_uuid")?;
-    let uuids: Vec<String> = stmt
-        .query_map([], |row| row.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
-    uuids
-        .iter()
-        .map(|uuid| Uuid::parse_str(uuid).map_err(|_| Error::Invalid("invalid account uuid")))
-        .collect()
 }
 
 /// The sign-in key of an agent: the environment variable and the secret.
@@ -122,27 +108,6 @@ impl WriteTx<'_> {
         self.conn
             .prepare_cached("DELETE FROM account_secret WHERE account_uuid = ?1 AND kind = ?2")?
             .execute(params![text(account), kind])?;
-        Ok(())
-    }
-
-    /// Puts `account` on the list of accounts whose secrets may still be in the OS
-    /// keychain. The v5 migration does this for every account that existed before it;
-    /// tests use it to stage a move.
-    pub fn list_legacy_secrets(&mut self, account: Uuid) -> Result<()> {
-        self.conn
-            .prepare_cached(
-                "INSERT OR IGNORE INTO legacy_secret_account (account_uuid) VALUES (?1)",
-            )?
-            .execute([text(account)])?;
-        Ok(())
-    }
-
-    /// Takes `account` off the list of accounts whose secrets may still be in the OS
-    /// keychain ([`Queries::legacy_secret_accounts`](crate::Queries::legacy_secret_accounts)).
-    pub fn finish_legacy_secrets(&mut self, account: Uuid) -> Result<()> {
-        self.conn
-            .prepare_cached("DELETE FROM legacy_secret_account WHERE account_uuid = ?1")?
-            .execute([text(account)])?;
         Ok(())
     }
 }

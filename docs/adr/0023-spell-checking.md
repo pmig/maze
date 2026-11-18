@@ -36,7 +36,7 @@ written in plaintext.
   check and cached, because the right-click menu is built synchronously; a menu
   opened before they are ready waits at most 150 ms on a helper thread.
 - **Personal dictionary:** one list for all languages in the encrypted database
-  (`spelling_word`, schema v12), read and written through `mazemail_core` and the
+  (`spelling_word`), read and written through `mazemail_core` and the
   composer's `ComposeBackend`, cached in a GPUI global so every open composer re-checks
   when a word is added. "Ignore" lasts for the draft only.
 - **Setting:** `spellcheck` is a list of tags, `[]` (or `true`) for the system's
