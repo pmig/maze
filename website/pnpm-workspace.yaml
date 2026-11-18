@@ -9,3 +9,18 @@ allowBuilds:
 # validation bypass, denial of service); miniflare (wrangler) pins an older 7.x.
 overrides:
   "undici@>=7.0.0 <7.30.1": 7.30.1
+
+# @emnapi/runtime is a devDependency (1.11.3) only to settle a peer: since astro 7.4.7
+# it would otherwise resolve to 2.0.0-beta.2 for @astrojs/check too, whose
+# @napi-rs/wasm-runtime 1.2.4 pairs it with @emnapi/core 1.x, and `astro check` then
+# crashes on exit ("this.bridge.deleteEnv is not a function"). Drop it once
+# @astrojs/check ships a wasm-runtime built for emnapi 2.
+
+# Advisories that don't apply to this site (`pnpm audit`; the GitHub alert is
+# dismissed with the same reason).
+auditConfig:
+  ignoreGhsas:
+    # picomatch <= 4.0.7: ReDoS through repeated extglobs (no fixed release yet). Only
+    # Astro's build tools use it (fdir, anymatch), with glob patterns from this repo;
+    # the deployed site is static, so no outside input reaches it.
+    - GHSA-fc5q-39xc-vjpf
