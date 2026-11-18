@@ -25,16 +25,16 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 
 use gpui::SharedString;
 use mazemail_types::{
-    AccountId, Address, Flags, FolderId, FolderRole, MessageId, Sensitive, ThreadId,
+    AccountId, Address, Flags, FolderId, FolderRole, MessageId, SavedSearchId, Sensitive, ThreadId,
 };
 use time::{Duration, OffsetDateTime};
 
 use crate::source::{
     AccountActivity, AccountEntry, AccountKind, AttachmentFile, AttachmentInfo, BodyLink,
     Direction, FolderEntry, FolderKey, FolderTree, ListSort, MailSource, MessageBody,
-    MessageDocument, MessageKeys, MessageRow, OriginalHtml, SenderClient, SortBy, SourceError,
-    SourceStatus, StorageUsage, SyncState, ThreadFilter, ThreadKeys, ThreadPredicate, ThreadRow,
-    ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
+    MessageDocument, MessageKeys, MessageRow, OriginalHtml, SavedSearchEntry, SenderClient, SortBy,
+    SourceError, SourceStatus, StorageUsage, SyncState, ThreadFilter, ThreadKeys, ThreadPredicate,
+    ThreadRow, ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
 };
 use crate::source::{AddressBookEntry, ContactDetail, ContactQuery, ContactRow};
 
@@ -419,6 +419,8 @@ pub struct FakeMailSource {
     /// Whether searches over all mail include the 1M folder (see
     /// [`FakeMailSource::without_large_folder_in_searches`]).
     search_large_folder: bool,
+    /// Saved searches, in order (kept apart from [`State`], which undo restores).
+    saved_searches: Mutex<Vec<SavedSearchEntry>>,
 }
 
 /// A folder action the fake was asked for (see [`FakeMailSource::folder_actions`]).
@@ -481,6 +483,7 @@ impl FakeMailSource {
             folder_actions: Mutex::new(Vec::new()),
             aliases: Mutex::new(HashMap::new()),
             search_large_folder: true,
+            saved_searches: Mutex::new(Vec::new()),
         }
     }
 
@@ -948,6 +951,68 @@ impl FakeMailSource {
             .clear();
     }
 
+    fn saved(&self) -> std::sync::MutexGuard<'_, Vec<SavedSearchEntry>> {
+        self.saved_searches
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// A saved search's scope as the search it runs: all mail, its query (plain words
+    /// in the fake) narrowed by the filter's text. `None` for other scopes.
+    fn saved_search_scope(
+        &self,
+        scope: &ThreadScope,
+        filter: &ThreadFilter,
+    ) -> Result<Option<(ThreadScope, ThreadFilter)>, SourceError> {
+        let ThreadScope::Folder(FolderKey::SavedSearch(id)) = scope else {
+            return Ok(None);
+        };
+        let query = self
+            .saved()
+            .iter()
+            .find(|s| s.id == *id)
+            .map(|s| s.query.expose().to_string())
+            .ok_or(SourceError::FolderNotFound)?;
+        let text = [query.as_str(), filter.text.as_deref().unwrap_or("")]
+            .join(" ")
+            .trim()
+            .to_owned();
+        let filter = ThreadFilter {
+            text: Some(text),
+            ..filter.clone()
+        };
+        Ok(Some((ThreadScope::AllFolders, filter)))
+    }
+
+    /// Checks a saved search's name and query like the core: both needed, names unique
+    /// ignoring case.
+    fn check_saved_search(
+        saved: &[SavedSearchEntry],
+        except: Option<SavedSearchId>,
+        name: &str,
+        query: &str,
+    ) -> Result<(), SourceError> {
+        if name.trim().is_empty() {
+            return Err(SourceError::Unavailable(
+                "a saved search needs a name".into(),
+            ));
+        }
+        if query.trim().is_empty() {
+            return Err(SourceError::Unavailable(
+                "a saved search needs a query".into(),
+            ));
+        }
+        let taken = saved
+            .iter()
+            .any(|s| Some(s.id) != except && s.name.to_lowercase() == name.trim().to_lowercase());
+        if taken {
+            return Err(SourceError::Unavailable(
+                "a saved search with that name exists already".into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn members(role: FolderRole) -> impl Iterator<Item = usize> {
         (0..FOLDERS.len()).filter(move |ix| FOLDERS[*ix].role == Some(role))
     }
@@ -959,6 +1024,8 @@ impl FakeMailSource {
                 .map(|ix| vec![ix])
                 .ok_or(SourceError::FolderNotFound),
             ThreadScope::Folder(FolderKey::Unified(role)) => Ok(Self::members(*role).collect()),
+            // Resolved to a search over all folders before.
+            ThreadScope::Folder(FolderKey::SavedSearch(_)) => Err(SourceError::FolderNotFound),
             ThreadScope::AllFolders => Ok((0..FOLDERS.len())
                 .filter(|ix| self.search_large_folder || *ix != LARGE_FOLDER)
                 .collect()),
@@ -1353,6 +1420,7 @@ impl MailSource for FakeMailSource {
         FolderTree {
             favorites,
             unified,
+            saved_searches: self.saved().clone(),
             accounts,
         }
     }
@@ -1410,6 +1478,45 @@ impl MailSource for FakeMailSource {
         Ok(())
     }
 
+    fn save_search(&self, name: &str, query: &str) -> Result<SavedSearchId, SourceError> {
+        let mut saved = self.saved();
+        Self::check_saved_search(&saved, None, name, query)?;
+        let id = SavedSearchId(saved.iter().map(|s| s.id.0).max().unwrap_or(0) + 1);
+        saved.push(SavedSearchEntry {
+            id,
+            name: name.trim().to_owned().into(),
+            query: Sensitive::new(query.trim().to_owned().into()),
+        });
+        Ok(id)
+    }
+
+    fn edit_saved_search(
+        &self,
+        id: SavedSearchId,
+        name: &str,
+        query: &str,
+    ) -> Result<(), SourceError> {
+        let mut saved = self.saved();
+        Self::check_saved_search(&saved, Some(id), name, query)?;
+        let entry = saved
+            .iter_mut()
+            .find(|s| s.id == id)
+            .ok_or(SourceError::FolderNotFound)?;
+        entry.name = name.trim().to_owned().into();
+        entry.query = Sensitive::new(query.trim().to_owned().into());
+        Ok(())
+    }
+
+    fn delete_saved_search(&self, id: SavedSearchId) -> Result<(), SourceError> {
+        let mut saved = self.saved();
+        let before = saved.len();
+        saved.retain(|s| s.id != id);
+        if saved.len() == before {
+            return Err(SourceError::FolderNotFound);
+        }
+        Ok(())
+    }
+
     fn set_favorite(&self, folder: FolderId, favorite: bool) -> Result<(), SourceError> {
         let ix = folder_index(folder).ok_or(SourceError::FolderNotFound)?;
         let mut state = self.write_state();
@@ -1430,6 +1537,7 @@ impl MailSource for FakeMailSource {
         match folder {
             FolderKey::Folder(id) => folder_index(*id).map_or(0, count),
             FolderKey::Unified(role) => Self::members(*role).map(count).sum(),
+            FolderKey::SavedSearch(_) => 0,
         }
     }
 
@@ -1439,6 +1547,9 @@ impl MailSource for FakeMailSource {
         filter: &ThreadFilter,
         sort: ListSort,
     ) -> Result<ThreadKeys, SourceError> {
+        if let Some((scope, filter)) = self.saved_search_scope(scope, filter)? {
+            return self.thread_keys(&scope, &filter, sort);
+        }
         let cacheable = filter.is_empty();
         let cache_key = (scope.clone(), sort);
         if cacheable
@@ -1508,6 +1619,9 @@ impl MailSource for FakeMailSource {
         filter: &ThreadFilter,
         sort: ListSort,
     ) -> Result<MessageKeys, SourceError> {
+        if let Some((scope, filter)) = self.saved_search_scope(scope, filter)? {
+            return self.message_keys(&scope, &filter, sort);
+        }
         let cacheable = filter.is_empty();
         let cache_key = (scope.clone(), sort);
         if cacheable

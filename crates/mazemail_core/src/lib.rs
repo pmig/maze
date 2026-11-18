@@ -20,7 +20,7 @@
 //! | Queries  | [`accounts`](CoreHandle::accounts), [`folders`](CoreHandle::folders), [`thread_list`](CoreHandle::thread_list), [`rows`](CoreHandle::rows): synchronous, cheap, no network |
 //! | Lists    | [`message_list`](CoreHandle::message_list), [`message_rows`](CoreHandle::message_rows) (threads off), [`thread_tree`](CoreHandle::thread_tree), [`thread_message_counts`](CoreHandle::thread_message_counts) (expanded threads) |
 //! | Messages | [`message`](CoreHandle::message), [`verify_auth`](CoreHandle::verify_auth) |
-//! | Search   | [`search`](CoreHandle::search), [`quick_filter_body`](CoreHandle::quick_filter_body), [`sort_threads`](CoreHandle::sort_threads) / [`sort_messages`](CoreHandle::sort_messages) (search results by any column) |
+//! | Search   | [`search`](CoreHandle::search), [`saved_searches`](CoreHandle::saved_searches) / [`search_saved`](CoreHandle::search_saved) (see [`saved_searches`](mod@saved_searches)), [`quick_filter_body`](CoreHandle::quick_filter_body), [`sort_threads`](CoreHandle::sort_threads) / [`sort_messages`](CoreHandle::sort_messages) (search results by any column) |
 //! | Commands | [`apply`](CoreHandle::apply), [`undo`](CoreHandle::undo) |
 //! | Contacts | [`address_books`](CoreHandle::address_books), [`contacts`](CoreHandle::contacts) (All Contacts grouped by address, or one book), [`contact`](CoreHandle::contact) (every book's version), [`contact_book_editable`](CoreHandle::contact_book_editable) / [`save_contact`](CoreHandle::save_contact) (see [`contacts`](mod@contacts)) |
 //! | Google and Microsoft contacts | [`connect_contacts`](CoreHandle::connect_contacts) / [`disconnect_contacts`](CoreHandle::disconnect_contacts), [`contacts_status`](CoreHandle::contacts_status), [`sync_contacts_now`](CoreHandle::sync_contacts_now), [`create_contact`](CoreHandle::create_contact) / [`update_contact`](CoreHandle::update_contact) (write-through), [`synced_contact`](CoreHandle::synced_contact), [`contact_photo`](CoreHandle::contact_photo) (see [`synced_contacts`]) |
@@ -90,6 +90,7 @@ pub mod new_mail;
 pub mod ops;
 pub mod outgoing;
 pub mod reader_text;
+pub mod saved_searches;
 pub mod secrets;
 pub mod storage;
 pub mod sync_bridge;
@@ -167,11 +168,13 @@ pub use message_list::{MessageListRow, MessageListSnapshot};
 pub use thread_list::{ListQuery, QuickFilter, ThreadListSnapshot};
 pub use thread_tree::TreeNode;
 
+pub use mazemail_types::SavedSearchId;
+pub use saved_searches::SavedSearchChange;
 /// Store types that are part of this API.
 pub use store::{
     Account, AccountKind, AgentThread, AgentThreadId, ContactId, ListKey, ListOrder, ListScope,
     MessageKey, MessageRow, OpId, ProposalId, ProposalItemId, ProposalItemState, ProposalState,
-    RuleId, SortField, SortOrder, Tag, ThreadRow, TokenId,
+    RuleId, SavedSearch, SortField, SortOrder, Tag, ThreadRow, TokenId,
 };
 
 /// Search types that are part of this API.

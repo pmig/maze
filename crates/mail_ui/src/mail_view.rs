@@ -23,7 +23,7 @@ use gpui_kit::component::{
     resizable::{HandleEdge, resize_handle},
     v_flex,
 };
-use mazemail_types::{FolderId, FolderRole, MessageId, ThreadId};
+use mazemail_types::{FolderId, FolderRole, MessageId, SavedSearchId, ThreadId};
 use serde::{Deserialize, Serialize};
 use time::UtcOffset;
 use ui::assets::IconName;
@@ -64,8 +64,9 @@ impl std::fmt::Debug for MailViewContext {
     }
 }
 
-/// What a mail view shows, as the layout file keeps it: folder ids, never names.
-/// Search results are kept as the unified Inbox (the query isn't written to disk).
+/// What a mail view shows, as the layout file keeps it: folder and saved search ids,
+/// never names. Search results are kept as the unified Inbox (the query isn't written
+/// to disk).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SerializedFolder {
@@ -79,6 +80,11 @@ pub enum SerializedFolder {
         /// Its role.
         role: FolderRole,
     },
+    /// A saved search.
+    SavedSearch {
+        /// The saved search.
+        id: SavedSearchId,
+    },
 }
 
 impl SerializedFolder {
@@ -87,6 +93,7 @@ impl SerializedFolder {
         match self {
             Self::Folder { id } => FolderKey::Folder(id),
             Self::Unified { role } => FolderKey::Unified(role),
+            Self::SavedSearch { id } => FolderKey::SavedSearch(id),
         }
     }
 
@@ -95,6 +102,7 @@ impl SerializedFolder {
         match scope {
             ThreadScope::Folder(FolderKey::Folder(id)) => Self::Folder { id: *id },
             ThreadScope::Folder(FolderKey::Unified(role)) => Self::Unified { role: *role },
+            ThreadScope::Folder(FolderKey::SavedSearch(id)) => Self::SavedSearch { id: *id },
             ThreadScope::AllFolders => Self::Unified {
                 role: FolderRole::Inbox,
             },
@@ -222,6 +230,17 @@ impl MailView {
             .update(cx, |list, cx| list.open(scope, title, search, cx));
         cx.emit(ItemEvent::UpdateTab);
         cx.emit(ItemEvent::Edited);
+        cx.notify();
+    }
+
+    /// A saved search shown here may have a new name or query: retitles the view and
+    /// re-runs the search, keeping the selection.
+    pub fn refresh_saved_search(&mut self, title: SharedString, cx: &mut Context<'_, Self>) {
+        self.thread_list.update(cx, |list, cx| {
+            list.set_title(title, cx);
+            list.refresh(cx);
+        });
+        cx.emit(ItemEvent::UpdateTab);
         cx.notify();
     }
 
@@ -492,9 +511,10 @@ impl Item for MailView {
     }
 
     fn tab_icon(&self, cx: &App) -> Option<IconName> {
-        Some(match self.thread_list.read(cx).scope() {
-            ThreadScope::AllFolders => IconName::Search,
-            ThreadScope::Folder(_) => IconName::Inbox,
+        Some(if self.thread_list.read(cx).scope().is_search() {
+            IconName::Search
+        } else {
+            IconName::Inbox
         })
     }
 

@@ -568,6 +568,8 @@ content. A tab whose message or draft no longer exists is left out.
 
 The folder pane on the left has three sections: **Favorites**, **Unified Folders** (the
 Inbox, Sent, … of all accounts together) and **Accounts** with each account's folders.
+Once you have [saved searches](#saved-searches), a **Saved Searches** section follows
+Unified Folders.
 Click a section's or an account's name to collapse or expand it.
 
 Each account lists its special folders first, in a fixed order: Inbox, Drafts, Sent,
@@ -609,7 +611,8 @@ folder no longer exists (or whose account was renamed) is hidden, not deleted.
 **Go to Folder** (`cmd-k`, or "Mail: Go To Folder" in the command palette) opens any
 folder without the mouse: type part of its name, pick it with the arrow keys and press
 `enter`. It lists the unified folders, then your favorites, then every folder of every
-account as its path ("Work / Archives / 2025"). The folders you opened from it last come
+account as its path ("Work / Archives / 2025"); saved searches are listed after the
+unified folders as "Saved Searches / Invoices". The folders you opened from it last come
 first. `arc25` finds "Archives / 2025": every word you type must appear in the path, in
 order if not in one piece.
 
@@ -791,6 +794,30 @@ search exactly.
 Like Gmail, search leaves out mail that is only in Trash or Junk, so what you delete
 from the results is gone from them. Add `in:trash` or `in:spam` to the query, or search
 in the Trash or Junk folder, to find it there.
+
+### Saved searches
+
+A saved search is a search with a name that the folder pane lists under **Saved
+Searches**, like Thunderbird's saved searches (virtual folders). Selecting it shows the
+mail of every account that matches its query, and the list follows your mail: new mail
+that matches appears, and mail you read, move or delete leaves it when it no longer
+matches (`invoice is:unread` empties as you read). The Quick Filter and its buttons
+narrow it like a folder.
+
+- **Save a search:** search all messages, then click **Save Search…** above the
+  results (or press `cmd-alt-s`, or run "Search: Save Search" from the command
+  palette). Give it a name; the query is filled in and can be changed. Names are
+  unique, ignoring case.
+- **Edit or delete:** right-click it in the folder pane and choose **Edit Saved
+  Search…** (name and query) or **Delete Saved Search…**. Deleting asks first and never
+  touches the mail it found. With a saved search open, "Search: Edit Saved Search" and
+  "Search: Delete Saved Search" in the palette do the same.
+
+Saved searches live in Maze's database, so they stay with your mail; a
+[Thunderbird import](#thunderbird-profiles) brings yours along. They search every
+folder, can't be favorites, and don't show unread counts yet. On the command line,
+`mazemail saved-search list|add|rename|edit|delete` manages them and
+`mazemail search --saved <name>` runs one (see the [CLI guide](cli.md)).
 
 ### Syncing
 
@@ -1304,6 +1331,7 @@ at once. These are bound today:
 | Go to Folder                                | `cmd-k`                                              |
 | Search all messages                         | `cmd-shift-f`, `cmd-/`                               |
 | Quick Filter                                | `cmd-f`, `cmd-shift-k`                               |
+| Save the shown search                       | `cmd-alt-s`                                          |
 | Toggle folder pane (book pane)              | `cmd-b` (or the title bar's left button)             |
 | Address Book / back to Mail                 | `cmd-shift-b` (or the spaces bar)                    |
 | Toggle message pane                         | `F8`                                                 |

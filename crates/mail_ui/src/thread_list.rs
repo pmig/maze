@@ -91,8 +91,8 @@ use ui::keymap::shortcut_label;
 use ui::theme::{scaled, ui_scale};
 
 use crate::actions::{
-    Archive, Delete, Forward, MoveToFolder, OpenMessage, Reply, ReplyAll, ReportJunk, SelectThread,
-    ToggleRead, ToggleStar,
+    Archive, Delete, Forward, MoveToFolder, OpenMessage, Reply, ReplyAll, ReportJunk, SaveSearch,
+    SelectThread, ToggleRead, ToggleStar,
 };
 use crate::format::{DateFormatter, format_size, format_thousands};
 use crate::list_model::{Expansions, RowPosition, TreeRow, tree_rows};
@@ -927,7 +927,7 @@ impl ThreadList {
         let filter = self.filter(cx);
         let scope = self.scope.clone();
         let (threaded, sort) = (self.prefs.threaded, self.prefs.sort);
-        if filter.text.is_none() && sort.is_by_date() {
+        if filter.text.is_none() && sort.is_by_date() && !scope.is_search() {
             let started = std::time::Instant::now();
             let keys = Self::load_keys(&self.source, &scope, &filter, threaded, sort);
             tracing::debug!(
@@ -1199,6 +1199,12 @@ impl ThreadList {
     /// [`ThreadListEvent::Selected`] only if the selected row is gone.
     pub fn refresh(&mut self, cx: &mut Context<'_, Self>) {
         self.reload(false, cx);
+    }
+
+    /// Gives the open list a new title (a renamed saved search).
+    pub fn set_title(&mut self, title: SharedString, cx: &mut Context<'_, Self>) {
+        self.title = title;
+        cx.notify();
     }
 
     /// Selects only `ix`, marks it read and tells the window.
@@ -2630,7 +2636,8 @@ impl ThreadList {
             (false, 1) => "message",
             (false, _) => "messages",
         };
-        let count = if self.loading.is_some() && self.filter(cx).text.is_some() {
+        let searching = self.filter(cx).text.is_some() || self.scope.is_search();
+        let count = if self.loading.is_some() && searching {
             SharedString::from("Searching…")
         } else if self.loading.is_some() && !self.prefs.sort.is_by_date() {
             SharedString::from("Sorting…")
@@ -2671,6 +2678,20 @@ impl ThreadList {
                             .text_color(theme.muted_foreground)
                             .child(count),
                     )
+                    .when(self.search.is_some(), |this| {
+                        this.child(
+                            Button::new("save-search")
+                                .debug_selector(|| "save-search".to_owned())
+                                .ghost()
+                                .xsmall()
+                                .icon(IconName::Plus)
+                                .label("Save Search…")
+                                .tooltip("Show this search in the folder pane, by name")
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(Box::new(SaveSearch), cx);
+                                }),
+                        )
+                    })
                     .child(
                         Button::new("sort-menu")
                             .ghost()

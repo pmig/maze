@@ -88,10 +88,10 @@ or fails with exit code 3 (**deny**).
 
 | Commands                                                      | read-only | triage  | writer |
 | ------------------------------------------------------------- | --------- | ------- | ------ |
-| `search`, `show`, `folders`, `tags`, `contacts`, `identities`, `token list` | allow | allow | allow |
-| `draft new`, `draft edit`, `propose`                          | deny      | allow   | allow  |
+| `search`, `show`, `folders`, `tags`, `contacts`, `identities`, `token list`, `saved-search list` | allow | allow | allow |
+| `draft new`, `draft edit`, `propose`, `saved-search add`, `saved-search rename`, `saved-search edit` | deny | allow | allow |
 | `archive`, `move`, `tag`, `flag`, `read`                      | deny      | propose | allow  |
-| `import`, `export`, `rule add`, `token revoke` (other tokens) | deny      | ask     | ask    |
+| `import`, `export`, `rule add`, `token revoke` (other tokens), `saved-search delete` | deny | ask | ask |
 | `send`                                                        | deny      | ask with `--allow-send` | ask with `--allow-send` |
 
 Permanent delete isn't available to tokens at all. `mazemail help` lists every command
@@ -142,6 +142,27 @@ keep working.
 
 Only one Maze (app or headless) can open a data directory at a time.
 
+## Saved searches
+
+Saved searches are the named searches Maze's folder pane lists under Saved Searches
+(see [getting-started.md](getting-started.md#saved-searches)). Manage them by name or
+id (`s_…`):
+
+```sh
+mazemail saved-search list
+mazemail saved-search add Invoices 'invoice has:attachment'
+mazemail saved-search rename Invoices Bills
+mazemail saved-search edit Bills 'invoice OR receipt has:attachment'
+mazemail saved-search delete Bills                  # asks in Maze
+mazemail search --saved Invoices                    # run one
+mazemail search --saved Invoices 'after:2026-01-01' # a query narrows it
+```
+
+Adding, renaming and editing change only what Maze shows, never mail, so a triage token
+may do them; deleting asks. Every token sees every saved search's name and query, but
+`search --saved` only returns mail in the token's scope, like any search. Maze's folder
+pane shows the changes at once.
+
 ## Exit codes
 
 | Code | Meaning                              |
@@ -161,7 +182,7 @@ Only one Maze (app or headless) can open a data directory at a time.
 `export`, `account list`, `account add` (with `--smtp-host`, `--smtp-port` and
 `--smtp-security` for the server Maze sends through, and `--tenant` for the
 organization of a `--oauth microsoft` sign-in), `account set` (a new name, password or
-servers, or `--sign-in` again), `account remove` and `sync` work.
+servers, or `--sign-in` again), `account remove`, `sync` and `saved-search` work.
 Writing and sending mail works in the app; the CLI commands for it (`draft new`,
 `draft edit`, `send`) and `rule add` and `attachment save` fail with "not available in
 this version" (exit code 1), and so does a `propose` batch with an `unsubscribe` item.

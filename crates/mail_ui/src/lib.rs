@@ -39,6 +39,7 @@ pub mod message_tab;
 pub mod message_view;
 pub mod perf;
 pub mod quick_move;
+pub mod saved_search;
 pub mod selection;
 pub mod settings_editor;
 pub mod source;

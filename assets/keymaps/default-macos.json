@@ -40,6 +40,8 @@
       "cmd-f": "search::QuickFilter",
       "cmd-shift-f": "search::FocusSearch",
       "cmd-/": "search::FocusSearch",
+      // Save the shown search as a saved search (Thunderbird has no key for it).
+      "cmd-alt-s": "search::SaveSearch",
       // Thunderbird: F5 gets new messages (Windows, Linux), cmd-shift-t gets them for
       // all accounts. Both sync every account; the last binding is the one shown.
       "f5": "mail::SyncNow",

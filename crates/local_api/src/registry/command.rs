@@ -7,7 +7,9 @@ use super::args::{
     AccountAddArgs, AccountListArgs, AccountRemoveArgs, AccountSetArgs, ArchiveArgs,
     AttachmentSaveArgs, ContactsArgs, DraftEditArgs, DraftNewArgs, ExportArgs, FlagArgs,
     FoldersArgs, IdentitiesArgs, ImportArgs, ImportFormat, MoveArgs, OAuthProvider, ProposeArgs,
-    ReadArgs, RuleAddArgs, SearchArgs, SendArgs, ShowArgs, SyncArgs, TagArgs, TagsArgs,
+    ReadArgs, RuleAddArgs, SavedSearchAddArgs, SavedSearchDeleteArgs, SavedSearchEditArgs,
+    SavedSearchListArgs, SavedSearchRenameArgs, SearchArgs, SendArgs, ShowArgs, SyncArgs, TagArgs,
+    TagsArgs,
 };
 
 /// Arguments that don't match a command's schema.
@@ -113,6 +115,16 @@ mail_commands! {
     AccountSet(AccountSetArgs) = "account.set",
     /// `mazemail sync`.
     Sync(SyncArgs) = "sync",
+    /// `mazemail saved-search list`.
+    SavedSearchList(SavedSearchListArgs) = "saved-search.list",
+    /// `mazemail saved-search add`.
+    SavedSearchAdd(SavedSearchAddArgs) = "saved-search.add",
+    /// `mazemail saved-search rename`.
+    SavedSearchRename(SavedSearchRenameArgs) = "saved-search.rename",
+    /// `mazemail saved-search edit`.
+    SavedSearchEdit(SavedSearchEditArgs) = "saved-search.edit",
+    /// `mazemail saved-search delete`. Already approved by the user when it arrives.
+    SavedSearchDelete(SavedSearchDeleteArgs) = "saved-search.delete",
 }
 
 impl Command {
@@ -130,6 +142,15 @@ impl Command {
             return Err(ArgsError("ids: at least one id is required".into()));
         }
         match self {
+            Self::Search(args)
+                if args.saved.is_none()
+                    && args
+                        .query
+                        .as_ref()
+                        .is_none_or(|q| q.expose().trim().is_empty()) =>
+            {
+                Err(ArgsError("query: give a query or a saved search".into()))
+            }
             Self::Tag(args) if args.add.is_empty() && args.remove.is_empty() => {
                 Err(ArgsError("add or remove at least one tag".into()))
             }
@@ -234,7 +255,8 @@ mod tests {
         let Command::Search(args) = &command else {
             panic!("{command:?}");
         };
-        assert_eq!(args.query.expose(), "from:anna");
+        assert_eq!(args.query.as_ref().unwrap().expose(), "from:anna");
+        assert_eq!(args.saved, None);
         assert_eq!(args.limit, 50);
         assert_eq!(command.name(), "search");
         assert_eq!(Command::from_wire("login", json!({})).unwrap(), None);
@@ -247,6 +269,10 @@ mod tests {
         let error =
             Command::from_wire("search", json!({ "query": "x", "dry_run": true })).unwrap_err();
         assert!(error.0.contains("unknown field `dry_run`"), "{error}");
+        let error = Command::from_wire("search", json!({})).unwrap_err();
+        assert!(error.0.contains("saved search"), "{error}");
+        let saved = Command::from_wire("search", json!({ "saved": "Invoices" })).unwrap();
+        assert!(matches!(saved, Some(Command::Search(_))));
         let error = Command::from_wire("archive", json!({ "ids": [] })).unwrap_err();
         assert!(error.0.contains("at least one id"), "{error}");
         let error = Command::from_wire("tag", json!({ "ids": ["m_b"] })).unwrap_err();

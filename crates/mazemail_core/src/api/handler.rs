@@ -35,8 +35,8 @@ use local_api::registry::args::{
 };
 use local_api::registry::output::{
     AttachmentMeta as ApiAttachment, ContactInfo, ExportOutput, FolderInfo, IdentityInfo,
-    ImportOutput, MessageMeta, MutationOutcome, MutationOutput, ProposalOutput, SearchHit,
-    ShowOutput, TagInfo,
+    ImportOutput, MessageMeta, MutationOutcome, MutationOutput, ProposalOutput, SavedSearchDeleted,
+    SavedSearchInfo, SearchHit, ShowOutput, TagInfo,
 };
 use local_api::{
     Command, CommandError, CommandHandler, CommandOutput, EffectiveScope, ErrorCode, ExecutionMode,
@@ -45,7 +45,8 @@ use local_api::{
 use mazemail_types::{AccountId, Flags, FolderId, MessageId, PublicId, Sensitive, TagId, ThreadId};
 use serde_json::{Value, json};
 use store::{
-    Folder, ListScope, MessageDetail, NewProposalItem, ProposalId, Queries as _, Reader, TokenId,
+    Folder, ListScope, MessageDetail, NewProposalItem, ProposalId, Queries as _, Reader,
+    SavedSearch, TokenId,
 };
 use time::OffsetDateTime;
 
@@ -56,6 +57,7 @@ use crate::global_search::{SearchOpts, SearchSort};
 use crate::handle::CoreHandle;
 use crate::message::Body;
 use crate::reader_text::{self as render, RenderedMessage, TextKind};
+use crate::saved_searches::{SavedSearchChange, combined_query};
 use crate::{Error, Snippet};
 
 /// Search pages fetched at most to fill one `search` result.
@@ -284,6 +286,14 @@ fn command_ids(command: &MailCommand) -> Vec<MessageId> {
     }
 }
 
+fn saved_search_info(saved: SavedSearch) -> SavedSearchInfo {
+    SavedSearchInfo {
+        id: saved.id.to_string(),
+        name: saved.name,
+        query: Sensitive::new(saved.query),
+    }
+}
+
 fn public_ids(ids: &[MessageId]) -> Vec<String> {
     ids.iter().map(ToString::to_string).collect()
 }
@@ -457,9 +467,15 @@ impl CoreCommandHandler {
         let limit = usize::try_from(args.limit)
             .unwrap_or(usize::MAX)
             .clamp(1, 10_000);
-        let found = self
-            .search_messages(&ctx.scope, args.query.expose(), limit)
-            .await?;
+        let narrow = args.query.as_ref().map(|q| q.expose().as_str());
+        let query = match &args.saved {
+            Some(saved) => {
+                let saved = self.core.find_saved_search(saved).map_err(core_error)?;
+                combined_query(&saved.query, narrow)
+            }
+            None => narrow.unwrap_or_default().to_owned(),
+        };
+        let found = self.search_messages(&ctx.scope, &query, limit).await?;
         let reader = self.reader()?;
         let tags: HashMap<TagId, String> = reader
             .tags()
@@ -503,6 +519,24 @@ impl CoreCommandHandler {
             .collect();
         let affected = hits.iter().map(|hit| hit.id.clone()).collect();
         output(&hits, affected)
+    }
+
+    /// Renames a saved search or changes its query (`saved-search rename|edit`).
+    async fn change_saved_search(
+        &self,
+        name_or_id: &str,
+        change: SavedSearchChange,
+    ) -> Result<CommandOutput, CommandError> {
+        let saved = self
+            .core
+            .find_saved_search(name_or_id)
+            .map_err(core_error)?;
+        let saved = self
+            .core
+            .update_saved_search(saved.id, change)
+            .await
+            .map_err(core_error)?;
+        output(&saved_search_info(saved), Vec::new())
     }
 
     async fn show(
@@ -1022,6 +1056,53 @@ impl CommandHandler for CoreCommandHandler {
                 let synced = super::accounts::sync(&self.core, ctx, &args)?;
                 let ids = synced.accounts.clone();
                 output(&synced, ids)
+            }
+            Command::SavedSearchList(_) => {
+                let list: Vec<SavedSearchInfo> = self
+                    .core
+                    .saved_searches()
+                    .map_err(core_error)?
+                    .into_iter()
+                    .map(saved_search_info)
+                    .collect();
+                output(&list, Vec::new())
+            }
+            Command::SavedSearchAdd(args) => {
+                let saved = self
+                    .core
+                    .create_saved_search(&args.name, args.query.expose())
+                    .await
+                    .map_err(core_error)?;
+                output(&saved_search_info(saved), Vec::new())
+            }
+            Command::SavedSearchRename(args) => {
+                let change = SavedSearchChange {
+                    name: Some(args.name),
+                    query: None,
+                };
+                self.change_saved_search(&args.search, change).await
+            }
+            Command::SavedSearchEdit(args) => {
+                let change = SavedSearchChange {
+                    name: None,
+                    query: Some(args.query.expose().clone()),
+                };
+                self.change_saved_search(&args.search, change).await
+            }
+            Command::SavedSearchDelete(args) => {
+                let saved = self
+                    .core
+                    .find_saved_search(&args.search)
+                    .map_err(core_error)?;
+                self.core
+                    .delete_saved_search(saved.id)
+                    .await
+                    .map_err(core_error)?;
+                let deleted = SavedSearchDeleted {
+                    id: saved.id.to_string(),
+                    deleted: true,
+                };
+                output(&deleted, Vec::new())
             }
             command @ (Command::AttachmentSave(_)
             | Command::DraftNew(_)

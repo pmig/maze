@@ -210,6 +210,28 @@ pub struct TagInfo {
     pub color: Option<String>,
 }
 
+/// One saved search in `saved-search list`, and what `saved-search add`, `rename` and
+/// `edit` return.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SavedSearchInfo {
+    /// Saved search id (`s_…`).
+    pub id: String,
+    /// Its name in the folder pane.
+    pub name: String,
+    /// Its query.
+    #[schemars(with = "String")]
+    pub query: Sensitive<String>,
+}
+
+/// `saved-search delete`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SavedSearchDeleted {
+    /// The deleted saved search's id.
+    pub id: String,
+    /// Always `true`.
+    pub deleted: bool,
+}
+
 /// One contact in `contacts`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ContactInfo {

@@ -64,6 +64,11 @@ expression: agents_md()
 | `account remove` | deny | deny | ask |
 | `account set` | deny | deny | ask |
 | `sync` | allow | allow | allow |
+| `saved-search list` | allow | allow | allow |
+| `saved-search add` | deny | allow | allow |
+| `saved-search rename` | deny | allow | allow |
+| `saved-search edit` | deny | allow | allow |
+| `saved-search delete` | deny | ask | ask |
 
 Permanent delete is not available to tokens. `send` is disabled unless the token was approved with `--allow-send`, and then every send asks.
 
@@ -368,17 +373,18 @@ mazemail token revoke tk_q3x7k2mz4b5ca
 
 Search mail.
 
-Searches every account and folder in your token's scope, newest first. The query language is Thunderbird's quick filter plus Gmail-style operators.
+Searches every account and folder in your token's scope, newest first. The query language is Thunderbird's quick filter plus Gmail-style operators. --saved runs a saved search (`mazemail saved-search list`); a query given with it narrows the results.
 
 Permission: `read`
 
 ```sh
-mazemail search [OPTIONS] <QUERY>
+mazemail search [OPTIONS] [<QUERY>]
 ```
 
 | Argument | Description |
 | -------- | ----------- |
-| `<QUERY>` | The query: words plus `from:`, `to:`, `subject:`, `has:attachment`, `is:unread`, `tag:`, `in:`, `list:`, `after:`, `before:`, `older_than:`. |
+| `<QUERY>` | The query: words plus `from:`, `to:`, `subject:`, `has:attachment`, `is:unread`, `tag:`, `in:`, `list:`, `after:`, `before:`, `older_than:`. With --saved it narrows the saved search. |
+| `--saved <NAME_OR_ID>` | Run a saved search, by name or id (`s_…`, from `mazemail saved-search list`). |
 | `--limit <LIMIT>` | Maximum number of results. Default: `50`. |
 | `--ids` | Print only message ids, one per line (for `$(…)`). |
 
@@ -410,6 +416,8 @@ Examples:
 mazemail search 'from:anna has:attachment after:2026-09-01' --json | jq -r '.[0].thread'
 # Ten unread messages
 mazemail search 'is:unread' --limit 10
+# A saved search, narrowed to this year
+mazemail search --saved Invoices 'after:2026-01-01'
 ```
 
 ### `mazemail show`
@@ -1289,4 +1297,169 @@ Examples:
 mazemail sync
 # Sync one account
 mazemail sync --account a_b
+```
+
+### `mazemail saved-search list`
+
+List saved searches.
+
+Lists the saved searches that Maze's folder pane shows under Saved Searches, with their queries. `mazemail search --saved <name>` runs one.
+
+Permission: `read`
+
+```sh
+mazemail saved-search list
+```
+
+Output (`--json`):
+
+```ts
+[
+  {
+    id: string,  // Saved search id (`s_…`).
+    name: string,  // Its name in the folder pane.
+    query: string,  // Its query.
+  }
+]
+```
+
+Examples:
+
+```sh
+# Names of the saved searches
+mazemail saved-search list --json | jq -r '.[].name'
+```
+
+### `mazemail saved-search add`
+
+Save a search under a name.
+
+Adds a saved search: Maze's folder pane shows it under Saved Searches, and selecting it lists the mail that matches the query, kept up to date as mail arrives. Names are unique (ignoring case). Nothing about your mail changes.
+
+Permission: `draft`
+
+```sh
+mazemail saved-search add <NAME> <QUERY>
+```
+
+| Argument | Description |
+| -------- | ----------- |
+| `<NAME>` | The name the folder pane shows (unique, ignoring case). |
+| `<QUERY>` | The search query, in `mazemail search`'s language. |
+
+Output (`--json`):
+
+```ts
+{
+  id: string,  // Saved search id (`s_…`).
+  name: string,  // Its name in the folder pane.
+  query: string,  // Its query.
+}
+```
+
+Examples:
+
+```sh
+# Save a search for invoices
+mazemail saved-search add Invoices 'invoice has:attachment'
+```
+
+### `mazemail saved-search rename`
+
+Rename a saved search.
+
+Gives a saved search (named by its name or id) a new name.
+
+Permission: `draft`
+
+```sh
+mazemail saved-search rename <SAVED_SEARCH> <NEW_NAME>
+```
+
+| Argument | Description |
+| -------- | ----------- |
+| `<SAVED_SEARCH>` | The saved search: its name or id (`s_…`). |
+| `<NEW_NAME>` | The new name. |
+
+Output (`--json`):
+
+```ts
+{
+  id: string,  // Saved search id (`s_…`).
+  name: string,  // Its name in the folder pane.
+  query: string,  // Its query.
+}
+```
+
+Examples:
+
+```sh
+# Rename a saved search
+mazemail saved-search rename Invoices 'Bills'
+```
+
+### `mazemail saved-search edit`
+
+Change the query of a saved search.
+
+Replaces the query of a saved search (named by its name or id). Its folder pane entry shows the new results at once.
+
+Permission: `draft`
+
+```sh
+mazemail saved-search edit <SAVED_SEARCH> <QUERY>
+```
+
+| Argument | Description |
+| -------- | ----------- |
+| `<SAVED_SEARCH>` | The saved search: its name or id (`s_…`). |
+| `<QUERY>` | The new query. |
+
+Output (`--json`):
+
+```ts
+{
+  id: string,  // Saved search id (`s_…`).
+  name: string,  // Its name in the folder pane.
+  query: string,  // Its query.
+}
+```
+
+Examples:
+
+```sh
+# Widen a saved search
+mazemail saved-search edit Invoices 'invoice OR receipt has:attachment'
+```
+
+### `mazemail saved-search delete`
+
+Delete a saved search.
+
+Removes a saved search (named by its name or id) from the folder pane. The mail it found stays where it is. Always asks for approval in Maze.
+
+Permission: `ask`
+
+```sh
+mazemail saved-search delete <SAVED_SEARCH>
+```
+
+| Argument | Description |
+| -------- | ----------- |
+| `<SAVED_SEARCH>` | The saved search: its name or id (`s_…`). |
+
+Output (`--json`):
+
+```ts
+{
+  deleted: boolean,  // Always `true`.
+  id: string,  // The deleted saved search's id.
+}
+```
+
+Examples:
+
+```sh
+# Delete a saved search
+mazemail saved-search delete Invoices
 ```

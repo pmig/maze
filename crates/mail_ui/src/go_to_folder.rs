@@ -2,7 +2,8 @@
 //! picked folder in the active mail view. Type part of a folder's path, pick one with
 //! the arrow keys, Enter opens it; Escape cancels.
 //!
-//! It lists the unified folders ("Unified / Inbox"), then the favorites, then every
+//! It lists the unified folders ("Unified / Inbox"), the saved searches ("Saved Searches
+//! / Invoices"), then the favorites, then every
 //! other folder of every account, each as its path with the account first
 //! ("Work / Archives / 2025"). With an empty filter the folders opened from here last
 //! come first (this session). Typing ranks the paths like Quick Move
@@ -43,8 +44,8 @@ pub struct Destination {
     pub role: Option<FolderRole>,
 }
 
-/// Every folder of `tree`: the unified folders, the favorites, then the other folders
-/// of each account in folder pane order.
+/// Every folder of `tree`: the unified folders, the saved searches, the favorites, then
+/// the other folders of each account in folder pane order.
 pub fn destinations(tree: &FolderTree) -> Vec<Destination> {
     fn walk(entries: &[FolderEntry], parent: &str, out: &mut Vec<Destination>) {
         for entry in entries {
@@ -60,6 +61,12 @@ pub fn destinations(tree: &FolderTree) -> Vec<Destination> {
     }
     let mut unified = Vec::new();
     walk(&tree.unified, "Unified", &mut unified);
+    unified.extend(tree.saved_searches.iter().map(|saved| Destination {
+        key: FolderKey::SavedSearch(saved.id),
+        name: saved.name.clone(),
+        path: format!("Saved Searches / {}", saved.name).into(),
+        role: None,
+    }));
     let mut folders = Vec::new();
     for account in &tree.accounts {
         walk(&account.folders, &account.name, &mut folders);
@@ -168,7 +175,10 @@ impl Render for GoToFolderPicker {
             .matches()
             .map(|destination| {
                 CommandItem::new()
-                    .icon(Icon::new(role_icon(destination.role)))
+                    .icon(Icon::new(match destination.key {
+                        FolderKey::SavedSearch(_) => ui::assets::IconName::MailSearch,
+                        _ => role_icon(destination.role),
+                    }))
                     .label(destination.path.clone())
             })
             .collect();
@@ -260,6 +270,11 @@ mod tests {
                 role: Some(FolderRole::Inbox),
                 children: Vec::new(),
             }],
+            saved_searches: vec![crate::source::SavedSearchEntry {
+                id: mazemail_types::SavedSearchId(1),
+                name: "Invoices".into(),
+                query: mazemail_types::Sensitive::new("invoice".into()),
+            }],
             accounts: vec![AccountEntry {
                 id: AccountId::from_raw(1),
                 name: "Work".into(),
@@ -293,13 +308,18 @@ mod tests {
             listed,
             [
                 "Unified / Inbox",
+                "Saved Searches / Invoices",
                 "Work / Customers",
                 "Work / Inbox",
                 "Work / Archives",
                 "Work / Archives / 2025",
             ]
         );
-        assert_eq!(all[4].name.as_ref(), "2025");
+        assert_eq!(all[5].name.as_ref(), "2025");
+        assert_eq!(
+            all[1].key,
+            FolderKey::SavedSearch(mazemail_types::SavedSearchId(1))
+        );
     }
 
     #[test]
@@ -314,5 +334,6 @@ mod tests {
         assert_eq!(ranked("inbox"), ["Unified / Inbox", "Work / Inbox"]);
         assert_eq!(ranked("arc25"), ["Work / Archives / 2025"]);
         assert_eq!(ranked("work cust"), ["Work / Customers"]);
+        assert_eq!(ranked("invoices"), ["Saved Searches / Invoices"]);
     }
 }

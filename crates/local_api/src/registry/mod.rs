@@ -275,7 +275,9 @@ static REGISTRY: &[CommandSpec] = &[
         path: &["search"],
         summary: "Search mail",
         help: "Searches every account and folder in your token's scope, newest first. The query \
-               language is Thunderbird's quick filter plus Gmail-style operators.",
+               language is Thunderbird's quick filter plus Gmail-style operators. --saved runs \
+               a saved search (`mazemail saved-search list`); a query given with it narrows \
+               the results.",
         permission: Permission::Read,
         requires_token: true,
         touches_mail: true,
@@ -287,6 +289,10 @@ static REGISTRY: &[CommandSpec] = &[
             ex(
                 "mazemail search 'is:unread' --limit 10",
                 "Ten unread messages",
+            ),
+            ex(
+                "mazemail search --saved Invoices 'after:2026-01-01'",
+                "A saved search, narrowed to this year",
             ),
         ],
         args_schema: schema::<SearchArgs>,
@@ -753,6 +759,91 @@ static REGISTRY: &[CommandSpec] = &[
         output_schema: schema::<SyncOutput>,
         human: Human::Fields,
     },
+    CommandSpec {
+        name: "saved-search.list",
+        path: &["saved-search", "list"],
+        summary: "List saved searches",
+        help: "Lists the saved searches that Maze's folder pane shows under Saved Searches, \
+               with their queries. `mazemail search --saved <name>` runs one.",
+        permission: Permission::Read,
+        requires_token: true,
+        touches_mail: false,
+        examples: &[ex(
+            "mazemail saved-search list --json | jq -r '.[].name'",
+            "Names of the saved searches",
+        )],
+        args_schema: schema::<SavedSearchListArgs>,
+        output_schema: schema::<Vec<SavedSearchInfo>>,
+        human: Human::Table(&[col("ID", "id"), col("NAME", "name"), col("QUERY", "query")]),
+    },
+    CommandSpec {
+        name: "saved-search.add",
+        path: &["saved-search", "add"],
+        summary: "Save a search under a name",
+        help: "Adds a saved search: Maze's folder pane shows it under Saved Searches, and \
+               selecting it lists the mail that matches the query, kept up to date as mail \
+               arrives. Names are unique (ignoring case). Nothing about your mail changes.",
+        permission: Permission::Draft,
+        requires_token: true,
+        touches_mail: false,
+        examples: &[ex(
+            "mazemail saved-search add Invoices 'invoice has:attachment'",
+            "Save a search for invoices",
+        )],
+        args_schema: schema::<SavedSearchAddArgs>,
+        output_schema: schema::<SavedSearchInfo>,
+        human: Human::Fields,
+    },
+    CommandSpec {
+        name: "saved-search.rename",
+        path: &["saved-search", "rename"],
+        summary: "Rename a saved search",
+        help: "Gives a saved search (named by its name or id) a new name.",
+        permission: Permission::Draft,
+        requires_token: true,
+        touches_mail: false,
+        examples: &[ex(
+            "mazemail saved-search rename Invoices 'Bills'",
+            "Rename a saved search",
+        )],
+        args_schema: schema::<SavedSearchRenameArgs>,
+        output_schema: schema::<SavedSearchInfo>,
+        human: Human::Fields,
+    },
+    CommandSpec {
+        name: "saved-search.edit",
+        path: &["saved-search", "edit"],
+        summary: "Change the query of a saved search",
+        help: "Replaces the query of a saved search (named by its name or id). Its folder pane \
+               entry shows the new results at once.",
+        permission: Permission::Draft,
+        requires_token: true,
+        touches_mail: false,
+        examples: &[ex(
+            "mazemail saved-search edit Invoices 'invoice OR receipt has:attachment'",
+            "Widen a saved search",
+        )],
+        args_schema: schema::<SavedSearchEditArgs>,
+        output_schema: schema::<SavedSearchInfo>,
+        human: Human::Fields,
+    },
+    CommandSpec {
+        name: "saved-search.delete",
+        path: &["saved-search", "delete"],
+        summary: "Delete a saved search",
+        help: "Removes a saved search (named by its name or id) from the folder pane. The mail \
+               it found stays where it is. Always asks for approval in Maze.",
+        permission: Permission::Ask,
+        requires_token: true,
+        touches_mail: false,
+        examples: &[ex(
+            "mazemail saved-search delete Invoices",
+            "Delete a saved search",
+        )],
+        args_schema: schema::<SavedSearchDeleteArgs>,
+        output_schema: schema::<SavedSearchDeleted>,
+        human: Human::Fields,
+    },
 ];
 
 /// Every command, in help order.
@@ -777,6 +868,10 @@ pub(crate) const GROUPS: &[(&str, &str)] = &[
     ("attachment", "Work with attachments"),
     ("draft", "Write and change drafts"),
     ("rule", "Manage filter rules"),
+    (
+        "saved-search",
+        "List, add, rename, edit and delete saved searches",
+    ),
 ];
 
 #[cfg(test)]
@@ -842,6 +937,11 @@ mod tests {
             "account.remove",
             "account.set",
             "sync",
+            "saved-search.list",
+            "saved-search.add",
+            "saved-search.rename",
+            "saved-search.edit",
+            "saved-search.delete",
         ] {
             assert!(find(name).is_some(), "{name} missing");
         }
@@ -855,8 +955,10 @@ mod tests {
             // Mail commands need a token; all but account management touch mail.
             if is_mail {
                 assert!(spec.requires_token, "{}", spec.name);
-                let manages_accounts = spec.name.starts_with("account.") || spec.name == "sync";
-                assert_eq!(spec.touches_mail, !manages_accounts, "{}", spec.name);
+                let manages_maze = spec.name.starts_with("account.")
+                    || spec.name.starts_with("saved-search.")
+                    || spec.name == "sync";
+                assert_eq!(spec.touches_mail, !manages_maze, "{}", spec.name);
             }
         }
         for name in Command::NAMES {
@@ -900,6 +1002,17 @@ mod tests {
             assert_eq!(triage(name), Propose, "{name}");
         }
         assert_eq!(triage("rule.add"), Ask);
+        // Saved searches change what Maze shows, never mail: a read, harmless additions
+        // and changes and a delete that asks.
+        assert_eq!(triage("saved-search.list"), Allow);
+        for name in [
+            "saved-search.add",
+            "saved-search.rename",
+            "saved-search.edit",
+        ] {
+            assert_eq!(triage(name), Allow, "{name}");
+        }
+        assert_eq!(triage("saved-search.delete"), Ask);
         // Accounts: listing and syncing are reads; adding, removing and changing need a
         // writer token and the user's approval.
         assert_eq!(triage("account.list"), Allow);

@@ -125,6 +125,10 @@ define_id!(
     /// A message being written (a local draft, PLAN §4.10).
     DraftId, "d"
 );
+define_id!(
+    /// A saved search: a named query shown like a folder (ADR-030).
+    SavedSearchId, "s"
+);
 
 /// Content address of a stored blob: a keyed BLAKE3 hash (32 bytes).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

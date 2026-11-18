@@ -63,6 +63,7 @@ use crate::message_tab::{MESSAGE_KIND, MessageTab, SerializedMessage};
 use crate::message_view::MessageView;
 use crate::perf::{FrameStats, ScrollBenchmark, resident_memory};
 use crate::quick_move::{MoveTarget, QuickMove, QuickMoveEvent, source_folder};
+use crate::saved_search::SavedSearchDialog;
 use crate::settings_editor::{SETTINGS_KIND, SerializedSettings, SettingsEditor, SettingsFile};
 use crate::source::{
     ContactSort, DataChanges, Direction, FolderKey, MailSource, SortBy, SyncState, ThreadScope,
@@ -255,6 +256,8 @@ pub struct MailWindow {
     /// "Sync activity" is open; the task re-renders it while it is.
     sync_activity: Option<Task<()>>,
     item_subscriptions: HashMap<EntityId, Subscription>,
+    /// The Save Search or Edit Saved Search dialog, while it is open.
+    saved_search_dialog: Option<Entity<SavedSearchDialog>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -278,7 +281,7 @@ pub fn show_mail_query(email: &str) -> String {
 fn folder_title(pane: &FolderPane, key: &FolderKey) -> Option<SharedString> {
     pane.title_of(key).or_else(|| match key {
         FolderKey::Unified(role) => Some(role_title(*role)),
-        FolderKey::Folder(_) => None,
+        FolderKey::Folder(_) | FolderKey::SavedSearch(_) => None,
     })
 }
 
@@ -386,6 +389,7 @@ impl MailWindow {
             sync_requested: None,
             sync_activity: None,
             item_subscriptions: HashMap::new(),
+            saved_search_dialog: None,
             _subscriptions: subscriptions,
         };
         this.register_kinds(window, cx);
@@ -825,6 +829,8 @@ impl MailWindow {
         }
         if changes.everything || changes.folders {
             self.folder_pane.update(cx, |pane, cx| pane.reload(cx));
+            // A saved search may have a new name or query (`mazemail saved-search`).
+            self.refresh_saved_search_views(cx);
         } else if changes.counts {
             self.folder_pane
                 .update(cx, |pane, cx| pane.refresh_counts(cx));
@@ -1035,6 +1041,12 @@ impl MailWindow {
             FolderPaneEvent::AddAlias { account } => {
                 let name = self.account_name(*account);
                 self.open_alias_dialog(*account, name, window, cx);
+            }
+            FolderPaneEvent::EditSavedSearch { id } => {
+                self.edit_saved_search(*id, window, cx);
+            }
+            FolderPaneEvent::DeleteSavedSearch { id } => {
+                self.delete_saved_search(*id, window, cx);
             }
             FolderPaneEvent::DeleteAll {
                 folder,
@@ -2096,6 +2108,21 @@ impl MailWindow {
         .on_action(cx.listener(|this, _: &GoToFolder, window, cx| {
             this.toggle_go_to_folder(window, cx);
         }))
+        .on_action(cx.listener(|this, _: &SaveSearch, window, cx| {
+            this.save_search(window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &EditSavedSearch, window, cx| {
+            match this.current_saved_search(cx) {
+                Some(id) => this.edit_saved_search(id, window, cx),
+                None => this.no_saved_search_open(window, cx),
+            }
+        }))
+        .on_action(cx.listener(|this, _: &DeleteSavedSearch, window, cx| {
+            match this.current_saved_search(cx) {
+                Some(id) => this.delete_saved_search(id, window, cx),
+                None => this.no_saved_search_open(window, cx),
+            }
+        }))
         .on_action(cx.listener(|this, _: &ToggleFavoriteFolder, window, cx| {
             this.toggle_favorite_folder(window, cx);
         }))
@@ -2469,6 +2496,8 @@ fn contains_folder(
     })
 }
 
+mod saved_searches;
+
 #[cfg(test)]
 mod tests {
     use gpui::{TestAppContext, VisualTestContext};
@@ -2817,7 +2846,7 @@ mod tests {
             .folders;
         let with_role = |role| match folders.iter().find(|f| f.role == Some(role)).unwrap().key {
             FolderKey::Folder(id) => id,
-            FolderKey::Unified(_) => unreachable!(),
+            FolderKey::Unified(_) | FolderKey::SavedSearch(_) => unreachable!(),
         };
         (with_role(FolderRole::Trash), with_role(FolderRole::Inbox))
     }
@@ -4075,5 +4104,6 @@ mod tests {
 
     mod original_html;
     mod panes;
+    mod saved_searches;
     mod settings_tab;
 }

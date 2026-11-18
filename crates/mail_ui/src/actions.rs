@@ -110,6 +110,13 @@ actions!(
         FocusSearch,
         /// Focus the Quick Filter of the message list (`cmd-f`, `cmd-shift-k`).
         QuickFilter,
+        /// Save the shown search under a name: it shows in the folder pane under Saved
+        /// Searches (`cmd-alt-s`, the search results' "Save Search…").
+        SaveSearch,
+        /// Rename the open saved search or change its query (its folder pane menu).
+        EditSavedSearch,
+        /// Delete the open saved search, after asking (its folder pane menu).
+        DeleteSavedSearch,
     ]
 );
 

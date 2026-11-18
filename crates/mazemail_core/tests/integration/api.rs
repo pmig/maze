@@ -11,7 +11,8 @@ use auth::MemorySecretStore;
 use imap::fake::FakeServer;
 use import::maildir::MaildirWriter;
 use local_api::registry::args::{
-    ArchiveArgs, ExportArgs, ExportFormat, FoldersArgs, ImportArgs, ImportPart, SearchArgs,
+    ArchiveArgs, ExportArgs, ExportFormat, FoldersArgs, ImportArgs, ImportPart, SavedSearchAddArgs, SavedSearchDeleteArgs, SavedSearchEditArgs, SavedSearchListArgs, SavedSearchRenameArgs,
+    SearchArgs,
     ShowArgs, ShowFormat,
 };
 use local_api::{
@@ -152,7 +153,8 @@ async fn run(t: &ApiCore, ctx: &RequestContext, command: Command) -> Result<Valu
 
 fn search(query: &str) -> Command {
     Command::Search(SearchArgs {
-        query: Sensitive::new(query.to_owned()),
+        query: Some(Sensitive::new(query.to_owned())),
+        saved: None,
         limit: 50,
         ids: false,
     })
@@ -172,6 +174,101 @@ fn ids(value: &Value) -> BTreeSet<String> {
         .iter()
         .map(|hit| hit["id"].as_str().unwrap().to_owned())
         .collect()
+}
+
+#[tokio::test]
+async fn saved_search_commands_and_search_saved() {
+    let t = open().await;
+    let record = token(&t, Profile::Triage, accounts(&[t.fixture.work])).await;
+    let ctx = ctx(&t, &record, ExecutionMode::Execute);
+    let added = run(
+        &t,
+        &ctx,
+        Command::SavedSearchAdd(SavedSearchAddArgs {
+            name: "Quarterly".into(),
+            query: Sensitive::new("quarterly".into()),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(added["name"], "Quarterly");
+    let id = added["id"].as_str().unwrap().to_owned();
+    assert!(id.starts_with("s_"), "{id}");
+    let taken = run(
+        &t,
+        &ctx,
+        Command::SavedSearchAdd(SavedSearchAddArgs {
+            name: "quarterly".into(),
+            query: Sensitive::new("x".into()),
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(taken.code, ErrorCode::InvalidArgs, "{taken}");
+
+    // `search --saved` runs it within the token's scope (Gmail's receipt matches too,
+    // but is out of scope), by name or id, and a query narrows it.
+    let saved = |saved: &str, query: Option<&str>| {
+        Command::Search(SearchArgs {
+            query: query.map(|q| Sensitive::new(q.to_owned())),
+            saved: Some(saved.to_owned()),
+            limit: 50,
+            ids: false,
+        })
+    };
+    let hits = run(&t, &ctx, saved("quarterly", None)).await.unwrap();
+    assert_eq!(
+        ids(&hits),
+        BTreeSet::from([t.work_mail.to_string(), t.projects_mail.to_string()])
+    );
+    let hits = run(&t, &ctx, saved(&id, Some("offsite"))).await.unwrap();
+    assert_eq!(ids(&hits), BTreeSet::from([t.work_mail.to_string()]));
+    let missing = run(&t, &ctx, saved("nope", None)).await.unwrap_err();
+    assert_eq!(missing.code, ErrorCode::NotFound, "{missing}");
+
+    let renamed = run(
+        &t,
+        &ctx,
+        Command::SavedSearchRename(SavedSearchRenameArgs {
+            search: id.clone(),
+            name: "Numbers".into(),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(renamed["name"], "Numbers");
+    let edited = run(
+        &t,
+        &ctx,
+        Command::SavedSearchEdit(SavedSearchEditArgs {
+            search: "numbers".into(),
+            query: Sensitive::new("subject:kickoff".into()),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(edited["query"], "subject:kickoff");
+    let hits = run(&t, &ctx, saved("Numbers", None)).await.unwrap();
+    assert_eq!(ids(&hits), BTreeSet::from([t.projects_mail.to_string()]));
+
+    let list = run(&t, &ctx, Command::SavedSearchList(SavedSearchListArgs {}))
+        .await
+        .unwrap();
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    let deleted = run(
+        &t,
+        &ctx,
+        Command::SavedSearchDelete(SavedSearchDeleteArgs {
+            search: "Numbers".into(),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(deleted["id"], id.as_str());
+    let list = run(&t, &ctx, Command::SavedSearchList(SavedSearchListArgs {}))
+        .await
+        .unwrap();
+    assert!(list.as_array().unwrap().is_empty());
 }
 
 #[tokio::test]

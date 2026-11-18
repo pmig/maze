@@ -15,7 +15,7 @@ use std::sync::Arc;
 use gpui::SharedString;
 pub use html_view::Part;
 use mazemail_types::{
-    AccountId, Address, Flags, FolderId, FolderRole, MessageId, Sensitive, ThreadId,
+    AccountId, Address, Flags, FolderId, FolderRole, MessageId, SavedSearchId, Sensitive, ThreadId,
 };
 use time::OffsetDateTime;
 
@@ -26,6 +26,8 @@ pub enum FolderKey {
     Folder(FolderId),
     /// A unified folder: the folders with this role across all accounts.
     Unified(FolderRole),
+    /// A saved search: the mail of every account that matches its query (ADR-030).
+    SavedSearch(SavedSearchId),
 }
 
 impl FolderKey {
@@ -34,11 +36,24 @@ impl FolderKey {
         match self {
             Self::Folder(id) => format!("folder:{id}").into(),
             Self::Unified(role) => format!("unified:{}", role.as_str()).into(),
+            Self::SavedSearch(id) => format!("saved:{id}").into(),
         }
     }
 }
 
-/// What the folder pane shows: Favorites, Unified Folders and Accounts (CONCEPT §8.2).
+/// A saved search in the folder pane (ADR-030).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SavedSearchEntry {
+    /// The saved search.
+    pub id: SavedSearchId,
+    /// Its name, unique ignoring case.
+    pub name: SharedString,
+    /// Its query, in the search language.
+    pub query: Sensitive<SharedString>,
+}
+
+/// What the folder pane shows: Favorites, Unified Folders, Saved Searches and Accounts
+/// (CONCEPT §8.2).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct FolderTree {
     /// Folders the user marked as favorites (without subfolders). The folder pane
@@ -46,11 +61,18 @@ pub struct FolderTree {
     pub favorites: Vec<FolderEntry>,
     /// Unified Inbox, Drafts, Sent, …
     pub unified: Vec<FolderEntry>,
+    /// Saved searches, in their order.
+    pub saved_searches: Vec<SavedSearchEntry>,
     /// Every account with its folder hierarchy.
     pub accounts: Vec<AccountEntry>,
 }
 
 impl FolderTree {
+    /// The saved search with this id.
+    pub fn saved_search(&self, id: SavedSearchId) -> Option<&SavedSearchEntry> {
+        self.saved_searches.iter().find(|s| s.id == id)
+    }
+
     /// Finds the entry for `key` anywhere in the tree.
     pub fn find(&self, key: &FolderKey) -> Option<&FolderEntry> {
         fn walk<'a>(entries: &'a [FolderEntry], key: &FolderKey) -> Option<&'a FolderEntry> {
@@ -415,6 +437,17 @@ pub enum ThreadScope {
     Folder(FolderKey),
     /// Every folder of every account (global search).
     AllFolders,
+}
+
+impl ThreadScope {
+    /// Whether the list is the result of a search over all mail: a search, or a saved
+    /// search. Their keys always load in the background.
+    pub fn is_search(&self) -> bool {
+        matches!(
+            self,
+            Self::AllFolders | Self::Folder(FolderKey::SavedSearch(_))
+        )
+    }
 }
 
 /// One row of the message list.
@@ -1535,6 +1568,33 @@ pub trait MailSource: Send + Sync + 'static {
     ) -> Result<(), SourceError> {
         let _ = (account, email, name, add);
         Err(SourceError::Unavailable("aliases aren't available".into()))
+    }
+
+    /// Saves `query` as a saved search called `name` ("Save Search…"). Fails for an
+    /// empty or taken name or a query that doesn't parse, with a message for people.
+    fn save_search(&self, _name: &str, _query: &str) -> Result<SavedSearchId, SourceError> {
+        Err(SourceError::Unavailable(
+            "saved searches aren't available".into(),
+        ))
+    }
+
+    /// Renames a saved search and replaces its query ("Edit Saved Search…").
+    fn edit_saved_search(
+        &self,
+        _id: SavedSearchId,
+        _name: &str,
+        _query: &str,
+    ) -> Result<(), SourceError> {
+        Err(SourceError::Unavailable(
+            "saved searches aren't available".into(),
+        ))
+    }
+
+    /// Deletes a saved search (its mail stays where it is).
+    fn delete_saved_search(&self, _id: SavedSearchId) -> Result<(), SourceError> {
+        Err(SourceError::Unavailable(
+            "saved searches aren't available".into(),
+        ))
     }
 
     /// Marks every message in `folder` read (the folder pane's Mark All as Read).

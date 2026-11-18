@@ -1,5 +1,5 @@
-//! The folder pane: Favorites, Unified Folders and Accounts in a gpui-kit `Tree`, with
-//! unread counts (CONCEPT §8.2, column 1).
+//! The folder pane: Favorites, Unified Folders, Saved Searches and Accounts in a gpui-kit
+//! `Tree`, with unread counts (CONCEPT §8.2, column 1).
 //!
 //! **Favorites** come first. The source says which folders are favorites (the
 //! `mazemail` binary keeps them in `settings.json`); the pane shows them in account
@@ -10,6 +10,10 @@
 //! does the same for the open folder. Right-clicking an account offers "Edit
 //! Account…" ([`EditAccountFor`], opened by the app) and "Add Alias…". A favorite opens its folder like the folder's
 //! row in its account.
+//!
+//! **Saved Searches** (ADR-030) follow Unified Folders when there are any: selecting one
+//! opens its results like a folder. Right-clicking one offers "Edit Saved Search…"
+//! (name and query) and "Delete Saved Search…"; the window runs both.
 //!
 //! Sections, accounts and folders with subfolders collapse and expand; the pane
 //! remembers which, so a rebuild (a new favorite, a synced folder) keeps them.
@@ -33,7 +37,7 @@ use gpui_kit::component::{
     tree::{TreeEntry, TreeEvent, TreeItem, TreeState, tree},
     v_flex,
 };
-use mazemail_types::{AccountId, FolderId, FolderRole, PRODUCT_NAME};
+use mazemail_types::{AccountId, FolderId, FolderRole, PRODUCT_NAME, SavedSearchId};
 use ui::assets::IconName;
 use ui::components::CountBadge;
 use ui::theme::scaled;
@@ -44,7 +48,7 @@ use crate::source::{AccountEntry, AccountKind, FolderEntry, FolderKey, FolderTre
 /// What a tree row stands for.
 #[derive(Debug, Clone, PartialEq)]
 enum Node {
-    /// "FAVORITES", "UNIFIED FOLDERS", "ACCOUNTS".
+    /// "FAVORITES", "UNIFIED FOLDERS", "SAVED SEARCHES", "ACCOUNTS".
     Section,
     /// An account root.
     Account {
@@ -57,7 +61,7 @@ enum Node {
     FavoritesAccount,
     /// The empty state of Favorites: "No favorite folders yet" and how to add one.
     NoFavorites,
-    /// A folder; selecting it opens it.
+    /// A folder (or a saved search); selecting it opens it.
     Folder {
         key: FolderKey,
         role: Option<FolderRole>,
@@ -105,6 +109,17 @@ pub enum FolderPaneEvent {
         /// Whether it is a Trash folder (its mail is deleted for good).
         trash: bool,
     },
+    /// "Edit Saved Search…" from a saved search's context menu.
+    EditSavedSearch {
+        /// The saved search.
+        id: SavedSearchId,
+    },
+    /// "Delete Saved Search…" from a saved search's context menu: the window asks
+    /// first.
+    DeleteSavedSearch {
+        /// The saved search.
+        id: SavedSearchId,
+    },
 }
 
 /// The folder pane view.
@@ -128,6 +143,7 @@ impl std::fmt::Debug for FolderPane {
 
 const SECTION_FAVORITES: &str = "section:favorites";
 const SECTION_UNIFIED: &str = "section:unified";
+const SECTION_SAVED: &str = "section:saved";
 const SECTION_ACCOUNTS: &str = "section:accounts";
 const NO_FAVORITES: &str = "favorites:none";
 const NO_FAVORITES_HINT: &str = "favorites:hint";
@@ -376,6 +392,28 @@ fn build(
                     .map(|f| folder_item(f, "Unified", &mut nodes, expanded)),
             ),
     );
+    if !tree.saved_searches.is_empty() {
+        let section: SharedString = SECTION_SAVED.into();
+        nodes.insert(section.clone(), Node::Section);
+        items.push(
+            TreeItem::new(section.clone(), "Saved Searches")
+                .expanded(is_expanded(&section, true))
+                .children(tree.saved_searches.iter().map(|saved| {
+                    let key = FolderKey::SavedSearch(saved.id);
+                    let id = key.tree_id();
+                    nodes.insert(
+                        id.clone(),
+                        Node::Folder {
+                            key,
+                            role: None,
+                            title: saved.name.clone(),
+                            divider_above: false,
+                        },
+                    );
+                    TreeItem::new(id, saved.name.clone())
+                })),
+        );
+    }
     let section: SharedString = SECTION_ACCOUNTS.into();
     nodes.insert(section.clone(), Node::Section);
     items.push(
@@ -609,6 +647,26 @@ impl FolderPane {
                         pane.update(cx, |_, cx| cx.emit(event.clone())).ok();
                     }
                 };
+                if let FolderKey::SavedSearch(id) = key {
+                    return menu
+                        .item(PopupMenuItem::new("Open in New Tab").on_click(emit(
+                            FolderPaneEvent::OpenInNewTab {
+                                key: key.clone(),
+                                title: title.clone(),
+                            },
+                        )))
+                        .separator()
+                        .item(
+                            PopupMenuItem::new("Edit Saved Search…")
+                                .icon(Icon::new(IconName::Pencil))
+                                .on_click(emit(FolderPaneEvent::EditSavedSearch { id: *id })),
+                        )
+                        .item(
+                            PopupMenuItem::new("Delete Saved Search…")
+                                .icon(Icon::new(IconName::Trash))
+                                .on_click(emit(FolderPaneEvent::DeleteSavedSearch { id: *id })),
+                        );
+                }
                 let menu = menu
                     .item(PopupMenuItem::new("Open in New Tab").on_click(emit(
                         FolderPaneEvent::OpenInNewTab {
@@ -641,7 +699,7 @@ impl FolderPane {
                         )
                         .separator()
                     }
-                    FolderKey::Unified(_) => menu,
+                    FolderKey::Unified(_) | FolderKey::SavedSearch(_) => menu,
                 }
             }
             _ => menu,
@@ -751,9 +809,12 @@ impl FolderPane {
                             div().w(scaled(12., cx)).flex_none().into_any_element()
                         })
                         .child(
-                            Icon::new(role_icon(*role))
-                                .small()
-                                .text_color(theme.muted_foreground),
+                            Icon::new(match key {
+                                FolderKey::SavedSearch(_) => IconName::MailSearch,
+                                _ => role_icon(*role),
+                            })
+                            .small()
+                            .text_color(theme.muted_foreground),
                         )
                         .child(
                             div()
@@ -868,6 +929,7 @@ mod tests {
                 .map(|id| entry(*id, "favorite", vec![]))
                 .collect(),
             unified: Vec::new(),
+            saved_searches: Vec::new(),
             accounts,
         }
     }
@@ -886,7 +948,7 @@ mod tests {
                     .iter()
                     .map(|f| match f.key {
                         FolderKey::Folder(id) => id.0,
-                        FolderKey::Unified(_) => unreachable!(),
+                        FolderKey::Unified(_) | FolderKey::SavedSearch(_) => unreachable!(),
                     })
                     .collect();
                 (g.account.id.0, folders)
@@ -912,6 +974,34 @@ mod tests {
         );
         assert!(favorite_groups(&two_accounts(&[])).is_empty());
         assert!(favorite_groups(&two_accounts(&[99])).is_empty());
+    }
+
+    #[test]
+    fn saved_searches_have_a_section_when_there_are_any() {
+        let mut tree = two_accounts(&[]);
+        let (items, _, _) = build(&tree, &HashMap::new());
+        assert_eq!(labels(&items), ["Favorites", "Unified Folders", "Accounts"]);
+        tree.saved_searches = vec![crate::source::SavedSearchEntry {
+            id: SavedSearchId(7),
+            name: "Invoices".into(),
+            query: mazemail_types::Sensitive::new("invoice".into()),
+        }];
+        let (items, nodes, _) = build(&tree, &HashMap::new());
+        assert_eq!(
+            labels(&items),
+            ["Favorites", "Unified Folders", "Saved Searches", "Accounts"]
+        );
+        let row = &items[2].children[0];
+        assert_eq!(row.label.as_ref(), "Invoices");
+        let key = FolderKey::SavedSearch(SavedSearchId(7));
+        assert_eq!(row.id, key.tree_id());
+        match nodes.get(&row.id) {
+            Some(Node::Folder { key: k, title, .. }) => {
+                assert_eq!(k, &key);
+                assert_eq!(title.as_ref(), "Invoices");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

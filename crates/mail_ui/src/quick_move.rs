@@ -116,7 +116,7 @@ pub fn source_folder(scope: &ThreadScope, account: &AccountEntry) -> Option<Fold
     match scope {
         ThreadScope::Folder(FolderKey::Folder(id)) => Some(*id),
         ThreadScope::Folder(FolderKey::Unified(role)) => with_role(&account.folders, *role),
-        ThreadScope::AllFolders => None,
+        ThreadScope::Folder(FolderKey::SavedSearch(_)) | ThreadScope::AllFolders => None,
     }
 }
 

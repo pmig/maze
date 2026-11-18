@@ -381,3 +381,133 @@ async fn deleted_mail_leaves_the_results_unless_trash_is_searched() {
         2
     );
 }
+
+#[tokio::test]
+async fn saved_searches_are_named_queries_whose_results_follow_the_mail() {
+    let c = corpus().await;
+    let core = &c.t.core;
+    assert!(core.saved_searches().unwrap().is_empty());
+
+    let invoices = core
+        .create_saved_search(" Invoices ", "invoice")
+        .await
+        .unwrap();
+    assert_eq!(invoices.name, "Invoices");
+    let lunch = core
+        .create_saved_search("Lunch", "subject:lunch")
+        .await
+        .unwrap();
+    assert!(lunch.ordinal > invoices.ordinal, "new ones go last");
+    let names: Vec<String> = core
+        .saved_searches()
+        .unwrap()
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+    assert_eq!(names, ["Invoices", "Lunch"]);
+
+    // Names are unique ignoring case; queries must parse.
+    for (name, query) in [("invoices", "x"), ("", "x"), ("Other", "  ")] {
+        let error = core.create_saved_search(name, query).await.unwrap_err();
+        assert!(matches!(error, Error::InvalidCommand(_)), "{error}");
+    }
+    let error = core
+        .create_saved_search("Broken", "from:(anna")
+        .await
+        .unwrap_err();
+    assert!(matches!(error, Error::Query(_)), "{error}");
+
+    // Found by id or by name.
+    assert_eq!(
+        core.find_saved_search(&invoices.id.to_string()).unwrap().id,
+        invoices.id
+    );
+    assert_eq!(core.find_saved_search("LUNCH").unwrap().id, lunch.id);
+    assert!(matches!(
+        core.find_saved_search("nope"),
+        Err(Error::NotFound { .. })
+    ));
+
+    let opts = || SearchOpts {
+        sort: SearchSort::NewestFirst,
+        ..SearchOpts::default()
+    };
+    let results = core.search_saved(invoices.id, None, opts()).await.unwrap();
+    assert_eq!(threads(&results.threads), [c.anna.1, c.bob.1]);
+    // The Quick Filter narrows it.
+    let narrowed = core
+        .search_saved(invoices.id, Some("scaffolding"), opts())
+        .await
+        .unwrap();
+    assert_eq!(threads(&narrowed.threads), [c.bob.1]);
+
+    // Results follow the mail: Anna's invoice read, a saved unread search drops it.
+    let unread = core
+        .create_saved_search("Unread invoices", "invoice is:unread")
+        .await
+        .unwrap();
+    let before = core.search_saved(unread.id, None, opts()).await.unwrap();
+    assert_eq!(threads(&before.threads), [c.anna.1]);
+    core.apply(
+        mazemail_core::MailCommand::SetFlags {
+            ids: vec![c.anna.0],
+            add: Flags::SEEN,
+            remove: Flags::empty(),
+        },
+        mazemail_core::Origin::User,
+    )
+    .await
+    .unwrap();
+    let after = core.search_saved(unread.id, None, opts()).await.unwrap();
+    assert!(after.threads.is_empty());
+
+    // Rename and edit.
+    let renamed = core
+        .update_saved_search(
+            invoices.id,
+            mazemail_core::SavedSearchChange {
+                name: Some("Bills".into()),
+                query: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (renamed.name.as_str(), renamed.query.as_str()),
+        ("Bills", "invoice")
+    );
+    let error = core
+        .update_saved_search(
+            invoices.id,
+            mazemail_core::SavedSearchChange {
+                name: Some("lunch".into()),
+                query: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, Error::InvalidCommand(_)), "{error}");
+    core.update_saved_search(
+        invoices.id,
+        mazemail_core::SavedSearchChange {
+            name: None,
+            query: Some("from:bob".into()),
+        },
+    )
+    .await
+    .unwrap();
+    let edited = core.search_saved(invoices.id, None, opts()).await.unwrap();
+    assert_eq!(threads(&edited.threads), [c.bob.1]);
+
+    // Delete.
+    core.delete_saved_search(lunch.id).await.unwrap();
+    assert!(matches!(
+        core.delete_saved_search(lunch.id).await,
+        Err(Error::NotFound { .. })
+    ));
+    assert!(matches!(
+        core.search_saved(lunch.id, None, opts()).await,
+        Err(Error::NotFound { .. })
+    ));
+    assert_eq!(core.saved_searches().unwrap().len(), 2);
+}

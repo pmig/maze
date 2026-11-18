@@ -82,6 +82,24 @@ pub enum CliCommand {
     Account(AccountCommand),
     /// `mazemail sync`.
     Sync(SyncArgs),
+    /// `mazemail saved-search …`.
+    #[command(subcommand)]
+    SavedSearch(SavedSearchCommand),
+}
+
+/// `mazemail saved-search …`.
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
+pub enum SavedSearchCommand {
+    /// `mazemail saved-search list`.
+    List(SavedSearchListArgs),
+    /// `mazemail saved-search add`.
+    Add(SavedSearchAddArgs),
+    /// `mazemail saved-search rename`.
+    Rename(SavedSearchRenameArgs),
+    /// `mazemail saved-search edit`.
+    Edit(SavedSearchEditArgs),
+    /// `mazemail saved-search delete`.
+    Delete(SavedSearchDeleteArgs),
 }
 
 /// `mazemail account …`.
@@ -404,6 +422,11 @@ impl CliCommand {
             Self::Account(AccountCommand::Remove(_)) => &["account", "remove"],
             Self::Account(AccountCommand::Set(_)) => &["account", "set"],
             Self::Sync(_) => &["sync"],
+            Self::SavedSearch(SavedSearchCommand::List(_)) => &["saved-search", "list"],
+            Self::SavedSearch(SavedSearchCommand::Add(_)) => &["saved-search", "add"],
+            Self::SavedSearch(SavedSearchCommand::Rename(_)) => &["saved-search", "rename"],
+            Self::SavedSearch(SavedSearchCommand::Edit(_)) => &["saved-search", "edit"],
+            Self::SavedSearch(SavedSearchCommand::Delete(_)) => &["saved-search", "delete"],
         };
         // Every path above is in the registry (tested), so the fallback is unreachable.
         find_by_path(path).unwrap_or(&registry()[0])
@@ -541,6 +564,11 @@ impl CliCommand {
                 Invocation::new(name, &wire)
             }
             Self::Sync(args) => Invocation::new(name, &args),
+            Self::SavedSearch(SavedSearchCommand::List(args)) => Invocation::new(name, &args),
+            Self::SavedSearch(SavedSearchCommand::Add(args)) => Invocation::new(name, &args),
+            Self::SavedSearch(SavedSearchCommand::Rename(args)) => Invocation::new(name, &args),
+            Self::SavedSearch(SavedSearchCommand::Edit(args)) => Invocation::new(name, &args),
+            Self::SavedSearch(SavedSearchCommand::Delete(args)) => Invocation::new(name, &args),
         }
     }
 }
@@ -813,6 +841,25 @@ mod tests {
             (&["account", "set", "a_b", "--name", "Work"], "account.set"),
             (&["sync"], "sync"),
             (&["sync", "--account", "a_b"], "sync"),
+            (&["search", "--saved", "Invoices"], "search"),
+            (&["search", "--saved", "s_b", "is:unread"], "search"),
+            (&["saved-search", "list"], "saved-search.list"),
+            (
+                &["saved-search", "add", "Invoices", "invoice has:attachment"],
+                "saved-search.add",
+            ),
+            (
+                &["saved-search", "rename", "Invoices", "Bills"],
+                "saved-search.rename",
+            ),
+            (
+                &["saved-search", "edit", "s_b", "invoice"],
+                "saved-search.edit",
+            ),
+            (
+                &["saved-search", "delete", "Invoices"],
+                "saved-search.delete",
+            ),
         ] {
             let invocation = invoke(args, &env);
             assert_eq!(invocation.cmd(), name, "{args:?}");
@@ -834,6 +881,8 @@ mod tests {
         );
         assert_eq!(invocation.args, json!({ "query": "from:anna", "limit": 5 }));
         assert!(invocation.render.ids_only);
+        let saved = invoke(&["search", "--saved", "Invoices"], &FakeEnv::default());
+        assert_eq!(saved.args, json!({ "saved": "Invoices", "limit": 50 }));
     }
 
     #[test]
@@ -851,6 +900,9 @@ mod tests {
                 "rule", "add", "--name", "n", "--when", "q", "--then", "delete",
             ],
             &["token"],
+            &["search"],
+            &["saved-search"],
+            &["saved-search", "add", "Invoices"],
         ] {
             let result = cmd
                 .clone()

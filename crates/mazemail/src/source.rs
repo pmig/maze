@@ -46,23 +46,25 @@ use mail_ui::source::{
     AccountActivity, AccountEntry, AccountKind, ActivityState, AttachmentFile, AttachmentInfo,
     BodyLink, Deception, FolderEntry, FolderKey, FolderProgress, FolderStep, FolderTree, ListSort,
     MailSource, MessageBody, MessageDocument, MessageKeys, MessageRow, OriginalHtml, Part,
-    SenderClient, SortBy, SourceError, SourceStatus, StorageUsage, SyncState, ThreadFilter,
-    ThreadKeys, ThreadRow, ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
+    SavedSearchEntry, SenderClient, SortBy, SourceError, SourceStatus, StorageUsage, SyncState,
+    ThreadFilter, ThreadKeys, ThreadRow, ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
 };
 use mail_ui::source::{
     AddressBookEntry, BookKind, ContactDetail, ContactEdit, ContactError, ContactLabel,
     ContactPhone, ContactQuery, ContactRow, ContactSort, ContactVersion,
 };
 use mazemail_core::correspondents::display;
+use mazemail_core::saved_searches::combined_query;
 use mazemail_core::{
     AccountActivity as CoreAccountActivity, AccountInfo, AuthStatus, Body, CoreEventBatch,
     CoreHandle, FolderNode, FolderNodeKind, FolderPhase, ListOrder, ListQuery, ListScope,
-    MailCommand, MessageListRow, MessageView, Origin, QuickFilter, RefreshScope, SearchOpts,
-    SearchSort, SortField, StorageUsage as CoreStorageUsage, SyncState as CoreSyncState,
-    reader_text,
+    MailCommand, MessageListRow, MessageView, Origin, QuickFilter, RefreshScope, SavedSearchChange,
+    SearchOpts, SearchSort, SortField, StorageUsage as CoreStorageUsage,
+    SyncState as CoreSyncState, reader_text,
 };
 use mazemail_types::{
-    AccountId, Address, Flags, FolderId, FolderRole, MessageId, Sensitive, TagId, ThreadId,
+    AccountId, Address, Flags, FolderId, FolderRole, MessageId, SavedSearchId, Sensitive, TagId,
+    ThreadId,
 };
 use security::phishing::WarningKind;
 use time::OffsetDateTime;
@@ -298,14 +300,15 @@ impl CoreMailSource {
         .map_err(unavailable)
     }
 
-    /// The threads a global search finds for the UI's filter, in `sort`'s order: the
-    /// search orders by date itself, the core sorts the hits by any other column.
+    /// The threads a global search for `query` finds, in `sort`'s order: the search
+    /// orders by date itself, the core sorts the hits by any other column. `interactive`:
+    /// typed by a person (the last word may be unfinished).
     fn search_threads(
         core: &CoreHandle,
-        filter: &ThreadFilter,
+        query: String,
+        interactive: bool,
         sort: ListSort,
     ) -> Result<Vec<ThreadId>, SourceError> {
-        let query = search_query(filter);
         if query.is_empty() {
             return Ok(Vec::new());
         }
@@ -317,7 +320,7 @@ impl CoreMailSource {
                 SearchSort::NewestFirst
             },
             snippets: false,
-            interactive: true,
+            interactive,
             ..SearchOpts::default()
         };
         let runner = core.clone();
@@ -330,14 +333,37 @@ impl CoreMailSource {
         core.sort_threads(&threads, list_order(sort))
             .map_err(unavailable)
     }
+
+    /// The query a search scope runs: the search box's text and the filter's flags, or
+    /// a saved search's query narrowed by them. With whether it was typed.
+    fn scope_query(
+        core: &CoreHandle,
+        scope: &ThreadScope,
+        filter: &ThreadFilter,
+    ) -> Result<(String, bool), SourceError> {
+        let typed = filter.text.as_deref().is_some_and(|t| !t.trim().is_empty());
+        let narrow = search_query(filter);
+        match scope {
+            ThreadScope::Folder(FolderKey::SavedSearch(id)) => {
+                let saved = core.saved_search(*id).map_err(unavailable)?;
+                Ok((combined_query(&saved.query, Some(&narrow)), typed))
+            }
+            _ => Ok((narrow, true)),
+        }
+    }
+}
+
+/// The core's scope of a folder or unified folder; `None` for a saved search.
+fn list_scope(key: &FolderKey) -> Option<ListScope> {
+    match key {
+        FolderKey::Folder(id) => Some(ListScope::Folder(*id)),
+        FolderKey::Unified(role) => Some(ListScope::Unified(*role)),
+        FolderKey::SavedSearch(_) => None,
+    }
 }
 
 /// The core's list query for a folder and the UI's filter.
-fn list_query(key: &FolderKey, filter: &ThreadFilter, sort: ListSort) -> ListQuery {
-    let scope = match key {
-        FolderKey::Folder(id) => ListScope::Folder(*id),
-        FolderKey::Unified(role) => ListScope::Unified(*role),
-    };
+fn list_query(scope: ListScope, filter: &ThreadFilter, sort: ListSort) -> ListQuery {
     ListQuery {
         scope,
         sort: list_order(sort),
@@ -352,6 +378,17 @@ fn list_query(key: &FolderKey, filter: &ThreadFilter, sort: ListSort) -> ListQue
                 .filter(|t| !t.trim().is_empty())
                 .map(Sensitive::new),
         },
+    }
+}
+
+/// A saved search error as the dialog shows it: the reason alone, for people.
+fn saved_search_error(error: mazemail_core::Error) -> SourceError {
+    match error {
+        mazemail_core::Error::InvalidCommand(reason) => SourceError::Unavailable(reason.to_owned()),
+        mazemail_core::Error::Query(error) => {
+            SourceError::Unavailable(format!("the query doesn't parse: {error}"))
+        }
+        other => unavailable(other),
     }
 }
 
@@ -952,6 +989,16 @@ impl MailSource for CoreMailSource {
                 FolderNodeKind::Unified(_) | FolderNodeKind::Folder(_) => {}
             }
         }
+        tree.saved_searches = core
+            .saved_searches()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|saved| SavedSearchEntry {
+                id: saved.id,
+                name: saved.name.into(),
+                query: Sensitive::new(saved.query.into()),
+            })
+            .collect();
         *write(&self.counts) = counts;
         *lock(&self.tree) = Some(tree.clone());
         let tags = core.tags().unwrap_or_default();
@@ -984,24 +1031,25 @@ impl MailSource for CoreMailSource {
         sort: ListSort,
     ) -> Result<ThreadKeys, SourceError> {
         let core = self.ready()?;
-        match scope {
-            ThreadScope::Folder(key) => {
-                let query = list_query(key, filter, sort);
-                let snapshot = if query.quick_filter.text.is_some() {
-                    let runner = core.clone();
-                    wait(&core, async move { runner.quick_filter_body(&query).await })?
-                } else {
-                    core.thread_list(&query)
-                }
-                .map_err(unavailable)?;
-                *lock(&self.context) = snapshot.context();
-                Ok(snapshot.keys().iter().map(|k| k.thread).collect())
-            }
-            ThreadScope::AllFolders => {
-                *lock(&self.context) = None;
-                Ok(Self::search_threads(&core, filter, sort)?.into())
-            }
+        let folder = match scope {
+            ThreadScope::Folder(key) => list_scope(key),
+            ThreadScope::AllFolders => None,
+        };
+        let Some(folder) = folder else {
+            *lock(&self.context) = None;
+            let (query, typed) = Self::scope_query(&core, scope, filter)?;
+            return Ok(Self::search_threads(&core, query, typed, sort)?.into());
+        };
+        let query = list_query(folder, filter, sort);
+        let snapshot = if query.quick_filter.text.is_some() {
+            let runner = core.clone();
+            wait(&core, async move { runner.quick_filter_body(&query).await })?
+        } else {
+            core.thread_list(&query)
         }
+        .map_err(unavailable)?;
+        *lock(&self.context) = snapshot.context();
+        Ok(snapshot.keys().iter().map(|k| k.thread).collect())
     }
 
     fn thread_rows(&self, keys: &[ThreadId]) -> Vec<ThreadRow> {
@@ -1046,36 +1094,37 @@ impl MailSource for CoreMailSource {
         sort: ListSort,
     ) -> Result<MessageKeys, SourceError> {
         let core = self.ready()?;
-        match scope {
-            ThreadScope::Folder(key) => {
-                let query = list_query(key, filter, sort);
-                let snapshot = if query.quick_filter.text.is_some() {
-                    let runner = core.clone();
-                    wait(&core, async move {
-                        runner.message_quick_filter_body(&query).await
-                    })?
-                } else {
-                    core.message_list(&query)
-                }
-                .map_err(unavailable)?;
-                *lock(&self.context) = snapshot.context();
-                Ok(snapshot.keys().iter().map(|k| k.message).collect())
+        let folder = match scope {
+            ThreadScope::Folder(key) => list_scope(key),
+            ThreadScope::AllFolders => None,
+        };
+        let Some(folder) = folder else {
+            // Search finds threads; with threads off, list their messages, sorted by
+            // the core.
+            *lock(&self.context) = None;
+            let (query, typed) = Self::scope_query(&core, scope, filter)?;
+            let threads = Self::search_threads(&core, query, typed, ListSort::NEWEST_FIRST)?;
+            let mut ids = Vec::new();
+            for thread in threads {
+                ids.extend(core.thread_message_ids(thread).map_err(unavailable)?);
             }
-            ThreadScope::AllFolders => {
-                // Search finds threads; with threads off, list their messages, sorted
-                // by the core.
-                *lock(&self.context) = None;
-                let threads = Self::search_threads(&core, filter, ListSort::NEWEST_FIRST)?;
-                let mut ids = Vec::new();
-                for thread in threads {
-                    ids.extend(core.thread_message_ids(thread).map_err(unavailable)?);
-                }
-                Ok(core
-                    .sort_messages(&ids, list_order(sort))
-                    .map_err(unavailable)?
-                    .into())
-            }
+            return Ok(core
+                .sort_messages(&ids, list_order(sort))
+                .map_err(unavailable)?
+                .into());
+        };
+        let query = list_query(folder, filter, sort);
+        let snapshot = if query.quick_filter.text.is_some() {
+            let runner = core.clone();
+            wait(&core, async move {
+                runner.message_quick_filter_body(&query).await
+            })?
+        } else {
+            core.message_list(&query)
         }
+        .map_err(unavailable)?;
+        *lock(&self.context) = snapshot.context();
+        Ok(snapshot.keys().iter().map(|k| k.message).collect())
     }
 
     fn message_rows(&self, keys: &[MessageId]) -> Vec<MessageRow> {
@@ -1439,12 +1488,47 @@ impl MailSource for CoreMailSource {
             .map_err(unavailable)
     }
 
+    fn save_search(&self, name: &str, query: &str) -> Result<SavedSearchId, SourceError> {
+        let core = self.ready()?;
+        let runner = core.clone();
+        let (name, query) = (name.to_owned(), query.to_owned());
+        let saved = wait(&core, async move {
+            runner.create_saved_search(&name, &query).await
+        })?
+        .map_err(saved_search_error)?;
+        Ok(saved.id)
+    }
+
+    fn edit_saved_search(
+        &self,
+        id: SavedSearchId,
+        name: &str,
+        query: &str,
+    ) -> Result<(), SourceError> {
+        let core = self.ready()?;
+        let runner = core.clone();
+        let change = SavedSearchChange {
+            name: Some(name.to_owned()),
+            query: Some(query.to_owned()),
+        };
+        wait(&core, async move {
+            runner.update_saved_search(id, change).await
+        })?
+        .map(drop)
+        .map_err(saved_search_error)
+    }
+
+    fn delete_saved_search(&self, id: SavedSearchId) -> Result<(), SourceError> {
+        let core = self.ready()?;
+        let runner = core.clone();
+        wait(&core, async move { runner.delete_saved_search(id).await })?
+            .map_err(saved_search_error)
+    }
+
     fn mark_all_read(&self, folder: &FolderKey) -> Result<(), SourceError> {
         let core = self.ready()?;
-        let scope = match folder {
-            FolderKey::Folder(id) => ListScope::Folder(*id),
-            FolderKey::Unified(role) => ListScope::Unified(*role),
-        };
+        let scope = list_scope(folder)
+            .ok_or_else(|| unavailable("a saved search isn't a folder".to_owned()))?;
         let runner = core.clone();
         wait_for(
             &core,

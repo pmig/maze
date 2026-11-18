@@ -5,11 +5,11 @@
 
 use std::fmt;
 
-pub use mazemail_types::DraftId;
 use mazemail_types::compose::Draft;
 use mazemail_types::{
     AccountId, Address, BlobId, FolderId, FolderRole, IdentityId, MessageId, TagId, ThreadId,
 };
+pub use mazemail_types::{DraftId, SavedSearchId};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -70,10 +70,6 @@ local_id!(
 local_id!(
     /// A filter rule.
     RuleId
-);
-local_id!(
-    /// A saved search (virtual folder).
-    SavedSearchId
 );
 local_id!(
     /// An address book entry.

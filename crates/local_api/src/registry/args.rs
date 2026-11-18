@@ -130,10 +130,16 @@ pub struct TokenRevokeArgs {
 #[serde(deny_unknown_fields)]
 pub struct SearchArgs {
     /// The query: words plus `from:`, `to:`, `subject:`, `has:attachment`, `is:unread`,
-    /// `tag:`, `in:`, `list:`, `after:`, `before:`, `older_than:`.
-    #[arg(value_name = "QUERY")]
-    #[schemars(with = "String")]
-    pub query: Sensitive<String>,
+    /// `tag:`, `in:`, `list:`, `after:`, `before:`, `older_than:`. With --saved it
+    /// narrows the saved search.
+    #[arg(value_name = "QUERY", required_unless_present = "saved")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub query: Option<Sensitive<String>>,
+    /// Run a saved search, by name or id (`s_…`, from `mazemail saved-search list`).
+    #[arg(long, value_name = "NAME_OR_ID")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved: Option<String>,
     /// Maximum number of results.
     #[arg(long, default_value_t = DEFAULT_SEARCH_LIMIT)]
     #[serde(default = "default_search_limit")]
@@ -664,6 +670,58 @@ pub struct RuleAddArgs {
     pub apply_now: bool,
 }
 
+/// `mazemail saved-search list`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SavedSearchListArgs {}
+
+/// `mazemail saved-search add`.
+#[derive(Debug, Clone, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SavedSearchAddArgs {
+    /// The name the folder pane shows (unique, ignoring case).
+    #[arg(value_name = "NAME")]
+    pub name: String,
+    /// The search query, in `mazemail search`'s language.
+    #[arg(value_name = "QUERY")]
+    #[schemars(with = "String")]
+    pub query: Sensitive<String>,
+}
+
+/// `mazemail saved-search rename`.
+#[derive(Debug, Clone, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SavedSearchRenameArgs {
+    /// The saved search: its name or id (`s_…`).
+    #[arg(value_name = "SAVED_SEARCH")]
+    pub search: String,
+    /// The new name.
+    #[arg(value_name = "NEW_NAME")]
+    pub name: String,
+}
+
+/// `mazemail saved-search edit`.
+#[derive(Debug, Clone, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SavedSearchEditArgs {
+    /// The saved search: its name or id (`s_…`).
+    #[arg(value_name = "SAVED_SEARCH")]
+    pub search: String,
+    /// The new query.
+    #[arg(value_name = "QUERY")]
+    #[schemars(with = "String")]
+    pub query: Sensitive<String>,
+}
+
+/// `mazemail saved-search delete`.
+#[derive(Debug, Clone, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SavedSearchDeleteArgs {
+    /// The saved search: its name or id (`s_…`).
+    #[arg(value_name = "SAVED_SEARCH")]
+    pub search: String,
+}
+
 /// `mazemail send`.
 #[derive(Debug, Clone, PartialEq, Eq, Args, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -1156,7 +1214,8 @@ mod tests {
     #[test]
     fn sensitive_fields_stay_out_of_debug() {
         let args = SearchArgs {
-            query: Sensitive::new("from:anna@example.com".into()),
+            query: Some(Sensitive::new("from:anna@example.com".into())),
+            saved: None,
             limit: 5,
             ids: false,
         };

@@ -14,8 +14,8 @@ pub use address::{Address, AddressListError, AddressParseError};
 pub use flags::Flags;
 pub use folder::FolderRole;
 pub use ids::{
-    AccountId, BlobId, DraftId, FolderId, IdentityId, MessageId, ParseIdError, PublicId, TagId,
-    ThreadId,
+    AccountId, BlobId, DraftId, FolderId, IdentityId, MessageId, ParseIdError, PublicId,
+    SavedSearchId, TagId, ThreadId,
 };
 pub use sensitive::Sensitive;
 pub use tenant::{InvalidTenant, MicrosoftTenant};

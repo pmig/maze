@@ -57,7 +57,10 @@ impl CommandHandler for FakeCore {
         });
         match command {
             Command::Search(args) => {
-                assert_eq!(args.query.expose(), "from:anna@example.com");
+                assert_eq!(
+                    args.query.as_ref().unwrap().expose(),
+                    "from:anna@example.com"
+                );
                 CommandOutput::new(&json!([{ "id": "m_b", "thread": "t_c" }]))
                     .map(|out| out.with_affected(["m_b".to_owned()]))
             }
