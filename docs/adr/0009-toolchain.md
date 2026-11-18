@@ -13,5 +13,5 @@ Rust **1.99.1** is pinned in `rust-toolchain.toml` (latest stable), edition 2024
 
 ## Consequences
 
-- One toolchain, no Homebrew. `mise run ci` runs fmt, clippy with `-D warnings`, nextest and cargo-deny, and CI runs the same tasks (PLAN §3).
+- One toolchain, no Homebrew. `mise run ci` runs fmt, clippy with `-D warnings`, nextest and cargo-deny. CI runs the same tasks (PLAN §3), except cargo-deny, which runs in its own workflow on pull requests that change dependencies and twice a day, so a new advisory doesn't fail unrelated builds.
 - Spike S1 confirms that the GPUI stack builds with 1.99.1.
