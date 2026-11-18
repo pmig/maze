@@ -1,16 +1,16 @@
-//! The rules tab: "Rules: Show Rules" lists the rules, a click toggles one and a
+//! The rules tab: "Rules: Show" lists the rules, a click toggles one and a
 //! rule Maze can't run can't be enabled.
 
 use gpui::{Modifiers, TestAppContext};
 
 use super::*;
-use crate::actions::ShowRules;
+use crate::actions::rules;
 use crate::rules_tab::RulesTab;
 
 #[gpui::test]
 fn show_rules_lists_and_toggles_rules(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
-    cx.dispatch_action(ShowRules);
+    cx.dispatch_action(rules::Show);
     cx.run_until_parked();
     let tab = view.read_with(cx, |w, cx| {
         w.panes()
@@ -37,7 +37,7 @@ fn show_rules_lists_and_toggles_rules(cx: &mut TestAppContext) {
     assert!(tab.read_with(cx, |tab, _| tab.error().is_some()));
 
     // Showing the rules again activates the same tab.
-    cx.dispatch_action(ShowRules);
+    cx.dispatch_action(rules::Show);
     cx.run_until_parked();
     let tabs = view.read_with(cx, |w, cx| {
         w.panes().read(cx).items_of::<RulesTab>(cx).len()

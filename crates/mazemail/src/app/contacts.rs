@@ -1,5 +1,5 @@
-//! Connecting contacts from the command palette ("Contacts: Connect Contacts",
-//! "Contacts: Sync Contacts"). Every Google and Microsoft account whose contacts aren't
+//! Connecting contacts from the command palette ("Address Book: Connect",
+//! "Address Book: Sync"). Every Google and Microsoft account whose contacts aren't
 //! connected (or lost the permission), or whose shared mailboxes
 //! (`accounts.<label>.shared_contacts`) lack permission, gets its provider's consent
 //! page in the browser, one after the other; the result shows as a notification. The

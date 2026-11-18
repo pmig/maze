@@ -46,7 +46,7 @@
 //!
 //! Any column sorts the list: a click on its header (again: the other way round, with
 //! an arrow on the sorted column), the sort button in the list header (cards and
-//! table), or the `view::SortBy…` actions in the command palette. The source sorts
+//! table), or the `thread_list::SortBy…` actions in the command palette. The source sorts
 //! ([`MailSource::thread_keys`]): the view only ever holds keys in display order. Date
 //! orders load like an unfiltered folder, at once; other orders in the background
 //! ("Sorting…"), keeping the selected row and scrolling to it when they arrive.
@@ -91,8 +91,8 @@ use ui::keymap::shortcut_label;
 use ui::theme::{scaled, ui_scale};
 
 use crate::actions::{
-    Archive, Delete, Forward, MoveToFolder, OpenMessage, Reply, ReplyAll, ReportJunk, SaveSearch,
-    SelectThread, ToggleRead, ToggleStar,
+    Archive, Delete, Forward, MoveToFolder, OpenMessage, Reply, ReplyAll, ReportJunk, SelectThread,
+    ToggleRead, ToggleStar, search,
 };
 use crate::format::{DateFormatter, format_size, format_thousands};
 use crate::list_model::{Expansions, RowPosition, TreeRow, tree_rows};
@@ -2049,7 +2049,7 @@ impl ThreadList {
         cx.notify();
     }
 
-    /// Sorts by `by` (`view::SortBy…`): in its first direction if the list is sorted by
+    /// Sorts by `by` (`thread_list::SortBy…`): in its first direction if the list is sorted by
     /// something else, unchanged if it is sorted by `by` already.
     pub fn sort_by(&mut self, by: SortBy, cx: &mut Context<'_, Self>) {
         if self.prefs.sort.by != by {
@@ -2065,7 +2065,7 @@ impl ThreadList {
         }
     }
 
-    /// `view::ReverseSortOrder`.
+    /// `thread_list::ReverseSortOrder`.
     pub fn reverse_sort(&mut self, cx: &mut Context<'_, Self>) {
         self.set_sort(self.prefs.sort.toggled(), cx);
     }
@@ -2688,7 +2688,7 @@ impl ThreadList {
                                 .label("Save Search…")
                                 .tooltip("Show this search in the folder pane, by name")
                                 .on_click(|_, window, cx| {
-                                    window.dispatch_action(Box::new(SaveSearch), cx);
+                                    window.dispatch_action(Box::new(search::Save), cx);
                                 }),
                         )
                     })
@@ -2967,7 +2967,7 @@ impl Render for ThreadList {
                                             .label("Add Account…")
                                             .on_click(|_, window, cx| {
                                                 window.dispatch_action(
-                                                    Box::new(crate::actions::AddAccount),
+                                                    Box::new(crate::actions::accounts::Add),
                                                     cx,
                                                 );
                                             }),
@@ -4045,7 +4045,7 @@ mod tests {
             assert!(sizes.windows(2).all(|w| w[0] >= w[1]), "largest first");
             assert_eq!(list.sort(), ListSort::by(SortBy::Size));
         });
-        // `view::SortBy…` keeps the direction; `view::ReverseSortOrder` flips it.
+        // `thread_list::SortBy…` keeps the direction; `thread_list::ReverseSortOrder` flips it.
         list.update(cx, |list, cx| {
             list.sort_by(SortBy::Size, cx);
             assert!(list.sort().descending);

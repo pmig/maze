@@ -207,7 +207,7 @@ fn installs_in_the_background_and_offers_the_restart(cx: &mut TestAppContext) {
 fn settings_changes_apply_live(cx: &mut TestAppContext) {
     let fixture = Fixture::new();
     fixture.publish(ReleaseChannel::Preview, "1.1.0-beta.1");
-    let initial = r#"{ "auto_update_install": "notify_only" }"#;
+    let initial = r#"{ "update": { "install": "notify_only" } }"#;
     let updater = fixture.auto_updater(
         cx,
         fixture.config("1.0.0"),
@@ -231,7 +231,7 @@ fn settings_changes_apply_live(cx: &mut TestAppContext) {
     // offers the update.
     settings_tx
         .send(settings(
-            r#"{ "update_channel": "preview", "auto_update_install": "notify_only" }"#,
+            r#"{ "update": { "channel": "preview", "install": "notify_only" } }"#,
         ))
         .unwrap();
     wait_until(cx, "the preview offer", |cx| {
@@ -250,10 +250,10 @@ fn settings_changes_apply_live(cx: &mut TestAppContext) {
         ReleaseChannel::Preview
     );
 
-    // `"auto_update": false` stops the background checks.
+    // `"update": { "auto": false }` stops the background checks.
     settings_tx
         .send(settings(
-            r#"{ "auto_update": false, "update_channel": "preview" }"#,
+            r#"{ "update": { "auto": false, "channel": "preview" } }"#,
         ))
         .unwrap();
     wait_until(cx, "polling to stop", |cx| {
@@ -344,7 +344,7 @@ fn the_button_renders_the_state(cx: &mut TestAppContext) {
     let updater = fixture.auto_updater(
         cx,
         fixture.config("1.0.0"),
-        resolved(r#"{ "auto_update": false }"#),
+        resolved(r#"{ "update": { "auto": false } }"#),
         AutoUpdaterOptions::default(),
     );
     let button = updater.clone();

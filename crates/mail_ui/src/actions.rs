@@ -22,13 +22,6 @@ actions!(
         Minimize,
         /// Zoom the window.
         Zoom,
-        /// Add a mail account (IMAP, Gmail or Microsoft).
-        AddAccount,
-        /// Edit the account of the shown mail or folder: its name, password, servers
-        /// or sign-in.
-        EditAccount,
-        /// Add a From address (alias) to the account of the shown mail or folder.
-        AddAlias,
         /// Edit your settings (`settings.json`) in a tab (`cmd-,`).
         OpenSettings,
         /// Show Maze's default settings, read-only, in a tab.
@@ -36,13 +29,39 @@ actions!(
     ]
 );
 
-actions!(
-    settings_editor,
-    [
-        /// Save the settings file and apply it (`cmd-s` in the settings tab).
-        SaveSettings,
-    ]
-);
+/// Actions of the settings tab.
+pub mod settings_editor {
+    gpui::actions!(
+        settings_editor,
+        [
+            /// Save the settings file and apply it (`cmd-s` in the settings tab).
+            Save,
+        ]
+    );
+}
+
+/// Mail accounts: add one, edit one, add an alias.
+pub mod accounts {
+    gpui::actions!(
+        accounts,
+        [
+            /// Add a mail account (IMAP, Gmail or Microsoft).
+            Add,
+            /// Edit the account of the shown mail or folder: its name, password,
+            /// servers or sign-in.
+            Edit,
+            /// Add a From address (alias) to the account of the shown mail or folder.
+            AddAlias,
+        ]
+    );
+
+    /// Edit this account: the app opens "Edit Account…" for it. Sent by the folder
+    /// pane's account menu, "Sync activity" and "Accounts: Edit" (which picks the
+    /// account). Not in the palette.
+    #[derive(Debug, Clone, PartialEq, Eq, gpui::Action)]
+    #[action(namespace = accounts, no_json)]
+    pub struct EditFor(pub mazemail_types::AccountId);
+}
 
 actions!(
     workspace,
@@ -62,48 +81,49 @@ actions!(
     ]
 );
 
-actions!(
-    address_book,
-    [
-        /// Select the next contact (down).
-        SelectNextContact,
-        /// Select the previous contact (up).
-        SelectPreviousContact,
-        /// Select the first contact (home).
-        SelectFirstContact,
-        /// Select the last contact (end).
-        SelectLastContact,
-        /// Write to the selected contact (the detail pane's New Mail).
-        NewMailToContact,
-        /// Show the mail from and to the selected contact in the Mail space.
-        ShowMailWithContact,
-        /// Sort the contact list by name.
-        SortContactsByName,
-        /// Sort the contact list by when you last wrote to them.
-        SortContactsByLastUsed,
-    ]
-);
+/// The Address Book space and the contacts of Google and Microsoft accounts.
+pub mod address_book {
+    gpui::actions!(
+        address_book,
+        [
+            /// Select the next contact (down).
+            SelectNextContact,
+            /// Select the previous contact (up).
+            SelectPreviousContact,
+            /// Select the first contact (home).
+            SelectFirstContact,
+            /// Select the last contact (end).
+            SelectLastContact,
+            /// Write to the selected contact (the detail pane's New Mail).
+            NewMailToContact,
+            /// Show the mail from and to the selected contact in the Mail space.
+            ShowMailWithContact,
+            /// Sort the contact list by name.
+            SortContactsByName,
+            /// Sort the contact list by when you last wrote to them.
+            SortContactsByLastUsed,
+            /// Connect the contacts of your Google and Microsoft accounts: sign in once
+            /// more to allow it; Maze then syncs them and saves edits to Google or
+            /// Microsoft.
+            Connect,
+            /// Sync the contacts of every connected account now.
+            Sync,
+        ]
+    );
+}
 
-actions!(
-    contacts,
-    [
-        /// Connect the contacts of your Google and Microsoft accounts: sign in once more
-        /// to allow it; Maze then syncs them and saves edits to Google or Microsoft.
-        ConnectContacts,
-        /// Sync the contacts of every connected account now.
-        SyncContacts,
-    ]
-);
-
-actions!(
-    rules,
-    [
-        /// Show the message rules (filters) in a tab, to review and enable them.
-        ShowRules,
-        /// Run the enabled rules on the selected folder now.
-        RunRulesOnFolder,
-    ]
-);
+/// Message rules (filters).
+pub mod rules {
+    gpui::actions!(
+        rules,
+        [
+            /// Show the message rules (filters) in a tab, to review and enable them.
+            Show,
+            /// Run the enabled rules on the selected folder now.
+            RunOnFolder,
+        ]
+    );
+}
 
 actions!(
     command_palette,
@@ -113,22 +133,27 @@ actions!(
     ]
 );
 
-actions!(
-    search,
-    [
-        /// Focus the search field that searches all messages (`cmd-shift-f`, `cmd-/`).
-        FocusSearch,
-        /// Focus the Quick Filter of the message list (`cmd-f`, `cmd-shift-k`).
-        QuickFilter,
-        /// Save the shown search under a name: it shows in the folder pane under Saved
-        /// Searches (`cmd-alt-s`, the search results' "Save Search…").
-        SaveSearch,
-        /// Rename the open saved search or change its query (its folder pane menu).
-        EditSavedSearch,
-        /// Delete the open saved search, after asking (its folder pane menu).
-        DeleteSavedSearch,
-    ]
-);
+/// Searching all messages, the Quick Filter and saved searches.
+pub mod search {
+    gpui::actions!(
+        search,
+        [
+            /// Focus the search field that searches all messages (`cmd-shift-f`,
+            /// `cmd-/`).
+            Focus,
+            /// Focus the Quick Filter of the message list (`cmd-f`, `cmd-shift-k`).
+            QuickFilter,
+            /// Save the shown search under a name: it shows in the folder pane under
+            /// Saved Searches (`cmd-alt-s`, the search results' "Save Search…").
+            Save,
+            /// Rename the open saved search or change its query (its folder pane
+            /// menu).
+            EditSavedSearch,
+            /// Delete the open saved search, after asking (its folder pane menu).
+            DeleteSavedSearch,
+        ]
+    );
+}
 
 actions!(
     mail,
@@ -211,13 +236,6 @@ actions!(
     ]
 );
 
-/// Edit this account: the app opens "Edit Account…" for it. Sent by the folder pane's
-/// account menu, "Sync activity" and "Maze: Edit Account" (which picks the account).
-/// Not in the palette.
-#[derive(Debug, Clone, PartialEq, Eq, gpui::Action)]
-#[action(namespace = accounts, no_json)]
-pub struct EditAccountFor(pub mazemail_types::AccountId);
-
 /// Write to the addresses of a `mailto:` link, clicked in a message. The window asks
 /// the app for a draft ([`crate::ComposeRequest::MailTo`]). Not in the palette.
 #[derive(Debug, Clone, PartialEq, Eq, gpui::Action)]
@@ -225,12 +243,8 @@ pub struct EditAccountFor(pub mazemail_types::AccountId);
 pub struct ComposeTo(pub MailTo);
 
 actions!(
-    view,
+    message_view,
     [
-        /// Switch the message list between cards and table (`cmd-alt-t`).
-        ToggleTableView,
-        /// Turn threads on or off: a thread tree, or one row per message (`cmd-alt-g`).
-        ToggleThreads,
         /// Switch an HTML message between reader mode and the original (`v`).
         ToggleOriginalHtml,
         /// Show an HTML message in reader mode (`cmd-alt-r`).
@@ -241,6 +255,16 @@ actions!(
         LoadImages,
         /// Always load remote images from the shown message's sender (`shift-i`).
         AlwaysLoadImagesFromSender,
+    ]
+);
+
+actions!(
+    thread_list,
+    [
+        /// Switch the message list between cards and table (`cmd-alt-t`).
+        ToggleTableView,
+        /// Turn threads on or off: a thread tree, or one row per message (`cmd-alt-g`).
+        ToggleThreads,
         /// Sort the message list by date.
         SortByDate,
         /// Sort the message list by the time the server received the mail.
@@ -293,14 +317,15 @@ pub fn sort_action(by: crate::source::SortBy) -> Box<dyn gpui::Action> {
 /// Action namespaces the command palette lists.
 pub const PALETTE_NAMESPACES: &[&str] = &[
     "maze",
+    "accounts",
     "workspace",
     "pane",
     "search",
     "mail",
-    "view",
+    "thread_list",
+    "message_view",
     "address_book",
     "agent",
-    "contacts",
     "rules",
 ];
 
@@ -346,8 +371,8 @@ mod tests {
         );
         assert_eq!(humanize_action_name("Quit"), "Quit");
         assert_eq!(
-            humanize_action_name("view::ToggleTableView"),
-            "View: Toggle Table View"
+            humanize_action_name("thread_list::ToggleTableView"),
+            "Thread List: Toggle Table View"
         );
     }
 }

@@ -41,7 +41,8 @@ pub(crate) fn run(options: &UpdateOnce) -> anyhow::Result<()> {
     let app = AppVersion::current();
     let channel = loaded
         .settings
-        .effective_update_channel(ReleaseChannel::current());
+        .update
+        .effective_channel(ReleaseChannel::current());
     let mut config = UpdaterConfig::for_current_build(paths.data_dir(), channel);
     if let Some(url) = &options.update_base_url {
         config.manifest_base_url = url.clone();

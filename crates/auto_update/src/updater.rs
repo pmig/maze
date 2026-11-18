@@ -197,7 +197,7 @@ pub enum CheckOutcome {
 /// What to do with a newer version.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum InstallMode {
-    /// Download and install in the background (`"auto_update_install": "background"`).
+    /// Download and install in the background (`"update": { "install": "background" }`).
     #[default]
     Background,
     /// Only report it (`"notify_only"`).
@@ -211,7 +211,7 @@ pub struct UpdaterConfig {
     pub current_version: Version,
     /// The channel of the running build. Dev builds never update.
     pub build_channel: ReleaseChannel,
-    /// The channel to follow (`update_channel` setting).
+    /// The channel to follow (`update.channel` setting).
     pub channel: ReleaseChannel,
     /// What to do with a newer version.
     pub install_mode: InstallMode,

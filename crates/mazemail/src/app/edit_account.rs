@@ -3,8 +3,8 @@
 //!
 //! It opens from the folder pane's account menu ("Edit Account…"), from "Sync activity"
 //! when an account needs a sign-in or has an error, and from the command palette
-//! ("Maze: Edit Account", for the account of the shown mail or folder), all through
-//! [`mail_ui::actions::EditAccountFor`]. The fields start with the account's settings;
+//! ("Accounts: Edit", for the account of the shown mail or folder), all through
+//! [`mail_ui::actions::accounts::EditFor`]. The fields start with the account's settings;
 //! saving sends only what changed ([`changes`]) to [`CoreHandle::update_account`], which
 //! checks the new settings against the server first, so a wrong password or an
 //! unreachable server keeps the dialog open with the error. The password field stays

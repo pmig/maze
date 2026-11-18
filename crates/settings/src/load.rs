@@ -512,7 +512,7 @@ mod tests {
                 "work": { "offline": "all", "remote_content": "never" },
                 "personal": { "sync_trash": true },
               },
-              "update_channel": "preview",
+              "update": { "channel": "preview" },
             }
             "#,
         ));
@@ -535,7 +535,7 @@ mod tests {
         );
         assert!(s.account("personal").sync_trash);
         assert_eq!(s.agent.default.as_deref(), Some("claude"));
-        assert_eq!(s.update_channel, Some(UpdateChannel::Preview));
+        assert_eq!(s.update.channel, Some(UpdateChannel::Preview));
     }
 
     #[test]
@@ -719,9 +719,9 @@ mod tests {
         let path = dir.path().join("settings.json");
         assert_eq!(load_settings(&path), LoadedSettings::default());
 
-        std::fs::write(&path, r#"{ "auto_update": false }"#).unwrap();
+        std::fs::write(&path, r#"{ "update": { "auto": false } }"#).unwrap();
         let loaded = load_settings(&path);
-        assert!(!loaded.settings.auto_update);
+        assert!(!loaded.settings.update.auto);
         assert!(loaded.diagnostics.is_empty());
 
         // A directory where the file should be is an IO error, not a panic.

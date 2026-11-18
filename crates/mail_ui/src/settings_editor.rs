@@ -45,7 +45,7 @@ use ui::keymap::shortcut_label;
 use ui::panes::{Item, ItemEvent, SerializedItem};
 use ui::theme::scaled;
 
-use crate::actions::{OpenDefaultSettings, SaveSettings};
+use crate::actions::{OpenDefaultSettings, settings_editor};
 
 /// The layout kind of settings tabs (`{"kind": "settings"}`).
 pub const SETTINGS_KIND: &str = "settings";
@@ -589,7 +589,7 @@ impl Render for SettingsEditor {
             .key_context("SettingsEditor")
             .bg(colors.background)
             .text_color(colors.foreground)
-            .on_action(cx.listener(|this, _: &SaveSettings, _, cx| {
+            .on_action(cx.listener(|this, _: &settings_editor::Save, _, cx| {
                 this.save(cx);
             }))
             .children(banner)

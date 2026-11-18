@@ -198,9 +198,10 @@ impl ThunderbirdProfile {
         if report.filters > 0 {
             report.unsupported.push(Unsupported {
                 item: format!("{} message filters", report.filters),
-                reason: "imported disabled; review them with `mazemail rule list` (or Rules: Show \
-                         Rules in Maze) and enable the ones you want with `mazemail rule enable`"
-                    .to_owned(),
+                reason:
+                    "imported disabled; review them with `mazemail rule list` (or Rules: Show in \
+                         Maze) and enable the ones you want with `mazemail rule enable`"
+                        .to_owned(),
             });
         }
         for (path, name) in &self.address_books {

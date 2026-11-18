@@ -172,7 +172,7 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
         let mut menus = mail_ui::app_menus();
         auto_update_ui::add_menu_item(&mut menus);
         cx.set_menus(menus);
-        cx.on_action(|_: &mail_ui::actions::AddAccount, cx| {
+        cx.on_action(|_: &mail_ui::actions::accounts::Add, cx| {
             // The action usually comes from a button or the palette, i.e. while the main
             // window is busy handling that event, and GPUI can't update a window from
             // inside its own event handling. Open the dialog once the event is done.
@@ -181,9 +181,9 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
                 None => tracing::info!("Add Account: the mail data isn't open yet"),
             });
         });
-        // From the folder pane's account menu, "Sync activity" and "Maze: Edit Account";
+        // From the folder pane's account menu, "Sync activity" and "Accounts: Edit";
         // deferred like Add Account.
-        cx.on_action(|action: &mail_ui::actions::EditAccountFor, cx| {
+        cx.on_action(|action: &mail_ui::actions::accounts::EditFor, cx| {
             let account = action.0;
             cx.defer(move |cx| match cx.global::<AppState>().core.clone() {
                 Some(core) => edit_account::show(core, account, cx),
@@ -199,10 +199,12 @@ pub(crate) fn run(options: AppOptions) -> anyhow::Result<()> {
         cx.on_action(|_: &mail_ui::actions::OpenSettings, cx| cx.defer(open_settings));
         // Google and Microsoft contacts (ADR-024); deferred like Add Account (it may open a browser
         // and show notifications).
-        cx.on_action(|_: &mail_ui::actions::ConnectContacts, cx| {
+        cx.on_action(|_: &mail_ui::actions::address_book::Connect, cx| {
             cx.defer(contacts::connect_contacts);
         });
-        cx.on_action(|_: &mail_ui::actions::SyncContacts, cx| cx.defer(contacts::sync_contacts));
+        cx.on_action(|_: &mail_ui::actions::address_book::Sync, cx| {
+            cx.defer(contacts::sync_contacts)
+        });
         agents::init(cx);
         cx.set_global(AppState {
             source,

@@ -59,12 +59,9 @@ pub struct Settings {
     pub agent_sandbox: AgentSandboxSettings,
     /// Maze Magic: an agent improves the draft in the composer (⌘M / Ctrl+M).
     pub maze_magic: MazeMagicSettings,
-    /// Look for updates in the background. `false`: only when asked.
-    pub auto_update: bool,
-    /// The update channel. `null`: the channel of the installed build.
-    pub update_channel: Option<UpdateChannel>,
-    /// What happens when an update is found.
-    pub auto_update_install: AutoUpdateInstall,
+    /// Updates of Maze: look for updates in the background, the channel and what
+    /// happens when one is found.
+    pub update: UpdateSettings,
     /// Notifications for new mail.
     pub notifications: NotificationSettings,
     /// Contacts synced from Google and Microsoft accounts that connected their contacts.
@@ -92,9 +89,7 @@ impl Default for Settings {
             agent: AgentSettings::default(),
             agent_sandbox: AgentSandboxSettings::default(),
             maze_magic: MazeMagicSettings::default(),
-            auto_update: true,
-            update_channel: None,
-            auto_update_install: AutoUpdateInstall::default(),
+            update: UpdateSettings::default(),
             notifications: NotificationSettings::default(),
             contacts: ContactsSettings::default(),
         }
@@ -102,16 +97,6 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// The update channel to follow: the `update_channel` setting, or the channel of
-    /// the running build. Dev builds stay on dev (they never update).
-    pub fn effective_update_channel(&self, build: ReleaseChannel) -> ReleaseChannel {
-        match (build, self.update_channel) {
-            (ReleaseChannel::Dev, _) => ReleaseChannel::Dev,
-            (_, Some(channel)) => channel.into(),
-            (build, None) => build,
-        }
-    }
-
     /// The settings that apply to one account: its overrides over the global values.
     pub fn account(&self, label: &str) -> AccountSettings {
         let overrides = self.accounts.get(label);
@@ -902,6 +887,40 @@ pub struct AgentPathRules {
     pub already_sandboxed: bool,
 }
 
+/// Updates of Maze (PLAN §4.15).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct UpdateSettings {
+    /// Look for updates in the background. `false`: only when asked.
+    pub auto: bool,
+    /// The update channel. `null`: the channel of the installed build.
+    pub channel: Option<UpdateChannel>,
+    /// What happens when an update is found.
+    pub install: UpdateInstall,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            auto: true,
+            channel: None,
+            install: UpdateInstall::default(),
+        }
+    }
+}
+
+impl UpdateSettings {
+    /// The update channel to follow: the `channel` setting, or the channel of the
+    /// running build. Dev builds stay on dev (they never update).
+    pub fn effective_channel(&self, build: ReleaseChannel) -> ReleaseChannel {
+        match (build, self.channel) {
+            (ReleaseChannel::Dev, _) => ReleaseChannel::Dev,
+            (_, Some(channel)) => channel.into(),
+            (build, None) => build,
+        }
+    }
+}
+
 /// The update channel a user can choose (dev builds never update).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -924,7 +943,7 @@ impl From<UpdateChannel> for ReleaseChannel {
 /// What happens when an update is found.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum AutoUpdateInstall {
+pub enum UpdateInstall {
     /// Download and install in the background, then offer a restart.
     #[default]
     Background,
@@ -1030,23 +1049,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn effective_update_channel() {
-        let mut settings = Settings::default();
+    fn effective_update_channel_follows_the_build() {
+        let mut settings = UpdateSettings::default();
         assert_eq!(
-            settings.effective_update_channel(ReleaseChannel::Preview),
+            settings.effective_channel(ReleaseChannel::Preview),
             ReleaseChannel::Preview
         );
         assert_eq!(
-            settings.effective_update_channel(ReleaseChannel::Stable),
+            settings.effective_channel(ReleaseChannel::Stable),
             ReleaseChannel::Stable
         );
-        settings.update_channel = Some(UpdateChannel::Preview);
+        settings.channel = Some(UpdateChannel::Preview);
         assert_eq!(
-            settings.effective_update_channel(ReleaseChannel::Stable),
+            settings.effective_channel(ReleaseChannel::Stable),
             ReleaseChannel::Preview
         );
         assert_eq!(
-            settings.effective_update_channel(ReleaseChannel::Dev),
+            settings.effective_channel(ReleaseChannel::Dev),
             ReleaseChannel::Dev
         );
     }

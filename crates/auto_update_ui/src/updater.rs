@@ -52,7 +52,7 @@ impl Default for AutoUpdaterOptions {
 }
 
 /// The app's updater: follows the [`Updater`]'s status for the title bar, polls
-/// while `auto_update` is on, applies settings changes live, and restarts into the new
+/// while `update.auto` is on, applies settings changes live, and restarts into the new
 /// version. The Tokio work runs on `runtime`, which must outlive the entity.
 pub struct AutoUpdater {
     updater: Arc<Updater>,
@@ -188,7 +188,7 @@ impl AutoUpdater {
     }
 
     /// Applies new settings: the channel and install mode take effect at the next
-    /// check; turning `auto_update` on or off starts or stops the background checks,
+    /// check; turning `update.auto` on or off starts or stops the background checks,
     /// and a changed channel or mode checks again right away.
     pub fn apply_settings(&mut self, settings: UpdateSettings, cx: &mut Context<'_, Self>) {
         let changed = settings != self.settings;

@@ -135,7 +135,7 @@ fn install_target(data_dir: &Path) -> InstallTarget {
     }
 }
 
-/// Creates the app's updater and starts its background checks (if `auto_update` is
+/// Creates the app's updater and starts its background checks (if `update.auto` is
 /// on and this build updates at all). Call once the main window is open.
 pub(crate) fn start(paths: &Paths, cx: &mut App) {
     let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -213,8 +213,7 @@ pub(crate) fn add_button(window: &Entity<MailWindow>, cx: &mut App) {
     });
 }
 
-/// Applies the core's settings reloads (`auto_update`, `update_channel`,
-/// `auto_update_install`) to the updater.
+/// Applies the core's settings reloads (the `update` section) to the updater.
 pub(crate) fn follow_core_settings(core: &CoreHandle, cx: &mut App) {
     if let Some(updater) = AutoUpdater::global(cx) {
         let settings = core.settings_watch();

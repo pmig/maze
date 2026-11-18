@@ -26,7 +26,7 @@ use time::OffsetDateTime;
 use ui::assets::IconName;
 use ui::theme::scaled;
 
-use crate::actions::EditAccountFor;
+use crate::actions::accounts;
 use crate::format::format_thousands;
 use crate::source::{
     AccountActivity, AccountKind, ActivityState, FolderProgress, FolderStep, MailSource,
@@ -164,7 +164,7 @@ fn account_section(
                     .xsmall()
                     .label("Edit Account…")
                     .on_click(move |_, window, cx| {
-                        window.dispatch_action(Box::new(EditAccountFor(id)), cx);
+                        window.dispatch_action(Box::new(accounts::EditFor(id)), cx);
                         cx.stop_propagation();
                     }),
             )

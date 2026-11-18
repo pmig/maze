@@ -135,7 +135,7 @@ message's body is downloaded when you open it.
 ### Adding an account
 
 - **In the app:** **Add Account…** in the folder pane (or the button in an empty
-  Maze, or "Maze: Add Account" in the command palette). Enter your address and
+  Maze, or "Accounts: Add" in the command palette). Enter your address and
   password for any IMAP server, or use **Sign in with Google** / **Sign in with
   Microsoft**. The server is detected for well-known providers (Gmail, Outlook.com,
   iCloud, Yahoo, Fastmail, GMX, …), and so is the SMTP server for sending (see
@@ -308,7 +308,7 @@ Your OAuth client needs two more things in the same Google Cloud project, once:
    contacts"). Both are *sensitive*, not *restricted*: an app in *Testing* can use them
    for its test users without a verification.
 
-Then choose **Contacts: Connect Contacts** in the command palette (`cmd-shift-p`).
+Then choose **Address Book: Connect** in the command palette (`cmd-shift-p`).
 Your browser opens the consent page for every Google (and [Microsoft](#microsoft-contacts))
 account whose contacts aren't connected yet: sign in and allow Maze to see and edit your
 contacts. Mail keeps working whatever you answer; if you untick the contacts, they stay
@@ -318,8 +318,8 @@ right away.
 What happens then:
 
 - **Syncing.** Maze syncs the contacts when it starts, every 30 minutes
-  (`contacts.sync_interval_minutes`), after the computer wakes, and on **Contacts: Sync
-  Contacts**. After the first full sync only changes are fetched; contacts deleted on
+  (`contacts.sync_interval_minutes`), after the computer wakes, and on **Address Book:
+  Sync**. After the first full sync only changes are fetched; contacts deleted on
   Google disappear in Maze. Names, email addresses, phone numbers, organizations and
   titles, postal addresses, web sites and notes are synced, and contact photos are
   fetched in the background (at 96 pixels, kept for a week).
@@ -425,7 +425,7 @@ saved to Microsoft first ([ADR-024](adr/0024-server-owned-contacts.md)).
 
 Your app registration needs one more permission, once: under **API permissions**, add
 the delegated **Microsoft Graph** permission `Contacts.ReadWrite` (and grant admin
-consent if your organization requires it). Then choose **Contacts: Connect Contacts** in
+consent if your organization requires it). Then choose **Address Book: Connect** in
 the command palette: your browser asks you to allow Maze to see and edit your contacts.
 Mail keeps working whatever you answer.
 
@@ -446,7 +446,7 @@ account in your settings:
 }
 ```
 
-The next **Contacts: Connect Contacts** asks for this permission on its own, after the
+The next **Address Book: Connect** asks for this permission on its own, after the
 permission for your own contacts, so your own contacts and mail keep working if your
 organization doesn't allow it. Each mailbox gets its own address book, named
 "Contacts of team@contoso.com", that you can search and complete from but not edit, and
@@ -496,7 +496,7 @@ From a Thunderbird profile Maze takes over:
   identities, signatures and SMTP servers
 - tags, saved searches (`virtualFolders.dat`) and address books
 - message filters, imported as **disabled** [rules](#rules): review them in the Rules tab
-  ("Rules: Show Rules") or with `mazemail rule list`, and enable the ones you want
+  ("Rules: Show") or with `mazemail rule list`, and enable the ones you want
 
 POP3 accounts and Local Folders are skipped, and the import result says so. For a POP3
 account, enable IMAP at your provider and add the account in Maze. To keep mail from
@@ -806,7 +806,7 @@ matches (`invoice is:unread` empties as you read). The Quick Filter and its butt
 narrow it like a folder.
 
 - **Save a search:** search all messages, then click **Save Search…** above the
-  results (or press `cmd-alt-s`, or run "Search: Save Search" from the command
+  results (or press `cmd-alt-s`, or run "Search: Save" from the command
   palette). Give it a name; the query is filled in and can be changed. Names are
   unique, ignoring case.
 - **Edit or delete:** right-click it in the folder pane and choose **Edit Saved
@@ -907,14 +907,14 @@ every new message in the Inbox of their account (or of every account).
 Rules only filter mail that arrives while they are enabled: turning a rule on doesn't
 sort the mail already in your Inbox, and each message is filtered once (a message you
 move back into the Inbox stays there). To sort the mail already in a folder, right-click
-it in the folder pane and choose **Run Rules on Folder** ("Rules: Run Rules on Folder" in
+it in the folder pane and choose **Run Rules on Folder** ("Rules: Run On Folder" in
 the command palette runs them on the selected folder).
 
 What rules do goes through the same path as your own commands: it reaches the server
 like a move you make, and every action is in the activity log with the rule as its
 origin. Actions can't be undone with `cmd-z`.
 
-**"Rules: Show Rules"** in the command palette opens the Rules tab: every rule in order
+**"Rules: Show"** in the command palette opens the Rules tab: every rule in order
 with its conditions, actions and what keeps it from running, and a button to enable or
 disable it. Filters imported from Thunderbird arrive disabled, with a note; rules whose
 conditions Maze can't evaluate (the age of a message, its size, a custom header other
@@ -1087,7 +1087,7 @@ What the agent is asked to do is up to you:
 
 An account can send from more addresses than its own: the aliases (proxy addresses) of
 a Microsoft 365 or Outlook.com mailbox, or Gmail's "Send mail as" addresses.
-Run **Mail: Add Alias** in the command palette. The dialog starts with the account of
+Run **Accounts: Add Alias** in the command palette. The dialog starts with the account of
 the mail or folder you have open (or your only account) and lets you pick another; enter
 the address, and a name if it should show another one, and press `enter` or **Add
 Alias**. A problem (not an address, a settings file that can't be read) shows in the
@@ -1328,9 +1328,11 @@ The settings, with their defaults:
 
 ```jsonc
 {
-  "auto_update": true,                 // false: only check when you ask
-  "update_channel": null,              // "stable" or "preview"; null: the channel of the installed build
-  "auto_update_install": "background"  // "notify_only": show "Update to x.y.z" instead of installing
+  "update": {
+    "auto": true,             // false: only check when you ask
+    "channel": null,          // "stable" or "preview"; null: the channel of the installed build
+    "install": "background"   // "notify_only": show "Update to x.y.z" instead of installing
+  }
 }
 ```
 

@@ -89,9 +89,7 @@ mod tests {
             "auth",
             "agent",
             "agent_sandbox",
-            "auto_update",
-            "update_channel",
-            "auto_update_install",
+            "update",
             "notifications",
         ] {
             assert!(properties.contains_key(key), "missing {key}");
@@ -99,7 +97,7 @@ mod tests {
         assert_eq!(schema["additionalProperties"], Value::Bool(false));
         // Doc comments become descriptions.
         assert!(
-            properties["auto_update"]["description"]
+            properties["update"]["description"]
                 .as_str()
                 .unwrap()
                 .contains("updates")

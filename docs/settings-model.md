@@ -51,7 +51,7 @@ flowchart LR
   end
 
   subgraph APP["Updates"]
-    auto_update["auto_update · update_channel ·<br/>auto_update_install"]
+    update["update<br/>auto · channel · install"]:::sec
   end
 
   S --- LOOK & READ & WRITE & SYNC & AI & APP

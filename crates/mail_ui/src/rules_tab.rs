@@ -1,4 +1,4 @@
-//! Message rules in a tab ("Rules: Show Rules", ADR-029): every rule in the order it
+//! Message rules in a tab ("Rules: Show", ADR-029): every rule in the order it
 //! runs, with its conditions and actions, what keeps it from running and a switch to
 //! enable or disable it. Rules imported from Thunderbird start disabled; this is where
 //! they are reviewed and turned on.

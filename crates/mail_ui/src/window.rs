@@ -780,7 +780,7 @@ impl MailWindow {
         Some(editor)
     }
 
-    /// Shows the rules in a tab ("Rules: Show Rules"); an open one is activated and
+    /// Shows the rules in a tab ("Rules: Show"); an open one is activated and
     /// reloaded.
     pub fn open_rules(
         &mut self,
@@ -830,7 +830,7 @@ impl MailWindow {
         }
     }
 
-    /// "Rules: Run Rules on Folder": the folder selected in the folder pane.
+    /// "Rules: Run On Folder": the folder selected in the folder pane.
     fn run_rules_on_selected(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let selected = self.folder_pane.read(cx).selected().cloned();
         let Some(FolderKey::Folder(folder)) = selected else {
@@ -1166,7 +1166,7 @@ impl MailWindow {
         }
     }
 
-    /// "Mail: Add Alias" in the palette: the dialog for the account of the selected
+    /// "Accounts: Add Alias" in the palette: the dialog for the account of the selected
     /// mail, else of the open folder, else the only account.
     fn add_alias_for_current_account(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let Some(account) = self.current_account(cx) else {
@@ -1184,11 +1184,11 @@ impl MailWindow {
         self.open_alias_dialog(account, name, window, cx);
     }
 
-    /// "Maze: Edit Account" in the palette: the app's dialog for the account of the
+    /// "Accounts: Edit" in the palette: the app's dialog for the account of the
     /// selected mail, else of the open folder, else the only account.
     fn edit_current_account(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         match self.current_account(cx) {
-            Some(account) => window.dispatch_action(Box::new(EditAccountFor(account)), cx),
+            Some(account) => window.dispatch_action(Box::new(accounts::EditFor(account)), cx),
             None => window.push_notification(
                 Notification::info(
                     "Open a folder of the account first, or right-click the account in the \
@@ -2069,41 +2069,57 @@ impl MailWindow {
         .on_action(cx.listener(|this, _: &ShowAddressBook, window, cx| {
             this.show_space(Space::AddressBook, window, cx);
         }))
-        .on_action(cx.listener(|this, _: &SelectNextContact, _, cx| {
-            this.address_book.update(cx, |book, cx| book.step(1, cx));
-        }))
-        .on_action(cx.listener(|this, _: &SelectPreviousContact, _, cx| {
-            this.address_book.update(cx, |book, cx| book.step(-1, cx));
-        }))
-        .on_action(cx.listener(|this, _: &SelectFirstContact, _, cx| {
-            this.address_book
-                .update(cx, |book, cx| book.edge(false, cx));
-        }))
-        .on_action(cx.listener(|this, _: &SelectLastContact, _, cx| {
-            this.address_book.update(cx, |book, cx| book.edge(true, cx));
-        }))
-        .on_action(cx.listener(|this, _: &NewMailToContact, _, cx| {
-            this.address_book.update(cx, |book, cx| book.new_mail(cx));
-        }))
-        .on_action(cx.listener(|this, _: &ShowMailWithContact, _, cx| {
-            this.address_book.update(cx, |book, cx| book.show_mail(cx));
-        }))
-        .on_action(cx.listener(|this, _: &SortContactsByName, window, cx| {
-            this.show_space(Space::AddressBook, window, cx);
-            this.address_book
-                .update(cx, |book, cx| book.set_sort(ContactSort::Name, cx));
-        }))
-        .on_action(cx.listener(|this, _: &SortContactsByLastUsed, window, cx| {
-            this.show_space(Space::AddressBook, window, cx);
-            this.address_book
-                .update(cx, |book, cx| book.set_sort(ContactSort::LastUsed, cx));
-        }))
+        .on_action(
+            cx.listener(|this, _: &address_book::SelectNextContact, _, cx| {
+                this.address_book.update(cx, |book, cx| book.step(1, cx));
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &address_book::SelectPreviousContact, _, cx| {
+                this.address_book.update(cx, |book, cx| book.step(-1, cx));
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &address_book::SelectFirstContact, _, cx| {
+                this.address_book
+                    .update(cx, |book, cx| book.edge(false, cx));
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &address_book::SelectLastContact, _, cx| {
+                this.address_book.update(cx, |book, cx| book.edge(true, cx));
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &address_book::NewMailToContact, _, cx| {
+                this.address_book.update(cx, |book, cx| book.new_mail(cx));
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &address_book::ShowMailWithContact, _, cx| {
+                this.address_book.update(cx, |book, cx| book.show_mail(cx));
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &address_book::SortContactsByName, window, cx| {
+                this.show_space(Space::AddressBook, window, cx);
+                this.address_book
+                    .update(cx, |book, cx| book.set_sort(ContactSort::Name, cx));
+            }),
+        )
+        .on_action(cx.listener(
+            |this, _: &address_book::SortContactsByLastUsed, window, cx| {
+                this.show_space(Space::AddressBook, window, cx);
+                this.address_book
+                    .update(cx, |book, cx| book.set_sort(ContactSort::LastUsed, cx));
+            },
+        ))
         .on_action(cx.listener(|this, _: &Toggle, window, cx| this.toggle_palette(window, cx)))
-        .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
+        .on_action(cx.listener(|this, _: &search::Focus, window, cx| {
             let focus = this.search.focus_handle(cx);
             window.focus(&focus, cx);
         }))
-        .on_action(cx.listener(|this, _: &QuickFilter, window, cx| {
+        .on_action(cx.listener(|this, _: &search::QuickFilter, window, cx| {
             if this.space == Space::AddressBook {
                 let filter = this.address_book.read(cx).filter().focus_handle(cx);
                 window.focus(&filter, cx);
@@ -2129,10 +2145,10 @@ impl MailWindow {
         .on_action(cx.listener(|this, _: &OpenDefaultSettings, window, cx| {
             this.open_settings(true, window, cx);
         }))
-        .on_action(cx.listener(|this, _: &ShowRules, window, cx| {
+        .on_action(cx.listener(|this, _: &rules::Show, window, cx| {
             this.open_rules(window, cx);
         }))
-        .on_action(cx.listener(|this, _: &RunRulesOnFolder, window, cx| {
+        .on_action(cx.listener(|this, _: &rules::RunOnFolder, window, cx| {
             this.run_rules_on_selected(window, cx);
         }))
         .on_action(cx.listener(|this, _: &OpenMessage, window, cx| {
@@ -2192,21 +2208,25 @@ impl MailWindow {
         .on_action(cx.listener(|this, _: &GoToFolder, window, cx| {
             this.toggle_go_to_folder(window, cx);
         }))
-        .on_action(cx.listener(|this, _: &SaveSearch, window, cx| {
+        .on_action(cx.listener(|this, _: &search::Save, window, cx| {
             this.save_search(window, cx);
         }))
-        .on_action(cx.listener(|this, _: &EditSavedSearch, window, cx| {
-            match this.current_saved_search(cx) {
-                Some(id) => this.edit_saved_search(id, window, cx),
-                None => this.no_saved_search_open(window, cx),
-            }
-        }))
-        .on_action(cx.listener(|this, _: &DeleteSavedSearch, window, cx| {
-            match this.current_saved_search(cx) {
-                Some(id) => this.delete_saved_search(id, window, cx),
-                None => this.no_saved_search_open(window, cx),
-            }
-        }))
+        .on_action(
+            cx.listener(|this, _: &search::EditSavedSearch, window, cx| {
+                match this.current_saved_search(cx) {
+                    Some(id) => this.edit_saved_search(id, window, cx),
+                    None => this.no_saved_search_open(window, cx),
+                }
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &search::DeleteSavedSearch, window, cx| {
+                match this.current_saved_search(cx) {
+                    Some(id) => this.delete_saved_search(id, window, cx),
+                    None => this.no_saved_search_open(window, cx),
+                }
+            }),
+        )
         .on_action(cx.listener(|this, _: &ToggleFavoriteFolder, window, cx| {
             this.toggle_favorite_folder(window, cx);
         }))
@@ -2268,10 +2288,10 @@ impl MailWindow {
         .on_action(cx.listener(|this, _: &ExtendSelectionUp, _, cx| {
             this.with_list(cx, |list, cx| list.extend(-1, cx));
         }))
-        .on_action(cx.listener(|this, _: &AddAlias, window, cx| {
+        .on_action(cx.listener(|this, _: &accounts::AddAlias, window, cx| {
             this.add_alias_for_current_account(window, cx);
         }))
-        .on_action(cx.listener(|this, _: &EditAccount, window, cx| {
+        .on_action(cx.listener(|this, _: &accounts::Edit, window, cx| {
             this.edit_current_account(window, cx);
         }))
         .on_action(cx.listener(|this, _: &ClearSelection, _, cx| {
@@ -2773,7 +2793,7 @@ mod tests {
         let results: Rc<RefCell<Vec<(&str, bool)>>> = Rc::default();
         cx.update(|_, cx| {
             let results = results.clone();
-            cx.on_action(move |_: &crate::actions::AddAccount, cx| {
+            cx.on_action(move |_: &crate::actions::accounts::Add, cx| {
                 let direct = handle.update(cx, |_, _, _| ()).is_ok();
                 results.borrow_mut().push(("direct", direct));
                 let results = results.clone();
@@ -2784,7 +2804,7 @@ mod tests {
             });
         });
         cx.simulate_keystrokes("cmd-shift-p");
-        cx.simulate_input("add account");
+        cx.simulate_input("accounts: add");
         cx.simulate_keystrokes("enter");
         cx.run_until_parked();
         assert_eq!(
@@ -4058,7 +4078,7 @@ mod tests {
         let edits: Rc<RefCell<Vec<AccountId>>> = Rc::default();
         cx.update(|_, cx| {
             let edits = edits.clone();
-            cx.on_action(move |action: &EditAccountFor, _| edits.borrow_mut().push(action.0));
+            cx.on_action(move |action: &accounts::EditFor, _| edits.borrow_mut().push(action.0));
         });
         cx.run_until_parked();
         let item = cx.debug_bounds("status-sync").expect("the sync item");
@@ -4080,7 +4100,7 @@ mod tests {
         assert_eq!(*edits.borrow(), vec![AccountId(2)]);
     }
 
-    /// "Maze: Edit Account" in the palette asks the app to edit the account of the open
+    /// "Accounts: Edit" in the palette asks the app to edit the account of the open
     /// folder.
     #[gpui::test]
     fn the_palette_edits_the_account_of_the_open_folder(cx: &mut TestAppContext) {
@@ -4091,10 +4111,10 @@ mod tests {
         let edits: Rc<RefCell<Vec<mazemail_types::AccountId>>> = Rc::default();
         cx.update(|_, cx| {
             let edits = edits.clone();
-            cx.on_action(move |action: &EditAccountFor, _| edits.borrow_mut().push(action.0));
+            cx.on_action(move |action: &accounts::EditFor, _| edits.borrow_mut().push(action.0));
         });
         cx.simulate_keystrokes("cmd-shift-p");
-        cx.simulate_input("edit account");
+        cx.simulate_input("accounts: edit");
         cx.simulate_keystrokes("enter");
         cx.run_until_parked();
         assert_eq!(

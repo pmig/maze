@@ -38,22 +38,22 @@
       // The Quick Filter narrows the open folder; search covers every account and
       // folder, on Zed's project search key and `cmd-/`.
       "cmd-f": "search::QuickFilter",
-      "cmd-shift-f": "search::FocusSearch",
-      "cmd-/": "search::FocusSearch",
+      "cmd-shift-f": "search::Focus",
+      "cmd-/": "search::Focus",
       // Save the shown search as a saved search (Thunderbird has no key for it).
-      "cmd-alt-s": "search::SaveSearch",
+      "cmd-alt-s": "search::Save",
       // Thunderbird: F5 gets new messages (Windows, Linux), cmd-shift-t gets them for
       // all accounts. Both sync every account; the last binding is the one shown.
       "f5": "mail::SyncNow",
       "cmd-shift-t": "mail::SyncNow",
       // Not Thunderbird defaults (it has no keys for these); cmd-alt avoids its
       // single-key and cmd-shift bindings.
-      "cmd-alt-t": "view::ToggleTableView",
-      "cmd-alt-g": "view::ToggleThreads",
+      "cmd-alt-t": "thread_list::ToggleTableView",
+      "cmd-alt-g": "thread_list::ToggleThreads",
       // The shown message in reader mode, or as the sender designed it (`v` switches
       // between them in the list and the message).
-      "cmd-alt-r": "view::ShowReader",
-      "cmd-alt-o": "view::ShowOriginal",
+      "cmd-alt-r": "message_view::ShowReader",
+      "cmd-alt-o": "message_view::ShowOriginal",
       "cmd-r": "mail::Reply",
       "cmd-shift-r": "mail::ReplyAll",
       "cmd-l": "mail::Forward",
@@ -95,10 +95,10 @@
       "n": "mail::NextUnread",
       "p": "mail::PreviousUnread",
       "m": "mail::ToggleRead",
-      "v": "view::ToggleOriginalHtml",
+      "v": "message_view::ToggleOriginalHtml",
       // Remote images of the shown message: this time, or always from its sender.
-      "i": "view::LoadImages",
-      "shift-i": "view::AlwaysLoadImagesFromSender",
+      "i": "message_view::LoadImages",
+      "shift-i": "message_view::AlwaysLoadImagesFromSender",
       "s": "mail::ToggleStar",
       "a": "mail::Archive",
       // Thunderbird's key for marking junk; Maze also moves it to the Junk folder.
@@ -206,7 +206,7 @@
     // The settings tab (settings.json).
     "context": "SettingsEditor",
     "bindings": {
-      "cmd-s": "settings_editor::SaveSettings"
+      "cmd-s": "settings_editor::Save"
     }
   },
   {

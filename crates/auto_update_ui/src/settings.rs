@@ -3,17 +3,17 @@
 use auto_update::manifest::manifest_url;
 use auto_update::{InstallMode, Platform};
 use release_channel::ReleaseChannel;
-use settings::{AutoUpdateInstall, Settings};
+use settings::{Settings, UpdateInstall};
 
-/// `auto_update`, `update_channel` and `auto_update_install`, resolved for the build.
+/// The `update` settings (`auto`, `channel` and `install`), resolved for the build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UpdateSettings {
-    /// Check in the background (`"auto_update": true`). `false`: only when asked
+    /// Check in the background (`"update": { "auto": true }`). `false`: only when asked
     /// ("Maze: Check for Updates").
     pub auto_check: bool,
-    /// The channel to follow: the `update_channel` setting, or the build's channel.
+    /// The channel to follow: the `update.channel` setting, or the build's channel.
     pub channel: ReleaseChannel,
-    /// Install in the background or only tell (`"auto_update_install"`).
+    /// Install in the background or only tell (`update.install`).
     pub install_mode: InstallMode,
 }
 
@@ -21,11 +21,11 @@ impl UpdateSettings {
     /// The update settings of `settings` for a build of channel `build`.
     pub fn from_settings(settings: &Settings, build: ReleaseChannel) -> Self {
         Self {
-            auto_check: settings.auto_update,
-            channel: settings.effective_update_channel(build),
-            install_mode: match settings.auto_update_install {
-                AutoUpdateInstall::Background => InstallMode::Background,
-                AutoUpdateInstall::NotifyOnly => InstallMode::NotifyOnly,
+            auto_check: settings.update.auto,
+            channel: settings.update.effective_channel(build),
+            install_mode: match settings.update.install {
+                UpdateInstall::Background => InstallMode::Background,
+                UpdateInstall::NotifyOnly => InstallMode::NotifyOnly,
             },
         }
     }
@@ -69,8 +69,8 @@ mod tests {
     #[test]
     fn reads_the_three_settings() {
         let settings = resolve(
-            r#"{ "auto_update": false, "update_channel": "preview",
-                 "auto_update_install": "notify_only" }"#,
+            r#"{ "update": { "auto": false, "channel": "preview",
+                 "install": "notify_only" } }"#,
             ReleaseChannel::Stable,
         );
         assert_eq!(
@@ -83,7 +83,11 @@ mod tests {
         );
         // Dev builds stay on dev whatever the setting says (and never update).
         assert_eq!(
-            resolve(r#"{ "update_channel": "stable" }"#, ReleaseChannel::Dev).channel,
+            resolve(
+                r#"{ "update": { "channel": "stable" } }"#,
+                ReleaseChannel::Dev
+            )
+            .channel,
             ReleaseChannel::Dev
         );
     }
@@ -96,7 +100,10 @@ mod tests {
             stable.manifest_url(DEFAULT_MANIFEST_BASE_URL, &platform),
             "https://releases.mazemail.dev/stable/macos-aarch64.json"
         );
-        let preview = resolve(r#"{ "update_channel": "preview" }"#, ReleaseChannel::Stable);
+        let preview = resolve(
+            r#"{ "update": { "channel": "preview" } }"#,
+            ReleaseChannel::Stable,
+        );
         assert_eq!(
             preview.manifest_url("http://127.0.0.1:8000/", &platform),
             "http://127.0.0.1:8000/preview/macos-aarch64.json"

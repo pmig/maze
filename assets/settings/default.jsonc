@@ -200,13 +200,16 @@
     "network_hosts": null
   },
 
-  // Look for updates in the background. false: only when asked
-  // (command palette "Maze: Check for Updates").
-  "auto_update": true,
-  // "stable" or "preview". null: the channel of the installed build.
-  "update_channel": null,
-  // "background" (download and install, then offer a restart) or "notify_only".
-  "auto_update_install": "background",
+  // Updates of Maze.
+  "update": {
+    // Look for updates in the background. false: only when asked
+    // (command palette "Maze: Check for Updates").
+    "auto": true,
+    // "stable" or "preview". null: the channel of the installed build.
+    "channel": null,
+    // "background" (download and install, then offer a restart) or "notify_only".
+    "install": "background"
+  },
 
   // System notifications for new mail in an Inbox or a favorite folder other than Sent
   // (Notification Center on macOS, the desktop's notification service on Linux). A

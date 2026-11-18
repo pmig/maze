@@ -19,7 +19,7 @@
 //! password account ([`CoreHandle::test_imap_account`]), then logs in to the SMTP
 //! server ([`CoreHandle::test_smtp_account`]), and saves nothing. The dialog opens from the empty state's
 //! button, the folder pane's "Add Account…" and the command palette
-//! ("Maze: Add Account").
+//! ("Accounts: Add").
 
 use std::cell::RefCell;
 use std::rc::Rc;

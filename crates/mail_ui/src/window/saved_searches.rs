@@ -42,7 +42,7 @@ impl MailWindow {
         );
     }
 
-    /// `search::SaveSearch`: the dialog for the search the active mail view shows (else
+    /// `search::Save`: the dialog for the search the active mail view shows (else
     /// the text in the search field). A saved search opens its Edit dialog instead.
     pub(super) fn save_search(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         if let Some(id) = self.current_saved_search(cx) {

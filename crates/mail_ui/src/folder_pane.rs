@@ -8,7 +8,7 @@
 //! favorites the section says "No favorite folders yet". Right-clicking a folder
 //! offers "Add to Favorites" or "Remove from Favorites"; `mail::ToggleFavoriteFolder`
 //! does the same for the open folder. Right-clicking an account offers "Edit
-//! Account…" ([`EditAccountFor`], opened by the app) and "Add Alias…". A favorite opens its folder like the folder's
+//! Account…" ([`accounts::EditFor`], opened by the app) and "Add Alias…". A favorite opens its folder like the folder's
 //! row in its account.
 //!
 //! **Saved Searches** (ADR-030) follow Unified Folders when there are any: selecting one
@@ -42,7 +42,7 @@ use ui::assets::IconName;
 use ui::components::CountBadge;
 use ui::theme::scaled;
 
-use crate::actions::{AddAccount, EditAccountFor};
+use crate::actions::accounts;
 use crate::source::{AccountEntry, AccountKind, FolderEntry, FolderKey, FolderTree, MailSource};
 
 /// What a tree row stands for.
@@ -631,7 +631,7 @@ impl FolderPane {
                         PopupMenuItem::new("Edit Account…")
                             .icon(Icon::new(IconName::Pencil))
                             .on_click(move |_, window, cx| {
-                                window.dispatch_action(Box::new(EditAccountFor(account)), cx);
+                                window.dispatch_action(Box::new(accounts::EditFor(account)), cx);
                             }),
                     )
                     .item(
@@ -887,7 +887,7 @@ impl Render for FolderPane {
                             .icon(IconName::Plus)
                             .label("Add Account…")
                             .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(AddAccount), cx);
+                                window.dispatch_action(Box::new(accounts::Add), cx);
                             }),
                     ),
             )

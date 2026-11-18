@@ -2,8 +2,8 @@
 //!
 //! - [`AutoUpdater`]: a GPUI entity around [`auto_update::Updater`]. It mirrors the
 //!   updater's status (a `tokio::sync::watch` channel), polls hourly and after wake-up
-//!   while `auto_update` is on, applies `auto_update`, `update_channel` and
-//!   `auto_update_install` live ([`AutoUpdater::follow_settings`]), and restarts into
+//!   while `update.auto` is on, applies the `update` settings (`auto`, `channel` and
+//!   `install`) live ([`AutoUpdater::follow_settings`]), and restarts into
 //!   the new version (`cx.restart()`, asking a [`RestartGuard`] first). Its Tokio work
 //!   runs through `ui::gpui_tokio::spawn_on`.
 //! - [`UpdateButton`]: the title bar element. Nothing when idle, a small progress
