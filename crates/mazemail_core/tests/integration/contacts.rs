@@ -244,7 +244,7 @@ async fn the_detail_lists_every_books_version_with_its_vcard_fields() {
     assert_eq!(anna.versions[2].frequency, 2);
     assert!(t.core.contact("nobody@example.com").unwrap().is_none());
 
-    // Nothing can be edited until contact sync writes to the server.
+    // The account never connected its contacts: Maze has no server to write to.
     let edit = ContactEdit {
         book: anna.versions[0].book.id.clone(),
         contact: Some(anna.versions[0].id),

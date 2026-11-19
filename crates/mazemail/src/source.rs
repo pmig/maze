@@ -1741,6 +1741,9 @@ impl MailSource for CoreMailSource {
         {
             Ok(_) => Ok(()),
             Err(mazemail_core::ContactError::NotEditable { .. }) => Err(ContactError::NotEditable),
+            Err(mazemail_core::ContactError::Core(mazemail_core::Error::Contacts(
+                mazemail_core::ServerContactError::Conflict(_),
+            ))) => Err(ContactError::Conflict),
             Err(error) => Err(ContactError::Failed(error.to_string())),
         }
     }

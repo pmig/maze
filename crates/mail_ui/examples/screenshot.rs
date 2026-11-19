@@ -18,7 +18,7 @@
 //!
 //! `MAZEMAIL_SCREENSHOT_SPACE=address-book` shows the Address Book space instead of
 //! Mail (`docs/screenshots/address-book.png`), with a person in several accounts
-//! selected.
+//! selected; `contact-editor` also opens Edit on their first version.
 
 // A command-line tool: it reports where it saved the file.
 #![allow(clippy::print_stdout)]
@@ -100,6 +100,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cx.update_window(window.into(), |_, window, cx| {
             view.update(cx, |mail, cx| match space.as_str() {
                 "address-book" => mail.show_space(Space::AddressBook, window, cx),
+                "contact-editor" => {
+                    mail.show_space(Space::AddressBook, window, cx);
+                    let book = mail.address_book().clone();
+                    let version = book
+                        .read(cx)
+                        .detail()
+                        .and_then(|detail| detail.versions.first().cloned());
+                    if let Some(version) = version {
+                        book.update(cx, |book, cx| book.edit(&version, cx));
+                    }
+                }
                 "mail" => {}
                 other => println!("unknown MAZEMAIL_SCREENSHOT_SPACE {other}"),
             });

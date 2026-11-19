@@ -375,8 +375,9 @@ impl std::fmt::Debug for ContactEdit {
 /// Why a contact couldn't be saved.
 #[derive(Debug, thiserror::Error)]
 pub enum ContactError {
-    /// The book is read-only in Maze: collected addresses, imported books, and every
-    /// book until contact sync can write to its server.
+    /// The book is read-only in Maze: collected addresses, imported books, Google's
+    /// Other contacts, shared Microsoft books and the books of accounts whose contacts
+    /// aren't connected.
     #[error("contacts in {book} can't be edited in Maze")]
     NotEditable {
         /// The `contact.book` id.

@@ -53,6 +53,12 @@ const BOOKS: &[Book] = &[
     },
 ];
 
+/// Whether the fake saves contacts of `book`: My Contacts and the Microsoft Contacts,
+/// like the core (Other Contacts, Collected and imported books are read-only).
+pub(crate) fn editable(book: &str) -> bool {
+    matches!(book, "google:fake-1" | "microsoft:fake-3")
+}
+
 /// An entry: book index, name, address, days since you last wrote, phone, org, title.
 struct Entry {
     book: usize,
@@ -292,7 +298,7 @@ pub(crate) fn contact(email: &str, now: OffsetDateTime) -> Option<ContactDetail>
                 last_used: e
                     .days_ago
                     .map(|days| now - Duration::days(days) - Duration::hours(1)),
-                editable: false,
+                editable: editable(book.id),
             }
         })
         .collect();

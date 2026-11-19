@@ -19,9 +19,10 @@
 //!   Show Mail (the mail from and to the address, in the Mail space), and each book's
 //!   version with its label. Editing writes to the account's server (ADR-024), so the
 //!   Edit button only shows on versions whose book the backend can write to
-//!   ([`MailSource::contact_book_editable`]); it hands a [`ContactEdit`] to whoever
-//!   listens ([`AddressBookEvent::Edit`]), which then saves it with
-//!   [`MailSource::save_contact`]. No book is editable yet.
+//!   ([`MailSource::contact_book_editable`]); it hands a [`ContactEdit`] to the window
+//!   ([`AddressBookEvent::Edit`]), which opens the
+//!   [contact editor](crate::contact_editor) to save it with
+//!   [`MailSource::save_contact`].
 //!
 //! The selected book and the order are remembered in `ui_state.json`. The list reads
 //! every row of a book at once (off the main thread) and draws only the visible ones,
@@ -77,8 +78,14 @@ pub enum AddressBookEvent {
     NewMail(Address),
     /// Show Mail: the mail from and to this address, in the Mail space.
     ShowMail(SharedString),
-    /// Edit on an editable version: the contact editor starts from this.
-    Edit(ContactEdit),
+    /// Edit on an editable version: the contact editor starts from `edit` and saves
+    /// to the book called `book_name` ("My Contacts of Gmail").
+    Edit {
+        /// The version as it is.
+        edit: ContactEdit,
+        /// The book for people.
+        book_name: SharedString,
+    },
 }
 
 /// The Address Book space: book pane, contact list and detail pane. See the
@@ -269,9 +276,15 @@ impl AddressBook {
     /// Re-reads the books and the list (after contacts changed), keeping the selected
     /// contact selected.
     pub fn reload(&mut self, cx: &mut Context<'_, Self>) {
+        let keep = self.selected_row().map(|row| row.email.clone());
+        self.reload_selecting(keep, cx);
+    }
+
+    /// [`Self::reload`], then selects the contact with address `email` (after it was
+    /// saved, maybe with another address), or the first one if it isn't listed.
+    pub fn reload_selecting(&mut self, keep: Option<SharedString>, cx: &mut Context<'_, Self>) {
         let source = self.source.clone();
         let query = self.query(cx);
-        let keep = self.selected_row().map(|row| row.email.clone());
         self.loading = Some(cx.spawn(async move |this, cx| {
             let loaded = cx
                 .background_spawn(async move {
@@ -425,8 +438,18 @@ impl AddressBook {
         }
     }
 
-    fn edit(&mut self, version: &ContactVersion, cx: &mut Context<'_, Self>) {
-        cx.emit(AddressBookEvent::Edit(ContactEdit::of(version)));
+    /// Edit on `version`: the window opens the contact editor.
+    pub fn edit(&mut self, version: &ContactVersion, cx: &mut Context<'_, Self>) {
+        // An account's book is named with the account ("My Contacts of Gmail"); a
+        // book of its own (an imported one) by its name.
+        let book_name = match version.label.color {
+            Some(_) => format!("{} of {}", version.book_name, version.label.text).into(),
+            None => version.book_name.clone(),
+        };
+        cx.emit(AddressBookEvent::Edit {
+            edit: ContactEdit::of(version),
+            book_name,
+        });
     }
 
     fn on_filter_event(
@@ -940,6 +963,7 @@ impl AddressBook {
         let edit = version.editable.then(|| {
             let version = version.clone();
             Button::new(("contact-edit", ix))
+                .debug_selector(move || format!("contact-edit-{ix}"))
                 .ghost()
                 .xsmall()
                 .icon(IconName::Pencil)
@@ -1335,8 +1359,10 @@ mod tests {
             );
         }
         assert!(cx.debug_bounds("copy-phone-1").is_some());
-        // Nothing is editable yet: no Edit button.
-        assert!(detail.versions.iter().all(|v| !v.editable));
+        // My Contacts and the Microsoft Contacts can be edited, Collected can't.
+        let editable: Vec<bool> = detail.versions.iter().map(|v| v.editable).collect();
+        assert_eq!(editable, [true, true, false]);
+        assert!(drawn(cx, "contact-edit-0".to_owned()));
 
         // Selecting another row shows that contact.
         click(cx, "contact-row-1");

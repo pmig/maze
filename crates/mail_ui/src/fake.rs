@@ -36,7 +36,9 @@ use crate::source::{
     SourceError, SourceStatus, StorageUsage, SyncState, ThreadFilter, ThreadKeys, ThreadPredicate,
     ThreadRow, ThreadScope, ThreadTree, TreeNode, Verdict, Verification,
 };
-use crate::source::{AddressBookEntry, ContactDetail, ContactQuery, ContactRow};
+use crate::source::{
+    AddressBookEntry, ContactDetail, ContactEdit, ContactError, ContactQuery, ContactRow,
+};
 
 /// Where the "view online" link of invoices goes, and its text.
 const INVOICE_URL: &str = "https://billing.example.com/invoices/2026-10/INV-4711?view=full";
@@ -424,6 +426,10 @@ pub struct FakeMailSource {
     /// The rules ([`MailSource::rules`]): two imported from Thunderbird, one that
     /// can't run.
     rules: Mutex<Vec<crate::rules_tab::RuleEntry>>,
+    /// The contacts [`MailSource::save_contact`] saved, in order.
+    contact_saves: Mutex<Vec<ContactEdit>>,
+    /// What saving a contact answers instead (see [`FakeMailSource::fail_contact_saves`]).
+    contact_save_error: Mutex<Option<ContactError>>,
 }
 
 /// A folder action the fake was asked for (see [`FakeMailSource::folder_actions`]).
@@ -490,6 +496,8 @@ impl FakeMailSource {
             search_large_folder: true,
             saved_searches: Mutex::new(Vec::new()),
             rules: Mutex::new(fake_rules()),
+            contact_saves: Mutex::new(Vec::new()),
+            contact_save_error: Mutex::new(None),
         }
     }
 
@@ -508,6 +516,23 @@ impl FakeMailSource {
 
     fn has_contacts(&self) -> bool {
         !self.no_contacts.load(Ordering::Relaxed)
+    }
+
+    /// The contacts saved so far ([`MailSource::save_contact`]), in order. The fake's
+    /// address books don't change.
+    pub fn contact_saves(&self) -> Vec<ContactEdit> {
+        self.contact_saves
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Makes saving a contact fail with `error` (`None`: saving works again).
+    pub fn fail_contact_saves(&self, error: Option<ContactError>) {
+        *self
+            .contact_save_error
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = error;
     }
 
     /// How often "Sync Now" was asked for ([`MailSource::sync_now`]).
@@ -2111,6 +2136,29 @@ impl MailSource for FakeMailSource {
             .has_contacts()
             .then(|| crate::fake_contacts::contact(email, self.now))
             .flatten())
+    }
+
+    fn contact_book_editable(&self, book: &str) -> bool {
+        crate::fake_contacts::editable(book)
+    }
+
+    fn save_contact(&self, edit: ContactEdit) -> Result<(), ContactError> {
+        if !crate::fake_contacts::editable(&edit.book) {
+            return Err(ContactError::NotEditable);
+        }
+        if let Some(error) = self
+            .contact_save_error
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+        {
+            return Err(error);
+        }
+        self.contact_saves
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(edit);
+        Ok(())
     }
 
     fn sync_now(&self) -> Result<(), SourceError> {

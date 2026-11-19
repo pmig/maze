@@ -54,6 +54,7 @@ use crate::actions::*;
 use crate::address_book::{AddressBook, AddressBookEvent};
 use crate::chrome::{AgentColumn, MailStatusBar, SpacesBar, SyncButton};
 use crate::command_palette::{CommandPalette, Dismissed};
+use crate::contact_editor::ContactEditor;
 use crate::folder_pane::{FolderPane, FolderPaneEvent};
 use crate::go_to_folder::{GoToFolderEvent, GoToFolderPicker, RECENT_DESTINATIONS};
 use crate::layout::{self, AgentPlacement, LayoutConfig, LayoutPrefs};
@@ -259,6 +260,8 @@ pub struct MailWindow {
     item_subscriptions: HashMap<EntityId, Subscription>,
     /// The Save Search or Edit Saved Search dialog, while it is open.
     saved_search_dialog: Option<Entity<SavedSearchDialog>>,
+    /// The open Edit Contact dialog's form, with the subscription to its events.
+    contact_editor: Option<(Entity<ContactEditor>, Subscription)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -391,6 +394,7 @@ impl MailWindow {
             sync_activity: None,
             item_subscriptions: HashMap::new(),
             saved_search_dialog: None,
+            contact_editor: None,
             _subscriptions: subscriptions,
         };
         this.register_kinds(window, cx);
@@ -646,9 +650,9 @@ impl MailWindow {
                 self.run_search(query, window, cx);
                 cx.notify();
             }
-            // The contact editor arrives with contact sync (ADR-024); until then no
-            // version is editable, so there is no Edit button to send this.
-            AddressBookEvent::Edit(_) => {}
+            AddressBookEvent::Edit { edit, book_name } => {
+                self.open_contact_editor(edit, book_name.clone(), window, cx);
+            }
         }
     }
 
@@ -2600,6 +2604,7 @@ fn contains_folder(
     })
 }
 
+mod contact_editor;
 mod saved_searches;
 
 #[cfg(test)]
@@ -4206,6 +4211,7 @@ mod tests {
         assert!(cx.debug_bounds("title-bar-item").is_some());
     }
 
+    mod contact_editor;
     mod original_html;
     mod panes;
     mod rules_tab;

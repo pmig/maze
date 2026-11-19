@@ -1225,10 +1225,14 @@ impl std::fmt::Debug for ContactEdit {
 /// Why a contact couldn't be saved.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ContactError {
-    /// The book is read-only in Maze (collected addresses, imported books, and every
-    /// book until contact sync can write to its server).
+    /// The book is read-only in Maze (collected addresses, imported books, Google's
+    /// Other Contacts, shared Microsoft books).
     #[error("this address book can't be edited in Maze")]
     NotEditable,
+    /// The contact was changed elsewhere since it was read; the stored copy is the
+    /// server's current version now, to edit again.
+    #[error("the contact was changed elsewhere; Maze shows the current version")]
+    Conflict,
     /// The backend couldn't save it (offline, the server refused, …); the message says
     /// why, for people.
     #[error("{0}")]
@@ -1688,14 +1692,15 @@ pub trait MailSource: Send + Sync + 'static {
         Ok(None)
     }
 
-    /// Whether contacts in `book` can be edited (the detail pane's Edit button).
-    /// `false` for every book until contact sync can write to the server.
+    /// Whether contacts in `book` can be edited (the detail pane's Edit button): the
+    /// synced books Maze can write to (Google's My Contacts, Microsoft's Contacts).
     fn contact_book_editable(&self, _book: &str) -> bool {
         false
     }
 
     /// Saves a contact: to the book's server first, then the local copy from the
-    /// server's answer (ADR-024). Nothing can be saved yet.
+    /// server's answer (ADR-024). Waits for the server: call it off the main thread.
+    /// Nothing can be saved by default.
     fn save_contact(&self, _edit: ContactEdit) -> Result<(), ContactError> {
         Err(ContactError::NotEditable)
     }

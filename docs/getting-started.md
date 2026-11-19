@@ -323,11 +323,16 @@ What happens then:
   Google disappear in Maze. Names, email addresses, phone numbers, organizations and
   titles, postal addresses, web sites and notes are synced, and contact photos are
   fetched in the background (at 96 pixels, kept for a week).
-- **Editing.** The contact editor comes in a later version. When you create or change
-  a contact in Maze, it goes to Google first; Maze shows it only once Google accepted
-  it. If the contact was changed elsewhere in the meantime
-  (on your phone, say), Maze shows Google's current version instead of overwriting it.
-  New contacts go into My Contacts; Other contacts are read-only.
+- **Editing.** **Edit** on a contact's My Contacts version in the
+  [Address Book](#the-address-book) opens the contact editor: the name, the email
+  addresses (the first is the contact's own), the phone numbers with their kind
+  (mobile, work, …), the organization and the title. **Save** (or `enter`) sends the
+  change to Google first; the editor closes once Google accepted it, and says why
+  when it didn't. What the editor doesn't show (postal addresses, notes, …) stays as
+  it is. If the contact was changed elsewhere in the meantime (on your phone, say),
+  Maze doesn't overwrite it: the editor shows Google's current version, for you to
+  make your change again. Other contacts are read-only; adding new contacts in Maze
+  comes in a later version.
 - **Offline.** Completion and the contact copy keep working. Saving a contact says it
   can't be saved while you're offline: Maze doesn't queue changes.
 - **Turning it off.** `"contacts": { "sync": false }` pauses syncing for every account,
@@ -953,7 +958,10 @@ Address Book** and **Workspace: Show Mail** are in the command palette too.
 - **The contact** on the right: every address and phone number with a copy button,
   **New Mail** (a new message with the contact already in To), **Show Mail** (searches
   all mail from, to or copied to the address and shows it in Mail), and each address
-  book's version of the contact with its label, so you see what each one knows.
+  book's version of the contact with its label, so you see what each one knows. The
+  versions in Google's My Contacts and Microsoft's Contacts have an **Edit** button
+  that opens the contact editor ([Google contacts](#google-contacts) says how saving
+  works).
 
 Maze remembers the selected book and the order in `ui_state.json`. Contacts are in the
 encrypted database on your computer. The Address Book shows collected addresses, those
