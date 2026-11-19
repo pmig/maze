@@ -50,6 +50,7 @@ flowchart LR
     contact_source["<b>contact_source</b><br/>synced book state"]
     contact_person["<b>contact_person</b><br/>server copy (Google)"]
     contact_photo["<b>contact_photo</b>"]
+    gravatar["<b>gravatar</b><br/>lookups (ADR-032)"]
     domain["<b>domain</b><br/>counts, favicon state"]
     message_domain["<b>message_domain</b>"]
     remote_content_sender["<b>remote_content_sender</b>"]
@@ -123,6 +124,9 @@ flowchart LR
 - **Contacts**: `contact` has one row per address (the book is a string such as
   `google:<account uuid>`); `contact_source` and `contact_person` are the sync state and the
   server copy of synced books ([ADR-024](adr/0024-server-owned-contacts.md)).
+  `contact_photo` and `gravatar` remember when a photo or a Gravatar
+  ([ADR-032](adr/0032-gravatar.md)) was fetched and whether there was one; the pictures
+  are in the encrypted blob cache.
 - **Rules** ([ADR-029](adr/0029-message-rules.md)) keep their conditions and actions as
   JSON in `rule`. `rule_cursor` remembers, per watched folder and UIDVALIDITY, the
   highest UID the arrival rules have seen; `rule_message` the messages they processed,

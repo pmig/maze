@@ -903,6 +903,7 @@ impl MailWindow {
             return;
         }
         if changes.everything || changes.contacts {
+            ui::contact_photos::refresh_contact_photos(cx);
             self.address_book.update(cx, |book, cx| book.reload(cx));
         }
         if changes.everything || changes.folders {

@@ -230,6 +230,11 @@
     // "accounts": { "Work": { "contacts_sync": false } }.
     "sync": true,
     // Minutes between syncs (also at startup and on demand). At least 5.
-    "sync_interval_minutes": 30
+    "sync_interval_minutes": 30,
+    // Pictures from Gravatar (gravatar.com) for contacts without a photo of their own.
+    // "contacts": for addresses in your address books and addresses you wrote to, at
+    // most once a week each, without cookies; Gravatar learns a hash of each address
+    // and your IP address. "off": Gravatar is never asked.
+    "gravatar": "off"
   }
 }

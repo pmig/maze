@@ -322,7 +322,9 @@ What happens then:
   Sync**. After the first full sync only changes are fetched; contacts deleted on
   Google disappear in Maze. Names, email addresses, phone numbers, organizations and
   titles, postal addresses, web sites and notes are synced, and contact photos are
-  fetched in the background (at 96 pixels, kept for a week).
+  fetched in the background (at 96 pixels, kept for a week) and shown in the Address
+  Book and on recipient chips. Google often includes the Google profile picture of
+  people in Other contacts too.
 - **Editing.** **Edit** on a contact's My Contacts version in the
   [Address Book](#the-address-book) opens the contact editor: the name, the email
   addresses (the first is the contact's own), the phone numbers with their kind
@@ -949,8 +951,9 @@ Address Book** and **Workspace: Show Mail** are in the command palette too.
   Contacts** with the number of people, then each account's address books, then **On
   This Computer**: **Collected** (every address you sent mail to) and the address
   books you imported from Thunderbird.
-- **The contact list:** one row per address, with the name and a small label for every
-  place the address is in: the account's name in the account's color, "Collected", or
+- **The contact list:** one row per address, with the contact's picture, the name and
+  a small label for every place the address is in: the account's name in the account's
+  color, "Collected", or
   the imported book's name. The same person in two address books is one row with two
   labels; the name comes from an account's or an imported address book before the one
   collected from your mail. `cmd-f` filters by name or address, `up` and `down` move,
@@ -963,12 +966,33 @@ Address Book** and **Workspace: Show Mail** are in the command palette too.
   that opens the contact editor ([Google contacts](#google-contacts) says how saving
   works).
 
-Maze remembers the selected book and the order in `ui_state.json`. Contacts are in the
+The picture is the contact's photo from Google or Microsoft, else their
+[Gravatar](#gravatar) if you turned that on, else their initials. Maze remembers the
+selected book and the order in `ui_state.json`. Contacts are in the
 encrypted database on your computer. The Address Book shows collected addresses, those
 imported from Thunderbird and the [Google](#google-contacts) and
 [Microsoft](#microsoft-contacts) contacts of accounts that connected them (**My
 Contacts** and **Other Contacts**, or **Contacts**, under the account). Changes to them
 are saved to Google or Microsoft first ([ADR-024](adr/0024-server-owned-contacts.md)).
+
+#### Gravatar
+
+Many people registered a picture for their address at [Gravatar](https://gravatar.com).
+Maze can show it for contacts without a photo of their own; it's off until you turn it
+on, because Gravatar then learns about the addresses you correspond with
+([ADR-032](adr/0032-gravatar.md)):
+
+```jsonc
+"contacts": { "gravatar": "contacts" }
+```
+
+- `"contacts"`: for addresses in your address books and addresses you wrote to, never
+  for people you only received mail from. Each address is asked for once and then at
+  most once a week; a missing picture is remembered as well. The pictures are kept
+  encrypted with the contact photos.
+- `"off"` (the default): Gravatar is never asked, and pictures it gave aren't shown.
+
+What exactly is sent is in [security.md](security.md#gravatar).
 
 ## Writing mail
 
@@ -984,7 +1008,8 @@ body filled in; `mazemail open 'mailto:…'` does the same from a script:
   More From addresses of an account (aliases, as Outlook on the web and Gmail offer
   them) come from the settings, see [Aliases](#aliases) below.
 - **To**, **Cc** and **Bcc** (click **Cc Bcc** or press `cmd-shift-c`) show each
-  recipient as a chip with their initials and name (hover for the address). See
+  recipient as a chip with their picture (or initials) and name (hover for the
+  address). See
   [Recipients](#recipients) below.
 - The body is **Markdown**: `**bold**`, `*italic*`, lists, `> quotes`, links. Maze sends
   your text as the plain-text part (without Markdown's backslash escapes, so a quoted

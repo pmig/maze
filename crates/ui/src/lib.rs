@@ -15,6 +15,7 @@
 
 pub mod assets;
 pub mod components;
+pub mod contact_photos;
 pub mod gpui_tokio;
 pub mod keymap;
 pub mod names;

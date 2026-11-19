@@ -1000,6 +1000,9 @@ pub struct ContactsSettings {
     /// Minutes between contact syncs (also at startup and on demand). At least 5.
     #[schemars(range(min = 5))]
     pub sync_interval_minutes: u32,
+    /// Pictures from Gravatar for contacts without a photo of their own (ADR-032).
+    /// Off by default: Gravatar learns a hash of each address it is asked about.
+    pub gravatar: GravatarPolicy,
 }
 
 impl Default for ContactsSettings {
@@ -1007,8 +1010,21 @@ impl Default for ContactsSettings {
         Self {
             sync: true,
             sync_interval_minutes: 30,
+            gravatar: GravatarPolicy::default(),
         }
     }
+}
+
+/// Which addresses Maze asks Gravatar for a picture (ADR-032).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GravatarPolicy {
+    /// None: Gravatar is never asked, and pictures it gave aren't shown.
+    #[default]
+    Off,
+    /// Your contacts without a photo of their own: in an address book, or among the
+    /// addresses you wrote to. Gravatar learns a hash of each of these addresses.
+    Contacts,
 }
 
 /// Notifications for new mail.

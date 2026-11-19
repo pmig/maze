@@ -177,7 +177,8 @@ impl Avatar {
         self
     }
 
-    /// A photo to show instead of the initials, if there is one.
+    /// A photo to show instead of the initials, if there is one (see
+    /// [`contact_photo`](crate::contact_photos::contact_photo)).
     pub fn photo(mut self, photo: Option<ImageSource>) -> Self {
         self.photo = photo;
         self
@@ -200,22 +201,32 @@ impl RenderOnce for Avatar {
             .flex_none()
             .rounded_full()
             .overflow_hidden();
-        match self.photo {
-            Some(photo) => circle.child(
-                img(photo)
-                    .size(self.size)
-                    .rounded_full()
-                    .object_fit(ObjectFit::Cover),
-            ),
-            None => circle
+        let (size, text) = (self.size, self.initials);
+        let initials = move || {
+            div()
+                .size_full()
+                .rounded_full()
                 .bg(bg)
                 .text_color(fg)
-                .text_size((self.size * 0.45).round())
+                .text_size((size * 0.45).round())
                 .font_semibold()
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(self.initials),
+                .child(text.clone())
+                .into_any_element()
+        };
+        match self.photo {
+            // The initials while the photo decodes, and if it doesn't.
+            Some(photo) => circle.child(
+                img(photo)
+                    .size(size)
+                    .rounded_full()
+                    .object_fit(ObjectFit::Cover)
+                    .with_loading(initials.clone())
+                    .with_fallback(initials),
+            ),
+            None => circle.child(initials()),
         }
     }
 }

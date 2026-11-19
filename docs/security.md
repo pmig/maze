@@ -228,6 +228,29 @@ domains you correspond with):
   random id; the domain index (which domains you correspond with) is in the encrypted
   database.
 
+## Gravatar
+
+Maze can show the picture someone registered at [Gravatar](https://gravatar.com) for
+contacts without a photo of their own. It's **off by default** (`"contacts": {
+"gravatar": "off" }`), because unlike favicons this asks a third party
+([ADR-032](adr/0032-gravatar.md)):
+
+- **What leaves your computer:** with `"gravatar": "contacts"`, for an address such as
+  `anna@example.com`, one request to `https://gravatar.com/avatar/<hash>?s=96&d=404`,
+  where `<hash>` is the SHA-256 of the trimmed, lowercase address. Gravatar (Automattic)
+  learns that someone at your IP address looked up that hash. A hash of a known address
+  is easy to match, so treat it as Gravatar learning which of the addresses it knows you
+  correspond with. No cookies, no `Referer`, no credentials, a generic `User-Agent`
+  (`Mozilla/5.0`), nothing else about you or your mail.
+- **Which addresses:** only your contacts without a photo from Google or Microsoft:
+  address book entries and addresses you wrote to. Never addresses you only received
+  mail from, so a sender can't make Maze ask about an address.
+- **How often:** when a contact's picture is first shown, then again after a week at
+  the earliest; a missing picture (Gravatar answers 404) is remembered as long. Pictures
+  are kept encrypted in Maze's cache, up to 1 MB each.
+- **Turning it off** stops all requests at once, and pictures Gravatar gave aren't shown
+  any more.
+
 ## Lost key and recovery
 
 Maze keeps all mail in server accounts ([ADR-019](adr/0019-imap-only.md)), so `mail/` is

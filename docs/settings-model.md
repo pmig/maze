@@ -39,7 +39,7 @@ flowchart LR
   subgraph SYNC["Sync and accounts"]
     offline["<b>offline</b> · <b>offline_recent_days</b>"]
     sync_trash["<b>sync_trash</b>"]
-    contacts["contacts<br/><b>sync</b> · sync_interval_minutes"]:::sec
+    contacts["contacts<br/><b>sync</b> · sync_interval_minutes · gravatar"]:::sec
     auth["auth<br/>google · microsoft (OAuth clients)"]:::sec
     accounts["accounts.&lt;name&gt;<br/>aliases · shared_contacts<br/>+ overrides (bold keys)"]:::acct
   end

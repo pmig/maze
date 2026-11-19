@@ -15,6 +15,8 @@
 //!   Outlook.com and Microsoft 365), see [`microsoft`].
 //! - [`ContactFields`] / [`Person`]: the model, with [`vcard`] (vCard 4.0) for the
 //!   `contact` table's `vcard` column.
+//! - [`gravatar_url`]: where a contact's Gravatar is, for contacts without a photo
+//!   (ADR-032, only when the user turned it on); fetched with [`fetch_photo`].
 //! - [`Book`]: an account's address book as named in the `contact` table
 //!   (`google:<account uuid>`, `google-other:<account uuid>`,
 //!   `microsoft:<account uuid>`); [`Provider`] says which books an account has.
@@ -23,6 +25,7 @@
 
 mod error;
 pub mod google;
+mod gravatar;
 pub mod microsoft;
 mod model;
 mod source;
@@ -30,6 +33,7 @@ pub mod vcard;
 
 pub use error::ContactError;
 pub use google::{Backoff, GoogleContacts, fetch_photo};
+pub use gravatar::{GRAVATAR, gravatar_url};
 pub use microsoft::MicrosoftContacts;
 pub use model::{
     Book, BookKind, ContactFields, Labeled, Name, NotASyncedBook, Organization, Person, Photo,

@@ -38,6 +38,7 @@ mod keyboard;
 mod lost_key;
 mod new_mail;
 mod open_url;
+mod photos;
 mod reading;
 mod spellcheck;
 mod theme;
@@ -443,6 +444,7 @@ pub(crate) fn core_ready(core: &CoreHandle, cx: &mut App) {
     reading::follow_core_settings(core, cx);
     spellcheck::follow_core_settings(core, cx);
     keyboard::follow_core_settings(core, cx);
+    photos::follow_core(core, cx);
     compose::register_restore(core, cx);
     agents::start(core, &authorizer, cx);
     let window = cx

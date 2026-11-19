@@ -215,6 +215,30 @@ pub(crate) fn server_contacts(conn: &Connection, book: &str) -> Result<Vec<Store
         .collect::<rusqlite::Result<_>>()?)
 }
 
+/// What Maze knows about the Gravatar of an address (ADR-032).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GravatarState {
+    /// The URL it was looked up under (the picture's key in the blob cache).
+    pub url: String,
+    /// When it was looked up.
+    pub fetched_at: UnixTime,
+    /// Whether Gravatar had a picture.
+    pub found: bool,
+}
+
+pub(crate) fn gravatar(conn: &Connection, email: &str) -> Result<Option<GravatarState>> {
+    Ok(conn
+        .prepare_cached("SELECT url, fetched_at, is_found FROM gravatar WHERE email = ?1")?
+        .query_row([email.trim()], |row| {
+            Ok(GravatarState {
+                url: row.get(0)?,
+                fetched_at: row.get(1)?,
+                found: row.get::<_, i64>(2)? != 0,
+            })
+        })
+        .optional()?)
+}
+
 pub(crate) fn contact_photo(conn: &Connection, url: &str) -> Result<Option<ContactPhotoState>> {
     Ok(conn
         .prepare_cached("SELECT fetched_at, is_found FROM contact_photo WHERE url = ?1")?
@@ -537,9 +561,11 @@ impl WriteTx<'_> {
         self.prune_contact_photos()
     }
 
-    /// Forgets photo URLs no person has any more; returns them.
+    /// Forgets photo URLs no person has any more, and the Gravatar lookups of
+    /// addresses that are no longer contacts; returns their URLs (the cache keys of
+    /// their pictures).
     pub fn prune_contact_photos(&mut self) -> Result<Vec<String>> {
-        let urls: Vec<String> = {
+        let mut urls: Vec<String> = {
             let mut stmt = self.conn.prepare_cached(
                 "SELECT url FROM contact_photo WHERE url NOT IN
                    (SELECT photo_url FROM contact_person WHERE photo_url IS NOT NULL)",
@@ -552,7 +578,33 @@ impl WriteTx<'_> {
                 .prepare_cached("DELETE FROM contact_photo WHERE url = ?1")?
                 .execute([url])?;
         }
+        let gone: Vec<(String, String)> = {
+            let mut stmt = self.conn.prepare_cached(
+                "SELECT email, url FROM gravatar WHERE email NOT IN (SELECT email FROM contact)",
+            )?;
+            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?
+        };
+        for (email, url) in gone {
+            self.conn
+                .prepare_cached("DELETE FROM gravatar WHERE email = ?1")?
+                .execute([&email])?;
+            urls.push(url);
+        }
         Ok(urls)
+    }
+
+    /// Records that the Gravatar of `email` was looked up at `url` now; `found` false
+    /// remembers that Gravatar has no picture.
+    pub fn record_gravatar(&mut self, email: &str, url: &str, found: bool) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT INTO gravatar (email, url, fetched_at, is_found) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (email) DO UPDATE SET url = excluded.url,
+                   fetched_at = excluded.fetched_at, is_found = excluded.is_found",
+            )?
+            .execute(params![email.trim(), url, self.now, found])?;
+        Ok(())
     }
 
     /// Records that photo `url` was fetched now; `found` false remembers that there

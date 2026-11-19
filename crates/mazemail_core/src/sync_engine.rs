@@ -140,6 +140,9 @@ pub struct SyncEngineConfig {
     pub contacts_api: Option<String>,
     /// How contact API calls retry rate limits and server errors.
     pub contacts_backoff: ::contacts::Backoff,
+    /// Gravatar (ADR-032); `None`: gravatar.com ([`contacts::GRAVATAR`](::contacts::GRAVATAR)).
+    /// Tests point it at a mock server.
+    pub gravatar: Option<String>,
 }
 
 impl fmt::Debug for SyncEngineConfig {
@@ -177,6 +180,7 @@ impl SyncEngineConfig {
             mailer: Arc::new(smtp::LettreMailer),
             contacts_api: None,
             contacts_backoff: ::contacts::Backoff::default(),
+            gravatar: None,
         }
     }
 
@@ -184,6 +188,13 @@ impl SyncEngineConfig {
     #[must_use]
     pub fn with_contacts_api(mut self, base: impl Into<String>) -> Self {
         self.contacts_api = Some(base.into());
+        self
+    }
+
+    /// Asks Gravatar at `base` (a mock server in tests).
+    #[must_use]
+    pub fn with_gravatar(mut self, base: impl Into<String>) -> Self {
+        self.gravatar = Some(base.into());
         self
     }
 

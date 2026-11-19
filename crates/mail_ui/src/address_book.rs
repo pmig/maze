@@ -9,7 +9,9 @@
 //!   with the number of addresses, then each account's books (Google's My Contacts
 //!   and Other Contacts, …), then Collected (addresses you wrote to) and imported
 //!   address books, then books of removed accounts under "Other".
-//! - **Contact list**: one row per address, with the avatar, name, address and a label
+//! - **Contact list**: one row per address, with the avatar (the contact's photo from
+//!   Google or Microsoft, or their Gravatar when that is on: see
+//!   [`ui::contact_photos`]; the initials otherwise), name, address and a label
 //!   per account (or collected or imported book) the address is in, so the same
 //!   person in two accounts is one row with two labels. The Quick Filter (`cmd-f`)
 //!   narrows it by name or address; the button next to the count sorts by name or by
@@ -52,6 +54,7 @@ use mazemail_types::{Address, PRODUCT_NAME};
 use time::UtcOffset;
 use ui::assets::IconName;
 use ui::components::{Avatar, CountBadge, initials};
+use ui::contact_photos::{contact_photo, observe_contact_photos};
 use ui::keymap::shortcut_label;
 use ui::theme::scaled;
 
@@ -180,7 +183,10 @@ impl AddressBook {
                 .placeholder(format!("Quick filter…  {}", shortcut_label("cmd-f", cx)))
                 .clean_on_escape()
         });
-        let subscriptions = vec![cx.subscribe_in(&filter, window, Self::on_filter_event)];
+        let subscriptions = vec![
+            cx.subscribe_in(&filter, window, Self::on_filter_event),
+            observe_contact_photos(cx),
+        ];
         let mut this = Self {
             source,
             ui_state,
@@ -745,10 +751,10 @@ impl AddressBook {
                                 this.hover(|this| this.bg(theme.list_hover))
                             }
                         })
-                        .child(Avatar::new(
-                            initials(row.name.as_deref(), &row.email),
-                            avatar,
-                        ))
+                        .child(
+                            Avatar::new(initials(row.name.as_deref(), &row.email), avatar)
+                                .photo(contact_photo(&row.email, cx)),
+                        )
                         .child(
                             v_flex()
                                 .flex_1()
@@ -1085,10 +1091,13 @@ impl AddressBook {
                 .child(
                     h_flex()
                         .gap_4()
-                        .child(Avatar::new(
-                            initials(detail.name.as_deref(), &detail.email),
-                            scaled(64., cx),
-                        ))
+                        .child(
+                            Avatar::new(
+                                initials(detail.name.as_deref(), &detail.email),
+                                scaled(64., cx),
+                            )
+                            .photo(contact_photo(&detail.email, cx)),
+                        )
                         .child(
                             v_flex()
                                 .flex_1()
@@ -1368,6 +1377,31 @@ mod tests {
         click(cx, "contact-row-1");
         let shown = book.read_with(cx, |b, _| b.detail().map(|d| d.email.to_string()));
         assert_eq!(shown.as_deref(), Some("clara.novak@acme.example"));
+    }
+
+    #[gpui::test]
+    fn avatars_show_the_contacts_photos(cx: &mut TestAppContext) {
+        let (_, cx) = open(cx);
+        let asked: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+        let log = asked.clone();
+        cx.update(|_, cx| {
+            ui::contact_photos::set_photo_loader(cx, move |email| {
+                log.lock().unwrap().push(email.to_owned());
+                (email == "anna@example.com").then(|| ui::contact_photos::PhotoData {
+                    content_type: "image/png".to_owned(),
+                    bytes: b"png".to_vec(),
+                })
+            });
+        });
+        click(cx, "space-contacts");
+        cx.run_until_parked();
+        // The rows on screen and the shown contact asked for their photos, once each.
+        let asked = asked.lock().unwrap().clone();
+        for email in ["anna@example.com", "clara.novak@acme.example"] {
+            assert_eq!(asked.iter().filter(|a| *a == email).count(), 1, "{email}");
+        }
+        let anna = cx.update(|_, cx| contact_photo("anna@example.com", cx));
+        assert!(anna.is_some(), "Anna's avatar has her photo");
     }
 
     #[gpui::test]

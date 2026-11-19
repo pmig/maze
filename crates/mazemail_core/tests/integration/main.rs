@@ -17,6 +17,7 @@ mod contacts;
 mod domains;
 mod events;
 mod google_contacts;
+mod gravatar;
 mod index;
 mod lifecycle;
 mod messages;

@@ -51,6 +51,7 @@ use gpui_kit::component::{
 };
 use mazemail_types::Address;
 use ui::components::{Avatar, AvatarTone, initials};
+use ui::contact_photos::{contact_photo, observe_contact_photos};
 use ui::theme::scaled;
 
 /// Finds addresses for what was typed (the backend's address completion). Called on a
@@ -188,11 +189,12 @@ fn recipient_initials(recipient: &Recipient) -> SharedString {
 }
 
 /// The round picture in front of a recipient: [`ui::components::Avatar`], the one
-/// look for people across Maze (initials until contact photos arrive).
-fn avatar(recipient: &Recipient, size: Pixels, on_accent: bool, _: &App) -> AnyElement {
-    let tone = match recipient {
-        Recipient::Address(_) => AvatarTone::Accent,
-        Recipient::Invalid(_) => AvatarTone::Danger,
+/// look for people across Maze: the contact's photo when there is one
+/// ([`contact_photo`]), the initials otherwise.
+fn avatar(recipient: &Recipient, size: Pixels, on_accent: bool, cx: &App) -> AnyElement {
+    let (tone, photo) = match recipient {
+        Recipient::Address(address) => (AvatarTone::Accent, contact_photo(&address.email, cx)),
+        Recipient::Invalid(_) => (AvatarTone::Danger, None),
     };
     Avatar::new(recipient_initials(recipient), size)
         .tone(if on_accent {
@@ -200,6 +202,7 @@ fn avatar(recipient: &Recipient, size: Pixels, on_accent: bool, _: &App) -> AnyE
         } else {
             tone
         })
+        .photo(photo)
         .into_any_element()
 }
 
@@ -342,7 +345,10 @@ impl RecipientField {
                 SharedString::default()
             })
         });
-        let subscriptions = vec![cx.subscribe_in(&input, window, Self::on_input_event)];
+        let subscriptions = vec![
+            cx.subscribe_in(&input, window, Self::on_input_event),
+            observe_contact_photos(cx),
+        ];
         Self {
             name: name.into(),
             recipients: addresses.iter().cloned().map(Recipient::Address).collect(),

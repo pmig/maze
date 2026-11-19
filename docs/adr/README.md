@@ -41,3 +41,4 @@ to the index below.
 | [029](0029-message-rules.md)               | Message rules                  | Accepted                    |
 | [030](0030-saved-searches.md)             | Saved searches in the folder pane | Accepted                 |
 | [031](0031-agents-see-every-account.md)    | Agents see every account       | Accepted                    |
+| [032](0032-gravatar.md)                    | Gravatar, off by default       | Accepted                    |

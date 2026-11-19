@@ -36,6 +36,7 @@ use ::contacts::{
 use auth::{AuthorizeOptions, Capabilities, Capability};
 use mazemail_types::AccountId;
 use serde::{Deserialize, Serialize};
+use settings::GravatarPolicy;
 use store::{Account, Queries as _, StoredServerContact};
 
 use crate::accounts::{AccountConfig, AccountErrorKind};
@@ -593,7 +594,11 @@ impl CoreHandle {
 
     /// The photo of the synced contact with address `email` (in `book`, or in any
     /// synced book, My Contacts first): from the encrypted cache, else fetched now
-    /// (and cached for 7 days). `None` when there is none or Maze is offline.
+    /// (and cached for 7 days). Without one (no photo URL, or the server has no photo
+    /// behind it, as for most Microsoft contacts), and without `book`: the address's
+    /// Gravatar when `contacts.gravatar` is `contacts` and the address is a contact (in
+    /// an address book, or one you wrote to; ADR-032). `None` when there is none or
+    /// Maze is offline.
     pub async fn contact_photo(
         &self,
         email: String,
@@ -602,35 +607,56 @@ impl CoreHandle {
         let core = self.clone();
         self.run(async move {
             let reader = core.store().reader()?;
-            let Some(url) = reader.contact_photo_url(&email, book.as_deref())? else {
-                return Ok(None);
-            };
-            let state = reader.contact_photo(&url)?;
-            drop(reader);
-            if let Some(state) = state {
-                let ttl = i64::try_from(PHOTO_TTL.as_secs()).unwrap_or(i64::MAX);
-                let fresh = now_secs().saturating_sub(state.fetched_at) < ttl;
-                if state.found {
-                    let key = crate::sync_engine::contacts::photo_key(&url);
-                    if let Some(photo) = core
-                        .store()
-                        .blobs()
-                        .cache_get(&key, PHOTO_CACHE_KIND, PHOTO_CACHE_VERSION)
-                        .and_then(|data| decode_photo(&data))
-                        && fresh
-                    {
-                        return Ok(Some(photo));
-                    }
-                } else if fresh {
-                    return Ok(None);
-                }
-            }
-            Ok(match core.engine() {
-                Some(engine) => engine.fetch_contact_photo(&url).await.unwrap_or(None),
+            let url = reader.contact_photo_url(&email, book.as_deref())?;
+            let state = match &url {
+                Some(url) => reader.contact_photo(url)?,
                 None => None,
+            };
+            let gravatar = book.is_none()
+                && core.settings().settings.contacts.gravatar == GravatarPolicy::Contacts
+                && reader.contact_by_email(&email)?.is_some();
+            drop(reader);
+            let synced = match url {
+                Some(url) => core.synced_photo(&url, state).await,
+                None => None,
+            };
+            Ok(match core.engine() {
+                Some(engine) if synced.is_none() && gravatar => engine.gravatar(&email).await,
+                _ => synced,
             })
         })
         .await
+    }
+
+    /// The synced photo at `url` (`state`: what Maze knows about it): from the cache
+    /// while fresh, else fetched now.
+    async fn synced_photo(
+        &self,
+        url: &str,
+        state: Option<store::ContactPhotoState>,
+    ) -> Option<Photo> {
+        if let Some(state) = state {
+            let ttl = i64::try_from(PHOTO_TTL.as_secs()).unwrap_or(i64::MAX);
+            let fresh = now_secs().saturating_sub(state.fetched_at) < ttl;
+            if state.found {
+                let key = crate::sync_engine::contacts::photo_key(url);
+                if let Some(photo) = self
+                    .store()
+                    .blobs()
+                    .cache_get(&key, PHOTO_CACHE_KIND, PHOTO_CACHE_VERSION)
+                    .and_then(|data| decode_photo(&data))
+                    && fresh
+                {
+                    return Some(photo);
+                }
+            } else if fresh {
+                return None;
+            }
+        }
+        match self.engine() {
+            Some(engine) => engine.fetch_contact_photo(url).await.unwrap_or(None),
+            None => None,
+        }
     }
 
     /// Stores a person the server sent back after a write.

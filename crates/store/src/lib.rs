@@ -165,7 +165,7 @@ pub use reader::Reader;
 pub use repo::Queries;
 pub use repo::agents::token_hash;
 pub use repo::contact_sync::{
-    ContactPhotoState, ContactSourceState, ServerContact, StoredServerContact,
+    ContactPhotoState, ContactSourceState, GravatarState, ServerContact, StoredServerContact,
 };
 pub use repo::domains::{
     DomainContact, DomainStats, FAVICON_CACHE_KIND, FAVICON_CACHE_VERSION, FaviconState,

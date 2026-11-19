@@ -19,6 +19,7 @@
 //! `MAZEMAIL_SCREENSHOT_SPACE=address-book` shows the Address Book space instead of
 //! Mail (`docs/screenshots/address-book.png`), with a person in several accounts
 //! selected; `contact-editor` also opens Edit on their first version.
+//! `MAZEMAIL_SCREENSHOT_PHOTOS=1` gives a few contacts a (generated) photo.
 
 // A command-line tool: it reports where it saved the file.
 #![allow(clippy::print_stdout)]
@@ -51,6 +52,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui::init(cx);
         mail_ui::init(cx);
     });
+    if flag("MAZEMAIL_SCREENSHOT_PHOTOS") {
+        cx.update(|cx| ui::contact_photos::set_photo_loader(cx, sample_photo));
+    }
 
     let source: Arc<dyn MailSource> = Arc::new(FakeMailSource::new());
     let source_for_setup = source.clone();
@@ -165,4 +169,27 @@ fn expand_branching_thread(
         list.scroll_handle()
             .scroll_to_item_strict(slot, gpui::ScrollStrategy::Top);
     }
+}
+
+/// A generated photo for a few of the fake contacts (`MAZEMAIL_SCREENSHOT_PHOTOS`): a
+/// soft two-color gradient, as a PNG.
+fn sample_photo(email: &str) -> Option<ui::contact_photos::PhotoData> {
+    let (from, to) = match email {
+        "anna@example.com" => ([236, 160, 120], [150, 80, 140]),
+        "clara.novak@acme.example" => ([110, 170, 220], [40, 90, 160]),
+        "felix@bauer.example" => ([140, 200, 150], [40, 120, 90]),
+        _ => return None,
+    };
+    let size = 96;
+    let picture = image::RgbImage::from_fn(size, size, |x, y| {
+        let t = (x + y) as f32 / (2 * size) as f32;
+        let mix = |i: usize| (from[i] as f32 * (1. - t) + to[i] as f32 * t) as u8;
+        image::Rgb([mix(0), mix(1), mix(2)])
+    });
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    picture.write_to(&mut bytes, image::ImageFormat::Png).ok()?;
+    Some(ui::contact_photos::PhotoData {
+        content_type: "image/png".to_owned(),
+        bytes: bytes.into_inner(),
+    })
 }

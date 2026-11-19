@@ -24,6 +24,7 @@ mod dev_v14;
 const MAIN: &[M<'static>] = &[
     M::up(SCHEMA_V1).foreign_key_check(),
     M::up(include_str!("../migrations/main/0002_rules.sql")).foreign_key_check(),
+    M::up(include_str!("../migrations/main/0003_gravatar.sql")).foreign_key_check(),
 ];
 
 /// The v1 schema (migration 0001).

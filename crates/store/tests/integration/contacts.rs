@@ -285,6 +285,66 @@ fn photos_are_remembered_and_go_with_the_books() {
 }
 
 #[test]
+fn gravatar_lookups_are_remembered_while_the_address_is_a_contact() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(dir.path());
+    let account = fixture(&store, AccountKind::Gmail).account;
+    store
+        .write_blocking(move |w| w.ensure_contact_source(BOOK, account, "google"))
+        .unwrap();
+    upsert(&store, person("c1", "Bob", &["bob@example.com"]), 1);
+    assert_eq!(
+        store.reader().unwrap().gravatar("bob@example.com").unwrap(),
+        None
+    );
+    store
+        .write_blocking(|w| {
+            w.record_gravatar("Bob@Example.com ", "https://gravatar.example/bob", true)
+        })
+        .unwrap();
+    let state = store
+        .reader()
+        .unwrap()
+        .gravatar("bob@example.com")
+        .unwrap()
+        .unwrap();
+    assert_eq!(state.url, "https://gravatar.example/bob");
+    assert!(state.found);
+
+    // Asked again: the answer and the time are updated.
+    store
+        .write_blocking(|w| {
+            w.record_gravatar("bob@example.com", "https://gravatar.example/bob", false)
+        })
+        .unwrap();
+    let again = store
+        .reader()
+        .unwrap()
+        .gravatar("BOB@example.com")
+        .unwrap()
+        .unwrap();
+    assert!(!again.found);
+    assert!(again.fetched_at >= state.fetched_at);
+
+    // Pruning keeps the lookups of contacts...
+    assert!(
+        store
+            .write_blocking(|w| w.prune_contact_photos())
+            .unwrap()
+            .is_empty()
+    );
+    // ...and forgets them, with their cache key, once the address isn't one.
+    let urls = store
+        .write_blocking(move |w| w.delete_contact_books(account))
+        .unwrap();
+    assert_eq!(urls, ["https://gravatar.example/bob"]);
+    assert_eq!(
+        store.reader().unwrap().gravatar("bob@example.com").unwrap(),
+        None
+    );
+}
+
+#[test]
 fn removing_the_account_removes_its_contacts() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(dir.path());

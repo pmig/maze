@@ -348,6 +348,72 @@ impl SyncEngine {
         }
     }
 
+    /// The Gravatar of the contact address `email` (ADR-032): from the encrypted cache
+    /// while the last lookup is younger than [`PHOTO_TTL`], else asked now, without
+    /// credentials, cookies or `Referer`, and remembered (a missing picture too). The
+    /// caller checks `contacts.gravatar` and that `email` is a contact. `None` when
+    /// Gravatar has no picture; when it can't be reached, the last one it gave.
+    pub(crate) async fn gravatar(&self, email: &str) -> Option<::contacts::Photo> {
+        let base = self
+            .config
+            .gravatar
+            .as_deref()
+            .unwrap_or(::contacts::GRAVATAR);
+        let url = ::contacts::gravatar_url(base, email);
+        let key = photo_key(&url);
+        let state = self
+            .store
+            .reader()
+            .and_then(|r| r.gravatar(email))
+            .ok()
+            .flatten()
+            .filter(|state| state.url == url);
+        let cached = state
+            .as_ref()
+            .filter(|state| state.found)
+            .and_then(|_| {
+                self.store
+                    .blobs()
+                    .cache_get(&key, PHOTO_CACHE_KIND, PHOTO_CACHE_VERSION)
+            })
+            .and_then(|data| decode_photo(&data));
+        let ttl = i64::try_from(PHOTO_TTL.as_secs()).unwrap_or(i64::MAX);
+        if let Some(state) = &state
+            && now_secs().saturating_sub(state.fetched_at) < ttl
+            && (cached.is_some() || !state.found)
+        {
+            return cached;
+        }
+        let found = match ::contacts::fetch_photo(&url).await {
+            Ok(found) => found,
+            Err(err) => {
+                // Offline, rate-limited: ask again another time.
+                tracing::debug!(%err, "asking Gravatar");
+                return cached;
+            }
+        };
+        if let Some(photo) = &found
+            && let Err(err) = self.store.blobs().cache_put(
+                &key,
+                PHOTO_CACHE_KIND,
+                PHOTO_CACHE_VERSION,
+                &encode_photo(photo),
+            )
+        {
+            tracing::warn!(%err, "caching a Gravatar");
+            return found;
+        }
+        let (email, is_found) = (email.to_owned(), found.is_some());
+        if let Err(err) = self
+            .store
+            .write(move |w| w.record_gravatar(&email, &url, is_found))
+            .await
+        {
+            tracing::warn!(%err, "remembering a Gravatar lookup");
+        }
+        found
+    }
+
     /// Starts the contact sync task of `account` if it is a Google or Microsoft OAuth
     /// account and has none yet. Whether it syncs is decided each round.
     pub(crate) fn start_contacts(self: &Arc<Self>, account: &Account, config: &AccountConfig) {

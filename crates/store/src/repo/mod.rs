@@ -217,6 +217,11 @@ pub trait Queries: sealed::Sealed {
         contact_sync::contact_photo_url(self.connection(sealed::Token), email, book)
     }
 
+    /// What Maze knows about the Gravatar of `email` (ADR-032).
+    fn gravatar(&self, email: &str) -> Result<Option<contact_sync::GravatarState>> {
+        contact_sync::gravatar(self.connection(sealed::Token), email)
+    }
+
     /// Photo URLs of synced people never fetched, or fetched before `fetched_before`.
     fn contact_photos_due(&self, fetched_before: UnixTime, limit: usize) -> Result<Vec<String>> {
         contact_sync::contact_photos_due(self.connection(sealed::Token), fetched_before, limit)
