@@ -979,8 +979,9 @@ body filled in; `mazemail open 'mailto:…'` does the same from a script:
   recipient as a chip with their initials and name (hover for the address). See
   [Recipients](#recipients) below.
 - The body is **Markdown**: `**bold**`, `*italic*`, lists, `> quotes`, links. Maze sends
-  your text as the plain-text part and renders it as the HTML part, so recipients see
-  normal formatted mail. Single line breaks are kept. A new line starts at the
+  your text as the plain-text part (without Markdown's backslash escapes, so a quoted
+  `9\. November` reads `9. November`) and renders it as the HTML part, so recipients
+  see normal formatted mail. Single line breaks are kept. A new line starts at the
   indentation of the one before, so nested lists stay nested; `tab` and `shift-tab`
   indent and outdent.
 - **Formatting keys** write the Markdown for you around the selection: `cmd-b` bold

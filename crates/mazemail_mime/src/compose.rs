@@ -1,10 +1,11 @@
 //! Outgoing mail (PLAN §4.10): Markdown to HTML, MIME building, and the helpers for
 //! replies and forwards (subject prefixes, `References`, quoting).
 //!
-//! A message is `multipart/alternative` with the Markdown source as `text/plain` and
-//! the rendered HTML (`pulldown-cmark` plus a small mail stylesheet) as `text/html`;
-//! with attachments both go into `multipart/mixed`. Bcc recipients are never written
-//! into the headers (they go into the SMTP envelope only).
+//! A message is `multipart/alternative` with the Markdown source (its backslash
+//! escapes resolved) as `text/plain` and the rendered HTML (`pulldown-cmark` plus a
+//! small mail stylesheet) as `text/html`; with attachments both go into
+//! `multipart/mixed`. Bcc recipients are never written into the headers (they go into
+//! the SMTP envelope only).
 //!
 //! Raw HTML in the Markdown is shown as text, not passed through: a quoted
 //! `<script>` stays text, and what you see in the editor is what the recipient gets.
@@ -230,7 +231,7 @@ pub fn build_message(message: &OutgoingMessage) -> Result<Vec<u8>, ComposeError>
 pub fn body_parts(body_markdown: &str, footer: &MessageFooter) -> (String, String) {
     if footer.is_empty() {
         return (
-            normalize_newlines(body_markdown),
+            normalize_newlines(&unescape_markdown(body_markdown)),
             markdown_to_html(body_markdown),
         );
     }
@@ -259,7 +260,7 @@ pub fn body_parts(body_markdown: &str, footer: &MessageFooter) -> (String, Strin
     if !quoted.is_empty() {
         blocks.push(quoted);
     }
-    let text = normalize_newlines(&blocks.join("\n\n"));
+    let text = normalize_newlines(&unescape_markdown(&blocks.join("\n\n")));
 
     let mut html = String::new();
     if !own.trim().is_empty() {
@@ -317,6 +318,72 @@ pub fn quote_start(body: &str) -> Option<usize> {
         _ => first_quoted,
     };
     Some(lines[start].0)
+}
+
+/// The Markdown with its backslash escapes (`9\.`, `\*`, `\_`) resolved, for the
+/// text/plain part: they only keep the HTML part from turning a quoted `9. November`
+/// into a list, and read as stray backslashes in plain text. Code spans and fenced
+/// code blocks keep theirs, and a backslash before anything else (a line break, a
+/// letter) stays.
+fn unescape_markdown(markdown: &str) -> String {
+    let mut out = String::with_capacity(markdown.len());
+    let mut fence: Option<(char, usize)> = None;
+    for line in markdown.split_inclusive('\n') {
+        // Fences may sit inside a `>` quote.
+        let content = line.trim_start_matches(['>', ' ']);
+        let marker = content.chars().next().filter(|c| *c == '`' || *c == '~');
+        let run = marker.map_or(0, |m| content.chars().take_while(|c| *c == m).count());
+        match (fence, marker) {
+            (Some((open, len)), Some(m)) if m == open && run >= len => {
+                fence = None;
+                out.push_str(line);
+                continue;
+            }
+            (Some(_), _) => {
+                out.push_str(line);
+                continue;
+            }
+            (None, Some(m)) if run >= 3 => {
+                fence = Some((m, run));
+                out.push_str(line);
+                continue;
+            }
+            _ => {}
+        }
+        unescape_line(line, &mut out);
+    }
+    out
+}
+
+/// One line outside fenced code: escapes resolved except inside code spans.
+fn unescape_line(line: &str, out: &mut String) {
+    let mut chars = line.chars().peekable();
+    // The length of the backtick run that opened the current code span.
+    let mut code: Option<usize> = None;
+    while let Some(c) = chars.next() {
+        match c {
+            '`' => {
+                let mut run = 1;
+                while chars.next_if_eq(&'`').is_some() {
+                    run += 1;
+                }
+                code = match code {
+                    Some(open) if open == run => None,
+                    None => Some(run),
+                    still => still,
+                };
+                out.extend(std::iter::repeat_n('`', run));
+            }
+            '\\' if code.is_none() => match chars.peek() {
+                Some(next) if next.is_ascii_punctuation() => {
+                    out.push(*next);
+                    chars.next();
+                }
+                _ => out.push(c),
+            },
+            _ => out.push(c),
+        }
+    }
 }
 
 fn normalize_newlines(text: &str) -> String {
@@ -538,6 +605,29 @@ pub fn content_type_for(name: &str) -> &'static str {
 mod tests {
     use mail_parser::MessageParser;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn the_text_part_has_no_markdown_escapes() {
+        let quoted = html_to_markdown("<p>9. November</p><p>a *star* and snake_case [link]</p>");
+        assert!(quoted.contains("9\\. November"), "{quoted}");
+        let (text, html) = body_parts(&quoted, &MessageFooter::default());
+        assert!(text.contains("9. November"), "{text}");
+        assert!(text.contains("a *star* and snake_case [link]"), "{text}");
+        assert!(!text.contains('\\'), "{text}");
+        assert!(html.contains("9. November"), "{html}");
+        assert!(!html.contains("<ol"), "still not a list: {html}");
+    }
+
+    #[test]
+    fn code_and_other_backslashes_keep_theirs() {
+        let md =
+            "a `C:\\path\\*` b\\\nline \\n\n```\nlet s = \"\\.\";\n```\n> ~~~\n> x\\_y\n> ~~~\n";
+        assert_eq!(
+            unescape_markdown(md),
+            "a `C:\\path\\*` b\\\nline \\n\n```\nlet s = \"\\.\";\n```\n> ~~~\n> x\\_y\n> ~~~\n"
+        );
+        assert_eq!(unescape_markdown("1\\. \\\\ \\# \\> x\n"), "1. \\ # > x\n");
+    }
 
     use super::*;
 
