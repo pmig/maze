@@ -2,7 +2,7 @@
 //! with the version's fields; Save hands the change to the source and closes once it
 //! was saved; a failure, a conflict or an address that isn't one keeps it open.
 
-use gpui::{Modifiers, TestAppContext};
+use gpui::{Modifiers, MouseButton, Point, TestAppContext};
 
 use super::*;
 use crate::contact_editor::ContactEditor;
@@ -55,7 +55,12 @@ fn open_editor(
 ) -> Entity<ContactEditor> {
     let selector: &'static str = Box::leak(format!("contact-edit-{ix}").into_boxed_str());
     click(cx, selector);
-    let form = editor(view, cx).expect("Edit opens the editor");
+    settled(view, cx)
+}
+
+/// The open editor, once the dialog's entrance animation ended.
+fn settled(view: &Entity<MailWindow>, cx: &mut VisualTestContext) -> Entity<ContactEditor> {
+    let form = editor(view, cx).expect("the editor is open");
     let mut last = None;
     for _ in 0..100 {
         cx.update(|window, cx| window.draw(cx).clear(cx));
@@ -214,4 +219,111 @@ fn read_only_versions_have_no_edit_button(cx: &mut TestAppContext) {
     assert_eq!(editable, [true, true, false]);
     assert!(shown(cx, "contact-edit-1"));
     assert!(!shown(cx, "contact-edit-2"));
+}
+
+/// Selects the row of `email` in the Address Book (it scrolls into view).
+fn select_contact(view: &Entity<MailWindow>, email: &str, cx: &mut VisualTestContext) -> usize {
+    let ix = view
+        .read_with(cx, |w, cx| {
+            let book = w.address_book().read(cx);
+            book.rows()
+                .iter()
+                .position(|row| row.email.as_ref() == email)
+        })
+        .unwrap_or_else(|| panic!("{email} is listed"));
+    view.update(cx, |w, cx| {
+        w.address_book().update(cx, |book, cx| book.select(ix, cx));
+    });
+    cx.run_until_parked();
+    ix
+}
+
+/// Drags `from` onto `to` with the mouse.
+fn drag(cx: &mut VisualTestContext, from: &str, to: &str) {
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let start = cx
+        .debug_bounds(Box::leak(from.to_owned().into_boxed_str()))
+        .unwrap()
+        .center();
+    let target = cx
+        .debug_bounds(Box::leak(to.to_owned().into_boxed_str()))
+        .unwrap()
+        .center();
+    cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(
+        start + Point::new(gpui::px(10.), gpui::px(4.)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.simulate_mouse_move(target, MouseButton::Left, Modifiers::none());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.simulate_mouse_up(target, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn add_to_puts_a_contact_into_an_accounts_book(cx: &mut TestAppContext) {
+    let (view, fake, cx) = open_address_book(cx);
+    // Anna is in both accounts' books: nothing to add her to.
+    assert!(!shown(cx, "contact-add-google:fake-1"));
+    assert!(!shown(cx, "contact-add-microsoft:fake-3"));
+
+    // Markus is only collected: both accounts can take him, Other Contacts can't.
+    select_contact(&view, "markus@pichler.example", cx);
+    assert!(shown(cx, "contact-add-google:fake-1"));
+    assert!(shown(cx, "contact-add-microsoft:fake-3"));
+    assert!(!shown(cx, "contact-add-google-other:fake-1"));
+
+    click(cx, "contact-add-google:fake-1");
+    let form = settled(&view, cx);
+    let start = fields(&form, cx);
+    assert_eq!(start.book.as_ref(), "google:fake-1");
+    assert_eq!(start.contact, None, "a new contact");
+    assert_eq!(start.emails, ["markus@pichler.example"]);
+    type_into(&form, |f| f.name.clone(), "Markus Pichler", cx);
+    click(cx, "save-contact");
+
+    let saves = fake.contact_saves();
+    assert_eq!(saves.len(), 1);
+    assert_eq!(saves[0].contact, None);
+    assert_eq!(saves[0].book.as_ref(), "google:fake-1");
+    assert_eq!(saves[0].name.as_deref(), Some("Markus Pichler"));
+    assert_eq!(saves[0].emails, ["markus@pichler.example"]);
+    assert!(editor(&view, cx).is_none(), "saved and closed");
+}
+
+#[gpui::test]
+fn dropping_a_contact_on_a_book_adds_or_edits_it_there(cx: &mut TestAppContext) {
+    let (view, _, cx) = open_address_book(cx);
+
+    // Markus onto Microsoft 365's Contacts: a new contact there.
+    let ix = select_contact(&view, "markus@pichler.example", cx);
+    drag(
+        cx,
+        &format!("contact-row-{ix}"),
+        "book-row:microsoft:fake-3",
+    );
+    let form = settled(&view, cx);
+    let start = fields(&form, cx);
+    assert_eq!(start.book.as_ref(), "microsoft:fake-3");
+    assert_eq!(start.contact, None);
+    assert_eq!(start.emails, ["markus@pichler.example"]);
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(editor(&view, cx).is_none());
+
+    // Anna onto My Contacts, where she is: her version there, to edit.
+    let ix = select_contact(&view, "anna@example.com", cx);
+    drag(cx, &format!("contact-row-{ix}"), "book-row:google:fake-1");
+    let form = settled(&view, cx);
+    let start = fields(&form, cx);
+    assert_eq!(start.book.as_ref(), "google:fake-1");
+    assert!(start.contact.is_some(), "her existing version");
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+
+    // Onto a book Maze can't write to: nothing opens.
+    drag(cx, &format!("contact-row-{ix}"), "book-row:collected");
+    assert!(editor(&view, cx).is_none());
 }

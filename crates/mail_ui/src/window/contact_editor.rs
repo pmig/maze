@@ -17,7 +17,8 @@ use crate::contact_editor::{ContactEditor, ContactEditorEvent};
 use crate::source::ContactEdit;
 
 impl MailWindow {
-    /// Opens the Edit Contact dialog on `edit`, saving to the book called `book_name`.
+    /// Opens the Edit Contact dialog on `edit` (Add Contact for a new one), saving to the
+    /// book called `book_name`.
     pub(super) fn open_contact_editor(
         &mut self,
         edit: &ContactEdit,
@@ -34,6 +35,11 @@ impl MailWindow {
         self.contact_editor = Some((form.clone(), subscription));
         let focus = form.read(cx).name.focus_handle(cx);
         let this = cx.weak_entity();
+        let title = if edit.contact.is_some() {
+            "Edit Contact"
+        } else {
+            "Add Contact"
+        };
         window.open_dialog(cx, move |dialog, _, cx| {
             let saving = form.read(cx).is_saving();
             let save = {
@@ -59,7 +65,7 @@ impl MailWindow {
                 }
             };
             dialog
-                .title("Edit Contact")
+                .title(title)
                 .on_ok(confirm)
                 .on_close(closed)
                 .width(ui::theme::scaled(520., cx))

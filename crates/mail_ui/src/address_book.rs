@@ -24,7 +24,11 @@
 //!   ([`MailSource::contact_book_editable`]); it hands a [`ContactEdit`] to the window
 //!   ([`AddressBookEvent::Edit`]), which opens the
 //!   [contact editor](crate::contact_editor) to save it with
-//!   [`MailSource::save_contact`].
+//!   [`MailSource::save_contact`]. **Add to …** (one button per account book Maze can
+//!   write to that doesn't have the contact) opens the editor on a new contact with
+//!   everything the books know about the person; so does dragging a contact row onto
+//!   such a book in the book pane ([`DraggedContact`]), or the editor on the version
+//!   there if the book already has the contact.
 //!
 //! The selected book and the order are remembered in `ui_state.json`. The list reads
 //! every row of a book at once (off the main thread) and draws only the visible ones,
@@ -91,6 +95,54 @@ pub enum AddressBookEvent {
     },
 }
 
+/// What a reload read, off the main thread.
+struct Loaded {
+    books: Vec<AddressBookEntry>,
+    writable: Vec<SharedString>,
+    all_count: usize,
+    rows: Result<Arc<[ContactRow]>, SourceError>,
+}
+
+/// A contact row being dragged, and its drag preview. Dropped on an account's book in
+/// the book pane, it opens the contact editor to add the contact there.
+#[derive(Clone)]
+pub struct DraggedContact {
+    /// The row's address.
+    pub email: SharedString,
+    /// The row's name.
+    pub name: Option<SharedString>,
+}
+
+impl std::fmt::Debug for DraggedContact {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Names and addresses are personal data: never in logs.
+        f.debug_struct("DraggedContact").finish_non_exhaustive()
+    }
+}
+
+impl Render for DraggedContact {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let size = scaled(20., cx);
+        h_flex()
+            .gap_1p5()
+            .py_0p5()
+            .pl_0p5()
+            .pr_2()
+            .rounded_full()
+            .border_1()
+            .border_color(theme.drag_border)
+            .bg(theme.background)
+            .shadow_md()
+            .text_sm()
+            .child(
+                Avatar::new(initials(self.name.as_deref(), &self.email), size)
+                    .photo(contact_photo(&self.email, cx)),
+            )
+            .child(self.name.clone().unwrap_or_else(|| self.email.clone()))
+    }
+}
+
 /// The Address Book space: book pane, contact list and detail pane. See the
 /// [module docs](self).
 pub struct AddressBook {
@@ -101,6 +153,9 @@ pub struct AddressBook {
     focus: FocusHandle,
     filter: Entity<InputState>,
     books: Vec<AddressBookEntry>,
+    /// The books contacts can be added to and edited in (an account's server book Maze
+    /// can write to), read with the books.
+    writable: Vec<SharedString>,
     /// Addresses across all books (All Contacts' count).
     all_count: usize,
     /// The selected book; All Contacts when `None`.
@@ -195,6 +250,7 @@ impl AddressBook {
             focus: cx.focus_handle(),
             filter,
             books: Vec::new(),
+            writable: Vec::new(),
             all_count: 0,
             book: saved.book.map(SharedString::from),
             sort: saved.sort,
@@ -295,6 +351,11 @@ impl AddressBook {
             let loaded = cx
                 .background_spawn(async move {
                     let books = source.address_books();
+                    let writable = books
+                        .iter()
+                        .filter(|b| source.contact_book_editable(&b.id))
+                        .map(|b| b.id.clone())
+                        .collect();
                     let rows = source.contacts(&query);
                     let unfiltered = query.book.is_none() && query.text.is_empty();
                     let all_count = match &rows {
@@ -303,7 +364,12 @@ impl AddressBook {
                             .contacts(&ContactQuery::default())
                             .map_or(0, |all| all.len()),
                     };
-                    (books, all_count, rows)
+                    Loaded {
+                        books,
+                        writable,
+                        all_count,
+                        rows,
+                    }
                 })
                 .await;
             this.update(cx, |this, cx| this.loaded(loaded, keep, cx))
@@ -313,17 +379,19 @@ impl AddressBook {
 
     fn loaded(
         &mut self,
-        (books, all_count, rows): (
-            Vec<AddressBookEntry>,
-            usize,
-            Result<Arc<[ContactRow]>, SourceError>,
-        ),
+        Loaded {
+            books,
+            writable,
+            all_count,
+            rows,
+        }: Loaded,
         keep: Option<SharedString>,
         cx: &mut Context<'_, Self>,
     ) {
         self.loading = None;
         self.loaded = true;
         self.books = books;
+        self.writable = writable;
         self.all_count = all_count;
         // The book went away (its account was removed): back to All Contacts.
         if let Some(book) = &self.book
@@ -456,6 +524,79 @@ impl AddressBook {
             edit: ContactEdit::of(version),
             book_name,
         });
+    }
+
+    /// The books the shown contact can be added to: an account's book Maze can write
+    /// to that doesn't have the contact yet.
+    pub fn add_targets(&self) -> Vec<&AddressBookEntry> {
+        let Some(detail) = &self.detail else {
+            return Vec::new();
+        };
+        self.books
+            .iter()
+            .filter(|book| self.writable.contains(&book.id))
+            .filter(|book| !detail.versions.iter().any(|v| v.book == book.id))
+            .collect()
+    }
+
+    /// Add to `book`: the window opens the contact editor on the shown contact as Maze
+    /// knows it from every book, to save it there.
+    pub fn add_to_book(&mut self, book: &SharedString, cx: &mut Context<'_, Self>) {
+        if let Some(detail) = self.detail.clone() {
+            self.open_in_book(detail, book, cx);
+        }
+    }
+
+    /// The contact editor on `detail` in `book`: its version there if it has one,
+    /// else a new contact with everything Maze knows about it. Nothing for a book
+    /// Maze can't write to.
+    fn open_in_book(
+        &mut self,
+        detail: ContactDetail,
+        book: &SharedString,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if !self.writable.contains(book) {
+            return;
+        }
+        let Some(entry) = self.books.iter().find(|b| &b.id == book) else {
+            return;
+        };
+        if let Some(version) = detail.versions.iter().find(|v| &v.book == book) {
+            let version = version.clone();
+            self.edit(&version, cx);
+            return;
+        }
+        let book_name = match &entry.kind {
+            BookKind::Account { name, .. } => format!("{} of {name}", entry.name).into(),
+            _ => entry.name.clone(),
+        };
+        cx.emit(AddressBookEvent::Edit {
+            edit: ContactEdit {
+                book: book.clone(),
+                contact: None,
+                name: detail.name,
+                emails: detail.emails,
+                phones: detail.phones,
+                organization: detail.organization,
+                title: detail.title,
+            },
+            book_name,
+        });
+    }
+
+    /// A contact row dropped on `book` in the book pane.
+    fn drop_contact(
+        &mut self,
+        drag: &DraggedContact,
+        book: &SharedString,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match self.source.contact(&drag.email) {
+            Ok(Some(detail)) => self.open_in_book(detail, book, cx),
+            Ok(None) => {}
+            Err(error) => tracing::warn!(%error, "cannot read a dropped contact"),
+        }
     }
 
     fn on_filter_event(
@@ -605,6 +746,8 @@ impl AddressBook {
         let theme = cx.theme().colors;
         let selected = self.book == book;
         let key: SharedString = book.clone().unwrap_or_else(|| "all".into());
+        // Contacts can be dropped on the books Maze can write to.
+        let drop_target = book.clone().filter(|id| self.writable.contains(id));
         h_flex()
             .id(SharedString::from(format!("book-row:{key}")))
             .debug_selector(move || format!("book-row:{key}"))
@@ -628,6 +771,12 @@ impl AddressBook {
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.select_book(book.clone(), cx);
             }))
+            .when_some(drop_target, |this, target| {
+                this.drag_over::<DraggedContact>(|style, _, _, cx| style.bg(cx.theme().drop_target))
+                    .on_drop(cx.listener(move |this, drag: &DraggedContact, _, cx| {
+                        this.drop_contact(drag, &target, cx);
+                    }))
+            })
     }
 
     // ---- contact list ------------------------------------------------------------
@@ -803,6 +952,13 @@ impl AddressBook {
                             this.select(ix, cx);
                             this.focus_list(window, cx);
                         }))
+                        .on_drag(
+                            DraggedContact {
+                                email: row.email.clone(),
+                                name: row.name.clone(),
+                            },
+                            |drag, _, _, cx| cx.new(|_| drag.clone()),
+                        )
                         .into_any_element(),
                 )
             })
@@ -1040,6 +1196,40 @@ impl AddressBook {
                 labels.push(version.label.clone());
             }
         }
+        // Add to …: one per account book that can take the contact, named after the
+        // account (Google and Microsoft accounts have one each: My Contacts, Contacts).
+        let targets: Vec<(SharedString, String, String)> = self
+            .add_targets()
+            .into_iter()
+            .map(|book| {
+                let (label, tooltip) = match &book.kind {
+                    BookKind::Account { name, .. } => (
+                        format!("Add to {name}"),
+                        format!("Add to {} of {name}, on the account's server", book.name),
+                    ),
+                    _ => (
+                        format!("Add to {}", book.name),
+                        format!("Add to {}", book.name),
+                    ),
+                };
+                (book.id.clone(), label, tooltip)
+            })
+            .collect();
+        let add_buttons: Vec<AnyElement> = targets
+            .into_iter()
+            .map(|(id, label, tooltip)| {
+                let selector = id.clone();
+                Button::new(SharedString::from(format!("contact-add-{id}")))
+                    .debug_selector(move || format!("contact-add-{selector}"))
+                    .outline()
+                    .small()
+                    .icon(IconName::BookUser)
+                    .label(label)
+                    .tooltip(tooltip)
+                    .on_click(cx.listener(move |this, _, _, cx| this.add_to_book(&id, cx)))
+                    .into_any_element()
+            })
+            .collect();
         let section = |label: &'static str| {
             div()
                 .pt_3()
@@ -1132,6 +1322,7 @@ impl AddressBook {
                     h_flex()
                         .pt_3()
                         .gap_2()
+                        .flex_wrap()
                         .child(
                             div().debug_selector(|| "contact-new-mail".into()).child(
                                 Button::new("contact-new-mail")
@@ -1152,7 +1343,8 @@ impl AddressBook {
                                     .tooltip("Mail from and to this address")
                                     .on_click(cx.listener(|this, _, _, cx| this.show_mail(cx))),
                             ),
-                        ),
+                        )
+                        .children(add_buttons),
                 )
                 .child(section("EMAIL"))
                 .children(emails)

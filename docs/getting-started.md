@@ -333,8 +333,11 @@ What happens then:
   when it didn't. What the editor doesn't show (postal addresses, notes, …) stays as
   it is. If the contact was changed elsewhere in the meantime (on your phone, say),
   Maze doesn't overwrite it: the editor shows Google's current version, for you to
-  make your change again. Other contacts are read-only; adding new contacts in Maze
-  comes in a later version.
+  make your change again. Other contacts are read-only. Someone you only have
+  elsewhere (collected, imported, or in another account) goes into My Contacts with
+  **Add to …** in the Address Book, or by dragging them onto My Contacts (see
+  [The Address Book](#the-address-book)); a contact from scratch comes in a later
+  version.
 - **Offline.** Completion and the contact copy keep working. Saving a contact says it
   can't be saved while you're offline: Maze doesn't queue changes.
 - **Turning it off.** `"contacts": { "sync": false }` pauses syncing for every account,
@@ -965,6 +968,11 @@ Address Book** and **Workspace: Show Mail** are in the command palette too.
   versions in Google's My Contacts and Microsoft's Contacts have an **Edit** button
   that opens the contact editor ([Google contacts](#google-contacts) says how saving
   works).
+- **Add to «account»** is there for every Google or Microsoft account whose address book
+  doesn't have the person yet: the contact editor opens with everything Maze knows
+  about them from all books, and **Save** adds them to the account's My Contacts or
+  Contacts. Dragging a contact from the list onto one of those books in the book pane
+  does the same, or opens their version there if the book has them already.
 
 The picture is the contact's photo from Google or Microsoft, else their
 [Gravatar](#gravatar) if you turned that on, else their initials. Maze remembers the
