@@ -88,7 +88,6 @@ notify = "8"
 # notify-rust maintainer's crate behind its `preview-macos-un` backend).
 notify-rust = { version = "4.18.2", default-features = false, features = ["z-with-tokio"] }
 mac-usernotifications = { version = "0.3.1", default-features = false }
-notify-debouncer-mini = "0.7"
 psl = "2.1"
 quick_cache = "0.7"
 rayon = "1.12"

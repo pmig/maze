@@ -1,12 +1,13 @@
 //! Hot reload: watches the settings file and publishes reloaded settings.
 
-use std::ffi::OsString;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
 
-use notify::{RecommendedWatcher, RecursiveMode};
-use notify_debouncer_mini::{DebounceEventResult, Debouncer, new_debouncer};
+use notify::event::{AccessKind, AccessMode};
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::watch;
 
 use crate::{LoadedSettings, load_settings};
@@ -37,6 +38,9 @@ pub enum WatchError {
         /// The cause.
         source: notify::Error,
     },
+    /// The thread that reloads the file couldn't be started.
+    #[error("cannot start the settings reload thread: {0}")]
+    Thread(std::io::Error),
 }
 
 /// Watches the user's settings file. Dropping it stops watching.
@@ -46,7 +50,8 @@ pub enum WatchError {
 pub struct SettingsWatcher {
     path: PathBuf,
     sender: watch::Sender<Arc<LoadedSettings>>,
-    _debouncer: Debouncer<RecommendedWatcher>,
+    /// Dropping it ends the reload thread too.
+    _watcher: RecommendedWatcher,
 }
 
 impl std::fmt::Debug for SettingsWatcher {
@@ -76,29 +81,46 @@ impl SettingsWatcher {
             source,
         })?;
 
-        let (sender, receiver) = watch::channel(Arc::new(load_settings(&path)));
-        let reload_path = path.clone();
-        let reload_sender = sender.clone();
-        let mut debouncer = new_debouncer(debounce, move |result: DebounceEventResult| {
-            handle_events(result, &reload_path, &file_name, &reload_sender);
+        let loaded = load_settings(&path);
+        log_diagnostics(&loaded);
+        let (sender, receiver) = watch::channel(Arc::new(loaded));
+
+        let (changes, changed) = mpsc::channel();
+        let mut watcher = notify::recommended_watcher(move |result: notify::Result<Event>| {
+            match result {
+                // Fails only once the reload thread is gone, and then nobody listens.
+                Ok(event) if may_change(&event, &file_name) => _ = changes.send(()),
+                Ok(_) => {}
+                Err(err) => tracing::warn!(%err, "settings watcher error"),
+            }
         })
         .map_err(|source| WatchError::Watch {
             path: dir.clone(),
             source,
         })?;
-        debouncer
-            .watcher()
+        watcher
             .watch(&dir, RecursiveMode::NonRecursive)
             .map_err(|source| WatchError::Watch {
                 path: dir.clone(),
                 source,
             })?;
 
+        let reload_path = path.clone();
+        let reload_sender = sender.clone();
+        std::thread::Builder::new()
+            .name("settings-reload".to_owned())
+            .spawn(move || {
+                reload_when_quiet(&changed, debounce, || {
+                    publish(&reload_path, &reload_sender);
+                });
+            })
+            .map_err(WatchError::Thread)?;
+
         Ok((
             Self {
                 path,
                 sender,
-                _debouncer: debouncer,
+                _watcher: watcher,
             },
             receiver,
         ))
@@ -118,30 +140,50 @@ impl SettingsWatcher {
     }
 }
 
-fn handle_events(
-    result: DebounceEventResult,
-    path: &Path,
-    file_name: &OsString,
-    sender: &watch::Sender<Arc<LoadedSettings>>,
-) {
-    let events = match result {
-        Ok(events) => events,
-        Err(err) => {
-            tracing::warn!(%err, "settings watcher error");
-            return;
-        }
-    };
+/// Whether `event` may have changed the file named `file_name`. Opening and reading
+/// it doesn't: inotify reports every open, reloading opens the file, and counting
+/// those would reload the settings over and over. Closing it after writing does.
+fn may_change(event: &Event, file_name: &OsStr) -> bool {
+    let reads_only = matches!(
+        event.kind,
+        EventKind::Access(access) if access != AccessKind::Close(AccessMode::Write)
+    );
     // Paths from FSEvents are canonical (`/private/var/…`), so compare file names.
-    if !events
-        .iter()
-        .any(|event| event.path.file_name() == Some(file_name.as_os_str()))
-    {
-        return;
-    }
-    publish(path, sender);
+    !reads_only
+        && event
+            .paths
+            .iter()
+            .any(|path| path.file_name() == Some(file_name))
 }
 
-/// Loads `path` and sends the result if it differs from the current settings.
+/// Calls `reload` once the changes have stopped for `quiet`, until the watcher (the
+/// sending side) is dropped.
+fn reload_when_quiet(changed: &mpsc::Receiver<()>, quiet: Duration, reload: impl Fn()) {
+    while changed.recv().is_ok() {
+        loop {
+            match changed.recv_timeout(quiet) {
+                Ok(()) => {}
+                Err(RecvTimeoutError::Timeout) => break,
+                Err(RecvTimeoutError::Disconnected) => return,
+            }
+        }
+        reload();
+    }
+}
+
+/// Logs the diagnostics of a load: errors as warnings, the rest as info.
+fn log_diagnostics(loaded: &LoadedSettings) {
+    for diagnostic in &loaded.diagnostics {
+        if diagnostic.is_error() {
+            tracing::warn!(%diagnostic, "settings");
+        } else {
+            tracing::info!(%diagnostic, "settings");
+        }
+    }
+}
+
+/// Loads `path` and sends the result if it differs from the current settings. The
+/// diagnostics are logged when they differ from the last load's.
 ///
 /// A file that is ignored as a whole (a syntax error while it is being edited, say)
 /// keeps the settings that were in effect, with the new diagnostics: a typo must not
@@ -149,12 +191,8 @@ fn handle_events(
 /// their defaults, key by key.
 fn publish(path: &Path, sender: &watch::Sender<Arc<LoadedSettings>>) {
     let mut loaded = load_settings(path);
-    for diagnostic in &loaded.diagnostics {
-        if diagnostic.is_error() {
-            tracing::warn!(%diagnostic, "settings");
-        } else {
-            tracing::info!(%diagnostic, "settings");
-        }
+    if sender.borrow().diagnostics != loaded.diagnostics {
+        log_diagnostics(&loaded);
     }
     sender.send_if_modified(|current| {
         if loaded.file_ignored() {
@@ -255,6 +293,68 @@ mod tests {
         let loaded = receiver.borrow_and_update().clone();
         assert_eq!(loaded.settings.layout, Layout::Classic);
         assert!(loaded.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn reading_the_file_is_no_change() {
+        use notify::event::{CreateKind, ModifyKind, RemoveKind, RenameMode};
+
+        let file = OsStr::new("settings.json");
+        let on = |kind, name: &str| Event::new(kind).add_path(PathBuf::from("/c").join(name));
+        let changes = [
+            EventKind::Create(CreateKind::File),
+            EventKind::Modify(ModifyKind::Any),
+            EventKind::Modify(ModifyKind::Name(RenameMode::To)),
+            EventKind::Remove(RemoveKind::File),
+            EventKind::Access(AccessKind::Close(AccessMode::Write)),
+            EventKind::Any,
+        ];
+        for kind in changes {
+            assert!(may_change(&on(kind, "settings.json"), file), "{kind:?}");
+            assert!(!may_change(&on(kind, "keymap.json"), file), "{kind:?}");
+        }
+        let reads = [
+            EventKind::Access(AccessKind::Open(AccessMode::Any)),
+            EventKind::Access(AccessKind::Read),
+            EventKind::Access(AccessKind::Close(AccessMode::Read)),
+        ];
+        for kind in reads {
+            assert!(!may_change(&on(kind, "settings.json"), file), "{kind:?}");
+        }
+        // A rename over the file names both paths.
+        let rename = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
+            .add_path(PathBuf::from("/c/settings.json.tmp"))
+            .add_path(PathBuf::from("/c/settings.json"));
+        assert!(may_change(&rename, file));
+    }
+
+    #[test]
+    fn reloads_once_when_the_changes_stop() {
+        let (changes, changed) = mpsc::channel();
+        let reloads = std::sync::atomic::AtomicUsize::new(0);
+        for _ in 0..3 {
+            changes.send(()).unwrap();
+        }
+        drop(changes);
+        reload_when_quiet(&changed, Duration::from_millis(10), || {
+            reloads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        });
+        // The sender went away before the quiet time was up: no reload, just the end.
+        assert_eq!(reloads.into_inner(), 0);
+
+        let (changes, changed) = mpsc::channel();
+        let reloads = std::sync::atomic::AtomicUsize::new(0);
+        let writer = std::thread::spawn(move || {
+            for _ in 0..3 {
+                changes.send(()).unwrap();
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        });
+        reload_when_quiet(&changed, Duration::from_millis(50), || {
+            reloads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        });
+        writer.join().unwrap();
+        assert_eq!(reloads.into_inner(), 1);
     }
 
     #[test]

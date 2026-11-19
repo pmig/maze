@@ -6998,18 +6998,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "notify-debouncer-mini"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17849edfaabd9a5fef1c606d99cfc615a8e99f7ac4366406d86c7942a3184cf2"
-dependencies = [
- "log",
- "notify",
- "notify-types",
- "tempfile",
-]
-
-[[package]]
 name = "notify-rust"
 version = "4.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11217,7 +11205,6 @@ dependencies = [
  "jsonc-parser",
  "mazemail_types",
  "notify",
- "notify-debouncer-mini",
  "pretty_assertions",
  "release_channel",
  "schemars 1.2.3",
