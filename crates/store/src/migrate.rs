@@ -1,9 +1,6 @@
 //! Schema migrations, the pre-migration backup and the downgrade guard (PLAN §4.15).
 //!
 //! `PRAGMA user_version` is the number of applied migrations (`rusqlite_migration`).
-//! The one exception is a database of a development build from before the first
-//! release, at that build's schema 14: it is recognised, backed up and converted to v1
-//! ([`dev_v14`]).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,18 +14,12 @@ use vault::SecretString;
 use crate::conn::{self, Access};
 use crate::{Error, Result};
 
-mod dev_v14;
-
-/// The main store's migrations. 0001 is the one schema of the first release; it
-/// replaces the 14 migrations of the development builds before it (see [`dev_v14`]).
+/// The main store's migrations. 0001 is the schema of the first release.
 const MAIN: &[M<'static>] = &[
-    M::up(SCHEMA_V1).foreign_key_check(),
+    M::up(include_str!("../migrations/main/0001_schema_v1.sql")).foreign_key_check(),
     M::up(include_str!("../migrations/main/0002_rules.sql")).foreign_key_check(),
     M::up(include_str!("../migrations/main/0003_gravatar.sql")).foreign_key_check(),
 ];
-
-/// The v1 schema (migration 0001).
-const SCHEMA_V1: &str = include_str!("../migrations/main/0001_schema_v1.sql");
 
 const SENDLOG: &[M<'static>] = &[M::up(include_str!(
     "../migrations/sendlog/0001_sendlog_v1.sql"
@@ -67,25 +58,12 @@ pub(crate) fn user_version(conn: &Connection) -> Result<u32> {
 /// - An existing database (version ≥ 1) that needs migrating is first copied to
 ///   `backups/mazemail-<schema>-<app version>.db` with the online backup API, keyed with
 ///   the same key; only the newest [`BACKUPS_KEPT`] backups are kept.
-/// - A database of a development build at its schema 14 is backed up the same way and
-///   converted to v1 ([`dev_v14`]); the migrations after 0001 then run as usual.
 pub(crate) fn migrate_main(
     conn: &mut Connection,
     key: &SecretString,
     backups_dir: &Path,
     app_version: &str,
 ) -> Result<MigrationReport> {
-    if dev_v14::is_dev_v14(conn)? {
-        let from = user_version(conn)?;
-        let backup = backup_before_migrating(conn, key, backups_dir, app_version, from)?;
-        dev_v14::convert(conn)?;
-        Migrations::from_slice(MAIN).to_latest(conn)?;
-        return Ok(MigrationReport {
-            from,
-            to: SCHEMA_VERSION,
-            backup: Some(backup),
-        });
-    }
     migrate_with_backup(conn, key, backups_dir, app_version, MAIN)
 }
 

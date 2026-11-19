@@ -1,9 +1,6 @@
 -- Maze store, schema v1 (PLAN §4.3, CONCEPT §5.1).
 --
--- The one schema of the first release. It replaces the migrations of the development
--- builds before it (0001 to 0014); a database those builds left at their last schema
--- is converted in place when it is opened (`src/migrate/dev_v14.rs`). Later
--- changes are new migrations after this one.
+-- The schema of the first release. Later changes are new migrations after this one.
 --
 -- Conventions:
 -- - Timestamps are Unix seconds (UTC) in columns ending in `_at` (`message.date` is

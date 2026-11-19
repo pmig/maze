@@ -31,10 +31,8 @@
 //! # Data model notes
 //!
 //! - **Schema** v1 (`migrations/main/0001_schema_v1.sql`) is the schema of the first
-//!   release; it replaces the migrations of the development builds before it, and a
-//!   database those builds left at their last schema is converted when it is opened
-//!   (`migrate::dev_v14`). Later changes are new migration files; opening an older
-//!   database backs it up first (see [`MigrationReport`]). The domain index
+//!   release. Later changes are new migration files; opening an older database backs it
+//!   up first (see [`MigrationReport`]). The domain index
 //!   ([`Queries::domain_stats`], favicons in the cache: see `repo::domains`) is filled
 //!   as messages are stored.
 //! - **Message lists** (threads off): [`Queries::message_list_keys`] pages through the
