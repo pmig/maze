@@ -44,6 +44,7 @@ use ui::theme::scaled;
 
 use crate::actions::accounts;
 use crate::source::{AccountEntry, AccountKind, FolderEntry, FolderKey, FolderTree, MailSource};
+use crate::thread_list::DraggedMail;
 
 /// What a tree row stands for.
 #[derive(Debug, Clone, PartialEq)]
@@ -89,6 +90,13 @@ pub enum FolderPaneEvent {
         key: FolderKey,
         /// Its title for the list header.
         title: SharedString,
+    },
+    /// Mail dragged from a list was dropped on a folder: move it there.
+    MailDropped {
+        /// The folder.
+        folder: FolderId,
+        /// What was dragged.
+        mail: DraggedMail,
     },
     /// "Mark All as Read" from a folder's context menu.
     MarkAllRead {
@@ -743,6 +751,7 @@ impl FolderPane {
     fn render_item(
         nodes: &HashMap<SharedString, Node>,
         source: &dyn MailSource,
+        pane: &WeakEntity<FolderPane>,
         ix: usize,
         entry: &TreeEntry,
         selected: bool,
@@ -809,6 +818,12 @@ impl FolderPane {
                 ..
             }) => {
                 let unread = source.unread_count(key);
+                // Mail can be dropped on a folder of an account (not on a unified
+                // folder or a saved search).
+                let drop_target = match key {
+                    FolderKey::Folder(id) => Some((*id, pane.clone())),
+                    FolderKey::Unified(_) | FolderKey::SavedSearch(_) => None,
+                };
                 row.when(*divider_above, |row| {
                     row.border_t_1().border_color(theme.border.opacity(0.6))
                 })
@@ -839,7 +854,21 @@ impl FolderPane {
                                 .when(unread > 0, |this| this.font_semibold())
                                 .child(item.label.clone()),
                         )
-                        .child(CountBadge::new(unread).emphasized(selected)),
+                        .child(CountBadge::new(unread).emphasized(selected))
+                        .when_some(drop_target, |this, (folder, pane)| {
+                            this.drag_over::<DraggedMail>(|style, _, _, cx| {
+                                style.bg(cx.theme().drop_target)
+                            })
+                            .on_drop(
+                                move |mail: &DraggedMail, _, cx| {
+                                    let mail = mail.clone();
+                                    pane.update(cx, |_, cx| {
+                                        cx.emit(FolderPaneEvent::MailDropped { folder, mail });
+                                    })
+                                    .ok();
+                                },
+                            )
+                        }),
                 )
             }
             None => row.child(item.label.clone()),
@@ -855,6 +884,7 @@ impl Render for FolderPane {
         let menu_nodes = self.nodes.clone();
         let favorites = self.favorites.clone();
         let pane = cx.weak_entity();
+        let drop_pane = pane.clone();
         let source = self.source.clone();
         let theme = cx.theme();
         v_flex()
@@ -865,7 +895,15 @@ impl Render for FolderPane {
             .child(
                 div().flex_1().min_h_0().child(
                     tree(&self.tree, move |ix, entry, selected, _, cx| {
-                        FolderPane::render_item(&nodes, source.as_ref(), ix, entry, selected, cx)
+                        FolderPane::render_item(
+                            &nodes,
+                            source.as_ref(),
+                            &drop_pane,
+                            ix,
+                            entry,
+                            selected,
+                            cx,
+                        )
                     })
                     .context_menu(move |_, entry, menu, _, _| {
                         let node = menu_nodes.get(&entry.item().id);

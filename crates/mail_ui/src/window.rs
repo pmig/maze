@@ -70,7 +70,9 @@ use crate::settings_editor::{SETTINGS_KIND, SerializedSettings, SettingsEditor, 
 use crate::source::{
     ContactSort, DataChanges, Direction, FolderKey, MailSource, SortBy, SyncState, ThreadScope,
 };
-use crate::thread_list::{ItemId, ListMode, ThreadList, card_height, table_row_height};
+use crate::thread_list::{
+    DraggedMail, ItemId, ListMode, ThreadList, card_height, table_row_height,
+};
 use crate::ui_state::{ListDefaults, UiStateStore};
 
 /// How the main window starts.
@@ -111,6 +113,16 @@ const DEFAULT_SIZE: (f32, f32) = (1680., 1000.);
 const MIN_SIZE: (f32, f32) = (720., 480.);
 /// Selected rows whose account Quick Move checks before it opens.
 const ACCOUNT_CHECK_ROWS: usize = 1_000;
+
+/// Whose mail a set of rows is ([`MailWindow::mail_account`]).
+enum MailAccount {
+    /// All of one account.
+    One(mazemail_types::AccountId),
+    /// Of several accounts.
+    Several,
+    /// Nothing, or rows whose account is gone.
+    Unknown,
+}
 /// The layout is saved this long after its last change.
 const LAYOUT_SAVE_DELAY: Duration = Duration::from_millis(400);
 /// The sync icon turns at least this long after "Sync Now".
@@ -1089,9 +1101,15 @@ impl MailWindow {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        // A drop moves mail and leaves the search as it is.
+        if let FolderPaneEvent::MailDropped { folder, mail } = event {
+            self.drop_mail(mail, *folder, window, cx);
+            return;
+        }
         self.search
             .update(cx, |search, cx| search.set_value("", window, cx));
         match event {
+            FolderPaneEvent::MailDropped { .. } => {}
             FolderPaneEvent::Selected { key, title } => {
                 self.open_folder(
                     ThreadScope::Folder(key.clone()),
@@ -1557,25 +1575,18 @@ impl MailWindow {
             return;
         };
         // The picker moves mail of one account (it moves out of that account's folder).
-        // The first rows tell: checking a huge selection row by row would stall.
-        let mut accounts = items
-            .iter()
-            .take(ACCOUNT_CHECK_ROWS)
-            .map(|item| match *item {
-                ItemId::Thread(thread) => self.source.thread_account(thread),
-                ItemId::Message(message) => self.source.message_account(message),
-            });
-        let Some(Some(account)) = accounts.next() else {
-            return;
+        let account = match self.mail_account(&items) {
+            MailAccount::One(account) => account,
+            MailAccount::Unknown => return,
+            MailAccount::Several => {
+                window.push_notification(
+                    Notification::info("Quick Move works on mail of one account at a time.")
+                        .title(PRODUCT_NAME),
+                    cx,
+                );
+                return;
+            }
         };
-        if !accounts.all(|other| other == Some(account)) {
-            window.push_notification(
-                Notification::info("Quick Move works on mail of one account at a time.")
-                    .title(PRODUCT_NAME),
-                cx,
-            );
-            return;
-        }
         let tree = self.source.folder_tree();
         let Some(account) = tree.accounts.iter().find(|a| a.id == account).cloned() else {
             tracing::warn!("quick move: the selected mail's account is gone");
@@ -1603,6 +1614,74 @@ impl MailWindow {
         self.quick_move = Some(picker);
         window.focus(&focus, cx);
         cx.notify();
+    }
+
+    /// The account of `items`, judged by the first rows: checking a huge selection row
+    /// by row would stall.
+    fn mail_account(&self, items: &[ItemId]) -> MailAccount {
+        let mut accounts = items
+            .iter()
+            .take(ACCOUNT_CHECK_ROWS)
+            .map(|item| match *item {
+                ItemId::Thread(thread) => self.source.thread_account(thread),
+                ItemId::Message(message) => self.source.message_account(message),
+            });
+        let Some(Some(account)) = accounts.next() else {
+            return MailAccount::Unknown;
+        };
+        if accounts.all(|other| other == Some(account)) {
+            MailAccount::One(account)
+        } else {
+            MailAccount::Several
+        }
+    }
+
+    /// Mail dragged from a list and dropped on folder `to` in the folder pane: moved
+    /// there as Quick Move moves it (mail of one account at a time, out of the folder
+    /// the list shows; another account's folder works too), and undone the same way.
+    /// Dropped on the folder it comes from, nothing happens.
+    pub(crate) fn drop_mail(
+        &mut self,
+        mail: &DraggedMail,
+        to: FolderId,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(list) = mail.list.upgrade() else {
+            return;
+        };
+        let items = list.update(cx, |list, _| list.drag_items(mail.row));
+        let account = match self.mail_account(&items) {
+            MailAccount::One(account) => account,
+            MailAccount::Unknown => return,
+            MailAccount::Several => {
+                window.push_notification(
+                    Notification::info("Drag and drop moves mail of one account at a time.")
+                        .title(PRODUCT_NAME),
+                    cx,
+                );
+                return;
+            }
+        };
+        let tree = self.source.folder_tree();
+        let Some(account) = tree.accounts.iter().find(|a| a.id == account) else {
+            return;
+        };
+        let from = source_folder(list.read(cx).scope(), account);
+        if from == Some(to) {
+            return;
+        }
+        match list.update(cx, |list, cx| list.move_items(&items, to, from, cx)) {
+            Ok(()) => self.ui_state.remember_move_target(account.id, to),
+            Err(error) => {
+                tracing::warn!(%error, "moving dropped mail failed");
+                window.push_notification(
+                    Notification::error(format!("The mail couldn't be moved: {error}"))
+                        .title(PRODUCT_NAME),
+                    cx,
+                );
+            }
+        }
     }
 
     fn on_quick_move_event(
@@ -4213,6 +4292,7 @@ mod tests {
     }
 
     mod contact_editor;
+    mod drag_mail;
     mod original_html;
     mod panes;
     mod rules_tab;

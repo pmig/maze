@@ -688,6 +688,14 @@ name to filter (`home arc` finds `Home / Archives`), pick one with the arrow key
 press `enter` to move the selection there; `escape` cancels. With an empty filter the
 folders you moved mail to last come first. The selection has to be mail of one account.
 
+**Drag and drop** does the same with the mouse: drag mail from the list onto a folder in
+the folder pane (also under Favorites, and also another account's folder) to move it
+there. Grabbing a selected row moves the whole selection; grabbing any other row moves
+just that one. While you drag, the folder under the pointer is highlighted; unified
+folders and saved searches don't take mail, and dropping on the folder the mail is in
+does nothing. `cmd-z` undoes it as it undoes Quick Move (a move into another account
+can't be undone, see below).
+
 A move into another account's folder uploads the messages to that account's server and
 deletes them on this one only once the other server accepted them, so a failure leaves
 a message in both accounts rather than in neither ([ADR-026](adr/0026-moving-mail-between-accounts.md)).

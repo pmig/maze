@@ -627,6 +627,71 @@ enum Batch {
     Messages(Vec<MessageId>),
 }
 
+/// A list row being dragged: the list and the row. Dropped on a folder in the folder
+/// pane, the window moves what [`ThreadList::drag_items`] says: the selection when the
+/// row is in it, else the row.
+#[derive(Clone, PartialEq)]
+pub struct DraggedMail {
+    /// The list the row is in.
+    pub list: WeakEntity<ThreadList>,
+    /// The row grabbed.
+    pub row: usize,
+}
+
+impl std::fmt::Debug for DraggedMail {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DraggedMail")
+            .field("row", &self.row)
+            .finish_non_exhaustive()
+    }
+}
+
+impl DraggedMail {
+    /// The drag preview: the subject of a single row, else how many.
+    fn preview(&self, cx: &mut App) -> Entity<DraggedMailPreview> {
+        let label = self
+            .list
+            .update(cx, |list, _| list.drag_label(self.row))
+            .unwrap_or_default();
+        cx.new(|_| DraggedMailPreview { label })
+    }
+}
+
+/// What follows the pointer while mail is dragged.
+pub struct DraggedMailPreview {
+    label: SharedString,
+}
+
+impl std::fmt::Debug for DraggedMailPreview {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The label can be a subject: never in logs.
+        f.debug_struct("DraggedMailPreview").finish_non_exhaustive()
+    }
+}
+
+impl Render for DraggedMailPreview {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        h_flex()
+            .max_w(scaled(320., cx))
+            .gap_1p5()
+            .px_2()
+            .py_1()
+            .rounded(theme.radius)
+            .border_1()
+            .border_color(theme.drag_border)
+            .bg(theme.background)
+            .shadow_md()
+            .text_sm()
+            .child(
+                Icon::new(IconName::Mail)
+                    .small()
+                    .text_color(theme.muted_foreground),
+            )
+            .child(div().truncate().child(self.label.clone()))
+    }
+}
+
 /// The message list view.
 pub struct ThreadList {
     source: Arc<dyn MailSource>,
@@ -1664,6 +1729,38 @@ impl ThreadList {
         Batch::Messages(messages)
     }
 
+    /// What dragging row `row` moves: the selection ([`Self::command_items`]) when the
+    /// row is selected, else that row alone.
+    pub fn drag_items(&mut self, row: usize) -> Vec<ItemId> {
+        if self.selection.is_selected(row) {
+            self.command_items()
+        } else {
+            self.item_at(row).map(|r| r.item).into_iter().collect()
+        }
+    }
+
+    /// The drag preview's text for row `row`: the subject when one row moves, else
+    /// how many threads or messages.
+    fn drag_label(&mut self, row: usize) -> SharedString {
+        let items = self.drag_items(row);
+        if let [item] = items.as_slice()
+            && self.item_at(row).is_some_and(|r| r.item == *item)
+            && let Some(view) = self.model.borrow_mut().row(row)
+        {
+            return view.subject.clone();
+        }
+        let n = items.len();
+        let threads = items.iter().all(|i| matches!(i, ItemId::Thread(_)));
+        let messages = items.iter().all(|i| matches!(i, ItemId::Message(_)));
+        match (threads, messages, n) {
+            (true, _, 1) => "1 thread".into(),
+            (true, _, n) => format!("{} threads", format_thousands(n as u64)).into(),
+            (_, true, 1) => "1 message".into(),
+            (_, true, n) => format!("{} messages", format_thousands(n as u64)).into(),
+            _ => format!("{} items", format_thousands(n as u64)).into(),
+        }
+    }
+
     /// Quick Move: moves `items` (from [`Self::command_items`]) into `to`, out of
     /// `from` (see [`MailSource::move_threads`]), and selects the next row.
     pub fn move_items(
@@ -2239,10 +2336,15 @@ impl ThreadList {
     ) -> Stateful<Div> {
         let theme = cx.theme().colors;
         let hovered = self.hovered == Some(ix);
+        let drag = DraggedMail {
+            list: cx.weak_entity(),
+            row: ix,
+        };
         div()
             .id(slot)
             .h(slot_height(cx))
             .w_full()
+            .on_drag(drag, |drag, _, _, cx| drag.preview(cx))
             .flex()
             .items_center()
             .relative()
@@ -3160,9 +3262,14 @@ impl TableDelegate for ThreadTable {
                     .is_some_and(|row| row.thread == thread)
             });
         let list = self.list.clone();
+        let drag = DraggedMail {
+            list: list.clone(),
+            row: row_ix,
+        };
         div()
             .id(("row", row_ix))
             .debug_selector(|| format!("table-row-{row_ix}"))
+            .on_drag(drag, |drag, _, _, cx| drag.preview(cx))
             // Like the cards (the accent bar also keeps selected rows from looking like
             // the header, whose background is about as light).
             .when(highlighted, |this| {
