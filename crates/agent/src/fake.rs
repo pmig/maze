@@ -85,6 +85,8 @@ pub struct FakeAgent {
     pub auth_message: Option<String>,
     /// Also offer a terminal login (`--login`) when the client supports terminal auth.
     pub terminal_login: bool,
+    /// Also offer Claude Code's "Anthropic Console" terminal login (`console-login`).
+    pub console_login: bool,
     /// Also offer an API-key method (`api-key`, provider `openai`), like Codex.
     pub api_key_method: bool,
     /// `authenticate` hands this link to the "open shim" (appends it to
@@ -232,6 +234,7 @@ impl FakeAgent {
             }
         };
         let terminal_login = self.terminal_login;
+        let console_login = self.console_login;
         let api_key_method = self.api_key_method;
         let browser = self.browser_login.clone().zip(self.open_urls.clone());
         let browser_done = Arc::clone(&self.browser_done);
@@ -284,6 +287,12 @@ impl FakeAgent {
                         AuthMethodTerminal::new("fake-terminal", "Fake Subscription")
                             .description("Sign in from a terminal".to_owned())
                             .args(vec!["--login".to_owned()]),
+                    ));
+                }
+                if console_login && caps.auth.terminal {
+                    methods.push(AuthMethod::Terminal(
+                        AuthMethodTerminal::new("console-login", "Anthropic Console")
+                            .args(vec!["--console".to_owned()]),
                     ));
                 }
                 responder.respond(

@@ -487,6 +487,34 @@ async fn teardown_revokes_the_token_and_deletes_the_scratch_dir() {
 }
 
 #[tokio::test]
+async fn claude_codes_console_login_is_left_out_on_macos() {
+    let h = Harness::new();
+    let mut agent = FakeAgent::new(vec![FakeStep::Message("hi".into())]);
+    agent.require_auth = true;
+    agent.terminal_login = true;
+    agent.console_login = true;
+    let mut config = h.config().await;
+    config.agent_id = "claude-acp".to_owned();
+    let handle = h.start(&agent, config, SessionResources::default());
+    let mut transcript = Transcript::default();
+    let events = until(&handle, &mut transcript, |e| {
+        matches!(e, SessionEvent::SignInRequired(_))
+    })
+    .await;
+    let Some(SessionEvent::SignInRequired(request)) = events.last() else {
+        panic!("expected a sign-in request")
+    };
+    let ids: Vec<&str> = request.methods.iter().map(|m| m.id.as_str()).collect();
+    // The login can't save its key on macOS (see `auth::offers_method`).
+    let expected = if cfg!(target_os = "macos") {
+        vec!["fake-login", "fake-terminal"]
+    } else {
+        vec!["fake-login", "fake-terminal", "console-login"]
+    };
+    assert_eq!(ids, expected);
+}
+
+#[tokio::test]
 async fn a_failed_prompt_asks_for_a_terminal_login_like_claude_code() {
     let h = Harness::new();
     let mut agent = FakeAgent::new(vec![FakeStep::Message("hi".into())]);

@@ -191,7 +191,7 @@ agent's row in the picker.
 
 | Agent       | Sign in from Maze                                                                 | Key variable                                                                 |
 | ----------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Claude Code | **Sign in… Claude Subscription** or **Anthropic Console** (Terminal), or a key     | `sk-ant-oat…` (from `claude setup-token`) → `CLAUDE_CODE_OAUTH_TOKEN`, else `ANTHROPIC_API_KEY` |
+| Claude Code | **Sign in… Claude Subscription** (Terminal; on Linux also **Anthropic Console**), or a key | `sk-ant-oat…` (from `claude setup-token`) → `CLAUDE_CODE_OAUTH_TOKEN`, else `ANTHROPIC_API_KEY` |
 | Codex       | **ChatGPT** (browser) or **API Key** with a saved key                             | `OPENAI_API_KEY`                                                             |
 | Gemini CLI  | **Log in with Google** (browser) or its Gemini API key method with a saved key   | `GEMINI_API_KEY`                                                             |
 | Cursor      | **Cursor Login** (browser), or a key                                              | `CURSOR_API_KEY`                                                             |
@@ -201,18 +201,24 @@ agent's row in the picker.
 
 1. Start Claude Code in the agent column and send a message. If it isn't signed in,
    the sign-in card appears.
-2. Either click **Sign in… Claude Subscription** (or **Anthropic Console** for API
-   billing): Terminal opens, the sign-in page opens in your browser, and the Terminal
-   window says when it's done. Click **Done, retry** in Maze.
-3. Or run `claude setup-token` in your own terminal, paste the `sk-ant-oat…` token (or
-   an Anthropic API key, `sk-ant-api…`) into the card and click **Save key and retry**.
+2. Either click **Sign in… Claude Subscription**: Terminal opens, the sign-in page opens
+   in your browser and the Terminal window says when it's done. Click **Done, retry** in
+   Maze. On Linux the card also offers **Anthropic Console** for API billing.
+3. Or paste a key into the card and click **Save key and retry**: an Anthropic API key
+   (`sk-ant-api…`, from API keys in the Anthropic Console, for API billing) or a token
+   from `claude setup-token` run in your own terminal (`sk-ant-oat…`, uses your
+   subscription).
 
 Claude Code in Maze has its own configuration directory (`CLAUDE_CONFIG_DIR` in its
 home), so it never reads or replaces the login of the Claude Code you use in a
 terminal. In the sandbox it can't write to your macOS keychain, so it keeps the
-subscription login in `.claude/.credentials.json` in its home in Maze (mode 0600). The
-"Anthropic Console" login needs to create a key in the keychain and may fail in the
-sandbox; paste a Console API key instead.
+subscription login in `.claude/.credentials.json` in its home in Maze (mode 0600).
+
+Maze doesn't offer Claude Code's "Anthropic Console" login on macOS. That login has
+Anthropic create an API key and saves it only in the macOS keychain, but with its home
+in Maze, Claude Code finds no keychain there (and the sandbox keeps it out of yours). So
+the login always failed and left the new key unused in your Console. For API billing on
+macOS, create a key under API keys in the Anthropic Console and paste it instead.
 
 ### Cursor
 

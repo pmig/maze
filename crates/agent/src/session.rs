@@ -844,7 +844,12 @@ async fn session_main(
             version: info.version.clone(),
         });
     }
-    let methods: Vec<AuthMethodInfo> = init.auth_methods.iter().map(auth_info).collect();
+    let methods: Vec<AuthMethodInfo> = init
+        .auth_methods
+        .iter()
+        .map(auth_info)
+        .filter(|method| crate::auth::offers_method(&config.agent_id, &method.id))
+        .collect();
     let mut sign_in = SignIn {
         cx: cx.clone(),
         events: events.clone(),

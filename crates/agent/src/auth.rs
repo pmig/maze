@@ -9,6 +9,8 @@
 //!   sandbox with the same `HOME` as the agent, so the credentials land where the agent
 //!   finds them and nowhere else (Claude Code can't write the macOS keychain from the
 //!   sandbox and keeps its login in `.claude/.credentials.json` in the agent's home).
+//!   On macOS Maze leaves out "Anthropic Console", which can't work there
+//!   ([`offers_method`]).
 //! - **Agent** methods (Cursor's "Cursor Login", Codex's "ChatGPT") are handled by the
 //!   agent in `authenticate`, which usually opens a browser.
 //! - **API keys and tokens**: Maze keeps one per agent in its encrypted store and passes
@@ -143,8 +145,9 @@ pub struct KeyAuth {
 }
 
 const ANTHROPIC: KeyAuth = KeyAuth {
-    help: "Paste an Anthropic API key (sk-ant-api…) or a token from `claude setup-token` \
-           (sk-ant-oat…, uses your Claude subscription).",
+    help: "Paste an Anthropic API key (sk-ant-api…, from API keys in the Anthropic \
+           Console) or a token from `claude setup-token` (sk-ant-oat…, uses your Claude \
+           subscription).",
     placeholder: "sk-ant-…",
 };
 const OPENAI: KeyAuth = KeyAuth {
@@ -229,6 +232,19 @@ pub fn clean_key(key: &str) -> Result<&str, KeyError> {
     } else {
         Ok(key)
     }
+}
+
+/// Whether Maze offers one of the agent's sign-in methods.
+///
+/// Claude Code's "Anthropic Console" login (`console-login`) has Anthropic create an
+/// API key and then saves it only in the macOS keychain. With its home in Maze, macOS
+/// finds no keychain for it (and the sandbox keeps it out of yours), so on macOS that
+/// save always fails and leaves the new key unused in the Console. Pasting a Console
+/// API key into the card works instead.
+pub fn offers_method(agent_id: &str, method_id: &str) -> bool {
+    !(cfg!(target_os = "macos")
+        && crate::catalog::resolve_alias(agent_id) == "claude-acp"
+        && method_id == "console-login")
 }
 
 /// Variables set from the agent's home for some agents. Claude Code gets its config
@@ -370,6 +386,16 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn console_login_is_left_out_only_for_claude_code_on_macos() {
+        let macos = cfg!(target_os = "macos");
+        assert_eq!(offers_method("claude-acp", "console-login"), !macos);
+        assert_eq!(offers_method("claude", "console-login"), !macos);
+        assert!(offers_method("claude-acp", "claude-ai-login"));
+        assert!(offers_method("claude-acp", "claude-login"));
+        assert!(offers_method("pi-acp", "console-login"));
+    }
 
     #[test]
     fn claude_keys_pick_their_variable_by_prefix() {
