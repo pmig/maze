@@ -50,10 +50,10 @@ release; the site and the Worker deploy on their own (`website.yaml`,
 | `APPLE_CERTIFICATE_P12`      | base64 of the **Developer ID Application** certificate with its private key, exported as `.p12` | `sign-and-notarize-mac`    |
 | `APPLE_CERTIFICATE_PASSWORD` | the password of that `.p12`                                                                    | `sign-and-notarize-mac`    |
 | `APPLE_TEAM_ID`              | the 10-character Apple Team ID                                                                 | signing, entitlements      |
-| `APPLE_NOTARY_KEY`           | the content of an App Store Connect API key (`AuthKey_….p8`) with the *Developer* role          | `notarytool`               |
+| `APPLE_NOTARY_KEY`           | the content of an App Store Connect API key (`AuthKey_….p8`) with the *Developer* role. It only lets `notarytool` submit builds to Apple's notary service; nothing is published on the App Store | `notarytool`               |
 | `APPLE_NOTARY_KEY_ID`        | that key's ID                                                                                  | `notarytool`               |
 | `APPLE_NOTARY_ISSUER`        | the issuer ID of your App Store Connect API keys                                               | `notarytool`               |
-| `APPLE_PROVISIONING_PROFILE` | base64 of a **Developer ID** provisioning profile for the App ID `dev.mazemail.maze` with the keychain sharing capability (it grants `keychain-access-groups`, `<TeamID>.dev.mazemail.maze`) | `bundle-mac --provisioning-profile` |
+| `APPLE_PROVISIONING_PROFILE` | base64 of a **Developer ID** provisioning profile for the App ID `dev.mazemail.maze`. The App ID needs no capability: every profile grants `keychain-access-groups` `<TeamID>.*`, which covers our `<TeamID>.dev.mazemail.maze` | `bundle-mac --provisioning-profile` |
 
 ```sh
 base64 -i DeveloperID.p12 | gh secret set APPLE_CERTIFICATE_P12
@@ -61,6 +61,53 @@ gh secret set APPLE_NOTARY_KEY < AuthKey_ABC123XYZ.p8
 base64 -i Maze_Developer_ID.provisionprofile | gh secret set APPLE_PROVISIONING_PROFILE
 gh secret set UPDATE_SIGNING_KEY < update-key.secret
 ```
+
+#### Creating the Developer ID certificate and profile
+
+Only the team's Account Holder can create a Developer ID certificate. The current one
+expires on 2027-12-20. The profile depends on it, so renewing means repeating all of
+this.
+
+Work in a folder only you can read, outside any git checkout. Use macOS's
+`/usr/bin/openssl`:
+
+```sh
+mkdir -m 700 maze-signing && cd maze-signing
+/usr/bin/openssl req -new -newkey rsa:2048 -nodes -keyout developer-id.key \
+  -out developer-id.csr -subj "/emailAddress=<you>/CN=<your name>/C=<country>"
+```
+
+1. **Certificate:** on developer.apple.com, *Certificates → + → Developer ID
+   Application*, profile type **G2 Sub-CA**, upload `developer-id.csr` and save
+   `developerID_application.cer` into the folder.
+2. **The `.p12`:** include Apple's intermediate certificate. Without it in a keychain,
+   `security find-identity -v` can't build the chain and finds no valid identity. A
+   runner may not have it installed. The password file has no trailing newline, so
+   the secret matches it exactly.
+
+   ```sh
+   curl -fsSO https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+   /usr/bin/openssl x509 -inform DER -in developerID_application.cer -out developer-id.pem
+   /usr/bin/openssl x509 -inform DER -in DeveloperIDG2CA.cer -out developer-id-ca.pem
+   /usr/bin/openssl x509 -in developer-id.pem -noout -subject   # shows (<TeamID>)
+   /usr/bin/openssl rand -base64 24 | tr -d '\n' > p12-password.txt
+   /usr/bin/openssl pkcs12 -export -inkey developer-id.key -in developer-id.pem \
+     -certfile developer-id-ca.pem -name "Developer ID Application" \
+     -passout file:p12-password.txt -out DeveloperID.p12
+   gh secret set APPLE_CERTIFICATE_PASSWORD < p12-password.txt
+   ```
+
+3. **App ID** (once): *Identifiers → + → App IDs → App*, explicit bundle ID
+   `dev.mazemail.maze`, no capabilities.
+4. **Profile:** *Profiles → + → Developer ID* (under Distribution), App ID
+   `dev.mazemail.maze`, the new certificate, named `Maze Developer ID`. Check it with
+   `security cms -D -i Maze_Developer_ID.provisionprofile`: `DeveloperCertificates`
+   must be the new certificate and `Entitlements` must list `keychain-access-groups`
+   `<TeamID>.*`.
+
+Set the secrets as above, keep `DeveloperID.p12` and its password in a password
+manager and delete the folder. Apple has no copy of the private key: if it's lost, you
+need a new certificate and profile.
 
 What happens when secrets are missing:
 
