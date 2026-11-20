@@ -660,7 +660,8 @@ with Reply, Reply All, Forward, Mark as Read or Unread, Star or Unstar, Archive,
 Junk, Delete, Move to Folder… and Select Thread, each with its shortcut. Right-clicking a message that isn't
 selected selects it (without marking it read); right-clicking inside a selection of
 several messages keeps it, and the menu acts on all of them. The message pane's menu
-also copies the sender's address.
+also copies the sender's address, and on a link its address (see
+[Links in a message](#links-in-a-message)).
 
 Threads are on by default: a thread is one row with its message count; `→` or a click
 on the count opens its messages as a reply tree, `←` closes it, `*` opens all threads
@@ -789,6 +790,9 @@ deceptive link asks first: "This link goes to evil.example, not paypal.com. Open
 anyway?". A link that isn't a valid address shows a message with a **Copy** button
 instead. Links in plain-text mail (`https://…`, `www.…`, `mailto:…`) are underlined and
 work the same way.
+
+Right-click a link for **Copy Link Address** at the top of the message's menu. It copies
+the full address the link opens, encoded the same way, without opening it.
 
 ### Searching
 

@@ -411,6 +411,13 @@ pub fn normalize_link(href: &str) -> Result<Url, LinkError> {
     Url::parse(&encoded).map_err(|_| invalid())
 }
 
+/// The address Copy Link Address puts on the clipboard: the link normalized as a click
+/// opens it ([`normalize_link`]), so it pastes as a working URL, or trimmed as written
+/// when it isn't one.
+pub fn copy_address(href: &str) -> String {
+    normalize_link(href).map_or_else(|_| href.trim().to_owned(), String::from)
+}
+
 /// What a click on the link to `href` does, among the body's `links` (which tell
 /// whether it's deceptive). The reusable policy behind [`open_link`].
 pub fn link_click(href: &str, links: &[BodyLink]) -> LinkClick {
@@ -758,6 +765,19 @@ mod tests {
             HoveredLink::resolve("https://other.example/", &links).warning(),
             None
         );
+    }
+
+    #[test]
+    fn copied_addresses_are_normalized_or_kept_as_written() {
+        assert_eq!(
+            copy_address(" www.example.com/a b "),
+            "https://www.example.com/a%20b"
+        );
+        assert_eq!(
+            copy_address("mailto:anna@example.com"),
+            "mailto:anna@example.com"
+        );
+        assert_eq!(copy_address(" not a link "), "not a link");
     }
 
     #[test]

@@ -2,7 +2,8 @@
 //! actions, the verification row, attachments, and the body (CONCEPT §8.4).
 //!
 //! A right-click opens the message list's context menu for the shown message (the
-//! window sets it, [`MessageView::set_context_menu`]), plus Copy Sender Address.
+//! window sets it, [`MessageView::set_context_menu`]), plus Copy Sender Address. On a
+//! link, Copy Link Address comes first ([`crate::links::copy_address`]).
 //!
 //! Hovering a link shows its target at the bottom left; a click opens it after the
 //! checks of [`crate::links`] (normalized, web and `mailto:` only, deceptive links ask).
@@ -1353,6 +1354,11 @@ impl Render for MessageView {
         };
         let sender = doc.from.expose().email.clone();
         let builder = self.context_menu.clone();
+        // Hovering re-renders, so this is the link a right-click lands on.
+        let link = self
+            .hovered
+            .as_ref()
+            .map(|link| crate::links::copy_address(link.href()));
         let original = match self.shown_mode(cx) {
             BodyMode::Original => self.ensure_original(&doc, window, cx),
             BodyMode::Reader => None,
@@ -1420,6 +1426,17 @@ impl Render for MessageView {
             })
             .child(body)
             .context_menu(move |menu, window, cx| {
+                // On a link, its address comes first, as in a browser.
+                let menu = match link.clone() {
+                    Some(address) => menu
+                        .item(
+                            PopupMenuItem::new("Copy Link Address").on_click(move |_, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(address.clone()));
+                            }),
+                        )
+                        .separator(),
+                    None => menu,
+                };
                 let menu = match &builder {
                     Some(builder) => builder(menu, window, cx),
                     None => menu,
@@ -1603,6 +1620,41 @@ mod tests {
         cx.simulate_mouse_down(over_link, MouseButton::Middle, Modifiers::none());
         cx.simulate_mouse_up(over_link, MouseButton::Middle, Modifiers::none());
         assert_eq!(cx.opened_url().as_deref(), Some(normalized));
+    }
+
+    /// A right-click on a link offers Copy Link Address first, with the address a click
+    /// opens; elsewhere in the body the menu has only Copy Sender Address.
+    #[gpui::test]
+    fn right_clicking_a_link_copies_its_address(cx: &mut TestAppContext) {
+        let html = "<p><a href=\" https://example.com/a b|c?q=ü \">the report</a> is ready.</p>";
+        let doc = document(MessageBody::Html(Sensitive::new(html.into())), Vec::new());
+        let (_, cx) = open(cx, doc);
+        let right_click_then_first_item = |at, cx: &mut VisualTestContext| {
+            cx.simulate_mouse_move(at, None, Modifiers::none());
+            cx.run_until_parked();
+            cx.simulate_mouse_down(at, MouseButton::Right, Modifiers::none());
+            cx.simulate_mouse_up(at, MouseButton::Right, Modifiers::none());
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.simulate_keystrokes("down enter");
+            cx.run_until_parked();
+            cx.read_from_clipboard().and_then(|c| c.text())
+        };
+
+        let over_link = start_of_body(cx);
+        assert_eq!(
+            right_click_then_first_item(over_link, cx).as_deref(),
+            Some("https://example.com/a%20b%7Cc?q=%C3%BC")
+        );
+        // Copying doesn't open it.
+        assert_eq!(cx.opened_url(), None);
+
+        let body = cx.debug_bounds("message-body").unwrap();
+        let empty = body.origin + point(body.size.width - px(8.), body.size.height - px(8.));
+        assert_eq!(
+            right_click_then_first_item(empty, cx).as_deref(),
+            Some("service@paypal.example")
+        );
     }
 
     /// `mailto:` links ask for a draft; other schemes are refused with a notification.
