@@ -255,10 +255,3 @@ codegen-units = 16
 inherits = "release"
 strip = false
 debug = true
-
-[patch.crates-io]
-# GPUI's font-kit fork wants freetype-sys 0.20 on Linux and Servo wanted 0.23; only
-# one crate may link `freetype`. The vendored copy differs from crates.io's zed-font-kit
-# 0.14.1-zed only in that requirement (third_party/zed-font-kit/README.maze.md). With
-# Servo gone (ADR-033) nothing needs it any more; drop it after a Linux CI run without.
-zed-font-kit = { path = "third_party/zed-font-kit" }

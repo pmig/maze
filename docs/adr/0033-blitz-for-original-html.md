@@ -94,9 +94,12 @@ job builds and tests it. App bundles are built for release tags only (ADR-011); 
   it's pinned exactly. An upgrade shows up in the WPT run as tests that start
   passing (several presentational attributes are already mapped on Blitz's `main`).
   The Maze-side rewrite rules should shrink with each upgrade.
-- **Leftovers of ADR-020 that can go.** The `rusqlite` 0.38 pin (only Servo forced it;
-  the SQLite advisory needs a SQLCipher 4.20 bundle either way) and the vendored
-  `zed-font-kit` (needs a Linux CI run without it).
+- **Leftovers of ADR-020.** The vendored `zed-font-kit` is gone: its `freetype-sys`
+  0.23 needs FreeType 2.13 or newer, which the Ubuntu 22.04 runners of the Linux
+  release builds don't have. GPUI's own 0.20 builds its bundled FreeType there (the
+  FreeType License, to be named on the licenses screen once there is one). The
+  `rusqlite` 0.38 pin can go too (only Servo forced it; the SQLite advisory needs a
+  SQLCipher 4.20 bundle either way).
 - **Linux gets the original view.** Nothing in Blitz needs Python or libclang, so the
   Linux builds include it too; it gets less testing there than on macOS.
 - **Every test run covers the engine.** `mail_ui`'s GPUI tests run with it (ADR-020 had
