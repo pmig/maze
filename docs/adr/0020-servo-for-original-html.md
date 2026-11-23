@@ -38,10 +38,10 @@ keyboard focus with gpui-pre) and on having a different engine per platform.
 ## Decision
 
 Original mode uses **Servo** in a new L3 crate, `html_view`, behind the cargo feature
-`servo` (exposed as `original-html` on `mail_ui` and `mazemail`). `servo` 0.7 is built
-from crates.io with `default-features = false` plus `baked-in-resources`: no `js_jit`
-(no JIT entitlement), no `multiprocess`, no devtools, no clipboard backend, none of
-WebGL/WebGPU/WebXR/WebCrypto/Bluetooth/GStreamer.
+`servo` (exposed as `original-html` on `mail_ui` and `mazemail`). `servo` (0.7, 0.8 since
+November 2026) is built from crates.io with `default-features = false` plus
+`baked-in-resources`: no `js_jit` (no JIT entitlement), no `multiprocess`, no devtools,
+no clipboard backend, none of WebGL/WebGPU/WebXR/WebCrypto/Bluetooth/GStreamer.
 
 - **Rendering:** one Servo instance per process, started on first use, on GPUI's main
   thread; its event-loop waker schedules a spin from a foreground task. Each view owns a
@@ -87,11 +87,11 @@ WebGL/WebGPU/WebXR/WebCrypto/Bluetooth/GStreamer.
 ## Consequences
 
 - **Dependency surgery.** Cargo allows one crate per native `links` name, and Servo
-  0.7 disagrees with us twice: `servo-net` links SQLite through `rusqlite` 0.38, so
-  the workspace moves from `rusqlite` 0.40 to 0.38 (`rusqlite_migration` 2.4; SQLCipher
-  stays, through `bundled-sqlcipher`); and Servo links `freetype-sys` 0.23 on Linux
-  while GPUI's font-kit fork wants 0.20, so `third_party/zed-font-kit` (one changed line,
-  README.maze.md) is patched in. Both go away when the versions line up again.
+  (0.7 and 0.8) disagrees with us twice: `servo-net` links SQLite through `rusqlite`
+  0.38, so the workspace moves from `rusqlite` 0.40 to 0.38 (`rusqlite_migration` 2.4;
+  SQLCipher stays, through `bundled-sqlcipher`); and Servo links `freetype-sys` 0.23 on
+  Linux while GPUI's font-kit fork wants 0.20, so `third_party/zed-font-kit` (one changed
+  line, README.maze.md) is patched in. Both go away when the versions line up again.
 - **Build requirements.** Servo's build scripts need Python 3.11+ (or `uv`).
   `mozjs_sys` only downloads a prebuilt SpiderMonkey when its `jit` feature is on, so
   without the JIT it compiles SpiderMonkey from source and generates its bindings with

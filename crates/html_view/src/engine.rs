@@ -301,7 +301,7 @@ fn respond(load: WebResourceLoad, content_type: &str, csp: Option<&str>, body: V
         header::REFERRER_POLICY,
         HeaderValue::from_static("no-referrer"),
     );
-    let url = load.request().url.clone();
+    let url = load.request().url.as_url().clone();
     let mut intercepted = load.intercept(
         WebResourceResponse::new(url)
             .headers(headers)
@@ -313,7 +313,7 @@ fn respond(load: WebResourceLoad, content_type: &str, csp: Option<&str>, body: V
 
 /// Answers with an empty 404 (a cancelled load can leave the page waiting for it).
 fn refuse(load: WebResourceLoad) {
-    let url = load.request().url.clone();
+    let url = load.request().url.as_url().clone();
     let mut headers = HeaderMap::new();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     load.intercept(
@@ -326,7 +326,7 @@ fn refuse(load: WebResourceLoad) {
 
 impl WebViewDelegate for Delegate {
     fn load_web_resource(&self, _webview: WebView, load: WebResourceLoad) {
-        let url = load.request().url.clone();
+        let url = load.request().url.as_url().clone();
         let current = self.current.borrow();
         let document = &current.document;
         let located = resource_for(&url).filter(|l| l.generation == document.generation());
