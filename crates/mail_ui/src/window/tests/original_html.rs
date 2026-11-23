@@ -51,7 +51,7 @@ fn the_pane_reads_and_a_double_clicked_tab_shows_the_original(cx: &mut TestAppCo
     tab_view.read_with(cx, |v, cx| {
         assert_eq!(v.place(), ViewPlace::Tab);
         assert_eq!(v.requested_mode(cx), BodyMode::Original);
-        // Without the engine (the `servo` feature) the tab stays in reader mode.
+        // Without the engine (the `blitz` feature) the tab stays in reader mode.
         let expected = if OriginalView::AVAILABLE {
             BodyMode::Original
         } else {

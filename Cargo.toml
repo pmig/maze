@@ -65,14 +65,11 @@ chacha20poly1305 = { version = "0.11", default-features = false, features = ["al
 bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
-dpi = "0.1"
-euclid = "0.22"
 dbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
 ed25519-dalek = "3"
 getrandom = "0.4"
 hex = "0.4"
 hkdf = "0.13"
-http = "1"
 idna = "1.1"
 jsonc-parser = { version = "0.34", features = ["cst", "serde"] }
 keyring-core = "1"
@@ -102,8 +99,22 @@ ruzstd = "0.9"
 schemars = "1"
 security-framework = { version = "3", features = ["OSX_10_15"] }
 semver = { version = "1", features = ["serde"] }
-# The original HTML engine (ADR-020): no JIT, no multiprocess, no devtools, no web APIs.
-servo = { version = "0.8", default-features = false, features = ["baked-in-resources"] }
+# The original HTML engine (ADR-033, Blitz): HTML and CSS only, with no JavaScript
+# engine at all. Only the parts mail needs: no networking (`blitz-net`), no shell or
+# window (`blitz-shell`, winit), no accessibility tree, no SVG (the sanitizer drops
+# inline SVG) and no web fonts (the CSP allows none). `system-fonts`: the fonts mail
+# names (Arial, Helvetica, Georgia) come from the system; `floats`: CSS `float`,
+# common in mail layouts (images beside text, responsive columns).
+blitz-dom = { version = "=0.3.0-beta.4", default-features = false, features = ["system-fonts", "floats"] }
+blitz-html = { version = "=0.3.0-beta.4", default-features = false }
+blitz-paint = { version = "=0.3.0-beta.4", default-features = false }
+blitz-traits = { version = "=0.3.0-beta.4", default-features = false }
+# CPU rendering into an image (no window renderers). `multithreading`: vello_cpu
+# rasterizes on up to 8 threads (one more crate, `ordered-channel`); a Retina frame of
+# a newsletter takes 2.5 ms, a hover or scroll 1.7 ms (`paint_time` in html_view).
+anyrender = { version = "0.14", default-features = false }
+anyrender_vello_cpu = { version = "0.18", default-features = false, features = ["multithreading"] }
+cursor-icon = "1"
 html5ever = "0.40.1"
 linkify = "0.11.0"
 mail-parser = { version = "1.0.1", features = ["full_encoding"] }
@@ -113,7 +124,7 @@ nucleo-matcher = "0.3"
 # HTML quotes of replies become Markdown (PLAN §4.10).
 htmd = "0.6.0"
 pulldown-cmark = { version = "0.13.6", default-features = false, features = ["html"] }
-# One crypto provider for all of rustls: aws-lc-rs. Servo, mail-auth and reqwest need it
+# One crypto provider for all of rustls: aws-lc-rs. mail-auth and reqwest need it
 # anyway; a second provider (ring) would leave rustls without a process-wide default.
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 rustls-platform-verifier = "0.7"
@@ -197,6 +208,33 @@ smol = { opt-level = 3 }
 ropey = { opt-level = 3 }
 markdown = { opt-level = 3 }
 xml5ever = { opt-level = 3 }
+# The original HTML engine restyles, lays out and rasterizes on the CPU for every frame
+# (a hover over another element, a scroll): Blitz, Stylo, text layout and vello_cpu.
+# At opt-level 1 a Retina frame of a newsletter took 196 ms; see `paint_time` in
+# html_view's engine tests.
+blitz-dom = { opt-level = 3 }
+blitz-paint = { opt-level = 3 }
+stylo = { opt-level = 3 }
+selectors = { opt-level = 3 }
+servo_arc = { opt-level = 3 }
+cssparser = { opt-level = 3 }
+stylo_taffy = { opt-level = 3 }
+parley = { opt-level = 3 }
+parley_engine = { opt-level = 3 }
+fontique = { opt-level = 3 }
+harfrust = { opt-level = 3 }
+skrifa = { opt-level = 3 }
+read-fonts = { opt-level = 3 }
+icu_segmenter = { opt-level = 3 }
+anyrender = { opt-level = 3 }
+anyrender_vello_cpu = { opt-level = 3 }
+vello_cpu = { opt-level = 3 }
+vello_common = { opt-level = 3 }
+fearless_simd = { opt-level = 3 }
+peniko = { opt-level = 3 }
+kurbo = { opt-level = 3 }
+# Its per-pixel loops (over white, RGBA to BGRA) cost ~70 ms per Retina frame unoptimized.
+html_view = { opt-level = 3 }
 
 [profile.release]
 # Fat LTO with one codegen unit keeps the stripped binary under the 40 MB budget
@@ -219,7 +257,8 @@ strip = false
 debug = true
 
 [patch.crates-io]
-# GPUI's font-kit fork wants freetype-sys 0.20 on Linux, Servo 0.7 wants 0.23, and
-# only one crate may link `freetype`. The vendored copy differs from crates.io's
-# zed-font-kit 0.14.1-zed only in that requirement (third_party/zed-font-kit/README.maze.md).
+# GPUI's font-kit fork wants freetype-sys 0.20 on Linux and Servo wanted 0.23; only
+# one crate may link `freetype`. The vendored copy differs from crates.io's zed-font-kit
+# 0.14.1-zed only in that requirement (third_party/zed-font-kit/README.maze.md). With
+# Servo gone (ADR-033) nothing needs it any more; drop it after a Linux CI run without.
 zed-font-kit = { path = "third_party/zed-font-kit" }

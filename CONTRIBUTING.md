@@ -25,6 +25,23 @@ workflow runs them after CI, from the test binaries CI built.
 
 Run `mise run ci` before you commit.
 
+### The original HTML engine
+
+`mise run test` builds without the original HTML engine (Blitz, ADR-033). Its tests
+need the feature: rendering and security checks, regression tests on real (anonymized)
+mail and a selection of Web Platform Tests reftests
+(`crates/html_view/tests/wpt/README.maze.md`):
+
+```sh
+cargo nextest run -p html_view --features blitz
+```
+
+To see how a mail renders, put it through the same pipeline into a PNG:
+`MAZEMAIL_RENDER_OUT=<dir> MAZEMAIL_RENDER_EML=<file.eml> cargo nextest run -p html_view
+--features blitz --run-ignored only -E 'test(render_mail_to_png)'`. A mail that renders
+wrongly becomes a fixture only as an anonymized copy: no names, addresses, links with
+tokens or other personal data.
+
 ### Keychain prompts in dev builds (macOS)
 
 A dev build reads one keychain item at startup, its storage key (ADR-017). Rust signs

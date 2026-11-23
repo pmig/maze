@@ -140,6 +140,26 @@ impl Dom {
         }
     }
 
+    /// Moves the children of `id` into a new `tag` element without attributes, which
+    /// becomes the only child of `id`. Returns the new element.
+    pub(crate) fn wrap_children(&mut self, id: NodeId, tag: &str) -> NodeId {
+        let wrapper = self.nodes.len();
+        let children = std::mem::take(&mut self.nodes[id].children);
+        for &child in &children {
+            self.nodes[child].parent = Some(wrapper);
+        }
+        self.nodes.push(Node {
+            parent: Some(id),
+            children,
+            data: NodeData::Element {
+                name: QualName::new(None, ns!(html), LocalName::from(tag)),
+                attrs: Vec::new(),
+            },
+        });
+        self.nodes[id].children.push(wrapper);
+        wrapper
+    }
+
     /// Unlink a node (and its subtree) from its parent.
     pub(crate) fn detach(&mut self, id: NodeId) {
         if let Some(parent) = self.nodes[id].parent.take() {

@@ -52,8 +52,9 @@ Works today:
 - search with Gmail-style operators (`from:`, `has:attachment`, `after:` …) and
   Quick Filter
 - reading mail in a sanitized reader view, or as the sender designed it in the original
-  HTML view (an embedded Servo engine with scripts off and every load going through
-  Maze; macOS builds only), remote images only when you allow them (**Load images**,
+  HTML view (an embedded Blitz engine, HTML and CSS without any script engine, with
+  every load going through Maze; macOS builds only), remote images only when you allow
+  them (**Load images**,
   **Always for this sender**), `cmd-alt-o` to switch
 - DKIM/SPF/DMARC results (SPF and DMARC as the receiving server recorded them), the
   sender's mail client, and link targets on hover with a warning for deceptive links
@@ -115,13 +116,12 @@ tar --zstd -xf mazemail-*-linux-x86_64.tar.zst -C ~/.local
 
 The toolchain is managed with [mise](https://mise.jdx.dev). On macOS you also need the
 Xcode Command Line Tools; on Debian and Ubuntu, `script/linux-deps` installs the system
-packages. On Linux `mise install` also brings clang and libclang, which the HTML engine's
-SpiderMonkey build needs.
+packages.
 
 ```sh
-mise install          # Rust 1.99.1, cargo-nextest, cargo-deny, cargo-insta (Linux: clang, libclang)
+mise install          # Rust 1.99.1, cargo-nextest, cargo-deny, cargo-insta
 mise start            # starts a dev build of Maze, with its own data directory (macOS: Maze Dev.app)
-mise run start:lite   # the same without the HTML engine (Servo): much faster first build
+mise run start:lite   # the same without the original HTML engine (Blitz): faster first build
 script/bundle-mac     # builds dist/mac-<arch>/Maze.app, the .dmg and the .app.tar.zst
 ```
 

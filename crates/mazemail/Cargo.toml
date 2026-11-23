@@ -51,7 +51,7 @@ vault = { workspace = true }
 
 [features]
 default = []
-# The original HTML engine (Servo, ADR-020). Release builds enable it
+# The original HTML engine (Blitz, ADR-033). Release builds enable it
 # (`script/bundle-mac`, CI's release job); dev builds and tests stay without it.
 original-html = ["mail_ui/original-html"]
 

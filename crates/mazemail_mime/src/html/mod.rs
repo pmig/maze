@@ -12,6 +12,7 @@
 
 pub(crate) mod css;
 pub(crate) mod dom;
+mod hints;
 mod icons;
 mod nesting;
 mod rewrite;

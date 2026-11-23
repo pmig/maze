@@ -133,20 +133,22 @@ pub fn rewrite_resources(sanitized_html: &str, origin: &ResourceOrigin) -> Rewri
     rewrite(sanitized_html, origin, false)
 }
 
-/// [`rewrite_resources`] for an embedded engine (the original mode, ADR-020): links
+/// [`rewrite_resources`] for an embedded engine (the original mode, ADR-033): links
 /// also lose their `target`, so a click navigates the message's own frame, where the
-/// embedder intercepts it, instead of asking for a new window.
+/// embedder intercepts it, instead of asking for a new window. Presentational
+/// attributes the engine ignores become CSS; table cells and columns are fixed where
+/// the engine's table layout differs from a browser's (see the `hints` module).
 pub fn rewrite_for_embedding(sanitized_html: &str, origin: &ResourceOrigin) -> RewrittenHtml {
     rewrite(sanitized_html, origin, true)
 }
 
-fn rewrite(sanitized_html: &str, origin: &ResourceOrigin, strip_targets: bool) -> RewrittenHtml {
+fn rewrite(sanitized_html: &str, origin: &ResourceOrigin, embedding: bool) -> RewrittenHtml {
     let mut dom = Dom::parse_fragment(sanitized_html);
     let root = dom.root();
     let mut table = RemoteTable::default();
     for node in dom.descendants(root) {
         match dom.tag(node) {
-            Some("a" | "area") if strip_targets => dom.remove_attr(node, "target"),
+            Some("a" | "area") if embedding => dom.remove_attr(node, "target"),
             Some("img") => rewrite_attr(&mut dom, node, "src", origin, &mut table),
             Some("style") => {
                 for child in dom.children(node).to_vec() {
@@ -171,8 +173,19 @@ fn rewrite(sanitized_html: &str, origin: &ResourceOrigin, strip_targets: bool) -
             }
         }
     }
+    // After the resources: `background` attributes point at the origin by now.
+    let hints = if embedding {
+        super::hints::apply(&mut dom, root)
+    } else {
+        None
+    };
+    let mut html = dom.serialize_children(root);
+    if let Some(sheet) = hints {
+        // First, so the message's own style sheets come after it.
+        html.insert_str(0, &format!("<style>{sheet}</style>"));
+    }
     RewrittenHtml {
-        html: dom.serialize_children(root),
+        html,
         remote_resources: table.urls,
     }
 }

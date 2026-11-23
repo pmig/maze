@@ -59,23 +59,18 @@ mise start              # starts Maze
 script/bundle-mac       # optional: dist/mac-<arch>/Maze.app, .dmg and .app.tar.zst
 ```
 
-`mise start` and `script/bundle-mac` include the original HTML engine (Servo, the
+`mise start` and `script/bundle-mac` include the original HTML engine (Blitz, the
 `original-html` feature), and so do the macOS release builds; a plain `cargo build`
-leaves it out. Servo's build scripts need Python 3.11 or newer (`mise install` provides
-it; `uv` works too), and its first build takes several minutes longer: Maze builds Servo
-without its JavaScript JIT, so SpiderMonkey is compiled from source, and its bindings
-need clang's `libclang` (Xcode's on macOS; on Linux `mise install` installs clang and
-libclang, and `script/mise-env` points the build at them). It builds into its own
-directory, `target/servo`, so
-switching between `mise start` and tests or your editor's rust-analyzer doesn't rebuild
-half the tree. `mise run start:lite` starts Maze without the engine (the original view
+leaves it out. The engine is Rust only and needs nothing beyond `mise install`. It
+builds into its own directory, `target/original-html`, so switching between `mise
+start` and tests or your editor's rust-analyzer doesn't rebuild half the tree. `mise run start:lite` starts Maze without the engine (the original view
 then falls back to the reader). For a local release build, `cargo build --profile
 release-fast` uses thin LTO and is far quicker than the fat-LTO `release` profile.
 
 A build from source is a **dev** build: it uses its own data directory
 (`mazemail-dev`), its own keychain item and the bundle ID `dev.mazemail.maze-dev`, so it
 never touches the store of an installed Maze. On macOS `mise start` runs it from
-`target/servo/debug/Maze Dev.app` (`script/dev-bundle`), so it shows
+`target/original-html/debug/Maze Dev.app` (`script/dev-bundle`), so it shows
 [notifications](#notifications) and the Dock shows Maze's icon; logs still go to the
 terminal.
 

@@ -3,21 +3,11 @@ rust = { version = "1.99.1", components = "rustfmt,clippy,rust-src", profile = "
 "cargo:cargo-nextest" = "latest"
 "cargo:cargo-deny" = "latest"
 "cargo:cargo-insta" = "latest"
-# Servo's build scripts (the original HTML engine, ADR-020) need Python 3.11 or newer.
-python = "3.13"
-# Linux: Maze builds Servo without its JIT, so mozjs_sys compiles SpiderMonkey from
-# source and generates its Rust bindings with bindgen, which needs libclang (and clang,
-# for its built-in headers). On macOS Xcode provides both. LIBCLANG_PATH is set in
-# script/mise-env.
-"conda:clang" = { version = "23", os = ["linux"] }
-"conda:libclang" = { version = "23", os = ["linux"] }
-
-[env]
-_.source = "{{config_root}}/script/mise-env"
 
 [tasks.start]
 description = "Build and start Maze (dev build with the original HTML engine: fast incremental rebuilds)"
-# The Servo build (`original-html`) gets its own target directory: with the feature on,
+# The build with the original HTML engine (`original-html`, Blitz, ADR-033) gets its own
+# target directory: with the feature on,
 # Cargo resolves features of shared dependencies differently, so building it in
 # `target/` would make every switch between `mise start` and tests, clippy or
 # rust-analyzer (which build without it) recompile GPUI and much of the tree.
@@ -25,7 +15,7 @@ description = "Build and start Maze (dev build with the original HTML engine: fa
 # so notifications work, and signs it with the "Maze Development" identity if it exists
 # (script/dev-codesign), so keychain "Always Allow" survives rebuilds. Elsewhere it
 # starts the binary as it is.
-env = { CARGO_TARGET_DIR = "{{config_root}}/target/servo" }
+env = { CARGO_TARGET_DIR = "{{config_root}}/target/original-html" }
 run = 'cargo build --locked -p mazemail --features original-html && exe=$(script/dev-bundle "$CARGO_TARGET_DIR/debug/mazemail") && exec "$exe"'
 
 [tasks."start:lite"]

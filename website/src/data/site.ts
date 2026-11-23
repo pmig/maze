@@ -45,9 +45,9 @@ export const NUMBERS = [
     detail: "Gmail-style queries over the encrypted Tantivy index, 1M-message benchmark. Budget: under 100 ms.",
   },
   {
-    value: "~123",
+    value: "~85",
     unit: "MB",
     label: "the whole app, one binary",
-    detail: "Stripped macOS release binary with the embedded Servo engine for original HTML mail (ADR-020); about 49 MB without it. The UI itself is native GPUI.",
+    detail: "Stripped macOS release binary with the embedded Blitz engine for original HTML mail (ADR-033). The UI itself is native GPUI.",
   },
 ] as const;

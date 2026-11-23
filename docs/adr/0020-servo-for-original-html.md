@@ -1,6 +1,8 @@
 # ADR-020: Servo for original HTML
 
-- **Status:** Accepted (supersedes [ADR-004](0004-html-original-mode.md))
+- **Status:** Accepted, the engine superseded by [ADR-033](0033-blitz-for-original-html.md)
+  (Blitz instead of Servo; the modes, the document's origin and policy and remote
+  content below stand). Superseded [ADR-004](0004-html-original-mode.md).
 - **Date:** 2026-10-26
 
 ## Context

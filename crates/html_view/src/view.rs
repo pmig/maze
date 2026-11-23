@@ -1,17 +1,17 @@
 //! [`OriginalView`]: a message's original HTML as a normal GPUI element.
 //!
-//! Servo renders into an offscreen software context; each new frame is copied into a
-//! GPUI image and painted in the view's bounds. Mouse and wheel events on the view go
-//! to Servo. Because it is an ordinary element (no native view), it clips, layers
+//! Blitz lays the message out and paints it on the CPU; each new frame is copied into
+//! a GPUI image and painted in the view's bounds. Mouse and wheel events on the view go
+//! to Blitz. Because it is an ordinary element (no native view), it clips, layers
 //! under overlays, hides with its tab and leaves keyboard focus in GPUI.
 //!
-//! One view shows one message at a time and keeps its Servo page for the next one
+//! One view shows one message at a time and keeps its page for the next one
 //! ([`OriginalView::show`]): each document gets a new number, the page loads it after a
 //! short pause (holding `f` through the list doesn't queue loads), and loads of a
 //! document the view has moved on from are refused. Until the current document has
 //! painted, [`OriginalView::is_ready`] is false and the caller shows the reader.
 //!
-//! Without the `servo` feature the view never gets ready; check
+//! Without the `blitz` feature the view never gets ready; check
 //! [`OriginalView::AVAILABLE`].
 
 use std::rc::Rc;
@@ -70,9 +70,9 @@ pub enum OriginalViewEvent {
 /// The document to show and where its parts come from.
 struct Shown {
     document: OriginalDocument,
-    #[cfg_attr(not(feature = "servo"), allow(dead_code))]
+    #[cfg_attr(not(feature = "blitz"), allow(dead_code))]
     parts: Rc<dyn PartSource>,
-    #[cfg_attr(not(feature = "servo"), allow(dead_code))]
+    #[cfg_attr(not(feature = "blitz"), allow(dead_code))]
     since: Instant,
 }
 
@@ -80,9 +80,9 @@ struct Shown {
 pub struct OriginalView {
     generation: u64,
     shown: Option<Shown>,
-    #[cfg(feature = "servo")]
-    servo: Option<servo_view::State>,
-    #[cfg(feature = "servo")]
+    #[cfg(feature = "blitz")]
+    page: Option<blitz_view::State>,
+    #[cfg(feature = "blitz")]
     pending_load: Option<gpui::Task<()>>,
     failed: bool,
 }
@@ -98,8 +98,8 @@ impl std::fmt::Debug for OriginalView {
 impl EventEmitter<OriginalViewEvent> for OriginalView {}
 
 impl OriginalView {
-    /// Whether this build includes the engine (feature `servo`).
-    pub const AVAILABLE: bool = cfg!(feature = "servo");
+    /// Whether this build includes the engine (feature `blitz`).
+    pub const AVAILABLE: bool = cfg!(feature = "blitz");
 
     /// How long a new document waits before it loads, so quickly passing messages
     /// don't each start a load.
@@ -111,9 +111,9 @@ impl OriginalView {
         Self {
             generation: 0,
             shown: None,
-            #[cfg(feature = "servo")]
-            servo: None,
-            #[cfg(feature = "servo")]
+            #[cfg(feature = "blitz")]
+            page: None,
+            #[cfg(feature = "blitz")]
             pending_load: None,
             failed: false,
         }
@@ -130,17 +130,17 @@ impl OriginalView {
     ) {
         self.generation += 1;
         let document = OriginalDocument::build(sanitized_html, options, self.generation);
-        #[cfg(feature = "servo")]
-        if let Some(state) = &self.servo {
+        #[cfg(feature = "blitz")]
+        if let Some(state) = &self.page {
             state.switch_to(document.clone(), parts.clone());
             let generation = self.generation;
             self.pending_load = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(Self::LOAD_DELAY).await;
                 let _ = this.update(cx, |view, _| {
                     if view.generation == generation
-                        && let (Some(state), Some(shown)) = (&view.servo, &view.shown)
+                        && let Some(state) = &view.page
                     {
-                        state.load(shown.document.url());
+                        state.load();
                     }
                 });
             }));
@@ -160,12 +160,12 @@ impl OriginalView {
 
     /// Whether the current document has painted. Until then, show the reader.
     pub fn is_ready(&self) -> bool {
-        #[cfg(feature = "servo")]
+        #[cfg(feature = "blitz")]
         return self
-            .servo
+            .page
             .as_ref()
             .is_some_and(|state| state.frame_generation() == Some(self.generation));
-        #[cfg(not(feature = "servo"))]
+        #[cfg(not(feature = "blitz"))]
         false
     }
 
@@ -182,18 +182,18 @@ impl OriginalView {
 
     /// Copies the selected text to the clipboard.
     pub fn copy(&mut self, cx: &mut Context<'_, Self>) {
-        #[cfg(feature = "servo")]
-        if let Some(state) = &self.servo {
+        #[cfg(feature = "blitz")]
+        if let Some(state) = &self.page {
             state.copy();
             cx.notify();
         }
-        #[cfg(not(feature = "servo"))]
+        #[cfg(not(feature = "blitz"))]
         let _ = cx;
     }
 
-    #[cfg(feature = "servo")]
+    #[cfg(feature = "blitz")]
     pub(crate) fn after_spin(&mut self, cx: &mut Context<'_, Self>) {
-        let Some(state) = &self.servo else {
+        let Some(state) = &self.page else {
             return;
         };
         let (opens, clipboard, redraw) = state.take_inbox();
@@ -213,7 +213,7 @@ impl OriginalView {
     }
 
     /// Called once a frame of the current document is on screen.
-    #[cfg(feature = "servo")]
+    #[cfg(feature = "blitz")]
     fn became_ready(&mut self, cx: &mut Context<'_, Self>) {
         if let Some(shown) = &self.shown {
             tracing::debug!(
@@ -227,45 +227,40 @@ impl OriginalView {
 }
 
 impl Render for OriginalView {
-    #[cfg(feature = "servo")]
+    #[cfg(feature = "blitz")]
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        servo_view::render(self, window, cx)
+        blitz_view::render(self, window, cx)
     }
 
-    #[cfg(not(feature = "servo"))]
+    #[cfg(not(feature = "blitz"))]
     fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
         gpui::Empty
     }
 }
 
-#[cfg(feature = "servo")]
-mod servo_view {
+#[cfg(feature = "blitz")]
+mod blitz_view {
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
     use std::sync::Arc;
 
+    use blitz_traits::events::MouseEventButton;
+    use cursor_icon::CursorIcon;
     use gpui::{
         Bounds, Context, CursorStyle, InteractiveElement as _, IntoElement, MouseButton,
         ParentElement as _, Pixels, RenderImage, ScrollDelta, Styled as _, Window, canvas, div, px,
     };
     use image::Frame;
-    use servo::{
-        Cursor, DeviceIntRect, DevicePoint, InputEvent, MouseButtonAction, MouseButtonEvent,
-        MouseMoveEvent, RenderingContext as _, SoftwareRenderingContext, WebView, WebViewBuilder,
-        WheelDelta, WheelEvent, WheelMode,
-    };
 
     use super::{OriginalView, PartSource};
     use crate::document::OriginalDocument;
-    use crate::engine::{Clipboard, Current, Delegate, Engine, Inbox};
+    use crate::engine::{Engine, Inbox, Page};
 
-    /// A wheel "line" in pixels, as Servo's own shell uses.
-    const LINE_HEIGHT: f32 = 38.;
+    /// A wheel "line" in CSS pixels.
+    const LINE_HEIGHT: f32 = 19.;
 
     pub(super) struct State {
-        webview: WebView,
-        context: Rc<SoftwareRenderingContext>,
-        delegate: Rc<Delegate>,
+        page: Page,
         inbox: Rc<Inbox>,
         /// Device size the page was laid out for.
         size: Cell<(u32, u32)>,
@@ -274,7 +269,7 @@ mod servo_view {
         bounds: Cell<Bounds<Pixels>>,
         /// The last frame and the document it shows.
         frame: RefCell<Option<(u64, Arc<RenderImage>)>>,
-        /// Frames waiting to be read out of the rendering context.
+        /// Frames waiting to be painted.
         dirty: Cell<bool>,
     }
 
@@ -284,48 +279,36 @@ mod servo_view {
             parts: Rc<dyn PartSource>,
             (width, height, scale): (u32, u32, f32),
             cx: &mut gpui::App,
-        ) -> Option<Self> {
-            let context = match SoftwareRenderingContext::new(dpi::PhysicalSize::new(width, height))
-            {
-                Ok(context) => Rc::new(context),
-                Err(error) => {
-                    tracing::warn!(?error, "can't create Servo's software rendering context");
-                    return None;
-                }
-            };
+        ) -> Self {
             let inbox = Rc::new(Inbox::default());
-            let url = document.url();
             let engine = Engine::get(cx);
-            let delegate = Rc::new(Delegate::new(document, parts, inbox.clone(), engine.wake()));
-            let webview = WebViewBuilder::new(engine.servo(), context.clone())
-                .delegate(delegate.clone())
-                .clipboard_delegate(Rc::new(Clipboard {
-                    inbox: inbox.clone(),
-                }))
-                .hidpi_scale_factor(euclid::Scale::new(scale))
-                .url(url)
-                .build();
-            Some(Self {
-                webview,
-                context,
-                delegate,
+            let page = Page::new(
+                document,
+                parts,
+                inbox.clone(),
+                engine.wake(),
+                (width, height, scale),
+            );
+            page.load();
+            Self {
+                page,
                 inbox,
                 size: Cell::new((width, height)),
                 scale: Cell::new(scale),
                 bounds: Cell::new(Bounds::default()),
                 frame: RefCell::new(None),
                 dirty: Cell::new(false),
-            })
+            }
         }
 
         /// Makes `document` the current one at once (so loads of the previous one are
         /// refused from now on); the page loads it with [`State::load`].
         pub(super) fn switch_to(&self, document: OriginalDocument, parts: Rc<dyn PartSource>) {
-            *self.delegate.current.borrow_mut() = Current { document, parts };
+            self.page.switch_to(document, parts);
         }
 
-        pub(super) fn load(&self, url: url::Url) {
-            self.webview.load(url);
+        pub(super) fn load(&self) {
+            self.page.load();
         }
 
         /// The link under the pointer, if it changed since the last call.
@@ -335,7 +318,7 @@ mod servo_view {
 
         /// The current document finished loading but hasn't been painted yet.
         pub(super) fn loaded_but_not_painted(&self) -> bool {
-            let current = self.delegate.current.borrow().document.generation();
+            let current = self.page.generation();
             if self.inbox.loaded.get() == Some(current) && self.frame_generation() != Some(current)
             {
                 self.dirty.set(true);
@@ -353,12 +336,14 @@ mod servo_view {
         }
 
         pub(super) fn copy(&self) {
-            self.send(InputEvent::EditingAction(servo::ClipboardAction::Copy));
+            if let Some(text) = self.page.selected_text() {
+                *self.inbox.clipboard.borrow_mut() = Some(text);
+            }
         }
 
         /// Links to open, clipboard text, and whether to redraw.
         pub(super) fn take_inbox(&self) -> (Vec<url::Url>, Option<String>, bool) {
-            self.delegate.poll_pending();
+            self.page.poll();
             let opens = std::mem::take(&mut *self.inbox.open.borrow_mut());
             let clipboard = self.inbox.clipboard.borrow_mut().take();
             let frame = self.inbox.frame_ready.replace(false);
@@ -374,28 +359,25 @@ mod servo_view {
             let (width, height) = device_size(bounds, scale);
             if (width, height) != self.size.get() {
                 self.size.set((width, height));
-                self.webview.resize(dpi::PhysicalSize::new(width, height));
+                self.page.resize(width, height);
+                self.dirty.set(true);
             }
             if scale != self.scale.get() {
                 self.scale.set(scale);
-                self.webview
-                    .set_hidpi_scale_factor(euclid::Scale::new(scale));
+                self.page.set_scale(scale);
+                self.dirty.set(true);
             }
         }
 
-        /// Paints the pending frame and copies it out, if it shows the current
-        /// document (frames of the previous message are never shown). Returns whether
-        /// this was the current document's first frame.
+        /// Paints the pending frame, if it shows the current document (frames of the
+        /// previous message are never shown). Returns whether this was the current
+        /// document's first frame.
         fn read_frame(&self, window: &mut Window, cx: &mut gpui::App) -> bool {
-            let current = self.delegate.current.borrow().document.generation();
+            let current = self.page.generation();
             if self.inbox.loaded.get() != Some(current) || !self.dirty.replace(false) {
                 return false;
             }
-            self.webview.paint();
-            let (width, height) = self.size.get();
-            let rect =
-                DeviceIntRect::from_size(servo::DeviceIntSize::new(width as i32, height as i32));
-            let Some(mut rgba) = self.context.read_to_image(rect) else {
+            let Some(mut rgba) = self.page.paint() else {
                 return false;
             };
             // GPUI images are BGRA.
@@ -410,35 +392,25 @@ mod servo_view {
             first
         }
 
-        fn point(&self, position: gpui::Point<Pixels>) -> servo::WebViewPoint {
+        /// A window position in the page's CSS pixels.
+        fn point(&self, position: gpui::Point<Pixels>) -> (f32, f32) {
             let origin = self.bounds.get().origin;
-            let scale = self.scale.get();
-            DevicePoint::new(
-                f32::from(position.x - origin.x) * scale,
-                f32::from(position.y - origin.y) * scale,
+            (
+                f32::from(position.x - origin.x),
+                f32::from(position.y - origin.y),
             )
-            .into()
         }
 
         fn cursor_style(&self) -> CursorStyle {
             match self.inbox.cursor.get() {
-                Some(Cursor::Pointer) => CursorStyle::PointingHand,
-                Some(Cursor::Text | Cursor::VerticalText) => CursorStyle::IBeam,
-                Some(Cursor::Crosshair) => CursorStyle::Crosshair,
-                Some(Cursor::NotAllowed | Cursor::NoDrop) => CursorStyle::OperationNotAllowed,
+                Some(CursorIcon::Pointer) => CursorStyle::PointingHand,
+                Some(CursorIcon::Text | CursorIcon::VerticalText) => CursorStyle::IBeam,
+                Some(CursorIcon::Crosshair) => CursorStyle::Crosshair,
+                Some(CursorIcon::NotAllowed | CursorIcon::NoDrop) => {
+                    CursorStyle::OperationNotAllowed
+                }
                 _ => CursorStyle::Arrow,
             }
-        }
-
-        fn send(&self, event: InputEvent) {
-            self.webview.notify_input_event(event);
-        }
-    }
-
-    impl Drop for State {
-        fn drop(&mut self) {
-            // The page goes when its last handle does; stop it painting meanwhile.
-            self.webview.hide();
         }
     }
 
@@ -447,26 +419,26 @@ mod servo_view {
         (side(bounds.size.width), side(bounds.size.height))
     }
 
-    fn button(button: MouseButton) -> Option<servo::MouseButton> {
+    fn button(button: MouseButton) -> Option<MouseEventButton> {
         match button {
-            MouseButton::Left => Some(servo::MouseButton::Primary),
-            MouseButton::Middle => Some(servo::MouseButton::Auxiliary),
+            MouseButton::Left => Some(MouseEventButton::Main),
+            MouseButton::Middle => Some(MouseEventButton::Auxiliary),
             _ => None,
         }
     }
 
     fn mouse_button(
         view: &OriginalView,
-        action: MouseButtonAction,
+        down: bool,
         pressed: MouseButton,
         position: gpui::Point<Pixels>,
+        cx: &mut Context<'_, OriginalView>,
     ) {
-        if let (Some(state), Some(button)) = (&view.servo, button(pressed)) {
-            state.send(InputEvent::MouseButton(MouseButtonEvent::new(
-                action,
-                button,
-                state.point(position),
-            )));
+        if let (Some(state), Some(button)) = (&view.page, button(pressed)) {
+            state
+                .page
+                .pointer_button(down, button, state.point(position));
+            cx.notify();
         }
     }
 
@@ -477,7 +449,7 @@ mod servo_view {
     ) -> impl IntoElement {
         let entity = cx.entity();
         let cursor = view
-            .servo
+            .page
             .as_ref()
             .map_or(CursorStyle::Arrow, State::cursor_style);
         div()
@@ -487,41 +459,35 @@ mod servo_view {
             .cursor(cursor)
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|this, event: &gpui::MouseDownEvent, _, _| {
-                    mouse_button(this, MouseButtonAction::Down, event.button, event.position);
+                cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
+                    mouse_button(this, true, event.button, event.position, cx);
                 }),
             )
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, event: &gpui::MouseUpEvent, _, _| {
-                    mouse_button(this, MouseButtonAction::Up, event.button, event.position);
+                cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
+                    mouse_button(this, false, event.button, event.position, cx);
                 }),
             )
-            .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, _| {
-                if let Some(state) = &this.servo {
-                    state.send(InputEvent::MouseMove(MouseMoveEvent::new(
-                        state.point(event.position),
-                    )));
+            .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
+                if let Some(state) = &this.page {
+                    state.page.pointer_move(state.point(event.position));
+                    cx.notify();
                 }
             }))
-            .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, _| {
-                if let Some(state) = &this.servo {
+            .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
+                if let Some(state) = &this.page {
                     let delta = match event.delta {
                         ScrollDelta::Pixels(delta) => delta,
                         ScrollDelta::Lines(lines) => {
                             gpui::point(px(lines.x * LINE_HEIGHT), px(lines.y * LINE_HEIGHT))
                         }
                     };
-                    let scale = f64::from(state.scale.get());
-                    state.send(InputEvent::Wheel(WheelEvent::new(
-                        WheelDelta {
-                            x: f64::from(f32::from(delta.x)) * scale,
-                            y: f64::from(f32::from(delta.y)) * scale,
-                            z: 0.,
-                            mode: WheelMode::DeltaPixel,
-                        },
+                    state.page.wheel(
+                        (f64::from(f32::from(delta.x)), f64::from(f32::from(delta.y))),
                         state.point(event.position),
-                    )));
+                    );
+                    cx.notify();
                 }
             }))
             .child(
@@ -529,24 +495,19 @@ mod servo_view {
                     move |bounds, window, cx| {
                         let scale = window.scale_factor();
                         entity.update(cx, |view, cx| {
-                            if view.servo.is_none() && !view.failed {
+                            if view.page.is_none() && !view.failed {
                                 let shown = view.shown.as_ref()?;
                                 let size = device_size(bounds, scale);
-                                view.servo = State::new(
+                                view.page = Some(State::new(
                                     shown.document.clone(),
                                     shown.parts.clone(),
                                     (size.0, size.1, scale),
                                     cx,
-                                );
-                                if view.servo.is_some() {
-                                    let weak = cx.entity().downgrade();
-                                    Engine::get(cx).register(weak);
-                                } else {
-                                    view.failed = true;
-                                    cx.notify();
-                                }
+                                ));
+                                let weak = cx.entity().downgrade();
+                                Engine::get(cx).register(weak);
                             }
-                            let state = view.servo.as_ref()?;
+                            let state = view.page.as_ref()?;
                             state.layout(bounds, scale);
                             let first = state.read_frame(window, cx);
                             let frame = state.frame.borrow().clone();

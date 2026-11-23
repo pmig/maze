@@ -29,7 +29,7 @@ to the index below.
 | [017](0017-account-secrets-in-the-vault.md)  | Account secrets in the vault   | Accepted                    |
 | [018](0018-workspace-panes.md)               | Workspace panes, tabs, splits  | Accepted                    |
 | [019](0019-imap-only.md)                     | IMAP only, no Local Folders    | Accepted                    |
-| [020](0020-servo-for-original-html.md)       | Servo for original HTML        | Accepted                    |
+| [020](0020-servo-for-original-html.md)       | Servo for original HTML        | Engine superseded by 033    |
 | [021](0021-system-notifications.md)          | System notifications           | Accepted                    |
 | [022](0022-go-to-folder-and-search-keys.md) | Go to Folder, search keys, Ctrl | Accepted                   |
 | [023](0023-spell-checking.md)               | Spell checking in the composer | Accepted                    |
@@ -42,3 +42,4 @@ to the index below.
 | [030](0030-saved-searches.md)             | Saved searches in the folder pane | Accepted                 |
 | [031](0031-agents-see-every-account.md)    | Agents see every account       | Accepted                    |
 | [032](0032-gravatar.md)                    | Gravatar, off by default       | Accepted                    |
+| [033](0033-blitz-for-original-html.md)     | Blitz for original HTML        | Accepted                    |

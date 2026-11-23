@@ -1,0 +1,165 @@
+# WPT reftests that fail in the original view today (see README.maze.md), each
+# with what it's waiting for. Regenerate with MAZEMAIL_WPT_UPDATE=1 (notes stay).
+FAIL css/CSS2/tables/border-collapse-006.html  # Blitz #386, #504 (collapsed borders)
+FAIL css/CSS2/tables/border-collapse-empty-row.html  # Blitz #386, #504 (collapsed borders)
+FAIL css/CSS2/tables/border-collapse-offset-001.xht  # Blitz #386, #504 (collapsed borders)
+FAIL css/CSS2/tables/border-collapse-offset-002.xht  # Blitz #386, #504 (collapsed borders)
+FAIL css/CSS2/tables/caption-side-applies-to-006.xht  # Blitz PR #529 (captions)
+FAIL css/CSS2/tables/caption-side-applies-to-007.xht  # Blitz PR #529 (captions)
+FAIL css/CSS2/tables/caption-side-applies-to-008.xht  # Blitz PR #529 (captions)
+FAIL css/CSS2/tables/caption-side-applies-to-009.xht  # Blitz PR #529 (captions)
+FAIL css/CSS2/tables/caption-side-applies-to-010.xht  # Blitz PR #529 (captions)
+FAIL css/CSS2/tables/caption-side-applies-to-011.xht  # Blitz PR #529 (captions)
+FAIL css/CSS2/tables/caption-side-applies-to-012.xht  # Blitz PR #529 (captions)
+FAIL css/CSS2/tables/caption-side-applies-to-013.xht  # Blitz PR #529 (captions)
+FAIL css/CSS2/tables/caption-side-applies-to-014.xht  # Blitz PR #529 (captions)
+FAIL css/CSS2/tables/caption-side-applies-to-015.xht  # Blitz PR #529 (captions)
+FAIL css/CSS2/tables/caption-side-applies-to-017.xht  # Blitz PR #529 (captions)
+FAIL css/CSS2/tables/collapsing-border-model-001.xht  # Blitz #386, #504 (collapsed borders)
+FAIL css/CSS2/tables/collapsing-border-model-003.xht  # Blitz #386, #504 (collapsed borders)
+FAIL css/CSS2/tables/collapsing-border-model-004.xht  # Blitz #386, #504 (collapsed borders)
+FAIL css/CSS2/tables/collapsing-border-model-007.xht  # Blitz #386, #504 (collapsed borders)
+FAIL css/CSS2/tables/collapsing-border-model-008.xht  # Blitz #386, #504 (collapsed borders)
+FAIL css/CSS2/tables/collapsing-border-model-009.xht  # Blitz #386, #504 (collapsed borders)
+FAIL css/CSS2/tables/collapsing-border-model-011.html  # Blitz #386, #504 (collapsed borders)
+FAIL css/CSS2/tables/collapsing-border-model-012.html  # Blitz #386, #504 (collapsed borders)
+FAIL css/CSS2/tables/collapsing-border-model-013.html  # Blitz #386, #504 (collapsed borders)
+FAIL css/CSS2/tables/collapsing-border-model-014.html  # Blitz #386, #504 (collapsed borders)
+FAIL css/CSS2/tables/empty-cells-applies-to-011.xht  # no Blitz issue (empty-cells: hide)
+FAIL css/CSS2/tables/empty-cells-applies-to-014.xht  # no Blitz issue (empty-cells: hide)
+FAIL css/CSS2/tables/empty-cells-applies-to-017.xht  # no Blitz issue (empty-cells: hide)
+FAIL css/CSS2/tables/table-anonymous-objects-017.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-anonymous-objects-018.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-anonymous-objects-059.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-060.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-061.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-062.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-063.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-064.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-065.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-066.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-067.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-068.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-069.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-070.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-071.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-072.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-073.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-074.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-075.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-076.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-077.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-078.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-079.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-080.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-081.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-082.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-083.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-084.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-085.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-086.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-087.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-088.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-089.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-090.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-091.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-092.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-093.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-094.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-095.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-096.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-097.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-098.xht  # Blitz #1430 (anonymous table boxes); Maze: sanitizer drops <body> attributes
+FAIL css/CSS2/tables/table-anonymous-objects-167.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-anonymous-objects-168.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-anonymous-objects-177.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-anonymous-objects-178.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-anonymous-objects-179.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-anonymous-objects-180.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-anonymous-objects-181.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-anonymous-objects-182.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-anonymous-objects-183.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-anonymous-objects-184.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-anonymous-objects-189.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-anonymous-objects-190.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-anonymous-objects-191.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-anonymous-objects-192.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-anonymous-objects-197.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-anonymous-objects-198.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-anonymous-objects-199.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-anonymous-objects-200.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-anonymous-objects-213.xht  # Blitz #1430 (anonymous table boxes)
+FAIL css/CSS2/tables/table-backgrounds-bc-cell-001.xht  # Blitz #386, #504 (collapsed borders)
+FAIL css/CSS2/tables/table-backgrounds-bc-colgroup-001.xht  # Blitz #386, #504 (collapsed borders)
+FAIL css/CSS2/tables/table-backgrounds-bc-column-001.xht  # Blitz #386, #504 (collapsed borders)
+FAIL css/CSS2/tables/table-backgrounds-bc-row-001.xht  # Blitz #386, #504 (collapsed borders)
+FAIL css/CSS2/tables/table-backgrounds-bc-rowgroup-001.xht  # Blitz #386, #504 (collapsed borders)
+FAIL css/CSS2/tables/table-backgrounds-bc-table-001.xht  # Blitz #386, #504 (collapsed borders)
+FAIL css/CSS2/tables/table-backgrounds-bs-cell-001.xht  # Blitz PR #638 (row, column and group backgrounds)
+FAIL css/CSS2/tables/table-backgrounds-bs-colgroup-001.xht  # Blitz PR #638 (row, column and group backgrounds)
+FAIL css/CSS2/tables/table-backgrounds-bs-column-001.xht  # Blitz PR #638 (row, column and group backgrounds)
+FAIL css/CSS2/tables/table-backgrounds-bs-row-001.xht  # Blitz PR #638 (row, column and group backgrounds)
+FAIL css/CSS2/tables/table-backgrounds-bs-rowgroup-001.xht  # Blitz PR #638 (row, column and group backgrounds)
+FAIL css/CSS2/tables/table-backgrounds-bs-table-001.xht  # Blitz PR #638 (row, column and group backgrounds)
+FAIL css/CSS2/tables/table-vertical-align-baseline-001.xht  # Blitz PR #1006, PR #721 (baseline alignment in cells)
+FAIL css/CSS2/tables/table-vertical-align-baseline-002.xht  # Blitz PR #1006, PR #721 (baseline alignment in cells)
+FAIL css/CSS2/tables/table-vertical-align-baseline-003.xht  # Blitz PR #1006, PR #721 (baseline alignment in cells)
+FAIL css/CSS2/tables/table-vertical-align-baseline-004.xht  # Blitz PR #1006, PR #721 (baseline alignment in cells)
+FAIL css/CSS2/tables/table-vertical-align-baseline-005.xht  # Blitz PR #1006, PR #721 (baseline alignment in cells)
+FAIL css/CSS2/tables/table-vertical-align-baseline-006.xht  # Blitz PR #1006, PR #721 (baseline alignment in cells)
+FAIL css/CSS2/tables/table-vertical-align-baseline-007.xht  # Blitz PR #1006, PR #721 (baseline alignment in cells)
+FAIL css/css-tables/anonymous-table-ws-001.html  # Blitz #1430 (anonymous table boxes)
+FAIL css/css-tables/border-conflict-resolution.html  # Blitz #386, #504 (collapsed borders)
+FAIL css/css-tables/col-definite-min-size-001.html  # no Blitz issue yet (columns without cells; draft 01)
+FAIL css/css-tables/collapsed-border-background-inset-spanning-and-missing-cells.html  # Blitz #386, #504 (collapsed borders)
+FAIL css/css-tables/collapsed-border-background-inset.html  # Blitz #386, #504 (collapsed borders)
+FAIL css/css-tables/collapsed-border-large-rowgroup-001.html  # Blitz #386, #504 (collapsed borders)
+FAIL css/css-tables/collapsed-border-large-rowgroup-002.html  # Blitz #386, #504 (collapsed borders)
+FAIL css/css-tables/height-distribution/percentage-sizing-of-table-cell-007.html  # untriaged (table sizing)
+FAIL css/css-tables/html-display-table.html  # Maze: sanitizer drops <html>
+FAIL css/css-tables/max-height-table.html  # untriaged (table sizing)
+FAIL css/css-tables/min-max-size-table-content-box.html  # untriaged (table sizing)
+FAIL css/css-tables/percent-height-overflow-auto-in-unrestricted-block-size-cell.tentative.html  # untriaged (table sizing)
+FAIL css/css-tables/percentages-grandchildren-quirks-mode-001.html  # Maze: documents always render in standards mode
+FAIL css/css-tables/percentages-grandchildren-quirks-mode-002.html  # Maze: documents always render in standards mode
+FAIL css/css-tables/rowspan-cell-border-after-color.html  # Blitz #386, #504 (collapsed borders)
+FAIL css/css-tables/subpixel-collapsed-borders-001.html  # Blitz #386, #504 (collapsed borders)
+FAIL css/css-tables/subpixel-collapsed-borders-002.html  # Blitz #386, #504 (collapsed borders)
+FAIL css/css-tables/subpixel-collapsed-borders-003.html  # Blitz #386, #504 (collapsed borders)
+FAIL css/css-tables/table-cell-overflow-explicit-height-001.html  # untriaged (table sizing)
+FAIL css/css-tables/table-cell-overflow-explicit-height-002.html  # untriaged (table sizing)
+FAIL css/css-tables/table-cell-width-0.html  # untriaged (table sizing)
+FAIL css/css-tables/table-intrinsic-size-001.html  # untriaged (table sizing)
+FAIL css/css-tables/table-intrinsic-size-002.html  # untriaged (table sizing)
+FAIL css/css-tables/table_grid_size_col_colspan.html  # no Blitz issue (colspan past the <col> grid in the fixed layout)
+FAIL css/css-tables/tentative/paint/background-image-column-collapsed.html  # Blitz PR #638 (row, column and group backgrounds)
+FAIL css/css-tables/tentative/paint/background-image-column.html  # Blitz PR #638 (row, column and group backgrounds)
+FAIL css/css-tables/tentative/paint/background-image-row-collapsed.html  # Blitz PR #638 (row, column and group backgrounds)
+FAIL css/css-tables/tentative/paint/background-image-row.html  # Blitz PR #638 (row, column and group backgrounds)
+FAIL css/css-tables/tentative/paint/collapsed-border-large-cell.html  # Blitz #386, #504 (collapsed borders)
+FAIL css/css-tables/tentative/paint/overflow-hidden-table.html  # Blitz PR #529 (captions)
+FAIL css/css-tables/tentative/section-no-tbody-fixed-distribution.html  # untriaged (table sizing)
+FAIL css/css-tables/tentative/section-no-tbody-percent-distribution.html  # untriaged (table sizing)
+FAIL css/css-tables/visibility-collapse-border-spacing-002.html  # no Blitz issue (visibility: collapse)
+FAIL css/css-tables/visibility-collapse-colspan-003.html  # no Blitz issue (visibility: collapse)
+FAIL css/css-tables/whitespace-001.html  # Blitz #1430 (anonymous table boxes)
+FAIL css/css-tables/zero-rowspan-001.html  # no Blitz issue (rowspan=0)
+FAIL css/css-tables/zero-rowspan-002.html  # no Blitz issue (rowspan=0)
+FAIL html/rendering/non-replaced-elements/lists/li-type-supported-xhtml.xhtml  # Maze: sanitizer drops li type; no Blitz issue yet (type on lists; draft 03)
+FAIL html/rendering/non-replaced-elements/lists/li-type-supported.html  # Maze: sanitizer drops li type; no Blitz issue yet (type on lists; draft 03)
+FAIL html/rendering/non-replaced-elements/lists/list-style-position-quirks-mode.html  # Maze: documents always render in standards mode
+FAIL html/rendering/non-replaced-elements/lists/ol-type-supported-xhtml.xhtml  # no Blitz issue yet (type on lists; draft 03)
+FAIL html/rendering/non-replaced-elements/lists/ol-type-supported.html  # no Blitz issue yet (type on lists; draft 03)
+FAIL html/rendering/non-replaced-elements/lists/ul-type-supported-xhtml.xhtml  # no Blitz issue yet (type on lists; draft 03)
+FAIL html/rendering/non-replaced-elements/lists/ul-type-supported.html  # no Blitz issue yet (type on lists; draft 03)
+FAIL html/rendering/non-replaced-elements/tables/table-border-1.html  # Blitz PRs #1396, #1681 (table border attribute)
+FAIL html/rendering/non-replaced-elements/tables/table-bordercolor-001.html  # Blitz PR #1571 (bordercolor)
+FAIL html/rendering/non-replaced-elements/tables/table-cell-nowrap-with-fixed-width.html  # untriaged (nowrap with a fixed width; Blitz main maps nowrap, #931)
+FAIL html/rendering/non-replaced-elements/tables/table-rules-none-rendering.html  # no Blitz issue (rules attribute)
+FAIL html/rendering/non-replaced-elements/tables/table-rules-rendering.html  # no Blitz issue (rules attribute)
+FAIL html/rendering/non-replaced-elements/tables/table-rules-separate.html  # no Blitz issue (rules attribute)
+FAIL html/rendering/non-replaced-elements/the-br-element/br-and-wbr-with-non-inline-display.html  # no Blitz issue (br and wbr with non-inline display)
+FAIL html/rendering/non-replaced-elements/the-br-element/br-clear-presentational-hints.html  # Maze: sanitizer drops br clear
+FAIL html/rendering/non-replaced-elements/the-hr-element-0/color.html  # fixed on Blitz main (#1398), not in 0.3.0-beta.4
+FAIL html/rendering/non-replaced-elements/the-hr-element-0/size-with-color-or-noshade.html  # fixed on Blitz main (#1398), not in 0.3.0-beta.4
+FAIL html/rendering/non-replaced-elements/the-hr-element-0/size.html  # fixed on Blitz main (#1398), not in 0.3.0-beta.4
