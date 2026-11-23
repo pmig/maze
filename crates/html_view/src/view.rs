@@ -10,9 +10,6 @@
 //! short pause (holding `f` through the list doesn't queue loads), and loads of a
 //! document the view has moved on from are refused. Until the current document has
 //! painted, [`OriginalView::is_ready`] is false and the caller shows the reader.
-//!
-//! Without the `blitz` feature the view never gets ready; check
-//! [`OriginalView::AVAILABLE`].
 
 use std::rc::Rc;
 use std::time::Instant;
@@ -70,9 +67,7 @@ pub enum OriginalViewEvent {
 /// The document to show and where its parts come from.
 struct Shown {
     document: OriginalDocument,
-    #[cfg_attr(not(feature = "blitz"), allow(dead_code))]
     parts: Rc<dyn PartSource>,
-    #[cfg_attr(not(feature = "blitz"), allow(dead_code))]
     since: Instant,
 }
 
@@ -80,9 +75,7 @@ struct Shown {
 pub struct OriginalView {
     generation: u64,
     shown: Option<Shown>,
-    #[cfg(feature = "blitz")]
     page: Option<blitz_view::State>,
-    #[cfg(feature = "blitz")]
     pending_load: Option<gpui::Task<()>>,
     failed: bool,
 }
@@ -98,9 +91,6 @@ impl std::fmt::Debug for OriginalView {
 impl EventEmitter<OriginalViewEvent> for OriginalView {}
 
 impl OriginalView {
-    /// Whether this build includes the engine (feature `blitz`).
-    pub const AVAILABLE: bool = cfg!(feature = "blitz");
-
     /// How long a new document waits before it loads, so quickly passing messages
     /// don't each start a load.
     pub const LOAD_DELAY: std::time::Duration = std::time::Duration::from_millis(40);
@@ -111,9 +101,7 @@ impl OriginalView {
         Self {
             generation: 0,
             shown: None,
-            #[cfg(feature = "blitz")]
             page: None,
-            #[cfg(feature = "blitz")]
             pending_load: None,
             failed: false,
         }
@@ -130,7 +118,6 @@ impl OriginalView {
     ) {
         self.generation += 1;
         let document = OriginalDocument::build(sanitized_html, options, self.generation);
-        #[cfg(feature = "blitz")]
         if let Some(state) = &self.page {
             state.switch_to(document.clone(), parts.clone());
             let generation = self.generation;
@@ -160,19 +147,14 @@ impl OriginalView {
 
     /// Whether the current document has painted. Until then, show the reader.
     pub fn is_ready(&self) -> bool {
-        #[cfg(feature = "blitz")]
-        return self
-            .page
+        self.page
             .as_ref()
-            .is_some_and(|state| state.frame_generation() == Some(self.generation));
-        #[cfg(not(feature = "blitz"))]
-        false
+            .is_some_and(|state| state.frame_generation() == Some(self.generation))
     }
 
-    /// Whether the engine is missing or couldn't start (the caller stays in reader
-    /// mode).
+    /// Whether the engine couldn't start (the caller stays in reader mode).
     pub fn failed(&self) -> bool {
-        self.failed || !Self::AVAILABLE
+        self.failed
     }
 
     /// Reports a click on `url` (already allowed by the navigation policy).
@@ -182,16 +164,12 @@ impl OriginalView {
 
     /// Copies the selected text to the clipboard.
     pub fn copy(&mut self, cx: &mut Context<'_, Self>) {
-        #[cfg(feature = "blitz")]
         if let Some(state) = &self.page {
             state.copy();
             cx.notify();
         }
-        #[cfg(not(feature = "blitz"))]
-        let _ = cx;
     }
 
-    #[cfg(feature = "blitz")]
     pub(crate) fn after_spin(&mut self, cx: &mut Context<'_, Self>) {
         let Some(state) = &self.page else {
             return;
@@ -213,7 +191,6 @@ impl OriginalView {
     }
 
     /// Called once a frame of the current document is on screen.
-    #[cfg(feature = "blitz")]
     fn became_ready(&mut self, cx: &mut Context<'_, Self>) {
         if let Some(shown) = &self.shown {
             tracing::debug!(
@@ -227,18 +204,11 @@ impl OriginalView {
 }
 
 impl Render for OriginalView {
-    #[cfg(feature = "blitz")]
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         blitz_view::render(self, window, cx)
     }
-
-    #[cfg(not(feature = "blitz"))]
-    fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
-        gpui::Empty
-    }
 }
 
-#[cfg(feature = "blitz")]
 mod blitz_view {
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;

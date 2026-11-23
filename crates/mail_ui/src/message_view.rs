@@ -297,18 +297,14 @@ impl MessageView {
             .is_some_and(|doc| doc.original.is_some())
     }
 
-    /// The mode the body is drawn in: the original only for HTML mail, and only in a
-    /// build with the engine.
+    /// The mode the body is drawn in: the original only for HTML mail whose engine
+    /// started.
     pub fn shown_mode(&self, cx: &App) -> BodyMode {
         let failed = self
             .original
             .as_ref()
             .is_some_and(|original| original.view.read(cx).failed());
-        if self.has_original()
-            && OriginalView::AVAILABLE
-            && !failed
-            && self.requested_mode(cx) == BodyMode::Original
-        {
+        if self.has_original() && !failed && self.requested_mode(cx) == BodyMode::Original {
             BodyMode::Original
         } else {
             BodyMode::Reader
@@ -1363,15 +1359,11 @@ impl Render for MessageView {
             BodyMode::Original => self.ensure_original(&doc, window, cx),
             BodyMode::Reader => None,
         };
-        // Asked for the original, but this build has no engine or it failed to start.
+        // Asked for the original, but the engine failed to start.
         let note = (original.is_none()
             && doc.original.is_some()
             && self.requested_mode(cx) == BodyMode::Original)
-            .then_some(if OriginalView::AVAILABLE {
-                "The original view couldn't start, so the message is shown in reader mode."
-            } else {
-                "This build doesn't include the original view, so the message is shown in reader mode."
-            });
+            .then_some("The original view couldn't start, so the message is shown in reader mode.");
         let muted = cx.theme().muted_foreground;
         let banner = original.is_some().then(|| self.remote_banner(cx)).flatten();
         let banner = banner.map(|banner| {

@@ -27,18 +27,15 @@ Run `mise run ci` before you commit.
 
 ### The original HTML engine
 
-`mise run test` builds without the original HTML engine (Blitz, ADR-033). Its tests
-need the feature: rendering and security checks, regression tests on real (anonymized)
-mail and a selection of Web Platform Tests reftests
-(`crates/html_view/tests/wpt/README.maze.md`):
-
-```sh
-cargo nextest run -p html_view --features blitz
-```
+The original HTML engine (Blitz, ADR-033) is part of every build, so `mise run test`
+and CI run its tests too: rendering and security checks, regression tests on real
+(anonymized) mail and a selection of Web Platform Tests reftests
+(`crates/html_view/tests/wpt/README.maze.md`). Only those:
+`cargo nextest run -p html_view`.
 
 To see how a mail renders, put it through the same pipeline into a PNG:
 `MAZEMAIL_RENDER_OUT=<dir> MAZEMAIL_RENDER_EML=<file.eml> cargo nextest run -p html_view
---features blitz --run-ignored only -E 'test(render_mail_to_png)'`. A mail that renders
+--run-ignored only -E 'test(render_mail_to_png)'`. A mail that renders
 wrongly becomes a fixture only as an anonymized copy: no names, addresses, links with
 tokens or other personal data.
 
@@ -55,8 +52,8 @@ the switch, and allow `codesign` to use the identity's key.
 
 ### Notifications in dev builds (macOS)
 
-Notification Center only works for an app bundle, so `mise start` and
-`mise run start:lite` run the binary from a minimal `Maze Dev.app` next to it
+Notification Center only works for an app bundle, so `mise start` runs the binary
+from a minimal `Maze Dev.app` next to it
 (`script/dev-bundle`: bundle ID `dev.mazemail.maze-dev`, an APFS clone of the binary,
 signed again only after a rebuild). Logs still go to the terminal and Ctrl-C stops it.
 macOS asks once whether "Maze Dev" may send notifications; System Settings →
@@ -107,8 +104,9 @@ a release PR open that updates `version.txt` and `CHANGELOG.md`. When a maintain
 it, release-please creates the tag (without a `v`, for example `0.2.0-alpha.3`) and the
 GitHub Release, and `release-artifacts.yaml` builds, signs, notarizes and publishes the
 bundles and the signed update manifests. Prereleases (alpha, beta, rc) go to the
-`preview` channel, final versions to `stable`. There are no nightly builds. Builds from
-`main` are unsigned workflow artifacts kept for 7 days, only for manual testing.
+`preview` channel, final versions to `stable`. There are no nightly builds: app bundles
+are only built for release tags. CI on `main` builds and tests without publishing
+anything.
 
 ## Distribution
 

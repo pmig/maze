@@ -29,7 +29,7 @@ specs, not only against the mail fixtures.
   breaks tests on purpose, regenerate it:
 
   ```sh
-  MAZEMAIL_WPT_UPDATE=1 cargo nextest run -p html_view --features blitz -E 'test(wpt_reftests)'
+  MAZEMAIL_WPT_UPDATE=1 cargo nextest run -p html_view -E 'test(wpt_reftests)'
   ```
 
 To update to another WPT commit: sparse-check out the directories above plus

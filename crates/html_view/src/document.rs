@@ -123,7 +123,7 @@ impl OriginalDocument {
 
     /// A document with exactly `html` and the CSP header `csp` (no `<meta>` CSP), to
     /// check each protection on its own.
-    #[cfg(all(test, feature = "blitz"))]
+    #[cfg(test)]
     pub(crate) fn with_header_only(html: &str, csp: &str) -> Self {
         Self {
             generation: 0,

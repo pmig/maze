@@ -26,11 +26,6 @@ ui = { workspace = true }
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true }
 
-[features]
-default = []
-# The original HTML engine (Blitz, ADR-033); off by default to keep dev builds fast.
-original-html = ["html_view/blitz"]
-
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 # `render_to_image` for screenshots needs the platform's test support.

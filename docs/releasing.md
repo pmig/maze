@@ -7,8 +7,10 @@ has the short version.
 
 ```
 PR (conventional title) ──squash──▶ main ──▶ ci.yaml (lint, test, build; nothing published)
-                                       └──▶ release-please.yaml: opens/updates the release PR
-                                            (version.txt + CHANGELOG.md)
+                                       ├──▶ release-please.yaml: opens/updates the release PR
+                                       │    (version.txt + CHANGELOG.md)
+                                       └──▶ release-cache.yaml (dependency changes, twice a
+                                            week): release builds, only to warm the cache
 release PR merged ──▶ tag 0.1.0-alpha.1 + GitHub Release (prerelease)
                   ──▶ release-please.yaml starts release-artifacts.yaml on the tag:
                       build, sign, notarize, upload to the release,

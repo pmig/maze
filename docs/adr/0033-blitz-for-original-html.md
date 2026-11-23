@@ -41,8 +41,10 @@ a few milliseconds (below).
 
 The original view uses **Blitz** (`blitz-dom`, `blitz-html`, `blitz-paint`,
 `blitz-traits` 0.3.0-beta.4, pinned exactly) with `anyrender_vello_cpu` for CPU
-rasterizing. `html_view`'s feature is `blitz`, still exposed as `original-html` on
-`mail_ui` and `mazemail`; `mise start` and the macOS release builds turn it on.
+rasterizing. The engine is part of every build, on macOS and Linux: there is no
+cargo feature for it and no build without it, so every `cargo build`, test run and CI
+job builds and tests it. App bundles are built for release tags only (ADR-011); CI on
+`main` builds and tests without publishing anything.
 
 - **Only what mail needs.** No `blitz-net`, no `blitz-shell` (winit), no accessibility
   tree, no SVG, no web fonts, no ICU text transforms; `blitz-dom` with `system-fonts`
@@ -80,9 +82,9 @@ rasterizing. `html_view`'s feature is `blitz`, still exposed as `original-html` 
 
 - **Builds.** No SpiderMonkey, no Python, no clang or libclang from mise; Cargo.lock
   drops from 1332 to 1142 crates. A first `mise start` with a warm compile cache
-  takes under two minutes. The engine builds into `target/original-html` (was
-  `target/servo`). The stripped macOS release binary is 84.5 MB, against 122.8 MB with
-  Servo and 48.6 MB without an engine when ADR-020 was written.
+  takes under two minutes. `mise start` builds into `target/` like everything else
+  (Servo needed `target/servo`). The stripped macOS release binary is 84.5 MB,
+  against 122.8 MB with Servo and 48.6 MB without an engine when ADR-020 was written.
 - **Fidelity.** Modern CSS renders as in Firefox's style engine; the gaps are Blitz's
   table model (anonymous boxes from style sheets, collapsed borders, captions,
   percentage cell widths in automatic layout) and are tracked upstream (#1430, #386,
@@ -95,11 +97,12 @@ rasterizing. `html_view`'s feature is `blitz`, still exposed as `original-html` 
 - **Leftovers of ADR-020 that can go.** The `rusqlite` 0.38 pin (only Servo forced it;
   the SQLite advisory needs a SQLCipher 4.20 bundle either way) and the vendored
   `zed-font-kit` (needs a Linux CI run without it).
-- **Linux.** Nothing in Blitz needs Python or libclang, so Linux release builds could
-  turn the original view on; that still needs testing on Linux.
-- **GPUI tests with the engine.** `mail_ui`'s tests pass with `original-html` on;
-  ADR-020 had to keep them engine-free. CI doesn't build the engine yet, so its
-  tests run locally (`cargo nextest run -p html_view --features blitz`).
+- **Linux gets the original view.** Nothing in Blitz needs Python or libclang, so the
+  Linux builds include it too; it gets less testing there than on macOS.
+- **Every test run covers the engine.** `mail_ui`'s GPUI tests run with it (ADR-020 had
+  to keep them engine-free). CI's checks on Linux and macOS run the engine tests, the
+  mail regressions and the WPT suite. An engine update that breaks the build or
+  the rendering can't merge with a green CI, as Servo 0.8 did.
 - **The sanitizer drops attributes of `<body>`** (`style`, `bgcolor`, `background`).
   Mail sets its canvas color and default font there; the WPT run shows it. It
   affects every view, not only Blitz.

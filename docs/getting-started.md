@@ -59,18 +59,14 @@ mise start              # starts Maze
 script/bundle-mac       # optional: dist/mac-<arch>/Maze.app, .dmg and .app.tar.zst
 ```
 
-`mise start` and `script/bundle-mac` include the original HTML engine (Blitz, the
-`original-html` feature), and so do the macOS release builds; a plain `cargo build`
-leaves it out. The engine is Rust only and needs nothing beyond `mise install`. It
-builds into its own directory, `target/original-html`, so switching between `mise
-start` and tests or your editor's rust-analyzer doesn't rebuild half the tree. `mise run start:lite` starts Maze without the engine (the original view
-then falls back to the reader). For a local release build, `cargo build --profile
+Every build includes the original HTML engine (Blitz, ADR-033); it is Rust only and
+needs nothing beyond `mise install`. For a local release build, `cargo build --profile
 release-fast` uses thin LTO and is far quicker than the fat-LTO `release` profile.
 
 A build from source is a **dev** build: it uses its own data directory
 (`mazemail-dev`), its own keychain item and the bundle ID `dev.mazemail.maze-dev`, so it
 never touches the store of an installed Maze. On macOS `mise start` runs it from
-`target/original-html/debug/Maze Dev.app` (`script/dev-bundle`), so it shows
+`target/debug/Maze Dev.app` (`script/dev-bundle`), so it shows
 [notifications](#notifications) and the Dock shows Maze's icon; logs still go to the
 terminal.
 
@@ -732,8 +728,6 @@ The message pane next to the list uses the reader by default; a message you open
 tab of its own (double-click, `enter` or `cmd-o`) shows the original. Change the
 defaults with `reader.default_mode` (the pane) and `reader.tab_mode` (tabs) in
 `settings.json`: `"reader"` or `"original"`. Plain-text mail always uses the reader.
-A build without the `original-html` feature (a plain `cargo build`, and the Linux
-release builds for now) shows the reader and says so.
 
 **Remote images.** Pictures that are attached to a message (inline images) always
 show. Images a message loads from the web can tell the sender that, when and from which

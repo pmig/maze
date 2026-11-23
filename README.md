@@ -53,8 +53,8 @@ Works today:
   Quick Filter
 - reading mail in a sanitized reader view, or as the sender designed it in the original
   HTML view (an embedded Blitz engine, HTML and CSS without any script engine, with
-  every load going through Maze; macOS builds only), remote images only when you allow
-  them (**Load images**,
+  every load going through Maze), remote images only when you allow them
+  (**Load images**,
   **Always for this sender**), `cmd-alt-o` to switch
 - DKIM/SPF/DMARC results (SPF and DMARC as the receiving server recorded them), the
   sender's mail client, and link targets on hover with a warning for deceptive links
@@ -89,7 +89,7 @@ Not there yet:
 - notifications for new mail
 - a settings window with forms (settings are edited as JSON for now), showing the
   recovery key
-- Linux packaging (Flatpak) and the original HTML view on Linux
+- Linux packaging (Flatpak)
 
 ## Install
 
@@ -121,7 +121,6 @@ packages.
 ```sh
 mise install          # Rust 1.99.1, cargo-nextest, cargo-deny, cargo-insta
 mise start            # starts a dev build of Maze, with its own data directory (macOS: Maze Dev.app)
-mise run start:lite   # the same without the original HTML engine (Blitz): faster first build
 script/bundle-mac     # builds dist/mac-<arch>/Maze.app, the .dmg and the .app.tar.zst
 ```
 

@@ -15,8 +15,6 @@
 # Environment:
 #   RELEASE_CHANNEL_FILE   file holding dev|preview|stable
 #                          (default: crates/mazemail/RELEASE_CHANNEL; missing means dev)
-#   MAZEMAIL_FEATURES      cargo features of the build (default: original-html, the
-#                          Blitz engine of ADR-033)
 #   MAZEMAIL_BUILD_VERSION, MAZEMAIL_BUILD_CHANNEL
 #                          test-only overrides of version.txt and the channel file, for
 #                          the end-to-end update test (cargo xtask update-e2e); the
@@ -79,8 +77,7 @@ channel=$(mac_release_channel)
 bundle_id=$(mac_bundle_id "$channel")
 
 if [ -z "$binary" ]; then
-  cargo build --release --locked --target "$target" --package mazemail \
-    --features "${MAZEMAIL_FEATURES-original-html}"
+  cargo build --release --locked --target "$target" --package mazemail
   binary="target/$target/release/mazemail"
 fi
 if [ ! -x "$binary" ]; then

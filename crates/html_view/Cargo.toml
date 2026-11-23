@@ -7,39 +7,22 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
-[features]
-default = []
-# The Blitz engine (HTML and CSS, no JavaScript). Off in dev builds and CI tests; on in
-# release builds. Without it, `OriginalView::AVAILABLE` is false and the message view
-# stays in reader mode.
-blitz = [
-  "dep:blitz-dom",
-  "dep:blitz-html",
-  "dep:blitz-paint",
-  "dep:blitz-traits",
-  "dep:anyrender",
-  "dep:anyrender_vello_cpu",
-  "dep:cursor-icon",
-  "dep:image",
-]
-
 [dependencies]
 async-channel = { workspace = true }
 gpui = { workspace = true }
 mazemail_mime = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
-anyrender = { workspace = true, optional = true }
-anyrender_vello_cpu = { workspace = true, optional = true }
-blitz-dom = { workspace = true, optional = true }
-blitz-html = { workspace = true, optional = true }
-blitz-paint = { workspace = true, optional = true }
-blitz-traits = { workspace = true, optional = true }
-cursor-icon = { workspace = true, optional = true }
-image = { workspace = true, optional = true }
+anyrender = { workspace = true }
+anyrender_vello_cpu = { workspace = true }
+blitz-dom = { workspace = true }
+blitz-html = { workspace = true }
+blitz-paint = { workspace = true }
+blitz-traits = { workspace = true }
+cursor-icon = { workspace = true }
+image = { workspace = true }
 
 [dev-dependencies]
-image = { workspace = true }
 pretty_assertions = { workspace = true }
 
 [lints]

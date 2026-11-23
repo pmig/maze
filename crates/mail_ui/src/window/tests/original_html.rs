@@ -1,9 +1,8 @@
-//! Reader and original mode of HTML mail (ADR-020). The engine itself doesn't run in
-//! these tests (it is a cargo feature, and headless); they check which mode each place
-//! asks for, the switch, and the fallback of a build without the engine.
+//! Reader and original mode of HTML mail (ADR-020): which mode each place asks for and
+//! shows, plus the switch between them. These tests run with the engine (Blitz,
+//! ADR-033), which every build includes.
 
 use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, TestAppContext};
-use html_view::OriginalView;
 
 use super::*;
 use crate::message_view::{BodyMode, BodyModes, ViewPlace, set_body_modes};
@@ -51,21 +50,9 @@ fn the_pane_reads_and_a_double_clicked_tab_shows_the_original(cx: &mut TestAppCo
     tab_view.read_with(cx, |v, cx| {
         assert_eq!(v.place(), ViewPlace::Tab);
         assert_eq!(v.requested_mode(cx), BodyMode::Original);
-        // Without the engine (the `blitz` feature) the tab stays in reader mode.
-        let expected = if OriginalView::AVAILABLE {
-            BodyMode::Original
-        } else {
-            BodyMode::Reader
-        };
-        assert_eq!(v.shown_mode(cx), expected);
-        assert_eq!(v.original_view().is_some(), OriginalView::AVAILABLE);
+        assert_eq!(v.shown_mode(cx), BodyMode::Original);
+        assert!(v.original_view().is_some());
     });
-    if !OriginalView::AVAILABLE {
-        assert!(
-            cx.debug_bounds("message-view").is_some(),
-            "the tab still shows the message"
-        );
-    }
 }
 
 #[gpui::test]
@@ -219,11 +206,9 @@ fn ask_shows_the_banner_until_load_images_or_always_for_this_sender(cx: &mut Tes
     assert!(!tab_view.read_with(cx, |v, _| v.remote_loaded_once()));
     // The banner (drawn with the original engine) shows the buttons' keys; `i` loads
     // the images like the button.
-    if OriginalView::AVAILABLE {
-        cx.update(|window, cx| window.draw(cx).clear(cx));
-        assert!(cx.debug_bounds("load-images-key").is_some());
-        assert!(cx.debug_bounds("always-for-sender-key").is_some());
-    }
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("load-images-key").is_some());
+    assert!(cx.debug_bounds("always-for-sender-key").is_some());
     cx.simulate_keystrokes("i");
     assert!(banner(cx).is_none());
     assert!(tab_view.read_with(cx, |v, _| v.remote_loaded_once()));

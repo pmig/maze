@@ -1,10 +1,10 @@
 name: CI
 
-# Pull requests and pushes to main: lint, test and a build (and, on Linux, the
-# end-to-end test binaries for the E2E workflow). Licenses and advisories
-# are checked in cargo-deny.yaml, on dependency changes and on a schedule.
-# Nothing is published from here (PLAN §4.16). The unsigned macOS build that
-# pushes to main upload is only a workflow artifact for manual testing.
+# Pull requests and pushes to main: lint, test and a build of everything, the
+# original HTML engine included (and, on Linux, the end-to-end test binaries for the
+# E2E workflow). Licenses and advisories are checked in cargo-deny.yaml, on dependency
+# changes and on a schedule. Nothing is built for distribution or published from here
+# (PLAN §4.16): app bundles come from release tags only (release-artifacts.yaml).
 on:
   pull_request:
   push:
@@ -45,7 +45,12 @@ jobs:
 
       - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
 
+      # Only `main` saves: pull requests restore its cache, but a cache saved by a pull
+      # request serves only that pull request and would crowd `main`'s out of the
+      # repository's 10 GB.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Lint (rustfmt + clippy)
         run: mise run lint
@@ -73,32 +78,4 @@ jobs:
           name: e2e-tests
           path: e2e-tests.tar.zst
           retention-days: 3
-          if-no-files-found: error
-
-  unsigned-macos-build:
-    name: Unsigned macOS build (artifact)
-    # Builds between releases are never published and never offered by the updater.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: check
-    runs-on: macos-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
-
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          key: release-aarch64-apple-darwin
-
-      - name: Bundle Maze.app (unsigned)
-        run: script/bundle-mac --target aarch64-apple-darwin
-
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: maze-macos-aarch64-unsigned
-          path: dist/*
-          retention-days: 7
           if-no-files-found: error
