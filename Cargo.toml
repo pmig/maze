@@ -103,7 +103,7 @@ schemars = "1"
 security-framework = { version = "3", features = ["OSX_10_15"] }
 semver = { version = "1", features = ["serde"] }
 # The original HTML engine (ADR-020): no JIT, no multiprocess, no devtools, no web APIs.
-servo = { version = "0.7", default-features = false, features = ["baked-in-resources"] }
+servo = { version = "0.8", default-features = false, features = ["baked-in-resources"] }
 html5ever = "0.40.1"
 linkify = "0.11.0"
 mail-parser = { version = "1.0.1", features = ["full_encoding"] }
