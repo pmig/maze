@@ -111,7 +111,7 @@ mail-builder = { version = "2.0", default-features = false }
 # fzf-style fuzzy matching for the folder pickers (Helix's matcher).
 nucleo-matcher = "0.3"
 # HTML quotes of replies become Markdown (PLAN §4.10).
-htmd = "0.5.6"
+htmd = "0.6.0"
 pulldown-cmark = { version = "0.13.6", default-features = false, features = ["html"] }
 # One crypto provider for all of rustls: aws-lc-rs. Servo, mail-auth and reqwest need it
 # anyway; a second provider (ring) would leave rustls without a process-wide default.
