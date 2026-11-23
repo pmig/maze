@@ -19,6 +19,7 @@ on:
       - '**/Cargo.toml'
       - 'rust-toolchain.toml'
       - 'mise.toml'
+      - 'script/linux-deps'
       - '.github/workflows/release-cache.yaml'
   schedule:
     - cron: '0 3 * * 1,4'

@@ -14,6 +14,9 @@ deps=(
   clang
   libdbus-1-dev
   libfontconfig1-dev
+  # freetype-sys (GPUI's fonts on Linux) builds against the system FreeType; the
+  # Ubuntu 22.04 runners of the release builds don't have it otherwise.
+  libfreetype-dev
   libssl-dev
   libvulkan-dev
   libwayland-dev
