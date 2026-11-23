@@ -6398,7 +6398,7 @@ dependencies = [
  "mazemail_types",
  "pretty_assertions",
  "reqwest",
- "resvg 0.48.1",
+ "resvg 0.50.0",
  "rules",
  "search",
  "security",
@@ -8906,6 +8906,21 @@ dependencies = [
  "tiny-skia 0.12.0",
  "usvg 0.48.1",
  "zune-jpeg 0.5.15",
+]
+
+[[package]]
+name = "resvg"
+version = "0.50.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77bb4b284cf8a5c8ae721594af53387fb755d2196fddb32b2acfb4fa9251fa0c"
+dependencies = [
+ "bytemuck",
+ "log",
+ "pico-args",
+ "rgb",
+ "svgtypes 0.16.2",
+ "tiny-skia 0.12.0",
+ "usvg 0.50.0",
 ]
 
 [[package]]
@@ -13275,6 +13290,25 @@ dependencies = [
  "unicode-script",
  "unicode-vo",
  "xmlwriter",
+]
+
+[[package]]
+name = "usvg"
+version = "0.50.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bdb896f04730b97805bbc3191fc57e4bf03face0f14577dd42e783c4d8c98802"
+dependencies = [
+ "data-url",
+ "imagesize 0.15.0",
+ "kurbo 0.13.1",
+ "log",
+ "pico-args",
+ "roxmltree 0.21.2",
+ "simplecss",
+ "siphasher",
+ "strict-num",
+ "svgtypes 0.16.2",
+ "tiny-skia-path 0.12.0",
 ]
 
 [[package]]
