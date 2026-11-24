@@ -79,3 +79,32 @@ jobs:
           path: e2e-tests.tar.zst
           retention-days: 3
           if-no-files-found: error
+
+  prune-cache:
+    name: Prune older caches
+    # Only `main` saves the check cache; after a dependency change the cache of the
+    # previous Cargo.lock still takes up its share of the repository's 10 GB, and
+    # GitHub would evict the least recently used caches first: the release caches.
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      # rust-cache keys end in two hashes (environment, Cargo.lock): group by the rest
+      # (the OS and architecture) and delete all but the newest of each group. An OS
+      # whose run failed saved nothing new, so its last cache stays.
+      - name: Keep the newest cache per OS
+        run: |
+          gh cache list --key 'v0-rust-check-' --ref refs/heads/main --limit 100 \
+            --json id,key,createdAt \
+            --jq 'group_by(.key | split("-") | .[:-2] | join("-")) | .[]
+                  | sort_by(.createdAt) | reverse | .[1:][] | "\(.id) \(.key)"' |
+            while read -r id key; do
+              echo "deleting $key"
+              gh cache delete "$id"
+            done

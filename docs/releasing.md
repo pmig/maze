@@ -17,6 +17,11 @@ release PR merged ──▶ tag 0.1.0-alpha.1 + GitHub Release (prerelease)
                       publish manifests to releases.mazemail.dev (Workers KV)
 ```
 
+Build caches: only `main` saves them (`ci.yaml`'s checks, `release-cache.yaml`'s
+release builds); pull requests and release tags restore them. After saving, a job keeps
+only the newest cache per OS or release target, so the repository stays within
+GitHub's 10 GB and the release caches aren't evicted.
+
 The `.dmg` and `.tar.zst` downloads live on the GitHub Release. Only the small signed
 update manifests are served from `releases.mazemail.dev`, by the `releases`
 Cloudflare Worker in [`releases/`](../releases) out of a Workers KV namespace

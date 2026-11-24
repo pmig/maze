@@ -75,3 +75,30 @@ jobs:
 
       - name: Build the release binary
         run: cargo build --release --locked --target "$TARGET" --package mazemail
+
+  prune-cache:
+    name: Prune older caches
+    # Keeps one release cache per target, as ci.yaml does for the check caches.
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      # rust-cache keys end in two hashes (environment, Cargo.lock): group by the rest
+      # (the target, OS and architecture) and delete all but the newest of each group.
+      # A target whose run failed saved nothing new, so its last cache stays.
+      - name: Keep the newest cache per target
+        run: |
+          gh cache list --key 'v0-rust-release-' --ref refs/heads/main --limit 100 \
+            --json id,key,createdAt \
+            --jq 'group_by(.key | split("-") | .[:-2] | join("-")) | .[]
+                  | sort_by(.createdAt) | reverse | .[1:][] | "\(.id) \(.key)"' |
+            while read -r id key; do
+              echo "deleting $key"
+              gh cache delete "$id"
+            done
