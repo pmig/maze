@@ -9,7 +9,7 @@
 
 use std::time::{Duration, Instant};
 
-use mazemail_core::{IndexDocument, ListQuery, ListScope, QuickFilter, SearchOpts};
+use mazemail_core::{IndexDocument, ListQuery, ListScope, QuickFilter, SearchOpts, SearchSort};
 use mazemail_types::{AccountId, Address, Flags, FolderId, Sensitive};
 use store::{NewLocation, NewMessage, ThreadAssignment};
 
@@ -250,6 +250,36 @@ async fn bench_100k() {
         }
     }
     let (_, search_p95) = stats("search (snippets, 50 threads)", search);
+    // The main window's search list: every matching thread, newest first.
+    let mut list = Vec::new();
+    for _ in 0..3 {
+        for q in [
+            "invoice",
+            "budget review",
+            "from:sender42",
+            "payment -in:archive",
+        ] {
+            let started = Instant::now();
+            let results = t
+                .core
+                .search(
+                    q,
+                    SearchOpts {
+                        limit: usize::MAX,
+                        sort: SearchSort::NewestFirst,
+                        snippets: false,
+                        interactive: true,
+                        ..SearchOpts::default()
+                    },
+                )
+                .await
+                .unwrap();
+            list.push(started.elapsed());
+            assert_eq!(results.threads.len(), results.total_threads, "{q}");
+            assert!(!results.truncated, "{q}");
+        }
+    }
+    let (_, list_p95) = stats("search list (every thread, by date)", list);
     let mut faceted = Vec::new();
     for q in ["invoice", "meeting in:inbox"] {
         let started = Instant::now();
@@ -279,6 +309,10 @@ async fn bench_100k() {
         assert!(
             search_p95 < Duration::from_millis(100),
             "search p95 {search_p95:?}"
+        );
+        assert!(
+            list_p95 < Duration::from_millis(100),
+            "search list p95 {list_p95:?}"
         );
     }
     t.core.shutdown().await.unwrap();

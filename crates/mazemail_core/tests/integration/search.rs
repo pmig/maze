@@ -511,3 +511,105 @@ async fn saved_searches_are_named_queries_whose_results_follow_the_mail() {
     ));
     assert_eq!(core.saved_searches().unwrap().len(), 2);
 }
+
+/// A domain's mail spread over every folder of two accounts, more of it than the
+/// search's small-set shortcuts cover: newest first and without a limit (the main
+/// window's search list), every thread outside Trash shows, the newest first.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_domain_search_finds_its_mail_in_every_folder() {
+    use mazemail_types::{AccountId, Address, FolderId};
+    use store::{NewLocation, NewMessage, ThreadAssignment};
+
+    let t = common::open().await;
+    let f = common::fixture(&t.core).await;
+    let places: [(AccountId, FolderId); 6] = [
+        (f.work, f.inbox),
+        (f.work, f.archive),
+        (f.work, f.projects),
+        (f.work, f.sent),
+        (f.gmail, f.g_label),
+        (f.work, f.trash),
+    ];
+    const COUNT: i64 = 1_600;
+    let stored = t
+        .core
+        .store()
+        .write(move |w| {
+            let mut out = Vec::new();
+            for i in 0..COUNT {
+                let (account, folder) = places[(i % 6) as usize];
+                let mut m = NewMessage::new(account, 1_700_000_000 + i * 60);
+                m.rfc_message_id = Some(format!("{i}.domain@example.com"));
+                m.subject = Some(format!("Build {i} passed"));
+                m.from = Some(Address::new(
+                    Some("Builds"),
+                    format!("builds{}@ci.northwind.example", i % 7),
+                ));
+                m.thread = ThreadAssignment::New;
+                m.locations = vec![NewLocation::new(folder, Some(i as u32 + 1), Flags::SEEN)];
+                let outcome = w.upsert_message(&m)?;
+                out.push((outcome, m, folder));
+            }
+            Ok(out)
+        })
+        .await
+        .unwrap();
+    let sink = t.core.index_sink();
+    let mut expected = Vec::new();
+    for (outcome, m, folder) in stored {
+        if folder != f.trash {
+            expected.push((m.date, outcome.thread));
+        }
+        sink.add(mazemail_core::IndexDocument {
+            message_id: outcome.message,
+            thread_id: outcome.thread,
+            account_id: m.account,
+            date: m.date,
+            size: 1024,
+            from: m.from.into_iter().collect(),
+            to: Vec::new(),
+            cc: Vec::new(),
+            subject: Sensitive::new(m.subject.unwrap_or_default()),
+            body_text: Sensitive::default(),
+            attachment_names: Vec::new(),
+            list_id: None,
+            has_attachment: false,
+            language: None,
+        })
+        .unwrap();
+    }
+    t.core.commit_index().await.unwrap();
+    expected.sort_by_key(|a| std::cmp::Reverse(a.0));
+    let newest_first: Vec<ThreadId> = expected.iter().map(|(_, thread)| *thread).collect();
+
+    for query in [
+        "northwind.example",
+        "from:northwind.example",
+        "from:@northwind.example",
+    ] {
+        let results = t
+            .core
+            .search(
+                query,
+                SearchOpts {
+                    limit: usize::MAX,
+                    sort: SearchSort::NewestFirst,
+                    snippets: false,
+                    interactive: true,
+                    ..SearchOpts::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(threads(&results.threads), newest_first, "{query}");
+        assert_eq!(results.total_messages, newest_first.len(), "{query}");
+        assert!(!results.truncated, "{query}");
+    }
+    // Trash holds a sixth of it.
+    let trash = t
+        .core
+        .search("from:@northwind.example in:trash", SearchOpts::default())
+        .await
+        .unwrap();
+    assert_eq!(trash.total_messages, (COUNT as usize).div_ceil(6) - 1);
+}

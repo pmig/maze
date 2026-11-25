@@ -486,6 +486,13 @@ pub trait Queries: sealed::Sealed {
         lists::message_ids_in_scope(self.connection(sealed::Token), scope)
     }
 
+    /// How many messages [`message_ids_in_scope`](Self::message_ids_in_scope) would
+    /// return, or a little more (a message with copies in two of the scope's folders
+    /// counts twice). Cheap: it reads no ids.
+    fn scope_size(&self, scope: &MessageScope) -> Result<u64> {
+        lists::scope_size(self.connection(sealed::Token), scope)
+    }
+
     /// The folders each of `ids` is in, as `(message, folder)` pairs in folder order
     /// (the table's Folder column).
     fn message_folders(&self, ids: &[MessageId]) -> Result<Vec<(MessageId, FolderId)>> {

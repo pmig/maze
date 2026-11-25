@@ -211,7 +211,7 @@ pub(crate) fn run(
         hits.retain(|(id, _)| in_scope.contains(id));
     }
     let ids: Vec<MessageId> = hits.iter().map(|(id, _)| *id).collect();
-    let placement = thread_and_date(&searcher, &reader, &ids)?;
+    let placement = thread_and_date(&searcher, &reader, &ids, executed.placement)?;
     let mut threads = group(&hits, &placement);
     match opts.sort {
         SearchSort::Relevance => {}
@@ -286,23 +286,29 @@ pub(crate) fn message_scope(scope: ListScope) -> MessageScope {
     }
 }
 
-/// Thread and date of each id: from the index's fast fields, else from the store
-/// (messages not indexed yet).
+/// Thread and date of each id: `known` (what the search read along with its hits),
+/// else from the index's fast fields, else from the store (messages not indexed yet).
 fn thread_and_date(
     searcher: &IndexSearcher,
     reader: &Reader,
     ids: &[MessageId],
+    known: HashMap<MessageId, (ThreadId, i64)>,
 ) -> Result<HashMap<MessageId, (ThreadId, i64)>> {
-    let mut out = HashMap::with_capacity(ids.len());
-    if ids.is_empty() {
+    let mut out = known;
+    let unknown: Vec<MessageId> = ids
+        .iter()
+        .copied()
+        .filter(|id| !out.contains_key(id))
+        .collect();
+    if unknown.is_empty() {
         return Ok(out);
     }
     let hits = searcher.search(
         &TantivyPart::everything(),
         &SearchOptions {
-            limit: ids.len(),
+            limit: unknown.len(),
             scope: Scope {
-                messages: Some(ids.to_vec()),
+                messages: Some(unknown.clone()),
                 accounts: None,
             },
             ..SearchOptions::default()
@@ -311,11 +317,11 @@ fn thread_and_date(
     for hit in hits {
         out.insert(hit.message_id, (hit.thread_id, hit.date));
     }
-    for id in ids {
-        if !out.contains_key(id)
-            && let Some(detail) = reader.message(*id)?
+    for id in unknown {
+        if !out.contains_key(&id)
+            && let Some(detail) = reader.message(id)?
         {
-            out.insert(*id, (detail.thread, detail.date));
+            out.insert(id, (detail.thread, detail.date));
         }
     }
     Ok(out)
@@ -453,15 +459,13 @@ pub(crate) fn body_matching_threads(
     if ids.is_empty() {
         return Ok(BTreeSet::new());
     }
-    let hits = index.searcher().search(
+    // Every match: the list is by date, where the best few by relevance would miss
+    // newer matches.
+    let hits = index.searcher().all_hits(
         &TantivyPart::text(text).with_matching(Matching::typing(text)),
-        &SearchOptions {
-            limit: search::RESULT_WINDOW,
-            scope: Scope {
-                messages: Some(ids),
-                accounts: None,
-            },
-            ..SearchOptions::default()
+        &Scope {
+            messages: Some(ids),
+            accounts: None,
         },
     )?;
     Ok(hits.into_iter().map(|hit| hit.thread_id).collect())

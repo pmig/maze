@@ -54,8 +54,8 @@ returns mail in the token's scope.
 
 ## Consequences
 
-- Saved searches behave like search results: as fast as the search, limited like it
-  (the first 10,000 threads), with no per-folder context in the rows.
+- Saved searches behave like search results: as fast as the search and as complete
+  (every matching thread), with no per-folder context in the rows.
 - Imported Thunderbird searches whose scope was a few folders now search everything.
   Applying `folders_json` (and a scope picker in the dialog) is a later step.
 - Unread counts, reordering (the `ordinal` column exists) and a `saved` folder pane mode

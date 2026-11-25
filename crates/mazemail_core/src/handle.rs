@@ -788,6 +788,18 @@ impl CoreHandle {
         Ok(self.inner.store.reader()?.thread_message_ids(thread)?)
     }
 
+    /// The messages of all of `threads`, by id: one query per 50,000 threads instead of
+    /// one per thread (the message list of a search with threads off).
+    pub fn messages_of_threads(&self, threads: &[ThreadId]) -> Result<Vec<MessageId>> {
+        self.ensure_open()?;
+        let reader = self.inner.store.reader()?;
+        let mut messages = Vec::new();
+        for chunk in threads.chunks(50_000) {
+            messages.extend(reader.messages_of_threads(chunk)?);
+        }
+        Ok(messages)
+    }
+
     // ---- message lists and thread trees (CONCEPT §8.2) --------------------------------
 
     /// The keys of a message list (threads off; 16 bytes per row). Metadata toggles of

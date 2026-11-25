@@ -340,6 +340,17 @@ fn scope_id_sets_and_facets() {
             .unwrap(),
         vec![extra.message]
     );
+    // Sizes without the ids: the same numbers.
+    for (scope, size) in [
+        (MessageScope::Folder(f.inbox), 12),
+        (MessageScope::Folders(vec![f.inbox, f.sent]), 13),
+        (MessageScope::Role(FolderRole::Sent), 1),
+        (MessageScope::Role(FolderRole::Trash), 0),
+        (MessageScope::Account(f.account), 13),
+        (MessageScope::Thread(extra.thread), 1),
+    ] {
+        assert_eq!(reader.scope_size(&scope).unwrap(), size, "{scope:?}");
+    }
     let counts = reader.folder_counts(&both).unwrap();
     assert_eq!(counts, vec![(f.inbox, 12), (f.sent, 1)]);
     // The folders of messages (the Folder column).

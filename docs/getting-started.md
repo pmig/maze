@@ -797,7 +797,9 @@ the full address the link opens, encoded the same way, without opening it.
   or mail with attachments. The list stays the folder; clear the filter and everything
   is back.
 - **Search all messages** (`cmd-shift-f` as in Zed, or `cmd-/`) searches every account
-  and folder, message text included, and shows the results as a list of their own.
+  and folder, message text included, and shows the results as a list of their own:
+  every matching thread, newest first, however many there are (a search for a
+  sender's domain, such as `example.com`, lists all of their mail).
 
 Both understand free text plus Gmail-style operators, for example
 `from:anna has:attachment after:2026-09-01`, `is:unread tag:todo`,

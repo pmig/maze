@@ -449,6 +449,40 @@ pub(crate) fn message_ids_in_scope(
     }
 }
 
+/// At least as many as [`message_ids_in_scope`] returns, and exactly that many unless
+/// a message has copies in several of the scope's folders. Counted on the indexes,
+/// without reading the ids.
+pub(crate) fn scope_size(conn: &Connection, scope: &MessageScope) -> Result<u64> {
+    let count = |sql: &str, param: &dyn ToSql| -> Result<u64> {
+        let mut stmt = conn.prepare_cached(sql)?;
+        let count: i64 = stmt.query_row([param], |row| row.get(0))?;
+        Ok(u64::try_from(count).unwrap_or_default())
+    };
+    match scope {
+        MessageScope::Folder(folder) => count(
+            "SELECT count(*) FROM message_location WHERE folder_id = ?1",
+            &folder.0,
+        ),
+        MessageScope::Folders(folders) => count(
+            "SELECT count(*) FROM message_location WHERE folder_id IN rarray(?1)",
+            &int_array(folders.iter().map(|f| f.0)),
+        ),
+        MessageScope::Role(role) => count(
+            "SELECT count(*) FROM message_location
+             WHERE folder_id IN (SELECT id FROM folder WHERE role = ?1)",
+            &role.as_str(),
+        ),
+        MessageScope::Account(account) => count(
+            "SELECT count(*) FROM message WHERE account_id = ?1 AND detached_at IS NULL",
+            &account.0,
+        ),
+        MessageScope::Thread(thread) => count(
+            "SELECT count(*) FROM message WHERE thread_id = ?1 AND detached_at IS NULL",
+            &thread.0,
+        ),
+    }
+}
+
 /// The folders of `ids`, as `(message, folder)` pairs ordered by folder.
 pub(crate) fn message_folders(
     conn: &Connection,

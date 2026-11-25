@@ -76,9 +76,6 @@ pub const WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 /// hold 100,000 messages.
 const FOLDER_ACTION_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Threads a global search shows at most.
-pub const SEARCH_LIMIT: usize = 2_000;
-
 /// What the list shows before any account exists.
 pub const NO_ACCOUNTS: &str = "No accounts yet. Add your IMAP, Gmail or Microsoft account, or \
      bring your Thunderbird accounts with `mazemail import <profile folder>`.";
@@ -313,7 +310,8 @@ impl CoreMailSource {
             return Ok(Vec::new());
         }
         let opts = SearchOpts {
-            limit: SEARCH_LIMIT,
+            // Every thread: the list loads rows as they scroll into view.
+            limit: usize::MAX,
             sort: if sort == ListSort::OLDEST_FIRST {
                 SearchSort::OldestFirst
             } else {
@@ -1104,10 +1102,7 @@ impl MailSource for CoreMailSource {
             *lock(&self.context) = None;
             let (query, typed) = Self::scope_query(&core, scope, filter)?;
             let threads = Self::search_threads(&core, query, typed, ListSort::NEWEST_FIRST)?;
-            let mut ids = Vec::new();
-            for thread in threads {
-                ids.extend(core.thread_message_ids(thread).map_err(unavailable)?);
-            }
+            let ids = core.messages_of_threads(&threads).map_err(unavailable)?;
             return Ok(core
                 .sort_messages(&ids, list_order(sort))
                 .map_err(unavailable)?

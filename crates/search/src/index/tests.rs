@@ -835,8 +835,53 @@ fn execute_scores_text_hits_and_reports_truncation() {
 
     let plan = QueryPlan::new(&parse("apple").unwrap().query, &context()).unwrap();
     let executed = searcher
-        .execute(&plan, &rows, &ExecuteOptions { cap: 3 })
+        .execute(&plan, &rows, &ExecuteOptions { cap: Some(3) })
         .unwrap();
     assert_eq!(executed.hits.len(), 3);
     assert!(executed.truncated);
+}
+
+/// A sender's mail beyond the result window, shown newest first (the search list): the
+/// newest message ranks last by relevance (a long sender name weighs the match down),
+/// so a cap on the best hits loses it.
+#[test]
+fn execute_finds_every_match_beyond_the_result_window() {
+    let count = RESULT_WINDOW as i64 + 2_000;
+    let sender = |name: &str| Address {
+        name: Some(name.to_owned()),
+        email: "notifications@github.example".to_owned(),
+    };
+    let docs: Vec<IndexDoc> = (1..=count)
+        .map(|id| IndexDoc {
+            from: vec![sender(if id == count {
+                "The Notification Robot Of The Code Hosting Platform"
+            } else {
+                "Hub"
+            })],
+            ..doc(id)
+        })
+        .collect();
+    let index = build(&docs);
+    let searcher = index.searcher();
+    let rows = Rows(BTreeMap::new());
+    for query in [
+        "from:github.example",
+        "github.example",
+        "from:@github.example",
+    ] {
+        let plan = QueryPlan::new(&parse(query).unwrap().query, &context()).unwrap();
+        let executed = searcher
+            .execute(&plan, &rows, &ExecuteOptions::default())
+            .unwrap();
+        assert_eq!(executed.hits.len(), count as usize, "{query}");
+        assert!(!executed.truncated, "{query}");
+        let newest = MessageId(count);
+        assert!(executed.hits.iter().any(|(id, _)| *id == newest), "{query}");
+        // Best first: the newest message, with its long sender name, comes last.
+        assert_eq!(
+            executed.hits.last().map(|(id, _)| *id),
+            Some(newest),
+            "{query}"
+        );
+    }
 }

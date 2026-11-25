@@ -23,7 +23,8 @@ use crate::plan::TantivyPart;
 /// Subjects are highlighted whole up to this length.
 const MAX_SUBJECT_CHARS: usize = 1000;
 
-/// Thread grouping and facets look at this many top hits at most (PLAN §4.4).
+/// Facets and [`IndexSearcher::search_threads`] look at this many top hits at most
+/// (PLAN §4.4). [`IndexSearcher::execute`], behind the search lists, takes every match.
 pub const RESULT_WINDOW: usize = 10_000;
 
 /// How hits are ordered.
@@ -203,6 +204,55 @@ impl SegmentColumns {
     }
 }
 
+/// Collects every matching document as a [`Hit`].
+struct AllHits;
+
+struct SegmentHits {
+    columns: SegmentColumns,
+    hits: Vec<Hit>,
+}
+
+impl Collector for AllHits {
+    type Fruit = Vec<Hit>;
+    type Child = SegmentHits;
+
+    fn for_segment(
+        &self,
+        _segment: tantivy::SegmentOrdinal,
+        reader: &SegmentReader,
+    ) -> tantivy::Result<SegmentHits> {
+        let fast = reader.fast_fields();
+        Ok(SegmentHits {
+            columns: SegmentColumns {
+                id: fast.u64(names::ID)?,
+                thread: fast.u64(names::THREAD)?,
+                date: fast.i64(names::DATE)?,
+            },
+            hits: Vec::new(),
+        })
+    }
+
+    fn requires_scoring(&self) -> bool {
+        true
+    }
+
+    fn merge_fruits(&self, segments: Vec<Vec<Hit>>) -> tantivy::Result<Vec<Hit>> {
+        Ok(segments.concat())
+    }
+}
+
+impl SegmentCollector for SegmentHits {
+    type Fruit = Vec<Hit>;
+
+    fn collect(&mut self, doc: DocId, score: Score) {
+        self.hits.push(self.columns.hit(doc, score));
+    }
+
+    fn harvest(self) -> Vec<Hit> {
+        self.hits
+    }
+}
+
 impl IndexSearcher {
     pub(crate) fn new(searcher: Searcher, fields: Arc<Fields>, analyzers: Analyzers) -> Self {
         Self {
@@ -234,17 +284,13 @@ impl IndexSearcher {
         self.top_hits(&*query, options.limit, options.offset, options.order)
     }
 
-    /// The top `limit` hits after skipping `offset`, plus the total match count.
-    pub(crate) fn top_hits_with_count(
-        &self,
-        part: &TantivyPart,
-        scope: &Scope,
-        limit: usize,
-    ) -> Result<(Vec<Hit>, usize)> {
+    /// Every hit for `part`, in no particular order: for lists shown by date or any
+    /// other column, where the best few by relevance would leave out matches. One pass
+    /// over the matches: as cheap as counting them, plus a score and three fast field
+    /// reads per match.
+    pub fn all_hits(&self, part: &TantivyPart, scope: &Scope) -> Result<Vec<Hit>> {
         let query = self.compile(part, scope);
-        let total = self.searcher.search(&*query, &Count)?;
-        let hits = self.top_hits(&*query, limit, 0, SortOrder::Relevance)?;
-        Ok((hits, total))
+        Ok(self.searcher.search(&*query, &AllHits)?)
     }
 
     fn top_hits(

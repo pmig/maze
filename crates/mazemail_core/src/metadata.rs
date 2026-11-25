@@ -175,7 +175,22 @@ impl<'r> StoreMetadata<'r> {
         filter: &store::MetadataFilter,
         within: Option<&BTreeSet<MessageId>>,
     ) -> store::Result<BTreeSet<MessageId>> {
+        let scope = scope_of(filter);
         if let Some(within) = within {
+            // A folder, role or account term over many candidates (Trash and Junk,
+            // left out of every search): reading the scope's ids is cheaper than
+            // checking each candidate when the scope holds fewer messages.
+            if let Some(scope) = &scope
+                && within.len() > DIRECT_SCOPE_MIN
+                && self.reader.scope_size(scope)? < within.len() as u64
+            {
+                return Ok(self
+                    .reader
+                    .message_ids_in_scope(scope)?
+                    .into_iter()
+                    .filter(|id| within.contains(id))
+                    .collect());
+            }
             let candidates: Vec<MessageId> = within.iter().copied().collect();
             return Ok(self
                 .reader
@@ -184,17 +199,6 @@ impl<'r> StoreMetadata<'r> {
                 .collect());
         }
         // Without candidates: a pure scope term becomes an id set directly.
-        let is_scope_only = filter.flags_set == Flags::empty()
-            && filter.flags_unset == Flags::empty()
-            && filter.tags.is_empty();
-        let scope = match (filter.folders.as_ref(), filter.account, filter.in_role) {
-            (Some(folders), None, None) if is_scope_only => {
-                Some(MessageScope::Folders(folders.clone()))
-            }
-            (None, Some(account), None) if is_scope_only => Some(MessageScope::Account(account)),
-            (None, None, Some(role)) if is_scope_only => Some(MessageScope::Role(role)),
-            _ => None,
-        };
         match scope {
             Some(scope) => Ok(self
                 .reader
@@ -255,6 +259,25 @@ impl<'r> StoreMetadata<'r> {
                 }
             },
         }
+    }
+}
+
+/// Below this many candidates, checking each one is fast whatever the scope.
+const DIRECT_SCOPE_MIN: usize = 1_000;
+
+/// The scope of a filter that is only a folder, role or account term.
+fn scope_of(filter: &store::MetadataFilter) -> Option<MessageScope> {
+    let is_scope_only = filter.flags_set == Flags::empty()
+        && filter.flags_unset == Flags::empty()
+        && filter.tags.is_empty();
+    if !is_scope_only {
+        return None;
+    }
+    match (filter.folders.as_ref(), filter.account, filter.in_role) {
+        (Some(folders), None, None) => Some(MessageScope::Folders(folders.clone())),
+        (None, Some(account), None) => Some(MessageScope::Account(account)),
+        (None, None, Some(role)) => Some(MessageScope::Role(role)),
+        _ => None,
     }
 }
 
