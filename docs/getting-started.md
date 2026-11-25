@@ -1044,7 +1044,10 @@ body filled in; `mazemail open 'mailto:…'` does the same from a script:
   always format text, even where the main window uses the same key (`cmd-k` is Go to
   Folder and `cmd-b` the folder pane everywhere else); in To, Cc, Bcc and Subject they
   do nothing.
-- **Attach…** (`cmd-shift-a`) adds files; they are read when the message is sent.
+- **Attach…** (`cmd-shift-a`) adds files; they are read when the message is sent. You
+  can also drag files from Finder (or your file manager) anywhere onto the composer:
+  it lights up while they are over it and attaches them when you let go. Folders
+  can't be attached, and a file that is attached already isn't added twice.
 - **Maze Magic** (`cmd-m`, or the button next to **Send**) has an agent fix and improve
   your draft before you send it. See [Maze Magic](#maze-magic) below.
 - **"Sent with Maze"** (on by default) adds a short line below your messages:

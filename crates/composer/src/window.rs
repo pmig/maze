@@ -51,11 +51,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    AnyWindowHandle, App, AppContext as _, ClickEvent, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, PathPromptOptions,
-    PromptLevel, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
-    Task, Window, WindowBounds, WindowOptions, div, prelude::FluentBuilder as _, px, relative,
-    size,
+    AnyWindowHandle, App, AppContext as _, ClickEvent, Context, Entity, EventEmitter,
+    ExternalPaths, FocusHandle, Focusable, InteractiveElement as _, IntoElement,
+    ParentElement as _, PathPromptOptions, PromptLevel, Render, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, WindowBounds,
+    WindowOptions, div, prelude::FluentBuilder as _, px, relative, size,
 };
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IndexPath, Sizable as _, TitleBar,
@@ -264,6 +264,18 @@ fn title_for(subject: &str) -> SharedString {
     } else {
         subject.to_owned().into()
     }
+}
+
+/// A file as an attachment: `None` for folders and paths that don't exist (any more).
+fn attachment(path: PathBuf) -> Option<DraftAttachment> {
+    let meta = std::fs::metadata(&path).ok().filter(|m| m.is_file())?;
+    let name = path.file_name()?.to_string_lossy().into_owned();
+    Some(DraftAttachment {
+        path,
+        name,
+        size: meta.len(),
+        forwarded: None,
+    })
 }
 
 /// "12 KB", "1.2 MB".
@@ -830,24 +842,47 @@ impl Composer {
                     return;
                 }
             };
-            let files: Vec<DraftAttachment> = paths
-                .into_iter()
-                .filter_map(|path| {
-                    let meta = std::fs::metadata(&path).ok().filter(|m| m.is_file())?;
-                    let name = path.file_name()?.to_string_lossy().into_owned();
-                    Some(DraftAttachment {
-                        path,
-                        name,
-                        size: meta.len(),
-                        forwarded: None,
-                    })
-                })
-                .collect();
             let _ = this.update_in(cx, |this, window, cx| {
-                this.add_attachments(files, window, cx)
+                this.attach_files(paths, window, cx);
             });
         })
         .detach();
+    }
+
+    /// Files dragged from Finder (or any file manager) onto the window.
+    fn drop_files(
+        &mut self,
+        paths: &ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.attach_files(paths.paths().to_vec(), window, cx);
+    }
+
+    /// Attaches the files among `paths`. Folders (and paths that are gone) can't be
+    /// attached: the status line says so.
+    fn attach_files(
+        &mut self,
+        paths: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let total = paths.len();
+        let files: Vec<DraftAttachment> = paths.into_iter().filter_map(attachment).collect();
+        let left_out = total - files.len();
+        // After adding: a change clears the status line.
+        self.add_attachments(files, window, cx);
+        if left_out > 0 {
+            self.status = Status::Error(
+                if left_out == total {
+                    "Only files can be attached, not folders."
+                } else {
+                    "Folders were left out: only files can be attached."
+                }
+                .into(),
+            );
+            cx.notify();
+        }
     }
 
     /// Adds files to the message (skipping ones attached already).
@@ -1074,6 +1109,30 @@ impl Composer {
             })
     }
 
+    /// Covers the window while files are dragged over it. Always there but empty and
+    /// clear: it shows only through its drag-over style, and its hitbox doesn't keep
+    /// the mouse from what's under it.
+    fn render_drop_hint() -> impl IntoElement {
+        div()
+            .id("drop-hint")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_sm()
+            .text_color(gpui::transparent_black())
+            .child("Drop files to attach them")
+            .drag_over::<ExternalPaths>(|style, _, _, cx| {
+                let theme = cx.theme();
+                style
+                    .bg(theme.drop_target)
+                    .border_2()
+                    .border_color(theme.drag_border)
+                    .text_color(theme.foreground)
+            })
+    }
+
     fn render_attachments(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
         h_flex()
@@ -1158,6 +1217,10 @@ impl Render for Composer {
             .on_action(cx.listener(|this, _: &Close, window, cx| this.close(window, cx)))
             .on_action(cx.listener(|this, _: &SaveDraft, window, cx| this.save_now(window, cx)))
             .on_action(cx.listener(|this, _: &Attach, window, cx| this.attach(window, cx)))
+            // Files dropped anywhere on the composer are attached.
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+                this.drop_files(paths, window, cx);
+            }))
             .on_action(cx.listener(|this, _: &ToggleCcBcc, window, cx| this.toggle_cc(window, cx)))
             .on_action(cx.listener(|this, _: &OpenInNewWindow, _, cx| this.open_in_new_window(cx)))
             .on_action(cx.listener(|this, _: &Bold, window, cx| {
@@ -1244,7 +1307,9 @@ impl Render for Composer {
                     })
                     .child(Self::field_row(
                         "Subject",
-                        Input::new(&self.subject).small(),
+                        div()
+                            .debug_selector(|| "composer-subject".to_owned())
+                            .child(Input::new(&self.subject).small()),
                     ))
                     .when(!self.attachments.is_empty(), |this| {
                         this.child(self.render_attachments(cx))
@@ -1252,6 +1317,7 @@ impl Render for Composer {
             )
             .child(
                 div()
+                    .debug_selector(|| "composer-body".to_owned())
                     .flex_1()
                     .min_h_0()
                     // `px_3`, but the editor insets its text 2 px more than a plain
@@ -1351,6 +1417,7 @@ impl Render for Composer {
                     ),
             )
             .children(magic)
+            .child(Self::render_drop_hint())
     }
 }
 

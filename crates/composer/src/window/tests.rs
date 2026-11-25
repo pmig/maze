@@ -449,6 +449,97 @@ fn attachments_join_the_draft(cx: &mut TestAppContext) {
     assert_eq!(format_size(3 * 1024 * 1024 / 2), "1.5 MB");
 }
 
+/// A folder of its own under the system's temp folder, for files to drop.
+fn temp_folder(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("mazemail-composer-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// Drags `paths` in from outside the window (Finder) and lets go at `position`.
+fn drop_paths(cx: &mut VisualTestContext, paths: &[PathBuf], position: gpui::Point<gpui::Pixels>) {
+    draw(cx);
+    cx.simulate_event(gpui::FileDropEvent::Entered {
+        position,
+        paths: ExternalPaths(paths.iter().cloned().collect()),
+    });
+    draw(cx);
+    cx.simulate_event(gpui::FileDropEvent::Pending { position });
+    draw(cx);
+    cx.simulate_event(gpui::FileDropEvent::Submit { position });
+    draw(cx);
+}
+
+#[gpui::test]
+fn dropped_files_are_attached(cx: &mut TestAppContext) {
+    let dir = temp_folder("drop");
+    let plan = dir.join("plan.pdf");
+    let notes = dir.join("notes.txt");
+    std::fs::write(&plan, vec![0u8; 2048]).unwrap();
+    std::fs::write(&notes, "hello").unwrap();
+    let backend = Arc::new(FakeBackend::default());
+    let (view, cx) = open(cx, backend, options());
+    draw(cx);
+
+    // Onto the body, where the text is typed.
+    let body = cx.debug_bounds("composer-body").unwrap().center();
+    drop_paths(cx, &[plan.clone(), notes], body);
+    let draft = view.read_with(cx, |c, cx| c.draft(cx)).unwrap();
+    let attached: Vec<(String, u64)> = draft
+        .attachments
+        .iter()
+        .map(|a| (a.name.clone(), a.size))
+        .collect();
+    assert_eq!(
+        attached,
+        [("plan.pdf".to_owned(), 2048), ("notes.txt".to_owned(), 5)]
+    );
+    assert_eq!(draft.attachments[0].path, plan);
+    assert!(view.read_with(cx, |c, _| c.is_dirty()));
+    assert!(body_text(&view, cx).is_empty(), "the body keeps its text");
+
+    // Onto the header fields: the same, and a file attached already isn't added twice.
+    let subject = cx.debug_bounds("composer-subject").unwrap().center();
+    drop_paths(cx, &[plan], subject);
+    let draft = view.read_with(cx, |c, cx| c.draft(cx)).unwrap();
+    assert_eq!(draft.attachments.len(), 2);
+
+    // A folder can't be attached: the status line says why nothing happened.
+    let folder = dir.join("photos");
+    std::fs::create_dir_all(&folder).unwrap();
+    drop_paths(cx, &[folder], body);
+    let draft = view.read_with(cx, |c, cx| c.draft(cx)).unwrap();
+    assert_eq!(draft.attachments.len(), 2);
+    assert!(matches!(
+        view.read_with(cx, |c, _| c.status.clone()),
+        Status::Error(message) if message.contains("not folders")
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[gpui::test]
+fn a_drag_that_leaves_the_window_attaches_nothing(cx: &mut TestAppContext) {
+    let dir = temp_folder("leave");
+    let file = dir.join("plan.pdf");
+    std::fs::write(&file, "pdf").unwrap();
+    let backend = Arc::new(FakeBackend::default());
+    let (view, cx) = open(cx, backend, options());
+    draw(cx);
+    let body = cx.debug_bounds("composer-body").unwrap().center();
+    cx.simulate_event(gpui::FileDropEvent::Entered {
+        position: body,
+        paths: ExternalPaths([file].into_iter().collect()),
+    });
+    draw(cx);
+    cx.simulate_event(gpui::FileDropEvent::Exited);
+    draw(cx);
+    let draft = view.read_with(cx, |c, cx| c.draft(cx)).unwrap();
+    assert!(draft.attachments.is_empty());
+    assert!(!view.read_with(cx, |c, _| c.is_dirty()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[gpui::test]
 fn the_title_follows_the_subject(cx: &mut TestAppContext) {
     let backend = Arc::new(FakeBackend::default());
