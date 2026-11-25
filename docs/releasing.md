@@ -7,20 +7,18 @@ has the short version.
 
 ```
 PR (conventional title) ──squash──▶ main ──▶ ci.yaml (lint, test, build; nothing published)
-                                       ├──▶ release-please.yaml: opens/updates the release PR
-                                       │    (version.txt + CHANGELOG.md)
-                                       └──▶ release-cache.yaml (dependency changes, twice a
-                                            week): release builds, only to warm the cache
+                                       └──▶ release-please.yaml: opens/updates the release PR
+                                            (version.txt + CHANGELOG.md)
 release PR merged ──▶ tag 0.1.0-alpha.1 + GitHub Release (prerelease)
                   ──▶ release-please.yaml starts release-artifacts.yaml on the tag:
                       build, sign, notarize, upload to the release,
                       publish manifests to releases.mazemail.dev (Workers KV)
 ```
 
-Build caches: only `main` saves them (`ci.yaml`'s checks, `release-cache.yaml`'s
-release builds); pull requests and release tags restore them. After saving, a job keeps
-only the newest cache per OS or release target, so the repository stays within
-GitHub's 10 GB and the release caches aren't evicted.
+Build caches: only `main` saves them (`ci.yaml`'s checks); pull requests restore
+them. After saving, a job keeps only the newest cache per OS, so the repository stays
+within GitHub's 10 GB. Release builds use no cache: they build from scratch, which
+takes a while longer but only happens for a release.
 
 The `.dmg` and `.tar.zst` downloads live on the GitHub Release. Only the small signed
 update manifests are served from `releases.mazemail.dev`, by the `releases`

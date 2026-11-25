@@ -83,8 +83,8 @@ jobs:
   prune-cache:
     name: Prune older caches
     # Only `main` saves the check cache; after a dependency change the cache of the
-    # previous Cargo.lock still takes up its share of the repository's 10 GB, and
-    # GitHub would evict the least recently used caches first: the release caches.
+    # previous Cargo.lock still takes up its share of the repository's 10 GB, which
+    # holds two of these per OS at most.
     if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
     needs: check
     runs-on: ubuntu-latest

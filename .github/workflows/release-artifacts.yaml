@@ -144,12 +144,10 @@ jobs:
       - name: Add Rust target
         run: rustup target add "$TARGET"
 
-      # Restores what release-cache.yaml saved on `main` (same key and environment); a
-      # cache saved by a tag's run would serve only that tag, so this one doesn't save.
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          shared-key: release-${{ matrix.target }}
-          save-if: false
+      # No build cache: releases are rare; `main`'s cache holds debug builds that a
+      # release (fat LTO, explicit target) can't use; a cache saved by a tag would serve
+      # only that tag. A release builds from scratch (well within the timeout), so
+      # nothing a cache holds can end up in it.
 
       - name: Write release channel
         run: printf '%s' "$CHANNEL" > "$RELEASE_CHANNEL_FILE"
@@ -248,12 +246,6 @@ jobs:
         if: steps.key.outputs.available == 'true'
         with:
           install_args: rust
-
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        if: steps.key.outputs.available == 'true'
-        with:
-          key: xtask
-          save-if: false
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.key.outputs.available == 'true'
