@@ -55,6 +55,13 @@ job builds and tests it. App bundles are built for release tags only (ADR-011); 
   draws like any picture. The renderer is reset before every paint. In dev builds the
   engine's crates and `html_view` run at `opt-level = 3` (`[profile.dev.package]`):
   a Retina frame of a table newsletter takes 2.5 ms, a hover or scroll 1.7 ms.
+  After a viewport change (a resize, a display with another scale) the next layout
+  rebuilds every box instead of updating them: when a newsletter's media query turned
+  its mobile layout back into tables, Blitz's incremental box construction lost the
+  content of cells that had been inline. The rebuild adds about 0.5 ms to a resize
+  frame. `blitz-dom` runs without its debug-only checks in dev builds, as in release:
+  one panics on box lists Blitz leaves on such rows but never reads
+  (DioxusLabs/blitz#1679 clears them).
 - **Security** (docs/security.md). Blitz has no script engine, so nothing in a message
   can run. Every load goes through Maze's providers: the document and `cid:` parts
   from memory, remote images only through Maze's own client when the message's

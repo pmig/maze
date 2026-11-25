@@ -203,6 +203,21 @@ struct Loaded {
     hover: Cell<Option<blitz_dom::NodeId>>,
 }
 
+impl Loaded {
+    /// Restyles and lays out what changed, or everything after a viewport change
+    /// ([`Page::resize`], [`Page::set_scale`]). Blitz updates its boxes incrementally,
+    /// and when a media query turned cells that had been inline back into cells (a
+    /// newsletter's mobile layout, left when the view got wider), their content went
+    /// missing. A full rebuild adds about 0.5 ms to a resize frame.
+    fn resolve(&mut self, now: f64) {
+        self.document.resolve(now);
+        // A resolve that waits for stylesheets didn't lay out: the next one rebuilds.
+        if !self.document.has_pending_critical_resources() {
+            self.document.set_incremental_layout(true);
+        }
+    }
+}
+
 impl Page {
     /// A page for `document` at `(width, height)` device pixels and `scale`; it loads
     /// with [`Page::load`].
@@ -284,9 +299,7 @@ impl Page {
         };
         let providers = loaded.providers.clone();
         self.answer(&providers);
-        loaded
-            .document
-            .resolve(self.started.elapsed().as_secs_f64());
+        loaded.resolve(self.started.elapsed().as_secs_f64());
         // Resolving can ask for images it found in styles.
         self.answer(&providers);
 
@@ -392,6 +405,8 @@ impl Page {
     fn set_viewport(&self, viewport: Viewport) {
         if let Some(loaded) = self.loaded.borrow_mut().as_mut() {
             loaded.document.set_viewport(viewport);
+            // Rebuilt in full, see `Loaded::resolve`.
+            loaded.document.set_incremental_layout(false);
         }
         self.inbox.frame_ready.set(true);
     }
@@ -401,8 +416,8 @@ impl Page {
     pub(crate) fn paint(&self) -> Option<image::RgbaImage> {
         let mut loaded = self.loaded.borrow_mut();
         let loaded = loaded.as_mut()?;
+        loaded.resolve(self.started.elapsed().as_secs_f64());
         let document: &mut BaseDocument = &mut loaded.document;
-        document.resolve(self.started.elapsed().as_secs_f64());
         if document.has_pending_critical_resources() {
             return None;
         }
@@ -556,9 +571,7 @@ impl Page {
                 return;
             };
             // Hit testing needs an up-to-date layout.
-            loaded
-                .document
-                .resolve(self.started.elapsed().as_secs_f64());
+            loaded.resolve(self.started.elapsed().as_secs_f64());
             EventDriver::new(&mut loaded.document, NoopEventHandler).handle_ui_event(event);
         }
         self.poll();
@@ -863,6 +876,79 @@ mod tests {
             )
             .unwrap();
         bytes
+    }
+
+    /// A page at `sizes[0]` (CSS pixels), resized to each of the others in turn, as
+    /// painted at the last.
+    fn render_resized(html: &str, sizes: &[(u32, u32)]) -> image::RgbaImage {
+        let mut raw = b"From: Acme <news@acme.example.com>\r\nTo: anna@example.com\r\nSubject: Spring\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n".to_vec();
+        raw.extend_from_slice(html.as_bytes());
+        let message = mazemail_mime::parse(&raw).unwrap();
+        let prepared = message
+            .prepare_html(&mazemail_mime::html::SanitizeOptions::default())
+            .unwrap();
+        let options = DocumentOptions {
+            remote_allowed: false,
+            colors: None,
+        };
+        let document = OriginalDocument::build(&prepared.sanitized.html, &options, 1);
+        let inbox = Rc::new(Inbox::default());
+        let (width, height) = sizes[0];
+        let page = Page::new(
+            document,
+            Rc::new(RenderParts { raw }),
+            inbox.clone(),
+            no_wake(),
+            (width, height, 1.),
+        );
+        page.load();
+        assert!(spin_until(&page, Duration::from_secs(30), || inbox
+            .loaded
+            .get()
+            == Some(1)));
+        let mut image = page.paint().unwrap();
+        for &(width, height) in &sizes[1..] {
+            page.resize(width, height);
+            image = page.paint().unwrap();
+        }
+        image
+    }
+
+    /// A newsletter's mobile layout (a media query that changes boxes): a resize across
+    /// its breakpoint, either way, paints what a page opened at the new width paints.
+    /// Closing a panel next to the message widened the pane past the breakpoint, and
+    /// Blitz's incremental box construction lost the content of a cell that had been
+    /// inline (this button; a whole column of the real mail), and its debug checks
+    /// panicked on a table's rows that had been blocks.
+    #[test]
+    fn a_resize_across_a_breakpoint_renders_like_a_fresh_page() {
+        let mails = [
+            // A cell that is inline on narrow panes, holding a button.
+            r#"<style>@media (max-width: 768px) { .column { display: inline } }</style>
+            <table><tr><th class="column"><table><tr><td>
+              <a style="display:inline-block;padding:8px 16px;background:#9d1023;color:#fff">Learn more</a>
+            </td></tr></table></th></tr></table>"#,
+            // A table whose parts are blocks on narrow panes.
+            r#"<style>@media (max-width: 768px) { table, tbody, tr, td { display: block !important } }</style>
+            <table><tr><td style="background:#9d1023;color:#fff">Learn more</td></tr></table>"#,
+        ];
+        for html in mails {
+            for (from, to) in [(760, 800), (800, 760), (500, 1000), (1000, 500)] {
+                let fresh = render_resized(html, &[(to, 200)]);
+                // Above the breakpoint, where the content went missing. (Below it Blitz
+                // doesn't draw a table inside an inline element at all.)
+                if to > 768 {
+                    assert!(ink(&fresh) > 0.005, "{to} px: nothing drawn\n{html}");
+                }
+                let resized = render_resized(html, &[(from, 200), (to, 200)]);
+                let differ = resized
+                    .pixels()
+                    .zip(fresh.pixels())
+                    .filter(|(a, b)| a != b)
+                    .count();
+                assert_eq!(differ, 0, "{from} px to {to} px\n{html}");
+            }
+        }
     }
 
     /// Renders a raw message through the real pipeline (parse, sanitize, document,

@@ -212,7 +212,12 @@ xml5ever = { opt-level = 3 }
 # (a hover over another element, a scroll): Blitz, Stylo, text layout and vello_cpu.
 # At opt-level 1 a Retina frame of a newsletter took 196 ms; see `paint_time` in
 # html_view's engine tests.
-blitz-dom = { opt-level = 3 }
+# Without its debug-only checks, as in release builds: they walk the whole page on
+# every frame, and one of them panics on state Blitz leaves behind but never reads
+# (a table row's old box children after a breakpoint turns it from a block back into
+# a row; DioxusLabs/blitz#1679), crashing debug builds on mail that release builds
+# render fine. See `a_resize_across_a_breakpoint_renders_like_a_fresh_page`.
+blitz-dom = { opt-level = 3, debug-assertions = false }
 blitz-paint = { opt-level = 3 }
 stylo = { opt-level = 3 }
 selectors = { opt-level = 3 }
