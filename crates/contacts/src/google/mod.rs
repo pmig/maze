@@ -17,9 +17,13 @@
 //!
 //! HTTP 401 forgets the access token ([`AccessTokens::invalidate`]) and retries once;
 //! 403 for missing scopes is [`ContactError::MissingScope`] (mail is unaffected);
-//! 429 and 5xx back off ([`Backoff`], honoring `Retry-After`), for writes only 429
-//! (a create that may have reached the server is never sent twice). Requests are
-//! sequential: one per account at a time.
+//! 429 and 5xx back off ([`Backoff`], honoring `Retry-After`). A create retries only
+//! 429 (one that may have reached the server is never sent twice); an update also 5xx,
+//! as it carries the etag it was read at and can't apply twice (a repeat of one that
+//! went through is a conflict, which shows the server's version). Requests are
+//! sequential: one per account at a time. A request the API answers with an error is
+//! logged with its route, status, the API's status code and its scrubbed message
+//! (`crate::diagnostics`).
 
 pub(crate) mod json;
 
@@ -32,6 +36,7 @@ use reqwest::Method;
 use reqwest::header::{CONTENT_TYPE, RETRY_AFTER};
 use url::Url;
 
+use crate::diagnostics::Failed;
 use crate::error::ContactError;
 use crate::model::{BookKind, ContactFields, Person, Photo};
 use crate::source::{AccessTokens, ContactSource, SyncPage};
@@ -93,6 +98,9 @@ enum Retry {
     Read,
     /// Writes: only 429 (the server didn't act on it).
     Write,
+    /// Writes that carry the version they change (the etag): like reads, as a repeat
+    /// can't apply twice.
+    Guarded,
 }
 
 /// A failed request: already an error, or Google's error answer to classify.
@@ -238,7 +246,7 @@ impl GoogleContacts {
             let response = match request.send().await {
                 Ok(response) => response,
                 Err(err) => {
-                    if retry == Retry::Read && attempt < attempts {
+                    if retry != Retry::Write && attempt < attempts {
                         tokio::time::sleep(self.backoff.delay(attempt)).await;
                         continue;
                     }
@@ -271,7 +279,7 @@ impl GoogleContacts {
             }
             let error = GError::parse(&bytes);
             let rate_limited = status == 429 || (status == 403 && error.is_rate_limit());
-            let retryable = rate_limited || (retry == Retry::Read && status >= 500);
+            let retryable = rate_limited || (retry != Retry::Write && status >= 500);
             if retryable && attempt < attempts {
                 let wait = retry_after
                     .unwrap_or_else(|| self.backoff.delay(attempt))
@@ -284,6 +292,17 @@ impl GoogleContacts {
                 tokio::time::sleep(wait).await;
                 continue;
             }
+            Failed {
+                api: "Google People API",
+                method: &method,
+                url: &url,
+                status,
+                code: &error.status,
+                message: &error.message,
+                request_id: None,
+                client_request_id: None,
+            }
+            .log();
             if rate_limited {
                 return Err(ContactError::Server { status: 429 }.into());
             }
@@ -494,7 +513,7 @@ impl ContactSource for GoogleContacts {
         let body = serde_json::to_vec(&person)
             .map_err(|err| ContactError::InvalidResponse(err.to_string()))?;
         match self
-            .execute(Method::PATCH, url, Some(body), Retry::Write)
+            .execute(Method::PATCH, url, Some(body), Retry::Guarded)
             .await
         {
             Ok(bytes) => Ok(Self::parse::<GPerson>(&bytes)?.into_person()),

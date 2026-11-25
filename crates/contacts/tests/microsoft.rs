@@ -1,6 +1,7 @@
 //! The Microsoft Graph client against a mock server: the default folder, delta paging,
 //! incremental changes and deletions, expired delta tokens, links that point
-//! elsewhere, writes with etags, conflicts, missing permission and photos.
+//! elsewhere, writes with etags, conflicts, server errors (retries, what gets logged),
+//! missing permission and photos.
 
 #![allow(clippy::unwrap_used)]
 
@@ -18,7 +19,7 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 use uuid::Uuid;
 use wiremock::matchers::{body_partial_json, header, method, path, query_param};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Match, Mock, MockServer, Request, ResponseTemplate};
 
 #[derive(Default)]
 struct Tokens {
@@ -268,6 +269,159 @@ fn fields(given: &str, email: &str) -> ContactFields {
     }
 }
 
+/// A JSON body without `null` members and empty lists, at any depth.
+struct NothingEmpty;
+
+impl Match for NothingEmpty {
+    fn matches(&self, request: &Request) -> bool {
+        fn empty_anywhere(value: &serde_json::Value) -> bool {
+            match value {
+                serde_json::Value::Null => true,
+                serde_json::Value::Array(items) => {
+                    items.is_empty() || items.iter().any(empty_anywhere)
+                }
+                serde_json::Value::Object(map) => map.values().any(empty_anywhere),
+                _ => false,
+            }
+        }
+        serde_json::from_slice(&request.body).is_ok_and(|body| !empty_anywhere(&body))
+    }
+}
+
+/// What the client logs, at debug and above.
+#[derive(Clone, Default)]
+struct Logs(Arc<Mutex<Vec<u8>>>);
+
+impl Logs {
+    fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+}
+
+impl std::io::Write for Logs {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Logs {
+    type Writer = Logs;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+/// Graph's answer to a request it failed: a 500 with its error and request id.
+fn graph_500() -> ResponseTemplate {
+    ResponseTemplate::new(500)
+        .insert_header("request-id", "graph-request-7")
+        .set_body_json(json!({"error": {
+            "code": "ErrorInternalServerError",
+            "message": "An internal server error occurred. The operation failed.",
+        }}))
+}
+
+#[tokio::test]
+async fn a_create_isnt_repeated_after_a_server_error_and_the_error_is_logged() {
+    let logs = Logs::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(logs.clone())
+        .with_ansi(false)
+        .with_max_level(tracing::Level::DEBUG)
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    let server = MockServer::start().await;
+    // A 500 may come after the contact was created: sending it again could create it
+    // twice, so the client gives up (sync tries later; the user sees the error).
+    Mock::given(method("POST"))
+        .and(path("/v1.0/me/contacts"))
+        .and(header("return-client-request-id", "true"))
+        .respond_with(graph_500())
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = client(&server, Arc::default());
+    let result = source.create(&fields("Anna", "anna@example.com")).await;
+    assert!(
+        matches!(result, Err(ContactError::Server { status: 500 })),
+        "{result:?}"
+    );
+    let sent = &server.received_requests().await.unwrap()[0];
+    let client_request_id = sent
+        .headers
+        .get("client-request-id")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let log = logs.text();
+    for expected in [
+        "contacts request failed",
+        "Microsoft Graph",
+        "POST",
+        "v1.0/me/contacts",
+        "500",
+        "ErrorInternalServerError",
+        "An internal server error occurred",
+        "graph-request-7",
+        client_request_id,
+    ] {
+        assert!(
+            log.contains(expected),
+            "{expected:?} missing from the log:\n{log}"
+        );
+    }
+    assert!(
+        !log.contains("anna@example.com"),
+        "contact data in the log:\n{log}"
+    );
+}
+
+#[tokio::test]
+async fn an_update_retries_a_server_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1.0/me/contacts/C1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(contact(
+            "C1",
+            "Anna",
+            "anna@example.com",
+        )))
+        .mount(&server)
+        .await;
+    // The first PATCH fails, the second goes through: If-Match keeps a repeat from
+    // applying twice, so an update may try again.
+    Mock::given(method("PATCH"))
+        .and(path("/v1.0/me/contacts/C1"))
+        .respond_with(graph_500())
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/v1.0/me/contacts/C1"))
+        .and(header("if-match", "W/\"etag-C1\""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(contact(
+            "C1",
+            "Anna Example",
+            "anna@example.com",
+        )))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = client(&server, Arc::default());
+    let updated = source
+        .update("C1", "W/\"etag-C1\"", &fields("Anna", "anna@example.com"))
+        .await
+        .unwrap();
+    assert_eq!(updated.resource_name, "C1");
+}
+
 #[tokio::test]
 async fn creating_a_contact_returns_the_servers_version() {
     let server = MockServer::start().await;
@@ -279,8 +433,8 @@ async fn creating_a_contact_returns_the_servers_version() {
             "displayName": "Anna Example",
             "emailAddresses": [{"address": "anna@example.com"}],
             "mobilePhone": "+43 660 1",
-            "homePhones": [],
         })))
+        .and(NothingEmpty)
         .respond_with(ResponseTemplate::new(201).set_body_json(contact(
             "NEW1",
             "Anna Example",

@@ -331,6 +331,13 @@ What happens then:
   version.
 - **Offline.** Completion and the contact copy keep working. Saving a contact says it
   can't be saved while you're offline: Maze doesn't queue changes.
+- **Server errors.** When the server fails (an HTTP 500, or too many requests), Maze
+  tries a change to a contact again on its own: it carries the version you edited, so
+  it can't apply twice. A new contact isn't sent again, as the server may have created
+  it before failing; the editor says so, for you to save it again. Every request the
+  server answers with an error is in Maze's log (`contacts request failed`): the
+  status, the server's error code and message without what you entered and, for
+  Microsoft, the `request-id` to ask Microsoft's support about.
 - **Turning it off.** `"contacts": { "sync": false }` pauses syncing for every account,
   `"accounts": { "Work": { "contacts_sync": false } }` for one; the copy stays.
   Removing the account deletes its contacts from your computer.

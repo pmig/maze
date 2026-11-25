@@ -23,6 +23,7 @@
 //!
 //! Contact data is never logged: the model's `Debug` impls only show counts.
 
+mod diagnostics;
 mod error;
 pub mod google;
 mod gravatar;

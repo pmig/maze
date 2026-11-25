@@ -27,8 +27,14 @@
 //!
 //! HTTP 401 forgets the access token and retries once; 403 `ErrorAccessDenied` is
 //! [`ContactError::MissingScope`] (mail is unaffected); 429 and 5xx back off
-//! ([`Backoff`], honoring `Retry-After`), for writes only 429. Requests are sequential:
-//! one per account at a time.
+//! ([`Backoff`], honoring `Retry-After`). A create retries only 429, as a 5xx may have
+//! created the contact anyway; an update also 5xx, as its `If-Match` can't apply twice
+//! (a repeat of a write that went through is a conflict, which shows the server's
+//! version). Requests are sequential: one per account at a time.
+//!
+//! Every request carries a `client-request-id`; a request Graph answers with an error
+//! is logged with its route, status, Graph's code, its scrubbed message and both ids
+//! (`crate::diagnostics`), so it can be looked up with Microsoft.
 
 pub mod json;
 
@@ -42,6 +48,7 @@ use reqwest::header::{CONTENT_TYPE, IF_MATCH, RETRY_AFTER};
 use url::Url;
 use uuid::Uuid;
 
+use crate::diagnostics::Failed;
 use crate::error::ContactError;
 use crate::google::{Backoff, PHOTO_MAX_BYTES};
 use crate::model::{BookKind, ContactFields, Person, Photo, is_valid_mailbox};
@@ -62,6 +69,9 @@ enum Retry {
     Read,
     /// Writes: only 429 (the server didn't act on it).
     Write,
+    /// Writes that carry the version they change (`If-Match`): like reads, as a repeat
+    /// can't apply twice.
+    Guarded,
 }
 
 /// A failed request: already an error, or Graph's error answer to classify.
@@ -266,10 +276,15 @@ impl MicrosoftContacts {
         loop {
             attempt += 1;
             let token = self.tokens.token().await.map_err(ContactError::from_auth)?;
+            // Graph logs it with the request and echoes it back: what to ask Microsoft
+            // about when a request fails.
+            let client_request_id = Uuid::new_v4().to_string();
             let mut request = self
                 .http
                 .request(method.clone(), url.clone())
-                .bearer_auth(token.expose());
+                .bearer_auth(token.expose())
+                .header("client-request-id", &client_request_id)
+                .header("return-client-request-id", "true");
             for (name, value) in headers {
                 request = request.header(name, value);
             }
@@ -281,7 +296,7 @@ impl MicrosoftContacts {
             let response = match request.send().await {
                 Ok(response) => response,
                 Err(err) => {
-                    if retry == Retry::Read && attempt < attempts {
+                    if retry != Retry::Write && attempt < attempts {
                         tokio::time::sleep(self.backoff.delay(attempt)).await;
                         continue;
                     }
@@ -295,6 +310,11 @@ impl MicrosoftContacts {
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.trim().parse::<u64>().ok())
                 .map(Duration::from_secs);
+            let request_id = response
+                .headers()
+                .get("request-id")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned);
             let content_type = response
                 .headers()
                 .get(CONTENT_TYPE)
@@ -322,19 +342,32 @@ impl MicrosoftContacts {
                 continue;
             }
             let error = MError::parse(&bytes);
-            let retryable = status == 429 || (retry == Retry::Read && status >= 500);
+            let retryable = status == 429 || (retry != Retry::Write && status >= 500);
             if retryable && attempt < attempts {
                 let wait = retry_after
                     .unwrap_or_else(|| self.backoff.delay(attempt))
                     .min(self.backoff.max);
                 tracing::debug!(
                     status,
+                    code = error.code,
+                    request_id = request_id.as_deref().unwrap_or(""),
                     wait_ms = wait.as_millis() as u64,
                     "Microsoft Graph busy; backing off"
                 );
                 tokio::time::sleep(wait).await;
                 continue;
             }
+            Failed {
+                api: "Microsoft Graph",
+                method: &method,
+                url: &url,
+                status,
+                code: &error.code,
+                message: &error.message,
+                request_id: request_id.as_deref(),
+                client_request_id: Some(&client_request_id),
+            }
+            .log();
             return Err(Failure::Api { status, error });
         }
     }
@@ -455,7 +488,8 @@ impl ContactSource for MicrosoftContacts {
             return Err(ContactError::Empty);
         }
         let url = self.url("me/contacts", &[])?;
-        let body = serde_json::to_vec(&MContactWrite::from_fields(fields))
+        let body = MContactWrite::from_fields(fields)
+            .create_body()
             .map_err(|err| ContactError::InvalidResponse(err.to_string()))?;
         let answer = self
             .execute(Method::POST, url, Some(body), &[], Retry::Write)
@@ -494,7 +528,7 @@ impl ContactSource for MicrosoftContacts {
                 url,
                 Some(body),
                 &[(IF_MATCH, etag.to_owned())],
-                Retry::Write,
+                Retry::Guarded,
             )
             .await
         {

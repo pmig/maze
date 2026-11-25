@@ -355,6 +355,31 @@ impl MContactWrite {
             other_address,
         }
     }
+
+    /// The body of a create: the fields without `null`s and empty lists, also inside
+    /// the email addresses and postal addresses. A new contact has nothing to clear,
+    /// and Graph has answered HTTP 500 to creates with `null` fields (Microsoft's
+    /// advice: send an address complete or not at all). An update keeps the `null`s
+    /// ([`MContactWrite`]).
+    pub(crate) fn create_body(&self) -> serde_json::Result<Vec<u8>> {
+        let mut value = serde_json::to_value(self)?;
+        drop_empty(&mut value);
+        serde_json::to_vec(&value)
+    }
+}
+
+/// Removes `null` members and empty lists from the objects in `value`, at any depth.
+fn drop_empty(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.retain(|_, member| {
+                drop_empty(member);
+                !(member.is_null() || member.as_array().is_some_and(Vec::is_empty))
+            });
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(drop_empty),
+        _ => {}
+    }
 }
 
 /// A page of a contacts list or delta query.
@@ -425,6 +450,35 @@ mod tests {
 
     fn account() -> Uuid {
         Uuid::from_u128(0x6f00_0000_0000_4000_8000_0000_0000_0001)
+    }
+
+    #[test]
+    fn a_create_leaves_empty_fields_out_and_an_update_clears_them() {
+        // Only an email address and a city: no name parts, phones, notes or street.
+        let fields = ContactFields {
+            emails: vec![Labeled::new("anna@example.com")],
+            addresses: vec![PostalAddress {
+                city: Some("Wien".into()),
+                kind: Some("home".into()),
+                ..PostalAddress::default()
+            }],
+            ..ContactFields::default()
+        };
+        let write = MContactWrite::from_fields(&fields);
+        let create: serde_json::Value =
+            serde_json::from_slice(&write.create_body().unwrap()).unwrap();
+        assert_eq!(
+            create,
+            serde_json::json!({
+                "emailAddresses": [{"address": "anna@example.com"}],
+                "homeAddress": {"city": "Wien"},
+            })
+        );
+        // An update names every field, so a removed value is removed on the server.
+        let update = serde_json::to_value(&write).unwrap();
+        assert_eq!(update["personalNotes"], serde_json::Value::Null);
+        assert_eq!(update["homePhones"], serde_json::json!([]));
+        assert_eq!(update["homeAddress"]["street"], serde_json::Value::Null);
     }
 
     #[test]

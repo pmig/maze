@@ -683,6 +683,19 @@ impl CoreHandle {
 
     /// A write that the server refused: a missing permission is remembered.
     async fn write_failed(&self, account: AccountId, err: ContactError) -> Error {
+        // The contacts client logged the server's answer (route, status, the server's
+        // code and request id); this says whose save it was and what the user was told.
+        // A refusal's text is the server's, logged there scrubbed, so only its status
+        // goes here.
+        match &err {
+            ContactError::Empty | ContactError::ReadOnly => {
+                tracing::debug!(%account, error = %err, "contact not saved");
+            }
+            ContactError::Rejected { status, .. } => {
+                tracing::warn!(%account, status, "the contacts server refused to save a contact");
+            }
+            _ => tracing::warn!(%account, error = %err, "saving a contact on the server failed"),
+        }
         if matches!(err, ContactError::MissingScope) {
             record_capability(self.store(), account, Capability::Contacts, false).await;
         }
