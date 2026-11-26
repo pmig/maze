@@ -3,9 +3,9 @@
 use gpui::SharedString;
 use time::{Date, OffsetDateTime, UtcOffset, macros::format_description};
 
-/// Formats dates relative to "today" in the user's time zone, like Thunderbird:
-/// time for today, weekday for the last week, day and month this year, full date
-/// otherwise.
+/// Formats dates relative to "today" in the user's time zone: time for today,
+/// "Yesterday" and the time, weekday and time for the rest of the last week, day and
+/// month this year, full date otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DateFormatter {
     offset: UtcOffset,
@@ -26,14 +26,17 @@ impl DateFormatter {
         }
     }
 
-    /// The short form for list rows: `10:12`, `Wed`, `Oct 3`, `2024-10-03`.
+    /// The short form for list rows: `10:12`, `Yesterday 10:12`, `Wed 10:12`, `Oct 3`,
+    /// `2024-10-03`.
     pub fn short(&self, date: OffsetDateTime) -> SharedString {
         let local = date.to_offset(self.offset);
         let days_ago = (self.today - local.date()).whole_days();
         let formatted = if days_ago == 0 {
             local.format(format_description!("[hour]:[minute]"))
-        } else if (1..7).contains(&days_ago) {
-            local.format(format_description!("[weekday repr:short]"))
+        } else if days_ago == 1 {
+            local.format(format_description!("Yesterday [hour]:[minute]"))
+        } else if (2..7).contains(&days_ago) {
+            local.format(format_description!("[weekday repr:short] [hour]:[minute]"))
         } else if local.year() == self.today.year() {
             local.format(format_description!("[month repr:short] [day padding:none]"))
         } else {
@@ -119,14 +122,31 @@ mod tests {
     fn short_dates_depend_on_age() {
         let f = DateFormatter::at(datetime!(2026-10-22 10:12 UTC), offset!(+2));
         assert_eq!(f.short(datetime!(2026-10-22 08:05 UTC)).as_ref(), "10:05");
-        assert_eq!(f.short(datetime!(2026-10-21 08:05 UTC)).as_ref(), "Wed");
+        assert_eq!(
+            f.short(datetime!(2026-10-21 08:05 UTC)).as_ref(),
+            "Yesterday 10:05"
+        );
+        assert_eq!(
+            f.short(datetime!(2026-10-20 08:05 UTC)).as_ref(),
+            "Tue 10:05"
+        );
+        // Six days ago is the last weekday; a week ago has the same name as today.
+        assert_eq!(
+            f.short(datetime!(2026-10-16 08:05 UTC)).as_ref(),
+            "Fri 10:05"
+        );
+        assert_eq!(f.short(datetime!(2026-10-15 08:05 UTC)).as_ref(), "Oct 15");
         assert_eq!(f.short(datetime!(2026-10-03 08:05 UTC)).as_ref(), "Oct 3");
         assert_eq!(
             f.short(datetime!(2024-10-03 08:05 UTC)).as_ref(),
             "2024-10-03"
         );
-        // Local midnight decides "today", not UTC.
+        // Local midnight decides "today" and "yesterday", not UTC.
         assert_eq!(f.short(datetime!(2026-10-21 22:30 UTC)).as_ref(), "00:30");
+        assert_eq!(
+            f.short(datetime!(2026-10-21 21:30 UTC)).as_ref(),
+            "Yesterday 23:30"
+        );
         assert_eq!(
             f.long(datetime!(2026-10-22 08:12 UTC)).as_ref(),
             "Thu, 22 Oct 2026 10:12"

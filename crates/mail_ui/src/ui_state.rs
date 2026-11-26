@@ -170,7 +170,8 @@ impl ColumnId {
             Self::Tags => 90.,
             Self::Account | Self::Folder => 120.,
             Self::Size => 64.,
-            Self::Date => 80.,
+            // Fits "Yesterday 10:12" in bold (unread).
+            Self::Date => 120.,
         }
     }
 
@@ -577,7 +578,7 @@ mod tests {
         assert_eq!(prefs.mode, ListMode::Table);
         assert!(!prefs.threaded);
         assert_eq!(prefs.columns, ColumnId::DEFAULT);
-        assert_eq!(prefs.width(ColumnId::Date), 80.);
+        assert_eq!(prefs.width(ColumnId::Date), 120.);
     }
 
     #[test]
