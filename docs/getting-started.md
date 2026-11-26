@@ -753,7 +753,8 @@ pixels are dropped either way.
 
 Attachments are listed under the message header with their size. Click one to open it
 in the app your system uses for its type; the arrow next to it (**Save…**) asks where to
-save it, starting in Downloads. Large messages may only have their text downloaded so
+save it, starting in Downloads. To start somewhere else, set `"download_dir"` in your
+settings, e.g. `"download_dir": "/tmp"` (`~/` is your home folder). Large messages may only have their text downloaded so
 far: Maze then downloads the whole message first (the size shows "…" meanwhile), which
 needs a connection to the server.
 

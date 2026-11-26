@@ -17,6 +17,7 @@
 //! Plain-text mail never uses the engine; a build without it stays in reader mode and
 //! says so.
 
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -150,6 +151,20 @@ pub fn set_body_modes(modes: BodyModes, cx: &mut App) {
     if cx.try_global::<BodyModes>() != Some(&modes) {
         cx.set_global(modes);
         cx.refresh_windows();
+    }
+}
+
+/// `download_dir`: the folder the save dialog of an attachment starts in (a global;
+/// [`set_download_dir`]). `None`: Downloads.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DownloadDir(pub Option<PathBuf>);
+
+impl Global for DownloadDir {}
+
+/// Applies the `download_dir` setting (at startup and after a settings change).
+pub fn set_download_dir(dir: Option<PathBuf>, cx: &mut App) {
+    if cx.try_global::<DownloadDir>().map(|d| &d.0) != Some(&dir) {
+        cx.set_global(DownloadDir(dir));
     }
 }
 
@@ -1120,7 +1135,7 @@ impl MessageView {
             return;
         };
         let name = attachment_files::safe_file_name(attachment.name.expose());
-        let picked = cx.prompt_for_new_path(&downloads_dir(), Some(&name));
+        let picked = cx.prompt_for_new_path(&save_dialog_dir(cx), Some(&name));
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(path))) = picked.await else {
                 return;
@@ -1449,8 +1464,20 @@ impl Render for MessageView {
     }
 }
 
-/// Where the save dialog starts: Downloads, else the home folder.
-fn downloads_dir() -> std::path::PathBuf {
+/// Where the save dialog starts: the `download_dir` setting if it is a folder, else
+/// Downloads, else the home folder.
+fn save_dialog_dir(cx: &App) -> PathBuf {
+    if let Some(dir) = cx.try_global::<DownloadDir>().and_then(|d| d.0.as_ref()) {
+        if dir.is_dir() {
+            return dir.clone();
+        }
+        tracing::warn!(dir = %dir.display(), "download_dir isn't a folder, using Downloads");
+    }
+    downloads_dir()
+}
+
+/// Downloads in the home folder, else the home folder.
+fn downloads_dir() -> PathBuf {
     let home = std::env::home_dir().unwrap_or_else(std::env::temp_dir);
     let downloads = home.join("Downloads");
     if downloads.is_dir() { downloads } else { home }

@@ -77,6 +77,11 @@
     "remote_content": "ask"
   },
 
+  // The folder the save dialog starts in when you save an attachment, e.g. "/tmp" or
+  // "~/Attachments". null: Downloads in your home folder. A relative path or a folder
+  // that doesn't exist falls back to Downloads.
+  "download_dir": null,
+
   // Writing mail.
   "compose": {
     // Added below every message you send (Markdown), after your signature and above

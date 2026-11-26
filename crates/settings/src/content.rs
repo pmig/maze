@@ -6,6 +6,7 @@
 //! Doc comments become descriptions in the generated JSON Schema.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use mazemail_types::MicrosoftTenant;
 use release_channel::ReleaseChannel;
@@ -32,6 +33,10 @@ pub struct Settings {
     pub folder_pane: FolderPaneSettings,
     /// The message view.
     pub reader: ReaderSettings,
+    /// The folder the save dialog starts in when you save an attachment, e.g. `/tmp` or
+    /// `~/Attachments`. `null`: Downloads in your home folder. A relative path or a
+    /// folder that doesn't exist falls back to Downloads.
+    pub download_dir: Option<String>,
     /// Writing mail.
     pub compose: ComposeSettings,
     /// Spell checking in the composer: a list of languages as BCP 47 tags (`de-DE`,
@@ -78,6 +83,7 @@ impl Default for Settings {
             thread_list: ThreadListSettings::default(),
             folder_pane: FolderPaneSettings::default(),
             reader: ReaderSettings::default(),
+            download_dir: None,
             compose: ComposeSettings::default(),
             spellcheck: Spellcheck::default(),
             offline: OfflinePolicy::default(),
@@ -97,6 +103,20 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// `download_dir` as a path, with a leading `~` meaning `home`. `None` when it is
+    /// unset, empty or relative (or starts with `~` and there is no home folder).
+    pub fn download_dir_path(&self, home: Option<&Path>) -> Option<PathBuf> {
+        let value = self.download_dir.as_deref()?.trim();
+        let path = if value == "~" {
+            home?.to_path_buf()
+        } else if let Some(rest) = value.strip_prefix("~/") {
+            home?.join(rest)
+        } else {
+            PathBuf::from(value)
+        };
+        path.is_absolute().then_some(path)
+    }
+
     /// The settings that apply to one account: its overrides over the global values.
     pub fn account(&self, name: &str) -> AccountSettings {
         let overrides = self.accounts.get(name);
@@ -1084,6 +1104,38 @@ mod tests {
             settings.effective_channel(ReleaseChannel::Dev),
             ReleaseChannel::Dev
         );
+    }
+
+    #[test]
+    fn the_download_dir_expands_the_home_folder_and_ignores_relative_paths() {
+        let home = Path::new("/home/anna");
+        let dir = |value: Option<&str>| {
+            let settings = Settings {
+                download_dir: value.map(str::to_owned),
+                ..Settings::default()
+            };
+            settings.download_dir_path(Some(home))
+        };
+        assert_eq!(dir(None), None, "unset: Downloads");
+        assert_eq!(dir(Some("/tmp")), Some(PathBuf::from("/tmp")));
+        assert_eq!(dir(Some(" /tmp ")), Some(PathBuf::from("/tmp")));
+        assert_eq!(dir(Some("~")), Some(PathBuf::from("/home/anna")));
+        assert_eq!(
+            dir(Some("~/Attachments")),
+            Some(PathBuf::from("/home/anna/Attachments"))
+        );
+        assert_eq!(dir(Some("")), None);
+        assert_eq!(dir(Some("Attachments")), None, "relative to what?");
+        assert_eq!(
+            dir(Some("~anna/x")),
+            None,
+            "other users' homes aren't expanded"
+        );
+        let tilde = Settings {
+            download_dir: Some("~/Attachments".to_owned()),
+            ..Settings::default()
+        };
+        assert_eq!(tilde.download_dir_path(None), None, "no home folder");
     }
 
     #[test]

@@ -3283,8 +3283,11 @@ mod tests {
         assert!(cx.debug_bounds("archive-key").is_none());
     }
 
-    #[gpui::test]
-    fn an_attachment_is_saved_where_the_user_picks(cx: &mut TestAppContext) {
+    /// Opens a window on the fake mail and selects the first message with an
+    /// attachment.
+    fn window_with_an_attachment(
+        cx: &mut TestAppContext,
+    ) -> (&mut VisualTestContext, crate::source::AttachmentInfo) {
         cx.update(|cx| {
             ui::init(cx);
             crate::init(cx);
@@ -3314,14 +3317,22 @@ mod tests {
             cx.run_until_parked();
             found = attachment(cx);
         }
-        let attachment = found.expect("a message with an attachment");
+        (cx, found.expect("a message with an attachment"))
+    }
 
+    fn click_save_attachment(cx: &mut VisualTestContext) {
         cx.update(|window, cx| window.draw(cx).clear(cx));
         let save = cx
             .debug_bounds("save-attachment-0")
             .expect("the save button is drawn");
         cx.simulate_click(save.center(), gpui::Modifiers::none());
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn an_attachment_is_saved_where_the_user_picks(cx: &mut TestAppContext) {
+        let (cx, attachment) = window_with_an_attachment(cx);
+        click_save_attachment(cx);
         let tmp = tempfile::tempdir().unwrap();
         let target = tmp.path().join("saved.bin");
         let picked = target.clone();
@@ -3332,6 +3343,36 @@ mod tests {
             saved,
             format!("Fake attachment {}\n", attachment.name.expose())
         );
+    }
+
+    #[gpui::test]
+    fn the_save_dialog_starts_in_the_download_dir(cx: &mut TestAppContext) {
+        let (cx, _) = window_with_an_attachment(cx);
+        let tmp = tempfile::tempdir().unwrap();
+        let download_dir = tmp.path().to_path_buf();
+        cx.update(|_, cx| {
+            crate::message_view::set_download_dir(Some(download_dir.clone()), cx);
+        });
+        click_save_attachment(cx);
+        let mut started_in = None;
+        cx.simulate_new_path_selection(|dir| {
+            started_in = Some(dir.to_path_buf());
+            None
+        });
+        assert_eq!(started_in, Some(download_dir));
+
+        // A folder that doesn't exist (yet) falls back to Downloads.
+        let missing = tmp.path().join("missing");
+        cx.update(|_, cx| crate::message_view::set_download_dir(Some(missing.clone()), cx));
+        click_save_attachment(cx);
+        let mut started_in = None;
+        cx.simulate_new_path_selection(|dir| {
+            started_in = Some(dir.to_path_buf());
+            None
+        });
+        let started_in = started_in.expect("the dialog was shown");
+        assert_ne!(started_in, missing);
+        assert!(started_in.is_dir(), "{}", started_in.display());
     }
 
     #[gpui::test]
